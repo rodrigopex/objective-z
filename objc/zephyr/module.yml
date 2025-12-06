@@ -1,0 +1,4 @@
+name: objc
+build:
+  cmake: .
+  kconfig: Kconfig

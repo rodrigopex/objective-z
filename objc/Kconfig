@@ -1,0 +1,12 @@
+config ZEPHYR_OBJECTIVE_C
+    bool "Objective-C support"
+    default n
+    help
+      Enable Objective-C language support in Zephyr.
+
+      This option enables the Objective-C compiler and related tools,
+      allowing you to write and compile Objective-C code within the Zephyr
+      RTOS environment.
+
+      Note: Enabling Objective-C support may increase the size of the
+      compiled binaries and could impact performance.
