@@ -1,0 +1,53 @@
+/*
+ * Copyright (c) 2012-2014 Wind River Systems, Inc.
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+#include "objc/NXConstantString.h"
+#import <objc/objc.h>
+#include <zephyr/kernel.h>
+#include "TemperatureService.h"
+
+void print_temp_callback(const struct zbus_channel *chan)
+{
+	const struct msg_temperature_service_report *report = zbus_chan_const_msg(chan);
+
+	if (chan != [TemperatureService reportChannel]) {
+		return;
+	}
+
+	if (report->tag == TEMPERATURE_SERVICE_REPORT_ERROR) {
+		printk(" + [listener] Could not read the temperature\n");
+		return;
+	}
+
+	printk(" + [listener] Temperature: %d\n", report->temperature.value);
+}
+
+ZBUS_LISTENER_DEFINE(lis_print_temp, print_temp_callback);
+
+ZBUS_CHAN_ADD_OBS(chan_temperature_service_report, lis_print_temp, 3);
+
+int main(void)
+{
+	int ret, temp;
+
+	while (1) {
+		NXConstantString *str = @"Requesting temperature";
+
+		printk("%s:\n", str.cStr);
+
+		ret = [TemperatureService requestTemperatureWithRef:&temp andTimeout:K_SECONDS(6)];
+
+		if (ret < 0) {
+			printk(" + [main] Could not read the temperature\n");
+		} else {
+			printk(" + [main] Temperature: %d\n", temp);
+		}
+
+		k_msleep(1000);
+	}
+
+	return 0;
+}
