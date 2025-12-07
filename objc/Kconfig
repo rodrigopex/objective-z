@@ -1,5 +1,6 @@
 config ZEPHYR_OBJECTIVE_C
     bool "Objective-C support"
+    select STATIC_INIT_GNU
     default n
     help
       Enable Objective-C language support in Zephyr.

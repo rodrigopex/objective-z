@@ -8,27 +8,35 @@
 #include <zephyr/kernel.h>
 
 @interface MyFirstObject: Object
+
 - (void)greet;
+
 + (void)greet;
+
 @end
 
 @implementation MyFirstObject
+
 - (void)greet
 {
 	printk("Hello, world from object\n");
 }
+
 + (void)greet
 {
 	printk("Hello, world from class\n");
 }
+
 @end
 
 int main(void)
 {
 	// Send a "greet" method to the Object class
+	[MyFirstObject greet];
+
 	MyFirstObject *hello = [[MyFirstObject alloc] init];
 
-	[MyFirstObject greet];
 	[hello greet];
+
 	return 0;
 }

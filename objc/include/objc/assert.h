@@ -19,4 +19,4 @@
  * failure message, including the condition, file name, and line number. If
  * `DEBUG` is not defined, this macro does nothing.
  */
-#define objc_assert(condition) _$_ASSERT(condition)
+#define objc_assert(condition) __ASSERT(condition)
