@@ -21,6 +21,11 @@ ZBUS_CHAN_ADD_OBS(chan_acc_data_consumed, msub_acc_consumed, 3);
 
 	return self;
 }
+- (void)dealloc
+{
+	printk("Deallocating AccDataProducer instance\n");
+	[super dealloc];
+}
 
 - (int)sendData
 {
@@ -50,6 +55,8 @@ void thread_entry_producer(void *arg1, void *arg2, void *arg3)
 			printk("Producer: Received %d acknowledgments from Consumer. Stopping "
 			       "production.\n",
 			       producer.ackCount);
+			[producer dealloc];
+
 			break;
 		}
 
