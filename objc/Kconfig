@@ -11,3 +11,11 @@ config ZEPHYR_OBJECTIVE_C
 
       Note: Enabling Objective-C support may increase the size of the
       compiled binaries and could impact performance.
+
+if ZEPHYR_OBJECTIVE_C
+
+module = OBJC
+module-str = objc
+source "subsys/logging/Kconfig.template.log_config"
+
+endif
