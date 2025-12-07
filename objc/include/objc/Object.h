@@ -5,26 +5,26 @@
  * This class provides basic memory management and introspection capabilities.
  */
 #pragma once
-
+#include "Object+Protocol.h"
 /**
  * @brief The root class of all Objective-C classes.
  * @headerfile Object.h objc/objc.h
- * @ingroup objc  
+ * @ingroup objc
  *
  * This class is the base class for all objects in Objective-C.
  * It provides basic memory management and introspection capabilities.
  */
 OBJC_ROOT_CLASS
 @interface Object <ObjectProtocol> {
-  /**
-   * @var isa
-   * @brief A pointer to the object's class structure.
-   *
-   * This instance variable holds a reference to the class to which the
-   * object belongs. It is a fundamental part of the Objective-C object model,
-   * enabling dynamic dispatch and introspection.
-   */
-  Class isa;
+	/**
+	 * @var isa
+	 * @brief A pointer to the object's class structure.
+	 *
+	 * This instance variable holds a reference to the class to which the
+	 * object belongs. It is a fundamental part of the Objective-C object model,
+	 * enabling dynamic dispatch and introspection.
+	 */
+	Class isa;
 }
 
 /**
