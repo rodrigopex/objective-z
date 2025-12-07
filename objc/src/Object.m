@@ -1,76 +1,93 @@
 #include <objc/objc.h>
+#include <zephyr/sys/printk.h>
 
 @implementation Object
 
-+ (void)initialize {
-  // No-op
++ (void)initialize
+{
+	// No-op
 }
 
-+ (id)alloc {
-  id obj = (id)objc_malloc(class_getInstanceSize(self));
-  if (obj) {
-    memset(obj, 0, class_getInstanceSize(self));
-    object_setClass(obj, self);
-  }
-  return obj;
++ (id)alloc
+{
+	printk("allocating instance of class %s\n", class_getName(self));
+	id obj = (id)objc_malloc(class_getInstanceSize(self));
+	if (obj) {
+		memset(obj, 0, class_getInstanceSize(self));
+		object_setClass(obj, self);
+	}
+	return obj;
 }
 
-- (id)init {
-  return self;
+- (id)init
+{
+	return self;
 }
 
-- (void)dealloc {
-  objc_free(self);
+- (void)dealloc
+{
+	printk("deallocating instance of class %s\n", class_getName(object_getClass(self)));
+
+	objc_free(self);
 }
 
-- (Class)class {
-  return object_getClass(self);
+- (Class)class
+{
+	return object_getClass(self);
 }
 
-+ (Class)class {
-  return self;
++ (Class)class
+{
+	return self;
 }
 
-- (Class)superclass {
-  return object_getSuperclass(self);
+- (Class)superclass
+{
+	return object_getSuperclass(self);
 }
 
-+ (Class)superclass {
-  return class_getSuperclass(self);
++ (Class)superclass
+{
+	return class_getSuperclass(self);
 }
 
-+ (const char *)name {
-  return class_getName(self);
++ (const char *)name
+{
+	return class_getName(self);
 }
 
-- (BOOL)isEqual:(id)anObject {
-  return self == anObject;
+- (BOOL)isEqual:(id)anObject
+{
+	return self == anObject;
 }
 
-- (BOOL)isKindOfClass:(Class)cls {
-  return object_isKindOfClass(self, cls);
+- (BOOL)isKindOfClass:(Class)cls
+{
+	return object_isKindOfClass(self, cls);
 }
 
 /**
  * @brief Checks if the class conforms to a protocol.
  */
-+ (BOOL)conformsTo:(Protocol *)aProtocolObject {
-  return class_conformsTo(self, (objc_protocol_t *)aProtocolObject);
++ (BOOL)conformsTo:(Protocol *)aProtocolObject
+{
+	return class_conformsTo(self, (objc_protocol_t *)aProtocolObject);
 }
 
 /**
  * @brief Checks if the receiver's class conforms to a protocol.
  */
-- (BOOL)conformsTo:(Protocol *)aProtocolObject {
-  return class_conformsTo(object_getClass(self),
-                          (objc_protocol_t *)aProtocolObject);
+- (BOOL)conformsTo:(Protocol *)aProtocolObject
+{
+	return class_conformsTo(object_getClass(self), (objc_protocol_t *)aProtocolObject);
 }
 
 /**
  * @brief Checks if the receiver responds to a selector.
  */
-- (BOOL)respondsToSelector:(SEL)aSelector {
-  return object_respondsToSelector(self, aSelector);
+- (BOOL)respondsToSelector:(SEL)aSelector
+{
+	return object_respondsToSelector(self, aSelector);
 }
 
 @end
