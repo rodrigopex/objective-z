@@ -18,6 +18,8 @@ if(CONFIG_OBJZ)
     zephyr_library_sources("${ZEPHYR_CURRENT_MODULE_DIR}/src/runtime.c")
 
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -lobjc")
-    # add_subdirectory("${ZEPHYR_CURRENT_MODULE_DIR}/src/malloc")
-    # add_subdirectory("${ZEPHYR_CURRENT_MODULE_DIR}/src/runtime-gcc")
+
+    # STATIC_INIT_GNU creates segments that newer binutils (>=2.39) flag as
+    # having RWX permissions. Suppress the linker warning.
+    zephyr_link_libraries(-Wl,--no-warn-rwx-segments)
 endif()

@@ -1,5 +1,7 @@
 #include <objc/objc.h>
 
+#include <zephyr/kernel.h>
+
 @implementation NXConstantString
 
 ////////////////////////////////////////////////////////////////////////////////////
@@ -9,16 +11,17 @@
   return nil; // NXConstantString should not be allocated directly
 }
 
-#ifdef __clang__
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wobjc-missing-super-calls"
-#endif
-- (void)dealloc {
-  // NXConstantString is immutable, so we do nothing
+- (void)dealloc
+{
+        /* NXConstantString is a compile-time constant and must never be freed. */
+        k_oops();
+
+        /*
+         * Unreachable: satisfies GCC's "method possibly missing a [super dealloc] call"
+         * check without actually calling into Object's dealloc (which would free memory).
+         */
+        [super dealloc];
 }
-#ifdef __clang__
-#pragma clang diagnostic pop
-#endif
 
 ////////////////////////////////////////////////////////////////////////////////////
 // PROPERTIES
