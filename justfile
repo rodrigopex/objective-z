@@ -3,6 +3,7 @@ alias c := clean
 alias r := run
 alias f := flash
 alias m := monitor
+alias t := test
 
 project_dir := "samples/hello_world"
 board := "mps2/an385"
@@ -33,3 +34,6 @@ run:
 
 monitor:
     tio {{ tty }}
+
+test:
+    west twister -T samples/ -p {{ board }} --force-toolchain -x=ZEPHYR_TOOLCHAIN_VARIANT=cross-compile -x=CROSS_COMPILE={{ gcc_path }}bin/arm-none-eabi-
