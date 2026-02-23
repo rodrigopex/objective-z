@@ -10,7 +10,6 @@
 #pragma once
 #include <stdbool.h>
 #include <stddef.h>
-#include <stdint.h>
 
 /** @brief A pointer to an instance of a class.
  * @ingroup objc
@@ -238,8 +237,7 @@ const char *proto_getName(objc_protocol_t *protocol);
  * @param otherProtocol The protocol to check conformance against.
  * @return `YES` if `protocol` conforms to `otherProtocol`, `NO` otherwise.
  */
-BOOL proto_conformsTo(objc_protocol_t *protocol,
-                      objc_protocol_t *otherProtocol);
+BOOL proto_conformsTo(objc_protocol_t *protocol, objc_protocol_t *otherProtocol);
 
 /**
  * @brief Checks if a class conforms to a protocol.
@@ -250,3 +248,36 @@ BOOL proto_conformsTo(objc_protocol_t *protocol,
  * otherwise.
  */
 BOOL class_conformsTo(Class cls, objc_protocol_t *otherProtocol);
+
+/**
+ * @brief Copies a property value from source to destination.
+ * @ingroup objc
+ * @param dest The destination buffer where the property value will be copied to.
+ * @param src The source buffer containing the property value to copy.
+ * @param size The size of the property value in bytes.
+ * @param atomic Whether the copy operation should be performed atomically.
+ * @param strong Whether the property uses strong reference semantics.
+ */
+void objc_copyPropertyStruct(void *dest, void *src, ptrdiff_t size, BOOL atomic, BOOL strong);
+
+/**
+ * @brief Retrieves a property value from source to destination.
+ * @ingroup objc
+ * @param dest The destination buffer where the property value will be copied to.
+ * @param src The source buffer containing the property value to retrieve.
+ * @param size The size of the property value in bytes.
+ * @param atomic Whether the retrieval operation should be performed atomically.
+ * @param strong Whether the property uses strong reference semantics.
+ */
+void objc_getPropertyStruct(void *dest, void *src, ptrdiff_t size, BOOL atomic, BOOL strong);
+
+/**
+ * @brief Sets a property value from source to destination.
+ * @ingroup objc
+ * @param dest The destination buffer where the property value will be copied to.
+ * @param src The source buffer containing the property value to set.
+ * @param size The size of the property value in bytes.
+ * @param atomic Whether the set operation should be performed atomically.
+ * @param strong Whether the property uses strong reference semantics.
+ */
+void objc_setPropertyStruct(void *dest, void *src, ptrdiff_t size, BOOL atomic, BOOL strong);
