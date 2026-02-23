@@ -3,8 +3,7 @@
 #include <objc/objc.h>
 #include <zephyr/kernel.h>
 
-#define STATICS_TABLE_SIZE 32
-static struct objc_static_instances_list *statics_table[STATICS_TABLE_SIZE + 1];
+static struct objc_static_instances_list *statics_table[CONFIG_OBJZ_STATICS_TABLE_SIZE + 1];
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -14,7 +13,7 @@ void __objc_statics_init() {
     return; // Already initialized
   }
   init = YES;
-  for (int i = 0; i <= STATICS_TABLE_SIZE; i++) {
+  for (int i = 0; i <= CONFIG_OBJZ_STATICS_TABLE_SIZE; i++) {
     statics_table[i] = NULL;
   }
 }
@@ -26,7 +25,7 @@ void __objc_statics_register(struct objc_static_instances_list *statics) {
 #ifdef OBJCDEBUG
   sys_printf("__objc_statics_register [%s]\n", statics->class_name);
 #endif
-  for (int i = 0; i < STATICS_TABLE_SIZE; i++) {
+  for (int i = 0; i < CONFIG_OBJZ_STATICS_TABLE_SIZE; i++) {
     if (statics_table[i] == statics) {
       // Static list is already registered, nothing to do
       return;
@@ -63,7 +62,7 @@ BOOL __objc_statics_load() {
   init = YES;
 
   // Replace class name with resolved class
-  for (int i = 0; i < STATICS_TABLE_SIZE; i++) {
+  for (int i = 0; i < CONFIG_OBJZ_STATICS_TABLE_SIZE; i++) {
     struct objc_static_instances_list *list = statics_table[i];
     if (list == NULL) {
       continue; // No static instances in this slot
@@ -72,4 +71,14 @@ BOOL __objc_statics_load() {
   }
 
   return YES;
+}
+
+int __objc_statics_count() {
+  int count = 0;
+  for (int i = 0; i < CONFIG_OBJZ_STATICS_TABLE_SIZE; i++) {
+    if (statics_table[i] != NULL) {
+      count++;
+    }
+  }
+  return count;
 }

@@ -3,8 +3,7 @@
 #include <string.h>
 #include <zephyr/kernel.h>
 
-#define HASH_TABLE_SIZE 512
-struct objc_hashitem hash_table[HASH_TABLE_SIZE + 1];
+struct objc_hashitem hash_table[CONFIG_OBJZ_HASH_TABLE_SIZE + 1];
 
 static size_t __objc_hash_compute(objc_class_t *cls, const char *method,
                                   const char *types);
@@ -22,7 +21,7 @@ void __objc_hash_init() {
   init = YES;
 
   // Initialize the hash table
-  for (int i = 0; i <= HASH_TABLE_SIZE; i++) {
+  for (int i = 0; i <= CONFIG_OBJZ_HASH_TABLE_SIZE; i++) {
     hash_table[i].cls = NULL;
   }
 }
@@ -45,7 +44,7 @@ struct objc_hashitem *__objc_hash_register(objc_class_t *cls,
     }
 
     // Collision detected, find the next available slot
-    hash = (hash + 1) % HASH_TABLE_SIZE;
+    hash = (hash + 1) % CONFIG_OBJZ_HASH_TABLE_SIZE;
     if (hash == index) {
       return NULL;
     }
@@ -95,7 +94,7 @@ struct objc_hashitem *__objc_hash_lookup(objc_class_t *cls, const char *method,
       return &hash_table[hash];
     }
     // Increment the hash to check the next item
-    hash = (hash + 1) % HASH_TABLE_SIZE;
+    hash = (hash + 1) % CONFIG_OBJZ_HASH_TABLE_SIZE;
     if (hash == index) {
       return NULL;
     }
@@ -124,5 +123,5 @@ static size_t __objc_hash_compute(objc_class_t *cls, const char *method,
       hash = (hash * 31) + *p;
     }
   }
-  return hash % HASH_TABLE_SIZE;
+  return hash % CONFIG_OBJZ_HASH_TABLE_SIZE;
 }

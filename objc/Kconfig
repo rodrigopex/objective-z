@@ -26,6 +26,43 @@ config OBJZ_MEMORY_POOL_ZEPHYR_REGION
 config OBJZ_MEMORY_POOL_ZEPHYR_REGION_NAME
     string "Objective-Z heap memory region name"
 
+config OBJZ_CLASS_TABLE_SIZE
+    int "Class table size"
+    default 32
+    help
+      Maximum number of Objective-C classes that can be registered.
+
+config OBJZ_CATEGORY_TABLE_SIZE
+    int "Category table size"
+    default 32
+    help
+      Maximum number of Objective-C categories that can be registered.
+
+config OBJZ_PROTOCOL_TABLE_SIZE
+    int "Protocol table size"
+    default 32
+    help
+      Maximum number of Objective-C protocols that can be registered.
+
+config OBJZ_STATICS_TABLE_SIZE
+    int "Static instances table size"
+    default 32
+    help
+      Maximum number of static instance lists that can be registered.
+
+config OBJZ_HASH_TABLE_SIZE
+    int "Method hash table size"
+    default 512
+    help
+      Size of the global method hash table. Uses open addressing
+      for collision resolution.
+
+config OBJZ_DISPATCH_TABLE_SIZE
+    int "Dispatch table size"
+    default 64
+    help
+      Size of the per-class dispatch table. Must be a power of 2.
+
 module = OBJZ
 module-str = objz
 source "subsys/logging/Kconfig.template.log_config"

@@ -4,8 +4,7 @@
 #include <string.h>
 #include <zephyr/kernel.h>
 
-#define PROTOCOL_TABLE_SIZE 32
-objc_protocol_t *protocol_table[PROTOCOL_TABLE_SIZE + 1];
+objc_protocol_t *protocol_table[CONFIG_OBJZ_PROTOCOL_TABLE_SIZE + 1];
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -16,7 +15,7 @@ void __objc_protocol_init() {
   }
   init = YES;
 
-  for (int i = 0; i <= PROTOCOL_TABLE_SIZE; i++) {
+  for (int i = 0; i <= CONFIG_OBJZ_PROTOCOL_TABLE_SIZE; i++) {
     protocol_table[i] = NULL;
   }
 }
@@ -28,7 +27,7 @@ void __objc_protocol_register(objc_protocol_t *p) {
 #ifdef OBJCDEBUG
   printk("__objc_protocol_register <%s>\n", p->name);
 #endif
-  for (int i = 0; i < PROTOCOL_TABLE_SIZE; i++) {
+  for (int i = 0; i < CONFIG_OBJZ_PROTOCOL_TABLE_SIZE; i++) {
     if (protocol_table[i] == p || protocol_table[i] == NULL) {
       protocol_table[i] = p;
       return;

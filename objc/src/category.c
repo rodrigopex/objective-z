@@ -4,8 +4,7 @@
 #include <objc/objc.h>
 #include <zephyr/kernel.h>
 
-#define CATEGORY_TABLE_SIZE 32
-static struct objc_category *category_table[CATEGORY_TABLE_SIZE + 1];
+static struct objc_category *category_table[CONFIG_OBJZ_CATEGORY_TABLE_SIZE + 1];
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -15,7 +14,7 @@ void __objc_category_init() {
     return; // Already initialized
   }
   init = YES;
-  for (int i = 0; i <= CATEGORY_TABLE_SIZE; i++) {
+  for (int i = 0; i <= CONFIG_OBJZ_CATEGORY_TABLE_SIZE; i++) {
     category_table[i] = NULL;
   }
 }
@@ -29,7 +28,7 @@ void __objc_category_register(struct objc_category *category) {
   printk("__objc_category_register [%s+%s]\n", category->class_name,
          category->name);
 #endif
-  for (int i = 0; i < CATEGORY_TABLE_SIZE; i++) {
+  for (int i = 0; i < CONFIG_OBJZ_CATEGORY_TABLE_SIZE; i++) {
     if (category_table[i] == category) {
       // Category is already registered, nothing to do
       return;
@@ -81,7 +80,7 @@ BOOL __objc_category_load() {
   init = YES;
 
   // Replace class name with resolved class
-  for (int i = 0; i < CATEGORY_TABLE_SIZE; i++) {
+  for (int i = 0; i < CONFIG_OBJZ_CATEGORY_TABLE_SIZE; i++) {
     struct objc_category *category = category_table[i];
     if (category == NULL) {
       continue; // Skip empty slots and continue searching
@@ -90,4 +89,14 @@ BOOL __objc_category_load() {
   }
 
   return YES;
+}
+
+int __objc_category_count() {
+  int count = 0;
+  for (int i = 0; i < CONFIG_OBJZ_CATEGORY_TABLE_SIZE; i++) {
+    if (category_table[i] != NULL) {
+      count++;
+    }
+  }
+  return count;
 }

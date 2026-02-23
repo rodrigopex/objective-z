@@ -7,8 +7,7 @@
 #include <string.h>
 #include <zephyr/kernel.h>
 
-#define CLASS_TABLE_SIZE 32
-objc_class_t *class_table[CLASS_TABLE_SIZE + 1];
+objc_class_t *class_table[CONFIG_OBJZ_CLASS_TABLE_SIZE + 1];
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -20,7 +19,7 @@ void __objc_class_init()
 	}
 	init = YES;
 
-	for (int i = 0; i <= CLASS_TABLE_SIZE; i++) {
+	for (int i = 0; i <= CONFIG_OBJZ_CLASS_TABLE_SIZE; i++) {
 		class_table[i] = NULL;
 	}
 }
@@ -34,7 +33,7 @@ void __objc_class_register(objc_class_t *p)
 	printk("__objc_class_register %c[%s] @%p size=%lu\n",
 	       p->info & objc_class_flag_meta ? '+' : '-', p->name, p, p->size);
 #endif
-	for (int i = 0; i < CLASS_TABLE_SIZE; i++) {
+	for (int i = 0; i < CONFIG_OBJZ_CLASS_TABLE_SIZE; i++) {
 		if (class_table[i] == p) {
 			// Class is already registered, nothing to do
 			return;
@@ -67,7 +66,7 @@ objc_class_t *__objc_lookup_class(const char *name)
 	if (name == NULL) {
 		return Nil;
 	}
-	for (int i = 0; i < CLASS_TABLE_SIZE; i++) {
+	for (int i = 0; i < CONFIG_OBJZ_CLASS_TABLE_SIZE; i++) {
 		if (class_table[i] == NULL || class_table[i]->name == NULL) {
 			continue; // Skip empty slots and continue searching
 		}

@@ -4,15 +4,14 @@
 ///////////////////////////////////////////////////////////////////////////////
 
 /*
- * Dispatch table size and mask
+ * Dispatch table mask (CONFIG_OBJZ_DISPATCH_TABLE_SIZE must be power of 2)
  */
-#define DTABLE_SIZE 64 // Should be power of 2
-#define DTABLE_MASK (DTABLE_SIZE - 1)
+#define DTABLE_MASK (CONFIG_OBJZ_DISPATCH_TABLE_SIZE - 1)
 
 ///////////////////////////////////////////////////////////////////////////////
 
 /*
- * Convert a pointer to a hash value in the range [0..DTABLE_SIZE-1]
+ * Convert a pointer to a hash value in the range [0..CONFIG_OBJZ_DISPATCH_TABLE_SIZE-1]
  */
 static inline uint32_t _objc_dtable_hash_ptr(void *sel_id)
 {
@@ -32,11 +31,11 @@ bool _objc_dtable_init(Class cls)
 		return false; // Dispatch table already exists
 	}
 
-	cls->dtable = objc_malloc(sizeof(void *) * DTABLE_SIZE);
+	cls->dtable = objc_malloc(sizeof(void *) * CONFIG_OBJZ_DISPATCH_TABLE_SIZE);
 	if (cls->dtable == NULL) {
 		return false; // Memory allocation failed
 	}
-	for (int i = 0; i < DTABLE_SIZE; i++) {
+	for (int i = 0; i < CONFIG_OBJZ_DISPATCH_TABLE_SIZE; i++) {
 		cls->dtable[i] = NULL;
 	}
 
@@ -54,7 +53,7 @@ bool _objc_dtable_exists(Class cls, void *sel_id)
 	}
 
 	uint32_t hash = _objc_dtable_hash_ptr(sel_id);
-	for (int i = 0; i < DTABLE_SIZE; i++) {
+	for (int i = 0; i < CONFIG_OBJZ_DISPATCH_TABLE_SIZE; i++) {
 		uint32_t idx = (hash + (uint32_t)i) & DTABLE_MASK;
 		void *entry = cls->dtable[idx];
 
@@ -78,7 +77,7 @@ bool _objc_dtable_add(Class cls, void *sel_id)
 	}
 
 	uint32_t hash = _objc_dtable_hash_ptr(sel_id);
-	for (int i = 0; i < DTABLE_SIZE; i++) {
+	for (int i = 0; i < CONFIG_OBJZ_DISPATCH_TABLE_SIZE; i++) {
 		uint32_t idx = (hash + (uint32_t)i) & DTABLE_MASK;
 
 		if (cls->dtable[idx] == NULL) {
