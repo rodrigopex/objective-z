@@ -1,4 +1,4 @@
-config ZEPHYR_OBJECTIVE_C
+config OBJZ
     bool "Objective-C support"
     select STATIC_INIT_GNU
     default n
@@ -12,10 +12,22 @@ config ZEPHYR_OBJECTIVE_C
       Note: Enabling Objective-C support may increase the size of the
       compiled binaries and could impact performance.
 
-if ZEPHYR_OBJECTIVE_C
+if OBJZ
+config OBJZ_MEM_POOL_SIZE
+    int "Objective-Z memory heap pool size"
+    default 4096
 
-module = OBJC
-module-str = objc
+config OBJZ_MEMORY_POOL_CUSTOM_SECTION
+    bool "Objective-Z heap memory custom section"
+
+config OBJZ_MEMORY_POOL_ZEPHYR_REGION
+    bool "Objective-Z heap memory region"
+
+config OBJZ_MEMORY_POOL_ZEPHYR_REGION_NAME
+    string "Objective-Z heap memory region name"
+
+module = OBJZ
+module-str = objz
 source "subsys/logging/Kconfig.template.log_config"
 
 endif

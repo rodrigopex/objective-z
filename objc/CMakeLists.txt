@@ -1,6 +1,6 @@
-if(CONFIG_ZEPHYR_OBJECTIVE_C)
-    zephyr_include_directories("${ZEPHYR_CURRENT_MODULE_DIR}/include")
+if(CONFIG_OBJZ)
     zephyr_library()
+    zephyr_include_directories("${ZEPHYR_CURRENT_MODULE_DIR}/include")
 
     zephyr_library_sources("${ZEPHYR_CURRENT_MODULE_DIR}/src/malloc.c")
     zephyr_library_sources("${ZEPHYR_CURRENT_MODULE_DIR}/src/module.c")
@@ -15,9 +15,9 @@ if(CONFIG_ZEPHYR_OBJECTIVE_C)
     zephyr_library_sources("${ZEPHYR_CURRENT_MODULE_DIR}/src/Protocol.m")
     zephyr_library_sources("${ZEPHYR_CURRENT_MODULE_DIR}/src/protocol.c")
     zephyr_library_sources("${ZEPHYR_CURRENT_MODULE_DIR}/src/statics.c")
+    zephyr_library_sources("${ZEPHYR_CURRENT_MODULE_DIR}/src/runtime.c")
 
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -lobjc")
     # add_subdirectory("${ZEPHYR_CURRENT_MODULE_DIR}/src/malloc")
     # add_subdirectory("${ZEPHYR_CURRENT_MODULE_DIR}/src/runtime-gcc")
 endif()
-
