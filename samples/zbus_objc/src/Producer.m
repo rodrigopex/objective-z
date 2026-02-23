@@ -27,7 +27,7 @@ ZBUS_CHAN_ADD_OBS(chan_acc_data_consumed, msub_acc_consumed, 3);
 	[super dealloc];
 }
 
-- (int)sendData
+- (void)sendData
 {
 	struct msg_acc_data msg = {
 		.x = sys_rand8_get() % 100, .y = sys_rand8_get() % 100, .z = sys_rand8_get() % 100};

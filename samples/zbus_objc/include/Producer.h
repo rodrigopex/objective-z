@@ -9,6 +9,6 @@
 
 @property(assign, nonatomic) int ackCount;
 
-- (int)sendData;
+- (void)sendData;
 
 @end
