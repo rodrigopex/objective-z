@@ -17,3 +17,8 @@ void __objc_category_register(struct objc_category *category);
  * or returns NO if the loading was already done.
  */
 BOOL __objc_category_load();
+
+/*
+ * Returns the number of registered categories.
+ */
+int __objc_category_count();

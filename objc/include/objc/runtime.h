@@ -281,3 +281,12 @@ void objc_getPropertyStruct(void *dest, void *src, ptrdiff_t size, BOOL atomic, 
  * @param strong Whether the property uses strong reference semantics.
  */
 void objc_setPropertyStruct(void *dest, void *src, ptrdiff_t size, BOOL atomic, BOOL strong);
+
+/**
+ * @brief Prints runtime table statistics.
+ * @ingroup objc
+ *
+ * Prints a table showing the configured size and current usage of each
+ * internal runtime table (class, category, protocol, statics, hash).
+ */
+void objc_print_table_stats(void);

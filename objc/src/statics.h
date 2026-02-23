@@ -16,3 +16,8 @@ void __objc_statics_register(struct objc_static_instances_list* statics);
  * or returns NO if the loading was already done.
  */
 BOOL __objc_statics_load();
+
+/*
+ * Returns the number of registered static instance lists.
+ */
+int __objc_statics_count();
