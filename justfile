@@ -36,4 +36,4 @@ monitor:
     tio {{ tty }}
 
 test:
-    west twister -T samples/ -p {{ board }} --force-toolchain -x=ZEPHYR_TOOLCHAIN_VARIANT=cross-compile -x=CROSS_COMPILE={{ gcc_path }}bin/arm-none-eabi-
+    west twister -T samples/ -p {{ board }} --force-toolchain -O /tmp/twister-out -x=ZEPHYR_TOOLCHAIN_VARIANT=cross-compile -x=CROSS_COMPILE={{ gcc_path }}bin/arm-none-eabi-
