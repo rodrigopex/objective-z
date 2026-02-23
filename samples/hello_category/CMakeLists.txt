@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: Apache-2.0
+cmake_minimum_required(VERSION 3.20.0)
+
+set(ZEPHYR_EXTRA_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/../../objc/")
+
+find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
+
+project(hello_category_sample)
+
+include_directories(include)
+
+target_sources(app PRIVATE
+    src/Car.m
+    src/Car+Maintenance.m
+    src/main.m
+)
