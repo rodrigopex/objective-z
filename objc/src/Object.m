@@ -1,5 +1,6 @@
-#include <objc/objc.h>
-#include <zephyr/sys/printk.h>
+#import <objc/objc.h>
+#import <zephyr/logging/log.h>
+LOG_MODULE_DECLARE(objz, CONFIG_OBJZ_LOG_LEVEL);
 
 @implementation Object
 
@@ -10,7 +11,7 @@
 
 + (id)alloc
 {
-	printk("allocating instance of class %s\n", class_getName(self));
+	LOG_DBG("allocating instance of class %s", class_getName(self));
 	id obj = (id)objc_malloc(class_getInstanceSize(self));
 	if (obj) {
 		memset(obj, 0, class_getInstanceSize(self));
@@ -26,7 +27,7 @@
 
 - (void)dealloc
 {
-	printk("deallocating instance of class %s\n", class_getName(object_getClass(self)));
+	LOG_DBG("deallocating instance of class %s", class_getName(object_getClass(self)));
 
 	objc_free(self);
 }
