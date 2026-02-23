@@ -1,15 +1,16 @@
 #include "Producer.h"
-#include "zephyr/sys/printk.h"
 
 #include <zephyr/kernel.h>
 #include <zephyr/zbus/zbus.h>
 #include <zephyr/random/random.h>
 
+#include <objc/malloc.h>
+
 ZBUS_MSG_SUBSCRIBER_DEFINE(msub_acc_consumed);
 
 ZBUS_CHAN_ADD_OBS(chan_acc_data_consumed, msub_acc_consumed, 3);
 
-@implementation AccDataProducer
+@implementation AccDataProducer: Object
 
 @synthesize ackCount = _count;
 
@@ -23,7 +24,6 @@ ZBUS_CHAN_ADD_OBS(chan_acc_data_consumed, msub_acc_consumed, 3);
 }
 - (void)dealloc
 {
-	printk("Deallocating AccDataProducer instance\n");
 	[super dealloc];
 }
 
