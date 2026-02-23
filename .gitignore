@@ -60,6 +60,7 @@ venv
 .venv
 .envrc
 .DS_Store
+.zed
 .clangd
 new.info
 
