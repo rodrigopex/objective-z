@@ -4,6 +4,8 @@
  */
 #pragma once
 #include <stddef.h>
+#include <stdbool.h>
+#include <zephyr/sys/sys_heap.h>
 
 /**
  * @brief Allocate memory for use by the Objective-C runtime.
@@ -19,3 +21,11 @@ void *objc_malloc(size_t size);
  * @param ptr A pointer to the memory block to be deallocated.
  */
 void objc_free(void *ptr);
+
+void *objc_realloc(void *ptr, size_t size);
+
+void objc_print_heap_info(bool dump_chunks);
+
+void objc_stats(struct sys_memory_stats *stats);
+
+void objc_heap_init(void);
