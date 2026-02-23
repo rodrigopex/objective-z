@@ -1,0 +1,15 @@
+sample:
+  description: ObjC categories with assert-based validation
+  name: ObjZ Hello Category
+common:
+  tags: objz
+  integration_platforms:
+    - mps2/an385
+  harness: console
+  harness_config:
+    type: one_line
+    regex:
+      - "All assertions passed"
+tests:
+  sample.objz.hello_category:
+    tags: objz category

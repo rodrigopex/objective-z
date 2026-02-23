@@ -1,0 +1,17 @@
+sample:
+  description: Basic class and instance method dispatch
+  name: ObjZ Hello World
+common:
+  tags: objz
+  integration_platforms:
+    - mps2/an385
+  harness: console
+  harness_config:
+    type: multi_line
+    ordered: true
+    regex:
+      - "Hello, world from class"
+      - "Hello, world from object"
+tests:
+  sample.objz.hello_world:
+    tags: objz introduction

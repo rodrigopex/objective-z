@@ -6,6 +6,7 @@
 #import "Car+Maintenance.h"
 #import <objc/objc.h>
 #import <assert.h>
+#include <zephyr/kernel.h>
 
 int main(void)
 {
@@ -19,5 +20,7 @@ int main(void)
 	assert([myCar milage] != 0);
 
 	[myCar dealloc];
+
+	printk("All assertions passed\n");
 	return 0;
 }

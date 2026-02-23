@@ -1,0 +1,17 @@
+sample:
+  description: ObjC objects with Zephyr zbus pub/sub messaging
+  name: ObjZ Zbus
+common:
+  tags: objz zbus
+  integration_platforms:
+    - mps2/an385
+  harness: console
+  harness_config:
+    type: multi_line
+    ordered: false
+    regex:
+      - "\\d+ - Accelerometer data x=\\d{2},y=\\d{2},z=\\d{2}"
+      - "Producer: Received \\d+ acknowledgments from Consumer. Stopping production."
+tests:
+  sample.objz.zbus_objc:
+    tags: objz zbus
