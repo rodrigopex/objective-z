@@ -70,12 +70,14 @@ static void __objc_send_initialize(objc_class_t *cls) {
     __objc_send_initialize(cls->superclass);
   }
 
-  // Find and call the initialize method
+  /* Find and call the initialize method.
+   * Use NULL type to match regardless of platform-specific type encoding
+   * (e.g. "v8@0:4" on 32-bit ARM vs "v16@0:8" on 64-bit). */
   static struct objc_selector initialize = {
-      .sel_id = "initialize", // The selector for the initialize method
-      .sel_type = "v16@0:8"   // The type encoding for the initialize method
+      .sel_id = "initialize",
+      .sel_type = NULL,
   };
-  IMP imp = __objc_msg_lookup(cls, &initialize); // Lookup the initialize method
+  IMP imp = __objc_msg_lookup(cls, &initialize);
   if (imp != NULL) {
     // Call the initialize method - suppress function cast warning as this is a
     // legitimate cast from variadic IMP to non-variadic function for

@@ -28,6 +28,22 @@ if(CONFIG_OBJZ)
         "${ZEPHYR_CURRENT_MODULE_DIR}/src/Protocol.m"
     )
 
+    # gnustep-1.7 dispatch support (Clang uses objc_msgSend instead of
+    # objc_msg_lookup + indirect call, and objc_slot_lookup_super for [super ...])
+    if(CONFIG_OBJZ_USE_CLANG)
+        zephyr_library_sources("${ZEPHYR_CURRENT_MODULE_DIR}/src/objc_msgSend.S")
+        zephyr_library_sources("${ZEPHYR_CURRENT_MODULE_DIR}/src/slot.c")
+    endif()
+
+    # MRR memory management layer
+    if(CONFIG_OBJZ_MRR)
+        zephyr_library_sources("${ZEPHYR_CURRENT_MODULE_DIR}/src/refcount.c")
+        objz_compile_objc_sources(${ZEPHYR_CURRENT_LIBRARY}
+            "${ZEPHYR_CURRENT_MODULE_DIR}/src/OZObject.m"
+            "${ZEPHYR_CURRENT_MODULE_DIR}/src/OZAutoreleasePool.m"
+        )
+    endif()
+
     # STATIC_INIT_GNU creates segments that newer binutils (>=2.39) flag as
     # having RWX permissions. Suppress the linker warning.
     zephyr_link_libraries(-Wl,--no-warn-rwx-segments)

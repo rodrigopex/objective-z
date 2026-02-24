@@ -7,6 +7,7 @@
 
 // This is the current API version for the Objective-C runtime.
 #define OBJC_ABI_VERSION 8
+#define OBJC_ABI_VERSION_GNUSTEP 9
 
 struct objc_selector {
   void *sel_id;   // Unique identifier for the selector
@@ -57,6 +58,16 @@ struct objc_class {
   struct objc_protocol_list
       *protocols;   // List of protocols adopted by this class
   void *extra_data; // Additional data associated with this class
+  /**
+   * gnustep-1.7 extended fields (ABI version 9).
+   * GCC ABI version 8 classes do not have these fields — the runtime
+   * must only access them when the module ABI version is 9.
+   */
+  long abi_version;     // gnustep ABI version (1 for gnustep-1.7)
+  int **ivar_offsets;   // Array of ptrs to ivar offset globals
+  void *properties;     // Property list (unused)
+  long strong_pointers; // GC bitmap (unused)
+  long weak_pointers;   // GC bitmap (unused)
 };
 
 enum objc_class_flags {

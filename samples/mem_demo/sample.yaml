@@ -1,0 +1,23 @@
+sample:
+  description: Manual retain/release memory management with OZObject
+  name: ObjZ Memory Management Demo
+common:
+  tags: objz
+  integration_platforms:
+    - mps2/an385
+  harness: console
+  harness_config:
+    type: multi_line
+    ordered: true
+    regex:
+      - "=== MRR Memory Management Demo ==="
+      - "retainCount after alloc: 1"
+      - "retainCount after retain: 2"
+      - "retainCount after release: 1"
+      - "Sensor dealloc"
+      - "=== Autorelease pool test ==="
+      - "Sensor dealloc"
+      - "=== Demo complete ==="
+tests:
+  sample.objz.mem_demo:
+    tags: objz memory

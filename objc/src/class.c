@@ -9,6 +9,120 @@
 
 objc_class_t *class_table[CONFIG_OBJZ_CLASS_TABLE_SIZE + 1];
 
+/**
+ * Return the size (in bytes) of a single ObjC type-encoding character.
+ * Handles the subset of types emitted by Clang for ivars on 32-bit ARM.
+ */
+static size_t __objc_sizeof_type(const char *type)
+{
+	if (type == NULL || *type == '\0') {
+		return 0;
+	}
+	switch (*type) {
+	case 'c': /* char / BOOL */
+	case 'C': /* unsigned char */
+		return 1;
+	case 's': /* short */
+	case 'S': /* unsigned short */
+		return 2;
+	case 'i': /* int */
+	case 'I': /* unsigned int */
+	case 'f': /* float */
+	case 'l': /* long (32-bit ARM) */
+	case 'L': /* unsigned long */
+		return 4;
+	case 'q': /* long long */
+	case 'Q': /* unsigned long long */
+	case 'd': /* double */
+		return 8;
+	case '#': /* Class */
+	case '@': /* id */
+	case ':': /* SEL */
+	case '^': /* pointer */
+	case '*': /* char* */
+	case '?': /* function pointer */
+		return sizeof(void *);
+	case '{': /* struct — fall back to pointer size */
+		return sizeof(void *);
+	default:
+		return sizeof(void *);
+	}
+}
+
+/**
+ * Return the natural alignment for an ivar type.
+ */
+static size_t __objc_alignof_type(const char *type)
+{
+	size_t sz = __objc_sizeof_type(type);
+	/* natural alignment = type size, capped at pointer size */
+	return (sz > sizeof(void *)) ? sizeof(void *) : sz;
+}
+
+/**
+ * Round up v to next multiple of align.
+ */
+static inline size_t __objc_align_up(size_t v, size_t align)
+{
+	return (v + align - 1) & ~(align - 1);
+}
+
+/**
+ * Fix up ivar offsets for a gnustep-1.7 class (ABI version 9).
+ *
+ * The compiler emits all ivar offsets as 0 and stores the class size
+ * as a negative value.  The runtime must compute actual offsets based
+ * on the superclass instance size and each ivar's type encoding.
+ *
+ * This writes the correct offset into:
+ *   - *(cls->ivar_offsets[i])   — the global __objc_ivar_offset_value_X.y
+ *   - cls->ivars->ivars[i].offset  — the ivar list entry
+ *
+ * It also sets cls->size to the total instance size.
+ */
+static void __objc_fixup_ivar_offsets(objc_class_t *cls)
+{
+	/* Only fixup non-meta classes with the extended fields */
+	if (cls == NULL || (cls->info & objc_class_flag_meta)) {
+		return;
+	}
+	if (cls->ivar_offsets == NULL) {
+		return;
+	}
+
+	/* Determine superclass instance size */
+	size_t offset = 0;
+	if (cls->superclass != NULL) {
+		offset = cls->superclass->size;
+	}
+
+	/* Walk each ivar and assign offsets */
+	struct objc_ivar_list *il = cls->ivars;
+	if (il != NULL) {
+		for (int i = 0; i < il->count; i++) {
+			struct objc_ivar *ivar = &il->ivars[i];
+			size_t ivar_size = __objc_sizeof_type(ivar->type);
+			size_t align = __objc_alignof_type(ivar->type);
+
+			/* Align the current offset */
+			offset = __objc_align_up(offset, align);
+
+			/* Write the offset into the ivar list */
+			ivar->offset = (int)offset;
+
+			/* Write the offset into the global variable */
+			if (cls->ivar_offsets[i] != NULL) {
+				*(cls->ivar_offsets[i]) = (int)offset;
+			}
+
+			offset += ivar_size;
+		}
+	}
+
+	/* Update total instance size */
+	cls->size = offset;
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 
 void __objc_class_init()
@@ -29,6 +143,15 @@ void __objc_class_register(objc_class_t *p)
 	if (p == NULL || p->name == NULL) {
 		return;
 	}
+
+	/*
+	 * gnustep-1.7 (ABI version 9) encodes instance size as negative
+	 * to indicate non-fragile ivar support. Convert to positive.
+	 */
+	if ((long)p->size < 0) {
+		p->size = (unsigned long)(-(long)p->size);
+	}
+
 #ifdef OBJCDEBUG
 	printk("__objc_class_register %c[%s] @%p size=%lu\n",
 	       p->info & objc_class_flag_meta ? '+' : '-', p->name, p, p->size);
@@ -201,6 +324,12 @@ Class objc_lookup_class(const char *name)
 	if (cls->metaclass != NULL) {
 		__objc_class_register_methods(cls->metaclass);
 	}
+
+	/*
+	 * gnustep-1.7 non-fragile ivar fixup: compute ivar offsets and
+	 * instance size now that the superclass is resolved.
+	 */
+	__objc_fixup_ivar_offsets(cls);
 
 	// Return the class pointer
 	return (Class)cls;
