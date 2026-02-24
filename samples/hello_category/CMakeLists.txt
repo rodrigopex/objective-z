@@ -9,7 +9,6 @@ project(hello_category_sample)
 
 include_directories(include)
 
-include(${CMAKE_CURRENT_SOURCE_DIR}/../../objc/cmake/ObjcClang.cmake)
 objz_target_sources(app
     src/Car.m
     src/Car+Maintenance.m
