@@ -13,6 +13,15 @@ config OBJZ
       compiled binaries and could impact performance.
 
 if OBJZ
+
+config OBJZ_USE_CLANG
+    bool "Use Clang to compile Objective-C (.m) files"
+    default n
+    help
+      Compile .m files with Clang instead of GCC. GCC remains the
+      linker. Enables future ARC support. Requires clang in PATH
+      or OBJZ_CLANG_PATH set at cmake configure time.
+
 config OBJZ_MEM_POOL_SIZE
     int "Objective-Z memory heap pool size"
     default 4096

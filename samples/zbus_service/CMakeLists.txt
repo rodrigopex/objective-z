@@ -9,7 +9,8 @@ project(zbus_service_sample)
 
 include_directories(include)
 
-target_sources(app PRIVATE
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../objc/cmake/ObjcClang.cmake)
+objz_target_sources(app
     src/TemperatureService.m
     src/main.m
 )
