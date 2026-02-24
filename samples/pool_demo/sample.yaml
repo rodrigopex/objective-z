@@ -1,0 +1,23 @@
+sample:
+  description: Static allocation pool demo with OZ_DEFINE_POOL
+  name: ObjZ Pool Demo
+common:
+  tags: objz
+  integration_platforms:
+    - mps2/an385
+  harness: console
+  harness_config:
+    type: multi_line
+    ordered: true
+    regex:
+      - "=== Static Pool Demo ==="
+      - "pool alloc.*value=1"
+      - "pool alloc.*value=2"
+      - "pool alloc.*value=3"
+      - "Sensor dealloc"
+      - "heap alloc.*value=100"
+      - "Gadget dealloc"
+      - "=== Demo complete ==="
+tests:
+  sample.objz.pool_demo:
+    tags: objz pool

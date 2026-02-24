@@ -42,6 +42,22 @@ config OBJZ_ARC
       objz_target_arc_sources() in CMake to compile .m files
       with -fobjc-arc.
 
+config OBJZ_STATIC_POOLS
+    bool "Static allocation pools for ObjC classes"
+    default n
+    help
+      Enable per-class static memory pools using K_MEM_SLAB.
+      Use OZ_DEFINE_POOL(ClassName, block_size, count, align)
+      in application code to declare pools. Classes without a
+      pool fall back to the sys_heap allocator.
+
+config OBJZ_STATIC_POOL_TABLE_SIZE
+    int "Maximum number of static pool registrations"
+    depends on OBJZ_STATIC_POOLS
+    default 16
+    help
+      Maximum number of OZ_DEFINE_POOL registrations.
+
 config OBJZ_MEM_POOL_SIZE
     int "Objective-Z memory heap pool size"
     default 4096

@@ -2,6 +2,11 @@
 #import <zephyr/logging/log.h>
 LOG_MODULE_DECLARE(objz, CONFIG_OBJZ_LOG_LEVEL);
 
+#ifdef CONFIG_OBJZ_STATIC_POOLS
+extern void *__objc_pool_alloc(const char *class_name);
+extern _Bool __objc_pool_free(void *ptr);
+#endif
+
 @implementation Object
 
 + (void)initialize
@@ -12,9 +17,19 @@ LOG_MODULE_DECLARE(objz, CONFIG_OBJZ_LOG_LEVEL);
 + (id)alloc
 {
 	LOG_DBG("allocating instance of class %s", class_getName(self));
-	id obj = (id)objc_malloc(class_getInstanceSize(self));
+	size_t size = class_getInstanceSize(self);
+	id obj = nil;
+
+#ifdef CONFIG_OBJZ_STATIC_POOLS
+	obj = (id)__objc_pool_alloc(class_getName(self));
+#endif
+	if (obj == nil) {
+		obj = (id)objc_malloc(size);
+		if (obj) {
+			memset(obj, 0, size);
+		}
+	}
 	if (obj) {
-		memset(obj, 0, class_getInstanceSize(self));
 		object_setClass(obj, self);
 	}
 	return obj;
@@ -29,6 +44,11 @@ LOG_MODULE_DECLARE(objz, CONFIG_OBJZ_LOG_LEVEL);
 {
 	LOG_DBG("deallocating instance of class %s", class_getName(object_getClass(self)));
 
+#ifdef CONFIG_OBJZ_STATIC_POOLS
+	if (__objc_pool_free(self)) {
+		return;
+	}
+#endif
 	objc_free(self);
 }
 
