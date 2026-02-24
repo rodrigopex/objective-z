@@ -8,6 +8,7 @@
 // This is the current API version for the Objective-C runtime.
 #define OBJC_ABI_VERSION 8
 #define OBJC_ABI_VERSION_GNUSTEP 9
+#define OBJC_ABI_VERSION_GNUSTEP_ARC 10
 
 struct objc_selector {
   void *sel_id;   // Unique identifier for the selector

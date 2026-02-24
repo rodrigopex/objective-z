@@ -44,6 +44,11 @@ if(CONFIG_OBJZ)
         )
     endif()
 
+    # ARC entry points (pure C, no -fobjc-arc)
+    if(CONFIG_OBJZ_ARC)
+        zephyr_library_sources("${ZEPHYR_CURRENT_MODULE_DIR}/src/arc.c")
+    endif()
+
     # STATIC_INIT_GNU creates segments that newer binutils (>=2.39) flag as
     # having RWX permissions. Suppress the linker warning.
     zephyr_link_libraries(-Wl,--no-warn-rwx-segments)

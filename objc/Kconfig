@@ -31,6 +31,17 @@ config OBJZ_MRR
       OZAutoreleasePool with per-thread pool stack.
       Requires CONFIG_THREAD_LOCAL_STORAGE (auto-selected).
 
+config OBJZ_ARC
+    bool "ARC (Automatic Reference Counting) support"
+    depends on OBJZ_MRR && OBJZ_USE_CLANG
+    default n
+    help
+      Enable ARC entry points (objc_retain, objc_release,
+      objc_storeStrong, etc.). Requires MRR layer and Clang.
+      Use objz_compile_objc_arc_sources() or
+      objz_target_arc_sources() in CMake to compile .m files
+      with -fobjc-arc.
+
 config OBJZ_MEM_POOL_SIZE
     int "Objective-Z memory heap pool size"
     default 4096

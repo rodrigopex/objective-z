@@ -13,7 +13,9 @@
 static void __objc_module_register(struct objc_module *module)
 {
 	if (module == NULL ||
-	    (module->version != OBJC_ABI_VERSION && module->version != OBJC_ABI_VERSION_GNUSTEP)) {
+	    (module->version != OBJC_ABI_VERSION &&
+	     module->version != OBJC_ABI_VERSION_GNUSTEP &&
+	     module->version != OBJC_ABI_VERSION_GNUSTEP_ARC)) {
 		printk("Invalid abi version: %lu\n", module ? module->version : 0);
 		return;
 	}

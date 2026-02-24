@@ -1,0 +1,21 @@
+sample:
+  description: ARC (Automatic Reference Counting) demo with OZObject
+  name: ObjZ ARC Demo
+common:
+  tags: objz
+  integration_platforms:
+    - mps2/an385
+  harness: console
+  harness_config:
+    type: multi_line
+    ordered: true
+    regex:
+      - "=== ARC Memory Management Demo ==="
+      - "Sensor created, value=42"
+      - "Sensor dealloc"
+      - "@autoreleasepool test"
+      - "Sensor dealloc"
+      - "=== Demo complete ==="
+tests:
+  sample.objz.arc_demo:
+    tags: objz arc

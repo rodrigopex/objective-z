@@ -242,6 +242,66 @@ function(objz_compile_objc_sources target)
     set_target_properties(${target} PROPERTIES LINKER_LANGUAGE C)
 endfunction()
 
+# ─── Compile ObjC ARC sources ─────────────────────────────────────────
+#
+# objz_compile_objc_arc_sources(<target> <source1.m> [source2.m ...])
+#
+# Same as objz_compile_objc_sources but adds -fobjc-arc.
+# Only valid when CONFIG_OBJZ_USE_CLANG is set.
+#
+function(objz_compile_objc_arc_sources target)
+    if(NOT CONFIG_OBJZ_USE_CLANG)
+        message(FATAL_ERROR "objz_compile_objc_arc_sources requires CONFIG_OBJZ_USE_CLANG")
+    endif()
+
+    _objz_build_clang_flags(_clang_flags)
+    list(APPEND _clang_flags -fobjc-arc)
+    set(_all_objects "")
+
+    foreach(_src ${ARGN})
+        get_filename_component(_name ${_src} NAME)
+        get_filename_component(_abs  ${_src} ABSOLUTE)
+
+        string(MAKE_C_IDENTIFIER "${_name}" _safe_name)
+        set(_obj ${CMAKE_CURRENT_BINARY_DIR}/clang_objc_arc/${_safe_name}.o)
+
+        get_target_property(_target_incs ${target} INCLUDE_DIRECTORIES)
+        set(_extra_incs "")
+        if(_target_incs)
+            foreach(_dir ${_target_incs})
+                string(FIND "${_dir}" "$<" _is_genexpr)
+                if(_is_genexpr EQUAL -1)
+                    list(APPEND _extra_incs -I${_dir})
+                endif()
+            endforeach()
+        endif()
+
+        add_custom_command(
+            OUTPUT  ${_obj}
+            COMMAND ${CMAKE_COMMAND} -E make_directory
+                    ${CMAKE_CURRENT_BINARY_DIR}/clang_objc_arc
+            COMMAND ${OBJZ_CLANG_COMPILER}
+                    ${_clang_flags}
+                    ${_extra_incs}
+                    -c ${_abs}
+                    -o ${_obj}
+            DEPENDS ${_abs}
+            COMMENT "Clang ObjC ARC: ${_name}"
+            COMMAND_EXPAND_LISTS
+            VERBATIM
+        )
+
+        list(APPEND _all_objects ${_obj})
+    endforeach()
+
+    target_sources(${target} PRIVATE ${_all_objects})
+    set_source_files_properties(${_all_objects} PROPERTIES
+        EXTERNAL_OBJECT TRUE
+        GENERATED       TRUE
+    )
+    set_target_properties(${target} PROPERTIES LINKER_LANGUAGE C)
+endfunction()
+
 # ─── Public API for samples ──────────────────────────────────────────
 #
 # objz_target_sources(<target> <source1> [source2 ...])
@@ -268,5 +328,34 @@ function(objz_target_sources target)
 
     if(_m_sources)
         objz_compile_objc_sources(${target} ${_m_sources})
+    endif()
+endfunction()
+
+# ─── Public API for ARC samples ──────────────────────────────────────
+#
+# objz_target_arc_sources(<target> <source1> [source2 ...])
+#
+# Routes .m -> objz_compile_objc_arc_sources (Clang + -fobjc-arc)
+# Routes .c -> target_sources (always GCC)
+#
+function(objz_target_arc_sources target)
+    set(_m_sources "")
+    set(_c_sources "")
+
+    foreach(_src ${ARGN})
+        get_filename_component(_ext ${_src} EXT)
+        if("${_ext}" STREQUAL ".m")
+            list(APPEND _m_sources ${_src})
+        else()
+            list(APPEND _c_sources ${_src})
+        endif()
+    endforeach()
+
+    foreach(_src ${_c_sources})
+        target_sources(${target} PRIVATE ${_src})
+    endforeach()
+
+    if(_m_sources)
+        objz_compile_objc_arc_sources(${target} ${_m_sources})
     endif()
 endfunction()
