@@ -9,7 +9,7 @@
 #import <objc/OZAutoreleasePool.h>
 #include <zephyr/kernel.h>
 
-@interface Sensor : OZObject {
+@interface Sensor: OZObject {
 	int _value;
 }
 - (void)setValue:(int)v;
@@ -49,6 +49,27 @@ static Sensor *createSensor(int v)
 	return s;
 }
 
+@interface Driver: OZObject {
+	Sensor *_sensor;
+}
+@property(nonatomic, strong) Sensor *sensor;
+@end
+
+@implementation Driver
+@synthesize sensor = _sensor;
+- (id)init:(int)newValue
+{
+	self = [super init];
+	_sensor = createSensor(newValue);
+	printk("Driver created (sensor value=%d)\n", [_sensor value]);
+	return self;
+}
+- (void)dealloc
+{
+	printk("Driver dealloc (sensor value=%d)\n", [_sensor value]);
+}
+@end
+
 int main(void)
 {
 	printk("=== ARC Memory Management Demo ===\n");
@@ -68,6 +89,19 @@ int main(void)
 	}
 	/* pool drains, a is released → dealloc fires */
 
-	printk("=== Demo complete ===\n");
+	printk("=== Demo main complete ===\n");
 	return 0;
 }
+
+static void arc_demo_extra_thread_entry(void *p1, void *p2, void *p3)
+{
+	ARG_UNUSED(p1);
+	ARG_UNUSED(p2);
+	ARG_UNUSED(p3);
+	printk("=== Demo Extra thread started ===\n");
+	Driver *d = [[Driver alloc] init:250];
+	d.sensor.value = 100;
+	printk("=== Demo Extra thread started ===\n");
+}
+
+K_THREAD_DEFINE(arc_demo_thread, 1024, arc_demo_extra_thread_entry, NULL, NULL, NULL, 7, 0, 0);

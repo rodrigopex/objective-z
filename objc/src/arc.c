@@ -6,6 +6,7 @@
  * refcount layer and OZObject message sends via objc_msg_lookup.
  */
 #include "api.h"
+#include "hash.h"
 #include <objc/arc.h>
 #include <objc/runtime.h>
 #include <zephyr/kernel.h>
@@ -20,11 +21,33 @@ extern id __objc_autorelease_add(id obj);
 extern IMP objc_msg_lookup(id receiver, SEL selector);
 
 /**
+ * Call .cxx_destruct for each class in the hierarchy that has one.
+ * Clang generates this method under ARC to release strong ivars
+ * via objc_storeStrong(&ivar, nil).  Walk per-class (not via
+ * objc_msg_lookup) so every level's destructor runs.
+ */
+static void __objc_arc_call_cxx_destruct(id obj)
+{
+	struct objc_class *cls = obj->isa;
+	while (cls != Nil) {
+		struct objc_hashitem *item =
+			__objc_hash_lookup(cls, ".cxx_destruct", NULL);
+		if (item != NULL) {
+			((void (*)(id, SEL))item->imp)(obj, NULL);
+		}
+		cls = cls->superclass;
+	}
+}
+
+/**
  * Send -dealloc to obj via the message dispatch.
  * Used when release drops refcount to zero.
+ * Calls .cxx_destruct first to release strong ivars under ARC.
  */
 static void __objc_arc_dealloc(id obj)
 {
+	__objc_arc_call_cxx_destruct(obj);
+
 	static struct objc_selector dealloc_sel = {
 		.sel_id = "dealloc",
 		.sel_type = NULL,

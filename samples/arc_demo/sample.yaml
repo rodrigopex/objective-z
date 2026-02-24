@@ -15,7 +15,11 @@ common:
       - "Sensor dealloc"
       - "@autoreleasepool test"
       - "Sensor dealloc"
-      - "=== Demo complete ==="
+      - "=== Demo main complete ==="
+      - "=== Demo Extra thread started ==="
+      - "Driver created"
+      - "Sensor dealloc"
+      - "Driver dealloc"
 tests:
   sample.objz.arc_demo:
     tags: objz arc
