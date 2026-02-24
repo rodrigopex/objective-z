@@ -28,7 +28,7 @@ Build and run the hello_world sample in QEMU:
 
 ```sh
 # Build
-west build -p -b mps2/an385 samples/hello_world -- -DCONFIG_OBJZ_USE_CLANG=y
+west build -p -b mps2/an385 samples/hello_world
 
 # Run in QEMU
 west build -t run
@@ -56,11 +56,11 @@ Exit QEMU with `Ctrl+A`, then `x`.
 |---|---|---|
 | `hello_world` | Basic class/instance method dispatch | `CONFIG_OBJZ=y` |
 | `hello_category` | Categories (method extensions on existing classes) | `CONFIG_OBJZ=y` |
-| `mem_demo` | Manual Retain/Release lifecycle with `OZObject` | `+OBJZ_USE_CLANG +OBJZ_MRR` |
-| `arc_demo` | Automatic Reference Counting, scoped cleanup | `+OBJZ_USE_CLANG +OBJZ_MRR +OBJZ_ARC` |
-| `pool_demo` | Static allocation pools with `K_MEM_SLAB` | `+OBJZ_USE_CLANG +OBJZ_MRR +OBJZ_STATIC_POOLS` |
-| `zbus_objc` | ObjC objects with Zephyr zbus pub/sub messaging | `+OBJZ_USE_CLANG +ZBUS` |
-| `zbus_service` | Request-response service pattern over zbus | `+OBJZ_USE_CLANG +ZBUS` |
+| `mem_demo` | Manual Retain/Release lifecycle with `OZObject` | `+OBJZ_MRR` |
+| `arc_demo` | Automatic Reference Counting, scoped cleanup | `+OBJZ_MRR +OBJZ_ARC` |
+| `pool_demo` | Static allocation pools with `K_MEM_SLAB` | `+OBJZ_MRR +OBJZ_STATIC_POOLS` |
+| `zbus_objc` | ObjC objects with Zephyr zbus pub/sub messaging | `+ZBUS` |
+| `zbus_service` | Request-response service pattern over zbus | `+ZBUS` |
 
 Build a specific sample:
 
@@ -123,7 +123,7 @@ project(my_app)
 # Include ObjC compilation helpers
 include(${CMAKE_CURRENT_SOURCE_DIR}/../objc/cmake/ObjcClang.cmake)
 
-# Compile .m sources (routes to Clang when CONFIG_OBJZ_USE_CLANG=y)
+# Compile .m sources with Clang
 objz_target_sources(app src/main.m)
 
 # For ARC-enabled sources, use instead:
@@ -136,13 +136,10 @@ objz_target_sources(app src/main.m)
 # Required
 CONFIG_OBJZ=y
 
-# Enable Clang compilation (gnustep-1.7 ABI)
-CONFIG_OBJZ_USE_CLANG=y
-
 # Optional: Manual Retain/Release
 CONFIG_OBJZ_MRR=y
 
-# Optional: Automatic Reference Counting (requires MRR + Clang)
+# Optional: Automatic Reference Counting (requires MRR)
 CONFIG_OBJZ_ARC=y
 
 # Optional: Static allocation pools
@@ -162,16 +159,16 @@ Use `Object` as root class for lightweight objects. Use `OZObject` when you need
 ### 5. Build
 
 ```sh
-west build -p -b mps2/an385 . -- -DCONFIG_OBJZ_USE_CLANG=y
+west build -p -b mps2/an385 .
 ```
 
 ## CMake Helpers
 
 | Function | Description |
 |---|---|
-| `objz_target_sources(target, files...)` | Routes `.m` to Clang (or GCC), `.c` to GCC |
+| `objz_target_sources(target, files...)` | Routes `.m` to Clang, `.c` to GCC |
 | `objz_target_arc_sources(target, files...)` | Same as above but adds `-fobjc-arc` to `.m` files |
-| `objz_compile_objc_sources(target, files...)` | Compile `.m` files only (Clang or GCC) |
+| `objz_compile_objc_sources(target, files...)` | Compile `.m` files only with Clang |
 | `objz_compile_objc_arc_sources(target, files...)` | Compile `.m` files only with ARC |
 
 ## Configuration
@@ -181,9 +178,8 @@ west build -p -b mps2/an385 . -- -DCONFIG_OBJZ_USE_CLANG=y
 | Kconfig | Description | Depends on |
 |---|---|---|
 | `CONFIG_OBJZ` | Enable Objective-C runtime | — |
-| `CONFIG_OBJZ_USE_CLANG` | Use Clang for .m files (gnustep-1.7 ABI) | `OBJZ` |
-| `CONFIG_OBJZ_MRR` | Manual Retain/Release with `OZObject` | `OBJZ`, `OBJZ_USE_CLANG` |
-| `CONFIG_OBJZ_ARC` | Automatic Reference Counting | `OBJZ_MRR`, `OBJZ_USE_CLANG` |
+| `CONFIG_OBJZ_MRR` | Manual Retain/Release with `OZObject` | `OBJZ` |
+| `CONFIG_OBJZ_ARC` | Automatic Reference Counting | `OBJZ_MRR` |
 | `CONFIG_OBJZ_STATIC_POOLS` | Per-class static allocation pools | `OBJZ` |
 
 ### Table Sizes

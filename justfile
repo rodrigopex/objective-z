@@ -11,10 +11,10 @@ flags := ""
 tty := "/dev/tty.usbmodem0006850372581"
 
 rebuild:
-    west build -p -b {{ board }} {{ project_dir }} -- -DCONFIG_OBJZ_USE_CLANG=y {{ flags }}
+    west build -p -b {{ board }} {{ project_dir }} -- {{ flags }}
 
 build:
-    west build -b {{ board }} {{ project_dir }} -- -DCONFIG_OBJZ_USE_CLANG=y {{ flags }}
+    west build -b {{ board }} {{ project_dir }} -- {{ flags }}
 
 flash:
     west flash
@@ -29,4 +29,4 @@ monitor:
     tio {{ tty }}
 
 test:
-    west twister -T samples/ -p {{ board }} -O /tmp/twister-out -x=CONFIG_OBJZ_USE_CLANG=y
+    west twister -T samples/ -p {{ board }} -O /tmp/twister-out

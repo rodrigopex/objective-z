@@ -1,9 +1,6 @@
 if(CONFIG_OBJZ)
     include(${ZEPHYR_CURRENT_MODULE_DIR}/cmake/ObjcClang.cmake)
-
-    if(CONFIG_OBJZ_USE_CLANG)
-        objz_find_clang()
-    endif()
+    objz_find_clang()
 
     zephyr_library()
     zephyr_include_directories("${ZEPHYR_CURRENT_MODULE_DIR}/include")
@@ -30,10 +27,8 @@ if(CONFIG_OBJZ)
 
     # gnustep-1.7 dispatch support (Clang uses objc_msgSend instead of
     # objc_msg_lookup + indirect call, and objc_slot_lookup_super for [super ...])
-    if(CONFIG_OBJZ_USE_CLANG)
-        zephyr_library_sources("${ZEPHYR_CURRENT_MODULE_DIR}/src/objc_msgSend.S")
-        zephyr_library_sources("${ZEPHYR_CURRENT_MODULE_DIR}/src/slot.c")
-    endif()
+    zephyr_library_sources("${ZEPHYR_CURRENT_MODULE_DIR}/src/objc_msgSend.S")
+    zephyr_library_sources("${ZEPHYR_CURRENT_MODULE_DIR}/src/slot.c")
 
     # MRR memory management layer
     if(CONFIG_OBJZ_MRR)
@@ -58,10 +53,8 @@ if(CONFIG_OBJZ)
     # having RWX permissions. Suppress the linker warning.
     zephyr_link_libraries(-Wl,--no-warn-rwx-segments)
 
-    if(CONFIG_OBJZ_USE_CLANG)
-        # libgcc objects (unwind-arm.o, _arm_fixunsdfsi.o) trigger linker
-        # warnings that --fatal-warnings (used by twister) turns into errors.
-        zephyr_link_libraries(-Wl,--no-warn-execstack)
-        zephyr_link_libraries(-Wl,--orphan-handling=place)
-    endif()
+    # libgcc objects (unwind-arm.o, _arm_fixunsdfsi.o) trigger linker
+    # warnings that --fatal-warnings (used by twister) turns into errors.
+    zephyr_link_libraries(-Wl,--no-warn-execstack)
+    zephyr_link_libraries(-Wl,--orphan-handling=place)
 endif()

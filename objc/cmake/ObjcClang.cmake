@@ -1,8 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # ObjcClang.cmake — Compile Objective-C (.m) files with Clang while linking
-# with GCC. When CONFIG_OBJZ_USE_CLANG is not set, falls back to GCC for
-# everything.
+# with GCC.
 
 include_guard(GLOBAL)
 
@@ -17,7 +16,7 @@ function(objz_find_clang)
 
     if(NOT OBJZ_CLANG_COMPILER)
         message(FATAL_ERROR
-            "CONFIG_OBJZ_USE_CLANG enabled but clang not found.\n"
+            "CONFIG_OBJZ requires clang but clang not found.\n"
             "Set -DOBJZ_CLANG_PATH=/path/to/clang/bin or ensure clang is in PATH.")
     endif()
 
@@ -179,17 +178,9 @@ endfunction()
 #
 # objz_compile_objc_sources(<target> <source1.m> [source2.m ...])
 #
-# CONFIG_OBJZ_USE_CLANG set:   compile each .m with Clang, add .o to target
-# CONFIG_OBJZ_USE_CLANG unset: pass .m to target_sources for GCC
+# Compiles each .m with Clang and adds the resulting .o to the target.
 #
 function(objz_compile_objc_sources target)
-    if(NOT CONFIG_OBJZ_USE_CLANG)
-        foreach(_src ${ARGN})
-            target_sources(${target} PRIVATE ${_src})
-        endforeach()
-        return()
-    endif()
-
     _objz_build_clang_flags(_clang_flags)
     set(_all_objects "")
 
@@ -247,13 +238,8 @@ endfunction()
 # objz_compile_objc_arc_sources(<target> <source1.m> [source2.m ...])
 #
 # Same as objz_compile_objc_sources but adds -fobjc-arc.
-# Only valid when CONFIG_OBJZ_USE_CLANG is set.
 #
 function(objz_compile_objc_arc_sources target)
-    if(NOT CONFIG_OBJZ_USE_CLANG)
-        message(FATAL_ERROR "objz_compile_objc_arc_sources requires CONFIG_OBJZ_USE_CLANG")
-    endif()
-
     _objz_build_clang_flags(_clang_flags)
     list(APPEND _clang_flags -fobjc-arc)
     set(_all_objects "")

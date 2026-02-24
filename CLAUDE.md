@@ -28,7 +28,7 @@ Default board: `mps2/an385`. Requires Zephyr SDK, west, and Clang (for ObjC file
 
 Build a specific sample: `just project_dir=samples/arc_demo rebuild`
 
-Each sample registers the runtime via `ZEPHYR_EXTRA_MODULES` in its CMakeLists.txt and enables it with `CONFIG_OBJZ=y` in prj.conf. All builds pass `-DCONFIG_OBJZ_USE_CLANG=y` by default.
+Each sample registers the runtime via `ZEPHYR_EXTRA_MODULES` in its CMakeLists.txt and enables it with `CONFIG_OBJZ=y` in prj.conf.
 
 ## Architecture
 
@@ -44,7 +44,7 @@ Each sample registers the runtime via `ZEPHYR_EXTRA_MODULES` in its CMakeLists.t
 - **`src/Object.m`** — Root class: alloc/init/dealloc/class/respondsToSelector. Checks static pools before heap fallback.
 - **`src/NXConstantString.m`** — Backs `@"..."` literals; aliased to `NSString` under Clang
 
-### Clang / gnustep-1.7 Dispatch (`CONFIG_OBJZ_USE_CLANG`)
+### Clang / gnustep-1.7 Dispatch
 
 - **`src/objc_msgSend.S`** — ARM Cortex-M Thumb-2 trampoline: `objc_msg_lookup(r0,r1)` + tail-call IMP
 - **`src/slot.c`** — `objc_slot_lookup_super()` bridge for gnustep-1.7 super sends

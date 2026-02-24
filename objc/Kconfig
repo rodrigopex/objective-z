@@ -14,14 +14,6 @@ config OBJZ
 
 if OBJZ
 
-config OBJZ_USE_CLANG
-    bool "Use Clang to compile Objective-C (.m) files"
-    default n
-    help
-      Compile .m files with Clang instead of GCC. GCC remains the
-      linker. Enables future ARC support. Requires clang in PATH
-      or OBJZ_CLANG_PATH set at cmake configure time.
-
 config OBJZ_MRR
     bool "Manual Retain/Release memory management"
     select THREAD_LOCAL_STORAGE
@@ -33,11 +25,11 @@ config OBJZ_MRR
 
 config OBJZ_ARC
     bool "ARC (Automatic Reference Counting) support"
-    depends on OBJZ_MRR && OBJZ_USE_CLANG
+    depends on OBJZ_MRR
     default n
     help
       Enable ARC entry points (objc_retain, objc_release,
-      objc_storeStrong, etc.). Requires MRR layer and Clang.
+      objc_storeStrong, etc.). Requires MRR layer.
       Use objz_compile_objc_arc_sources() or
       objz_target_arc_sources() in CMake to compile .m files
       with -fobjc-arc.
