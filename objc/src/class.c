@@ -42,6 +42,19 @@ static size_t __objc_sizeof_type(const char *type)
 	case '*': /* char* */
 	case '?': /* function pointer */
 		return sizeof(void *);
+	case '[': {
+		/* Array type: [NType] e.g. [64@] = 64 id pointers */
+		unsigned long count = 0;
+		const char *p = type + 1;
+		while (*p >= '0' && *p <= '9') {
+			count = count * 10 + (*p - '0');
+			p++;
+		}
+		if (count == 0 || *p == '\0' || *p == ']') {
+			return sizeof(void *);
+		}
+		return count * __objc_sizeof_type(p);
+	}
 	case '{': /* struct — fall back to pointer size */
 		return sizeof(void *);
 	default:
