@@ -26,7 +26,14 @@ void __objc_class_register(objc_class_t *cls);
 void __objc_class_category_register(struct objc_category *cat);
 
 /*
+ * Look up a class by name in the class table (no method resolution).
+ * Returns NULL if the class is not found.
+ */
+objc_class_t *__objc_lookup_class(const char *name);
+
+/*
  * Lookup a class by name in the Objective-C runtime.
+ * Resolves methods and ivar offsets if not yet done.
  * Returns Nil if the class is not found.
  */
 Class objc_lookup_class(const char *name);

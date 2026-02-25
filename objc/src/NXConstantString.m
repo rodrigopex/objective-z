@@ -42,8 +42,8 @@
   return self;
 }
 
-- (void)release {
-  // NXConstantString is immutable, so we do nothing
+- (oneway void)release {
+  /* NXConstantString is immutable, so we do nothing */
 }
 
 - (BOOL)isEqual:(id)anObject {

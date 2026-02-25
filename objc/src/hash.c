@@ -69,15 +69,10 @@ struct objc_hashitem *__objc_hash_register(objc_class_t *cls,
 inline static BOOL __objc_hash_match(struct objc_hashitem *item,
                                      objc_class_t *cls, const char *method,
                                      const char *types) {
-  if (types) {
-    // Prefer to match types if provided
-    return item->cls == cls && item->method != NULL && method != NULL &&
-           strcmp(item->method, method) == 0 && item->types != NULL &&
-           strcmp(item->types, types) == 0;
-  } else {
-    return item->cls == cls && item->method != NULL && method != NULL &&
-           strcmp(item->method, method) == 0;
-  }
+  /* Match by class + selector name only (see __objc_hash_compute). */
+  (void)types;
+  return item->cls == cls && item->method != NULL && method != NULL &&
+         strcmp(item->method, method) == 0;
 }
 
 /*
@@ -106,20 +101,23 @@ struct objc_hashitem *__objc_hash_lookup(objc_class_t *cls, const char *method,
 
 static size_t __objc_hash_compute(objc_class_t *cls, const char *method,
                                   const char *types) {
+  /*
+   * ObjC dispatch is by selector name only — type encodings are
+   * informational and must NOT participate in hash or match.
+   * Different compilation units may encode the same method with
+   * slightly different type strings (e.g. "v8@0:4" vs "Vv8@0:4"
+   * for oneway void).
+   */
+  (void)types;
   size_t hash = 0;
   for (const char *p = cls->name; *p; p++) {
     hash = (hash * 31) + *p;
   }
   if (cls->info & objc_class_flag_meta) {
-    hash += 0x10000; // Meta class flag
+    hash += 0x10000;
   }
   if (method != NULL) {
     for (const char *p = method; *p; p++) {
-      hash = (hash * 31) + *p;
-    }
-  }
-  if (types != NULL) {
-    for (const char *p = types; *p; p++) {
       hash = (hash * 31) + *p;
     }
   }

@@ -10,6 +10,24 @@
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(objz, CONFIG_OBJZ_LOG_LEVEL);
 
+/**
+ * GNUstep ObjC exception personality stub.
+ *
+ * Clang emits references to this in .ARM.extab sections for ObjC code
+ * even with -fno-exceptions (e.g. collection literal cleanup).
+ * We provide a no-op stub since this runtime does not support @try/@catch.
+ */
+int __gnustep_objc_personality_v0(int version, int actions, long long exn_class,
+				  void *exn_info, void *context)
+{
+	(void)version;
+	(void)actions;
+	(void)exn_class;
+	(void)exn_info;
+	(void)context;
+	return 0;
+}
+
 int objz_init(void)
 {
 	objc_heap_init();

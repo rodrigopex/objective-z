@@ -10,7 +10,87 @@
 objc_class_t *class_table[CONFIG_OBJZ_CLASS_TABLE_SIZE + 1];
 
 /**
- * Return the size (in bytes) of a single ObjC type-encoding character.
+ * Advance past a single ObjC type-encoding element.
+ * Returns a pointer to the next type in the encoding string.
+ */
+static const char *__objc_skip_type(const char *type)
+{
+	if (type == NULL || *type == '\0') {
+		return type;
+	}
+	switch (*type) {
+	/* Single-character primitive types */
+	case 'c': case 'C': case 's': case 'S':
+	case 'i': case 'I': case 'f': case 'l': case 'L':
+	case 'q': case 'Q': case 'd':
+	case '#': case '@': case ':': case '*': case '?':
+	case 'v': case 'B':
+		return type + 1;
+	case '^':
+		/* Pointer to type */
+		return __objc_skip_type(type + 1);
+	case '[': {
+		/* Array: [NType] */
+		const char *p = type + 1;
+		while (*p >= '0' && *p <= '9') {
+			p++;
+		}
+		p = __objc_skip_type(p);
+		if (*p == ']') {
+			p++;
+		}
+		return p;
+	}
+	case '{':
+	case '(': {
+		/* Struct or union: {name=types} or (name=types) */
+		const char *p = type + 1;
+		int depth = 1;
+		while (*p && depth > 0) {
+			if (*p == '{' || *p == '(') {
+				depth++;
+			} else if (*p == '}' || *p == ')') {
+				depth--;
+			}
+			p++;
+		}
+		return p;
+	}
+	default:
+		return type + 1;
+	}
+}
+
+static size_t __objc_sizeof_type(const char *type);
+
+/**
+ * Compute the size of a union type encoding: (name=type1type2...)
+ * Returns the size of the largest member.
+ */
+static size_t __objc_sizeof_union(const char *type)
+{
+	/* Skip past '(' and optional name to '=' */
+	const char *p = type + 1;
+	while (*p && *p != '=' && *p != ')') {
+		p++;
+	}
+	if (*p == '=') {
+		p++;
+	}
+
+	size_t max_size = 0;
+	while (*p && *p != ')') {
+		size_t msz = __objc_sizeof_type(p);
+		if (msz > max_size) {
+			max_size = msz;
+		}
+		p = __objc_skip_type(p);
+	}
+	return max_size > 0 ? max_size : sizeof(void *);
+}
+
+/**
+ * Return the size (in bytes) of a single ObjC type-encoding element.
  * Handles the subset of types emitted by Clang for ivars on 32-bit ARM.
  */
 static size_t __objc_sizeof_type(const char *type)
@@ -55,6 +135,8 @@ static size_t __objc_sizeof_type(const char *type)
 		}
 		return count * __objc_sizeof_type(p);
 	}
+	case '(': /* union — compute from members */
+		return __objc_sizeof_union(type);
 	case '{': /* struct — fall back to pointer size */
 		return sizeof(void *);
 	default:

@@ -52,22 +52,29 @@ static IMP __objc_msg_lookup(objc_class_t *cls, SEL selector) {
   return NULL; // Method not found
 }
 
-static void __objc_send_initialize(objc_class_t *cls) {
-  if (cls == Nil) {
+/**
+ * Send +initialize to a metaclass.
+ *
+ * ObjC convention: +initialize receives the CLASS object as self, not
+ * the metaclass.  We look up the instance class via __objc_lookup_class
+ * so that `self == [ClassName class]` works correctly in +initialize.
+ */
+static void __objc_send_initialize(objc_class_t *metacls) {
+  if (metacls == Nil) {
     return;
   }
 
-  // Don't call initialize on the same class twice
-  if (cls->info & objc_class_flag_initialized) {
+  /* Don't call initialize on the same class twice */
+  if (metacls->info & objc_class_flag_initialized) {
     return;
   }
 
-  // Mark the class as initialized early to prevent recursion
-  cls->info |= objc_class_flag_initialized;
+  /* Mark as initialized early to prevent recursion */
+  metacls->info |= objc_class_flag_initialized;
 
-  // If the superclass has an initialize method, call it first
-  if (cls->superclass) {
-    __objc_send_initialize(cls->superclass);
+  /* If the superclass has an initialize method, call it first */
+  if (metacls->superclass) {
+    __objc_send_initialize(metacls->superclass);
   }
 
   /* Find and call the initialize method.
@@ -77,15 +84,18 @@ static void __objc_send_initialize(objc_class_t *cls) {
       .sel_id = "initialize",
       .sel_type = NULL,
   };
-  IMP imp = __objc_msg_lookup(cls, &initialize);
+  IMP imp = __objc_msg_lookup(metacls, &initialize);
   if (imp != NULL) {
-    // Call the initialize method - suppress function cast warning as this is a
-    // legitimate cast from variadic IMP to non-variadic function for
-    // +initialize which takes no parameters
+    /*
+     * Resolve the instance class: +initialize must receive the CLASS
+     * object (not metaclass) so that `self == [ClassName class]` holds.
+     */
+    objc_class_t *class_obj = __objc_lookup_class(metacls->name);
+    id receiver = class_obj ? (id)class_obj : (id)metacls;
+
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wcast-function-type"
-    ((void (*)(id, SEL))imp)(
-        (id)cls, &initialize); // Call the initialize method on the class
+    ((void (*)(id, SEL))imp)(receiver, &initialize);
 #pragma GCC diagnostic pop
   }
 }
