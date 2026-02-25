@@ -44,6 +44,15 @@ if(CONFIG_OBJZ)
         zephyr_library_sources("${ZEPHYR_CURRENT_MODULE_DIR}/src/arc.c")
     endif()
 
+    # Boxed literals and collection literals
+    if(CONFIG_OBJZ_LITERALS)
+        objz_compile_objc_sources(${ZEPHYR_CURRENT_LIBRARY}
+            "${ZEPHYR_CURRENT_MODULE_DIR}/src/OZNumber.m"
+            "${ZEPHYR_CURRENT_MODULE_DIR}/src/OZArray.m"
+            "${ZEPHYR_CURRENT_MODULE_DIR}/src/OZDictionary.m"
+        )
+    endif()
+
     # Static allocation pools
     if(CONFIG_OBJZ_STATIC_POOLS)
         zephyr_library_sources("${ZEPHYR_CURRENT_MODULE_DIR}/src/pool.c")

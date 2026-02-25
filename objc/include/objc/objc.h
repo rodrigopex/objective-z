@@ -24,4 +24,10 @@
 #include "Object.h"
 #include "Protocol.h"
 
+#ifdef CONFIG_OBJZ_LITERALS
+#include "OZNumber.h"
+#include "OZArray.h"
+#include "OZDictionary.h"
+#endif
+
 #endif // __OBJC__

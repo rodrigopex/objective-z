@@ -1,0 +1,28 @@
+sample:
+  description: ObjC boxed literals and collection literals demo
+  name: ObjZ Literals Demo
+common:
+  tags: objz
+  integration_platforms:
+    - mps2/an385
+  harness: console
+  harness_config:
+    type: multi_line
+    ordered: true
+    regex:
+      - "=== ObjC Literals Demo ==="
+      - "@YES boolValue=1"
+      - "@NO boolValue=0"
+      - "@0 intValue=0"
+      - "@15 intValue=15"
+      - "@1000 intValue=1000"
+      - "@3.14 intValue=3"
+      - "array count=2"
+      - "arr\\[0\\]=hello"
+      - "arr\\[1\\]=42"
+      - "dict count=1"
+      - "dict\\[@\"key\"\\]=value"
+      - "=== Demo complete ==="
+tests:
+  sample.objz.literals_demo:
+    tags: objz literals

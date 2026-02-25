@@ -50,6 +50,13 @@ config OBJZ_STATIC_POOL_TABLE_SIZE
     help
       Maximum number of OZ_DEFINE_POOL registrations.
 
+config OBJZ_LITERALS
+    bool "ObjC boxed literals and collection literals"
+    depends on OBJZ_MRR
+    help
+      Enable OZNumber (@42, @YES, @3.14), OZArray (@[...]),
+      and OZDictionary (@{k:v}) literal classes.
+
 config OBJZ_MEM_POOL_SIZE
     int "Objective-Z memory heap pool size"
     default 4096
