@@ -29,4 +29,4 @@ monitor:
     tio {{ tty }}
 
 test:
-    west twister -T samples/ -p {{ board }} -O /tmp/twister-out
+    west twister -T samples/ -T tests/ -p {{ board }} -O /tmp/twister-out

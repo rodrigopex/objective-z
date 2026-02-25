@@ -1,0 +1,6 @@
+tests:
+  test.objz.message_dispatch:
+    tags:
+      - objz
+    integration_platforms:
+      - mps2/an385

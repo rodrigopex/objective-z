@@ -1,0 +1,6 @@
+tests:
+  test.objz.class_registry:
+    tags:
+      - objz
+    integration_platforms:
+      - mps2/an385

@@ -1,0 +1,6 @@
+tests:
+  test.objz.refcount:
+    tags:
+      - objz
+    integration_platforms:
+      - mps2/an385
