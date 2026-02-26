@@ -1,4 +1,8 @@
 #import <objc/objc.h>
+#ifdef CONFIG_OBJZ_MRR
+#import <objc/OZMutableString.h>
+#endif
+#include <zephyr/sys/printk.h>
 #import <zephyr/logging/log.h>
 LOG_MODULE_DECLARE(objz, CONFIG_OBJZ_LOG_LEVEL);
 
@@ -109,6 +113,17 @@ extern _Bool __objc_pool_free(void *ptr);
 - (BOOL)respondsToSelector:(SEL)aSelector
 {
 	return object_respondsToSelector(self, aSelector);
+}
+
+- (id)description
+{
+#ifdef CONFIG_OBJZ_MRR
+	char buf[64];
+	snprintk(buf, sizeof(buf), "<%s: %p>", class_getName(object_getClass(self)), self);
+	return [OZMutableString stringWithCString:buf];
+#else
+	return nil;
+#endif
 }
 
 @end

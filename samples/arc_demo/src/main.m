@@ -7,6 +7,7 @@
 
 #import <objc/OZObject.h>
 #import <objc/OZAutoreleasePool.h>
+#include <objc/OZLog.h>
 #include <zephyr/kernel.h>
 
 @interface Sensor: OZObject {
@@ -36,7 +37,7 @@
 
 - (void)dealloc
 {
-	printk("Sensor dealloc (value=%d)\n", _value);
+	OZLog("Sensor dealloc (value=%d)", _value);
 	/* ARC calls [super dealloc] automatically */
 }
 
@@ -61,35 +62,35 @@ static Sensor *createSensor(int v)
 {
 	self = [super init];
 	_sensor = createSensor(newValue);
-	printk("Driver created (sensor value=%d)\n", [_sensor value]);
+	OZLog("Driver created (sensor value=%d)", [_sensor value]);
 	return self;
 }
 - (void)dealloc
 {
-	printk("Driver dealloc (sensor value=%d)\n", [_sensor value]);
+	OZLog("Driver dealloc (sensor value=%d)", [_sensor value]);
 }
 @end
 
 int main(void)
 {
-	printk("=== ARC Memory Management Demo ===\n");
+	OZLog("=== ARC Memory Management Demo ===");
 
 	/* Scope test: ARC releases s when it goes out of scope */
 	{
 		Sensor *s = createSensor(42);
-		printk("Sensor created, value=%d\n", [s value]);
+		OZLog("Sensor created, value=%d", [s value]);
 	}
 	/* s is released here by ARC → dealloc fires */
 
 	/* @autoreleasepool test */
-	printk("@autoreleasepool test\n");
+	OZLog("@autoreleasepool test");
 	@autoreleasepool {
 		Sensor *a = createSensor(99);
-		printk("pool sensor value=%d\n", [a value]);
+		OZLog("pool sensor value=%d", [a value]);
 	}
 	/* pool drains, a is released → dealloc fires */
 
-	printk("=== Demo main complete ===\n");
+	OZLog("=== Demo main complete ===");
 	return 0;
 }
 
@@ -98,10 +99,10 @@ static void arc_demo_extra_thread_entry(void *p1, void *p2, void *p3)
 	ARG_UNUSED(p1);
 	ARG_UNUSED(p2);
 	ARG_UNUSED(p3);
-	printk("=== Demo Extra thread started ===\n");
+	OZLog("=== Demo Extra thread started ===");
 	Driver *d = [[Driver alloc] init:250];
 	d.sensor.value = 100;
-	printk("=== Demo Extra thread started ===\n");
+	OZLog("=== Demo Extra thread started ===");
 }
 
 K_THREAD_DEFINE(arc_demo_thread, 1024, arc_demo_extra_thread_entry, NULL, NULL, NULL, 7, 0, 0);

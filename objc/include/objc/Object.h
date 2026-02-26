@@ -133,4 +133,13 @@ OBJC_ROOT_CLASS
  */
 - (BOOL)conformsTo:(Protocol *)aProtocolObject;
 
+/**
+ * @brief Returns an object describing the receiver.
+ * @return An autoreleased OZMutableString with "<ClassName: 0xADDR>".
+ *
+ * Subclasses may override to provide a more meaningful representation.
+ * Requires CONFIG_OBJZ_MRR. Returns nil when MRR is disabled.
+ */
+- (id)description;
+
 @end

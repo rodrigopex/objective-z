@@ -1,5 +1,6 @@
 #include "TemperatureService.h"
 
+#include <objc/OZLog.h>
 #include <zephyr/kernel.h>
 #include <zephyr/zbus/zbus.h>
 #include <zephyr/random/random.h>
@@ -104,7 +105,7 @@ static void _wait_report(const struct zbus_channel **chan,
 
 		return 0;
 	} else {
-		printk("Error!\n");
+		OZLog("Error!");
 	}
 
 	zbus_obs_set_enable(&_msub_temp_serv_report_channel, false);

@@ -12,6 +12,7 @@
 #include "malloc.h"
 #include "mutex.h"
 #include "runtime.h"
+#include "OZLog.h"
 
 #if __OBJC__
 

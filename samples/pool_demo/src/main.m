@@ -9,7 +9,7 @@
 
 #import <objc/OZObject.h>
 #import <objc/OZAutoreleasePool.h>
-#include <zephyr/kernel.h>
+#include <objc/OZLog.h>
 
 /* ── Sensor class ─────────────────────────────────────────────────── */
 
@@ -34,7 +34,7 @@
 
 - (void)dealloc
 {
-	printk("Sensor dealloc (value=%d)\n", _value);
+	OZLog("Sensor dealloc (value=%d)", _value);
 	[super dealloc];
 }
 
@@ -63,7 +63,7 @@
 
 - (void)dealloc
 {
-	printk("Gadget dealloc (value=%d)\n", _value);
+	OZLog("Gadget dealloc (value=%d)", _value);
 	[super dealloc];
 }
 
@@ -71,20 +71,20 @@
 
 int main(void)
 {
-	printk("=== Static Pool Demo ===\n");
+	OZLog("=== Static Pool Demo ===");
 
 	/* Allocate 3 Sensors from the slab pool */
 	Sensor *s1 = [[Sensor alloc] init];
 	[s1 setValue:1];
-	printk("pool alloc s1 value=%d\n", [s1 value]);
+	OZLog("pool alloc s1 value=%d", [s1 value]);
 
 	Sensor *s2 = [[Sensor alloc] init];
 	[s2 setValue:2];
-	printk("pool alloc s2 value=%d\n", [s2 value]);
+	OZLog("pool alloc s2 value=%d", [s2 value]);
 
 	Sensor *s3 = [[Sensor alloc] init];
 	[s3 setValue:3];
-	printk("pool alloc s3 value=%d\n", [s3 value]);
+	OZLog("pool alloc s3 value=%d", [s3 value]);
 
 	/* Release all — blocks return to slab */
 	[s1 release];
@@ -94,9 +94,9 @@ int main(void)
 	/* Gadget has no pool — falls back to sys_heap */
 	Gadget *g = [[Gadget alloc] init];
 	[g setValue:100];
-	printk("heap alloc g value=%d\n", [g value]);
+	OZLog("heap alloc g value=%d", [g value]);
 	[g release];
 
-	printk("=== Demo complete ===\n");
+	OZLog("=== Demo complete ===");
 	return 0;
 }

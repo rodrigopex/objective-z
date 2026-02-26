@@ -11,6 +11,7 @@
  * +initialize with refcount set to INT32_MAX (immortal).
  */
 #import <objc/OZNumber.h>
+#import <objc/OZMutableString.h>
 #import <objc/objc.h>
 #include <stdint.h>
 #include <string.h>
@@ -312,6 +313,32 @@ static OZNumber *_smallInts[SMALL_INT_COUNT];
 		return _value.doubleVal;
 	}
 	return 0.0;
+}
+
+/* ── Description ────────────────────────────────────────────────── */
+
+- (id)description
+{
+	char buf[32];
+
+	switch (_type) {
+	case OZNumberTypeBool:
+		return [OZMutableString stringWithCString:_value.boolVal ? "YES" : "NO"];
+	case OZNumberTypeFloat:
+	case OZNumberTypeDouble: {
+		double d = [self doubleValue];
+		int whole = (int)d;
+		int frac = (int)((d - (double)whole) * 100);
+		if (frac < 0) {
+			frac = -frac;
+		}
+		snprintk(buf, sizeof(buf), "%d.%02d", whole, frac);
+		return [OZMutableString stringWithCString:buf];
+	}
+	default:
+		snprintk(buf, sizeof(buf), "%lld", [self longLongValue]);
+		return [OZMutableString stringWithCString:buf];
+	}
 }
 
 /* ── Comparison ─────────────────────────────────────────────────── */

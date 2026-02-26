@@ -7,7 +7,7 @@
 
 #import <objc/OZObject.h>
 #import <objc/OZAutoreleasePool.h>
-#include <zephyr/kernel.h>
+#include <objc/OZLog.h>
 
 @interface Sensor : OZObject {
 	int _value;
@@ -30,7 +30,7 @@
 
 - (void)dealloc
 {
-	printk("Sensor dealloc (value=%d)\n", _value);
+	OZLog("Sensor dealloc (value=%d)", _value);
 	[super dealloc];
 }
 
@@ -38,31 +38,31 @@
 
 int main(void)
 {
-	printk("=== MRR Memory Management Demo ===\n");
+	OZLog("=== MRR Memory Management Demo ===");
 
 	/* Basic retain/release lifecycle */
 	Sensor *s = [[Sensor alloc] init];
 	[s setValue:42];
-	printk("retainCount after alloc: %u\n", [s retainCount]);
+	OZLog("retainCount after alloc: %u", [s retainCount]);
 
 	[s retain];
-	printk("retainCount after retain: %u\n", [s retainCount]);
+	OZLog("retainCount after retain: %u", [s retainCount]);
 
 	[s release];
-	printk("retainCount after release: %u\n", [s retainCount]);
+	OZLog("retainCount after release: %u", [s retainCount]);
 
 	/* Final release triggers dealloc */
 	[s release];
 
 	/* Autorelease pool test */
-	printk("=== Autorelease pool test ===\n");
+	OZLog("=== Autorelease pool test ===");
 	@autoreleasepool {
 		Sensor *a = [[[Sensor alloc] init] autorelease];
 		[a setValue:99];
-		printk("autoreleased sensor value=%d, rc=%u\n", [a value], [a retainCount]);
+		OZLog("autoreleased sensor value=%d, rc=%u", [a value], [a retainCount]);
 		/* a will be released when pool drains */
 	}
 
-	printk("=== Demo complete ===\n");
+	OZLog("=== Demo complete ===");
 	return 0;
 }

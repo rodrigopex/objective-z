@@ -8,46 +8,44 @@
 
 #import <objc/objc.h>
 #import <objc/OZAutoreleasePool.h>
-#include <zephyr/kernel.h>
 
 int main(void)
 {
-	printk("=== ObjC Literals Demo ===\n");
+	OZLog("=== ObjC Literals Demo ===");
 
 	@autoreleasepool {
 		/* Boolean literals */
 		OZNumber *yes = @YES;
 		OZNumber *no = @NO;
-		printk("@YES boolValue=%d\n", [yes boolValue]);
-		printk("@NO boolValue=%d\n", [no boolValue]);
+		OZLog("@YES = %@", yes);
+		OZLog("@NO  = %@", no);
 
 		/* Small integer cache (0..15 are singletons) */
 		OZNumber *zero = @0;
 		OZNumber *fifteen = @15;
-		printk("@0 intValue=%d\n", [zero intValue]);
-		printk("@15 intValue=%d\n", [fifteen intValue]);
+		OZLog("@0  = %@", zero);
+		OZLog("@15 = %@", fifteen);
 
 		/* Heap-allocated integer */
 		OZNumber *big = @1000;
-		printk("@1000 intValue=%d\n", [big intValue]);
+		OZLog("@1000 = %@", big);
 
-		/* Double literal (no %f on Cortex-M, use intValue) */
+		/* Double literal */
 		OZNumber *pi = @3.14;
-		printk("@3.14 intValue=%d\n", [pi intValue]);
+		OZLog("@3.14 = %@", pi);
 
 		/* Array literal */
 		OZArray *arr = @[ @"hello", @42 ];
-		printk("array count=%u\n", [arr count]);
-		printk("arr[0]=%s\n", [(OZString *)[arr objectAtIndex:0] cStr]);
-		printk("arr[1]=%d\n", [(OZNumber *)[arr objectAtIndex:1] intValue]);
+		OZLog("array = %@", arr);
+		OZLog("arr[0] = %@", [arr objectAtIndex:0]);
+		OZLog("arr[1] = %@", [arr objectAtIndex:1]);
 
 		/* Dictionary literal */
 		OZDictionary *dict = @{@"key" : @"value"};
-		printk("dict count=%u\n", [dict count]);
-		printk("dict[@\"key\"]=%s\n",
-		       [(OZString *)[dict objectForKey:@"key"] cStr]);
+		OZLog("dict = %@", dict);
+		OZLog("dict[@\"key\"] = %@", [dict objectForKey:@"key"]);
 	}
 
-	printk("=== Demo complete ===\n");
+	OZLog("=== Demo complete ===");
 	return 0;
 }

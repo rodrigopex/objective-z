@@ -5,7 +5,6 @@
  */
 
 #import <objc/objc.h>
-#include <zephyr/kernel.h>
 
 @interface MyFirstObject: Object
 
@@ -19,19 +18,19 @@
 
 - (void)greet
 {
-	printk("Hello, world from object\n");
+	OZLog("Hello, world from object");
 }
 
 + (void)greet
 {
-	printk("Hello, world from class\n");
+	OZLog("Hello, world from class");
 }
 
 @end
 
 int main(void)
 {
-	// Send a "greet" method to the Object class
+	/* Send a "greet" method to the Object class */
 	[MyFirstObject greet];
 
 	MyFirstObject *hello = [[MyFirstObject alloc] init];

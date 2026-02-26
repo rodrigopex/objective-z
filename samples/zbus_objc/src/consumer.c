@@ -1,4 +1,5 @@
 #include "channels.h"
+#include <objc/OZLog.h>
 
 ZBUS_MSG_SUBSCRIBER_DEFINE(msub_consumer);
 
@@ -18,8 +19,8 @@ void consumer_thread(void *p1, void *p2, void *p3)
 		zbus_sub_wait_msg(&msub_consumer, &chan, &msg, K_FOREVER);
 		++ack_msg.count;
 
-		printk(" %d - Accelerometer data x=%02d,y=%02d,z=%02d\n", ack_msg.count, msg.x,
-		       msg.y, msg.z);
+		OZLog(" %d - Accelerometer data x=%02d,y=%02d,z=%02d", ack_msg.count, msg.x,
+		      msg.y, msg.z);
 
 		zbus_chan_pub(&chan_acc_data_consumed, &ack_msg, K_MSEC(250));
 	}

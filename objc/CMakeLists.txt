@@ -36,6 +36,8 @@ if(CONFIG_OBJZ)
         objz_compile_objc_sources(${ZEPHYR_CURRENT_LIBRARY}
             "${ZEPHYR_CURRENT_MODULE_DIR}/src/OZObject.m"
             "${ZEPHYR_CURRENT_MODULE_DIR}/src/OZAutoreleasePool.m"
+            "${ZEPHYR_CURRENT_MODULE_DIR}/src/OZMutableString.m"
+            "${ZEPHYR_CURRENT_MODULE_DIR}/src/OZLog.m"
         )
     endif()
 

@@ -17,7 +17,7 @@ if OBJZ
 config OBJZ_MRR
     bool "Manual Retain/Release memory management"
     select THREAD_LOCAL_STORAGE
-    default n
+    default y
     help
       Enable OZObject with retain/release/autorelease and
       OZAutoreleasePool with per-thread pool stack.
@@ -56,6 +56,13 @@ config OBJZ_LITERALS
     help
       Enable OZNumber (@42, @YES, @3.14), OZArray (@[...]),
       and OZDictionary (@{k:v}) literal classes.
+
+config OBJZ_LOG_BUFFER_SIZE
+    int "OZLog format buffer size"
+    default 128
+    help
+      Size of the stack buffer used by OZLog() for formatting.
+      Messages longer than this are truncated.
 
 config OBJZ_MEM_POOL_SIZE
     int "Objective-Z memory heap pool size"

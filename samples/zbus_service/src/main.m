@@ -18,11 +18,11 @@ void print_temp_callback(const struct zbus_channel *chan)
 	}
 
 	if (report->tag == TEMPERATURE_SERVICE_REPORT_ERROR) {
-		printk(" + [listener] Could not read the temperature\n");
+		OZLog(" + [listener] Could not read the temperature");
 		return;
 	}
 
-	printk(" + [listener] Temperature: %d\n", report->temperature.value);
+	OZLog(" + [listener] Temperature: %d", report->temperature.value);
 }
 
 ZBUS_LISTENER_DEFINE(lis_print_temp, print_temp_callback);
@@ -36,14 +36,14 @@ int main(void)
 	while (1) {
 		OZString *str = @"Requesting temperature";
 
-		printk("%s:\n", str.cStr);
+		OZLog("%s:", str.cStr);
 
 		ret = [TemperatureService requestTemperatureWithRef:&temp andTimeout:K_SECONDS(6)];
 
 		if (ret < 0) {
-			printk(" + [main] Could not read the temperature\n");
+			OZLog(" + [main] Could not read the temperature");
 		} else {
-			printk(" + [main] Temperature: %d\n", temp);
+			OZLog(" + [main] Temperature: %d", temp);
 		}
 
 		k_msleep(1000);

@@ -1,10 +1,10 @@
 #include "Producer.h"
 
+#include <objc/OZLog.h>
+#include <objc/malloc.h>
 #include <zephyr/kernel.h>
 #include <zephyr/zbus/zbus.h>
 #include <zephyr/random/random.h>
-
-#include <objc/malloc.h>
 
 ZBUS_MSG_SUBSCRIBER_DEFINE(msub_acc_consumed);
 
@@ -52,9 +52,9 @@ void thread_entry_producer(void *arg1, void *arg2, void *arg3)
 		[producer sendData];
 
 		if (producer.ackCount > 9) {
-			printk("Producer: Received %d acknowledgments from Consumer. Stopping "
-			       "production.\n",
-			       producer.ackCount);
+			OZLog("Producer: Received %d acknowledgments from Consumer. "
+			      "Stopping production.",
+			      producer.ackCount);
 			[producer dealloc];
 
 			break;
