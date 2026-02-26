@@ -214,10 +214,10 @@ struct objc_init {
 	struct objc_class **cls_end;
 	struct objc_class **cls_ref_begin;
 	struct objc_class **cls_ref_end;
-	struct objc_category **cat_begin;
-	struct objc_category **cat_end;
-	struct objc_protocol **proto_begin;
-	struct objc_protocol **proto_end;
+	struct objc_category *cat_begin;
+	struct objc_category *cat_end;
+	struct objc_protocol *proto_begin;
+	struct objc_protocol *proto_end;
 	struct objc_protocol **proto_ref_begin;
 	struct objc_protocol **proto_ref_end;
 	struct objc_class_alias *alias_begin;

@@ -5,16 +5,16 @@
 
 /**
  * @file main.c
- * @brief Tests for message dispatch (message.c, slot.c).
+ * @brief Tests for message dispatch (message.c).
  */
 #include <zephyr/ztest.h>
 #include <objc/runtime.h>
 
-/* ── External ABI structures (from api.h) ───────────────────────── */
+/* ── External ABI structures (gnustep-2.0) ──────────────────────── */
 
 struct objc_selector {
-	void *sel_id;
-	char *sel_type;
+	const char *name;
+	const char *types;
 };
 
 struct objc_super {
@@ -22,20 +22,10 @@ struct objc_super {
 	struct objc_class *superclass;
 };
 
-struct objc_slot {
-	Class owner;
-	Class cached_for;
-	const char *types;
-	unsigned int version;
-	IMP method;
-};
-
 /* ── Runtime functions ──────────────────────────────────────────── */
 
 extern IMP objc_msg_lookup(id receiver, SEL selector);
 extern IMP objc_msg_lookup_super(struct objc_super *super, SEL selector);
-extern struct objc_slot *objc_slot_lookup_super(struct objc_super *super,
-						SEL selector);
 
 /* ── ObjC helpers (defined in helpers.m) ────────────────────────── */
 
@@ -60,7 +50,7 @@ ZTEST_SUITE(message_dispatch, NULL, NULL, NULL, NULL, NULL);
 /* Nil receiver returns a non-NULL IMP (the nil method handler) */
 ZTEST(message_dispatch, test_nil_receiver)
 {
-	struct objc_selector sel = { .sel_id = "speak", .sel_type = NULL };
+	struct objc_selector sel = { .name = "speak", .types = NULL };
 	IMP imp = objc_msg_lookup(nil, &sel);
 
 	zassert_not_null(imp, "nil receiver should return nil_method IMP, not NULL");
@@ -118,8 +108,8 @@ ZTEST(message_dispatch, test_subclass_override)
 ZTEST(message_dispatch, test_unknown_selector)
 {
 	id animal = test_create_animal();
-	struct objc_selector sel = { .sel_id = "nonExistentMethod",
-				     .sel_type = NULL };
+	struct objc_selector sel = { .name = "nonExistentMethod",
+				     .types = NULL };
 	IMP imp = objc_msg_lookup(animal, &sel);
 
 	zassert_is_null(imp, "unknown selector should return NULL IMP");
@@ -135,7 +125,7 @@ ZTEST(message_dispatch, test_super_send)
 
 	zassert_not_null(animal_cls, "Dog should have a superclass");
 
-	struct objc_selector sel = { .sel_id = "speak", .sel_type = NULL };
+	struct objc_selector sel = { .name = "speak", .types = NULL };
 	struct objc_super sup = { .receiver = dog, .superclass = animal_cls };
 
 	IMP imp = objc_msg_lookup_super(&sup, &sel);
@@ -151,7 +141,7 @@ ZTEST(message_dispatch, test_super_send)
 /* Super send with nil receiver */
 ZTEST(message_dispatch, test_super_nil_receiver)
 {
-	struct objc_selector sel = { .sel_id = "speak", .sel_type = NULL };
+	struct objc_selector sel = { .name = "speak", .types = NULL };
 	struct objc_super sup = { .receiver = nil, .superclass = NULL };
 
 	IMP imp = objc_msg_lookup_super(&sup, &sel);
@@ -161,7 +151,7 @@ ZTEST(message_dispatch, test_super_nil_receiver)
 /* Super send via NULL struct */
 ZTEST(message_dispatch, test_super_null_struct)
 {
-	struct objc_selector sel = { .sel_id = "speak", .sel_type = NULL };
+	struct objc_selector sel = { .name = "speak", .types = NULL };
 
 	IMP imp = objc_msg_lookup_super(NULL, &sel);
 	zassert_is_null(imp, "super send with NULL super should return NULL");
@@ -171,7 +161,7 @@ ZTEST(message_dispatch, test_super_null_struct)
 ZTEST(message_dispatch, test_responds_to_selector_yes)
 {
 	Class cls = objc_lookupClass("TestAnimal");
-	struct objc_selector sel = { .sel_id = "speak", .sel_type = NULL };
+	struct objc_selector sel = { .name = "speak", .types = NULL };
 
 	zassert_true(class_respondsToSelector(cls, &sel),
 		     "TestAnimal should respond to 'speak'");
@@ -181,7 +171,7 @@ ZTEST(message_dispatch, test_responds_to_selector_yes)
 ZTEST(message_dispatch, test_responds_to_selector_no)
 {
 	Class cls = objc_lookupClass("TestAnimal");
-	struct objc_selector sel = { .sel_id = "nonExistent", .sel_type = NULL };
+	struct objc_selector sel = { .name = "nonExistent", .types = NULL };
 
 	zassert_false(class_respondsToSelector(cls, &sel),
 		      "TestAnimal should not respond to 'nonExistent'");
@@ -190,7 +180,7 @@ ZTEST(message_dispatch, test_responds_to_selector_no)
 /* class_respondsToSelector with Nil class */
 ZTEST(message_dispatch, test_responds_nil_class)
 {
-	struct objc_selector sel = { .sel_id = "speak", .sel_type = NULL };
+	struct objc_selector sel = { .name = "speak", .types = NULL };
 
 	zassert_false(class_respondsToSelector(Nil, &sel),
 		      "Nil class should return NO");
@@ -200,9 +190,9 @@ ZTEST(message_dispatch, test_responds_nil_class)
 ZTEST(message_dispatch, test_object_responds)
 {
 	id animal = test_create_animal();
-	struct objc_selector sel_yes = { .sel_id = "speak", .sel_type = NULL };
-	struct objc_selector sel_no = { .sel_id = "nonExistent",
-					.sel_type = NULL };
+	struct objc_selector sel_yes = { .name = "speak", .types = NULL };
+	struct objc_selector sel_no = { .name = "nonExistent",
+					.types = NULL };
 
 	zassert_true(object_respondsToSelector(animal, &sel_yes),
 		     "animal should respond to 'speak'");
@@ -218,9 +208,9 @@ ZTEST(message_dispatch, test_object_responds)
 ZTEST(message_dispatch, test_metaclass_responds)
 {
 	Class cls = objc_lookupClass("TestAnimal");
-	struct objc_selector sel_yes = { .sel_id = "classValue",
-					 .sel_type = NULL };
-	struct objc_selector sel_no = { .sel_id = "speak", .sel_type = NULL };
+	struct objc_selector sel_yes = { .name = "classValue",
+					 .types = NULL };
+	struct objc_selector sel_no = { .name = "speak", .types = NULL };
 
 	zassert_true(class_metaclassRespondsToSelector(cls, &sel_yes),
 		     "metaclass should respond to 'classValue'");
@@ -231,8 +221,8 @@ ZTEST(message_dispatch, test_metaclass_responds)
 /* sel_getName */
 ZTEST(message_dispatch, test_sel_getName)
 {
-	struct objc_selector sel = { .sel_id = "testSelector",
-				     .sel_type = NULL };
+	struct objc_selector sel = { .name = "testSelector",
+				     .types = NULL };
 
 	const char *name = sel_getName(&sel);
 	zassert_not_null(name, "sel_getName should return a name");
@@ -269,25 +259,3 @@ ZTEST(message_dispatch, test_initialize_super_first)
 		     "Dog +initialize should have been called");
 }
 
-/* Slot lookup super (gnustep-1.7 bridge) */
-ZTEST(message_dispatch, test_slot_lookup_super)
-{
-	id dog = test_create_dog();
-	Class dog_cls = object_getClass(dog);
-	Class animal_cls = class_getSuperclass(dog_cls);
-
-	struct objc_selector sel = { .sel_id = "speak", .sel_type = NULL };
-	struct objc_super sup = { .receiver = dog, .superclass = animal_cls };
-
-	struct objc_slot *slot = objc_slot_lookup_super(&sup, &sel);
-
-	zassert_not_null(slot, "slot lookup should return non-NULL");
-	zassert_not_null(slot->method,
-			 "slot should contain a valid IMP");
-
-	/* Call the IMP — should be Animal's speak (1) */
-	int result = ((int (*)(id, SEL))slot->method)(dog, &sel);
-	zassert_equal(result, 1, "slot super should resolve Animal's speak");
-
-	test_dealloc(dog);
-}

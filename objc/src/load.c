@@ -43,9 +43,6 @@ void __objc_load(struct objc_init *init)
 	__objc_category_init();
 	__objc_protocol_init();
 
-	/* Register selectors — uniquing not needed for our minimal runtime;
-	 * selectors are matched by name string comparison. */
-
 	/* Register classes */
 	for (struct objc_class **cls = init->cls_begin; cls < init->cls_end; cls++) {
 		if (*cls != NULL) {
@@ -58,19 +55,17 @@ void __objc_load(struct objc_init *init)
 		}
 	}
 
-	/* Register categories */
-	for (struct objc_category **cat = init->cat_begin; cat < init->cat_end; cat++) {
-		if (*cat != NULL) {
-			__objc_category_register(*cat);
-		}
+	/* Register categories.
+	 * __objc_cats contains struct objc_category directly (not pointers). */
+	for (struct objc_category *cat = init->cat_begin; cat < init->cat_end; cat++) {
+		__objc_category_register(cat);
 	}
 
-	/* Register protocols */
-	for (struct objc_protocol **proto = init->proto_begin; proto < init->proto_end;
+	/* Register protocols.
+	 * __objc_protocols contains struct objc_protocol directly (not pointers). */
+	for (struct objc_protocol *proto = init->proto_begin; proto < init->proto_end;
 	     proto++) {
-		if (*proto != NULL) {
-			__objc_protocol_register(*proto);
-		}
+		__objc_protocol_register(proto);
 	}
 
 	/* Fix constant string isa pointers.
@@ -86,20 +81,8 @@ void __objc_load(struct objc_init *init)
 		}
 	}
 
-	/* Process class aliases (e.g. NSString -> OZString).
-	 * Each alias is { const char *alias_name, Class *class_ref }.
-	 * We resolve the class ref to point to the named class. */
-	for (struct objc_class_alias *alias = init->alias_begin; alias < init->alias_end;
-	     alias++) {
-		if (alias->alias_name == NULL) {
-			continue;
-		}
-		/* The class_ref points to a __objc_class_refs entry.
-		 * We don't need to create a separate alias table — the
-		 * compiler resolves NSString to OZString at compile time
-		 * via @compatibility_alias. The alias section exists for
-		 * dynamic lookup which we don't support. */
-	}
+	/* Class aliases: the compiler resolves these at compile time
+	 * via @compatibility_alias. Skip for embedded (no dynamic lookup). */
 
 	/* Mark as loaded */
 	init->version = UINT64_MAX;

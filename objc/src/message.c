@@ -104,6 +104,11 @@ IMP objc_msg_lookup(id receiver, SEL selector)
 		return NULL;
 	}
 
+	/* Lazy resolution: ensure methods are registered before lookup */
+	if (!(cls->info & objc_class_flag_resolved)) {
+		objc_lookup_class(cls->name);
+	}
+
 	IMP imp = __objc_msg_lookup(cls, selector);
 	if (imp == NULL) {
 		printk("objc_msg_lookup: class=%c[%s %s] selector->types=%s cannot send "

@@ -1,5 +1,6 @@
 
 #import <objc/objc.h>
+#import <objc/OZObject.h>
 #include <zephyr/kernel.h>
 
 struct color {
@@ -8,7 +9,7 @@ struct color {
 	uint8_t b;
 };
 
-@interface Car: Object {
+@interface Car: OZObject {
 	struct color *_color;
 	OZString *_model;
 	int _throttleLevel;

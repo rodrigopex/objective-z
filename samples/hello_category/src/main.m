@@ -18,7 +18,7 @@ int main(void)
 	assert([myCar breakWithLevel:20] == YES);
 	assert([myCar milage] != 0);
 
-	[myCar dealloc];
+	[myCar release];
 
 	OZLog("All assertions passed");
 	return 0;

@@ -108,7 +108,16 @@ void __objc_class_register(objc_class_t *p)
 		}
 
 		if (strcmp(class_table[i]->name, p->name) == 0) {
-			printk("Duplicate class named: %s", p->name);
+			/*
+			 * In gnustep-2.0, metaclass and instance class share
+			 * the same name.  Only warn if both are the same kind.
+			 */
+			BOOL same_kind =
+				(class_table[i]->info & objc_class_flag_meta) ==
+				(p->info & objc_class_flag_meta);
+			if (same_kind) {
+				printk("Duplicate class named: %s", p->name);
+			}
 		}
 	}
 	printk("Class table is full, cannot register class: %s", p->name);
@@ -196,18 +205,17 @@ void __objc_class_register_methods(objc_class_t *p)
 		__objc_class_register_method_list(p, ml);
 	}
 
-	/* Resolve the superclass name to a class pointer */
-	if (p->superclass != NULL) {
-		if (p->info & objc_class_flag_meta) {
-			/* Metaclass superclass is set by objc_lookup_class */
-		} else {
-			Class superclass = objc_lookup_class((const char *)p->superclass);
-			if (superclass == Nil) {
-				printk("Superclass %s not found for class %s",
-				       (const char *)p->superclass, p->name);
-				return;
-			}
-			p->superclass = superclass;
+	/*
+	 * Resolve the superclass.
+	 *
+	 * gnustep-2.0: the superclass field is already a class pointer
+	 * (resolved at link time), not a name string.  Just ensure the
+	 * superclass's methods are registered.
+	 */
+	if (p->superclass != NULL && !(p->info & objc_class_flag_meta)) {
+		objc_class_t *super = p->superclass;
+		if (!(super->info & objc_class_flag_resolved)) {
+			objc_lookup_class(super->name);
 		}
 	}
 }
