@@ -57,6 +57,9 @@ if(CONFIG_OBJZ)
         zephyr_library_sources("${ZEPHYR_CURRENT_MODULE_DIR}/src/pool.c")
     endif()
 
+    # gnustep-2.0 ObjC metadata sections (__objc_selectors, __objc_classes, etc.)
+    zephyr_linker_sources(SECTIONS ${ZEPHYR_CURRENT_MODULE_DIR}/cmake/objc_sections.ld)
+
     # STATIC_INIT_GNU creates segments that newer binutils (>=2.39) flag as
     # having RWX permissions. Suppress the linker warning.
     zephyr_link_libraries(-Wl,--no-warn-rwx-segments)
