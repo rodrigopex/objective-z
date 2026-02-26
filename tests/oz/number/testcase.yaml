@@ -1,5 +1,5 @@
 tests:
-  test.objz.mutable_string:
+  test.oz.number:
     tags:
       - objz
     integration_platforms:

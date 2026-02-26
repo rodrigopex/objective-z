@@ -1,0 +1,6 @@
+tests:
+  test.oz.array:
+    tags:
+      - objz
+    integration_platforms:
+      - mps2/an385
