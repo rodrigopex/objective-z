@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Objective-Z is an Objective-C runtime for Zephyr RTOS, ported from [djthorpe/objc](https://github.com/djthorpe/objc) (minimal GCC-compatible ObjC runtime). It is packaged as a Zephyr module (`objc/zephyr/module.yml`). Supports GCC ABI v8, gnustep-1.7 ABI v9, and gnustep-1.7+ARC ABI v10.
+Objective-Z is an Objective-C runtime for Zephyr RTOS, packaged as a Zephyr module (`objc/zephyr/module.yml`). Uses the gnustep-2.0 ABI with Clang for ObjC compilation.
 
 ## Project instructions
 
@@ -34,21 +34,21 @@ Each sample registers the runtime via `ZEPHYR_EXTRA_MODULES` in its CMakeLists.t
 
 ### Runtime Module (`objc/`)
 
-- **`src/api.h`** — ABI structures (`objc_class`, `objc_method`, `objc_selector`, `objc_module`), ABI version constants (8, 9, 10), gnustep-1.7 extended class fields
-- **`src/module.c`** — Entry point: `__objc_exec_class()` called by compiler for each ObjC module during static init (`STATIC_INIT_GNU`). Accepts ABI versions 8, 9, 10.
-- **`src/message.c`** — Core dispatch: `objc_msg_lookup()` / `objc_msg_lookup_super()`, sends `+initialize` on first use
-- **`src/class.c`** — Class table (32 slots), lazy resolution of superclasses, gnustep-1.7 non-fragile ivar offset fixup
+- **`src/api.h`** — ABI structures (`objc_class`, `objc_method`, `objc_selector`, `objc_init`), gnustep-2.0 types
+- **`src/load.c`** — Entry point: `__objc_load()` called via `.init_array` static constructor. Registers classes, categories, protocols, and fixes constant string isa pointers from gnustep-2.0 metadata sections.
+- **`src/message.c`** — Core dispatch: `objc_msg_lookup()` / `objc_msg_lookup_super()`, lazy class resolution, sends `+initialize` on first use
+- **`src/class.c`** — Class table (32 slots), lazy resolution of superclasses, gnustep-2.0 non-fragile ivar offset fixup
 - **`src/hash.c`** — Global method hash table (512 slots, open addressing)
 - **`src/category.c`** — Category table (32 slots), deferred loading until class is resolved
 - **`src/malloc.c`** — Dedicated `sys_heap` (default 4096 bytes via `CONFIG_OBJZ_MEM_POOL_SIZE`) with spinlock
 - **`src/Object.m`** — Root class: alloc/init/dealloc/class/respondsToSelector. Checks static pools before heap fallback.
 - **`src/OZString.m`** — Backs `@"..."` literals; aliased to `NSString` under Clang
 
-### Clang / gnustep-1.7 Dispatch
+### Clang / gnustep-2.0 Dispatch
 
 - **`src/objc_msgSend.S`** — ARM Cortex-M Thumb-2 trampoline: `objc_msg_lookup(r0,r1)` + tail-call IMP
-- **`src/slot.c`** — `objc_slot_lookup_super()` bridge for gnustep-1.7 super sends
-- **`cmake/ObjcClang.cmake`** — Clang cross-compilation with `-fobjc-runtime=gnustep-1.7`, provides `objz_compile_objc_sources()`, `objz_compile_objc_arc_sources()`, `objz_target_sources()`, `objz_target_arc_sources()`
+- **`cmake/ObjcClang.cmake`** — Clang cross-compilation with `-fobjc-runtime=gnustep-2.0`, provides `objz_compile_objc_sources()`, `objz_compile_objc_arc_sources()`, `objz_target_sources()`, `objz_target_arc_sources()`
+- **`cmake/objc_sections.ld`** — Linker script for gnustep-2.0 ObjC metadata sections (`__objc_selectors`, `__objc_classes`, etc.) with `__start_`/`__stop_` boundary symbols
 
 ### MRR Layer (`CONFIG_OBJZ_MRR`)
 
@@ -69,11 +69,11 @@ Each sample registers the runtime via `ZEPHYR_EXTRA_MODULES` in its CMakeLists.t
 
 ### Init Order
 
-`SYS_INIT(objz_init, APPLICATION, 99)` initializes the heap. Static pools register at priority 98. `STATIC_INIT_GNU` runs GCC static constructors which trigger `__objc_exec_class()` for module registration.
+`SYS_INIT(objz_init, APPLICATION, 99)` initializes the heap. Static pools register at priority 98. `STATIC_INIT_GNU` runs static constructors (`.init_array`) which trigger `__objc_load()` for gnustep-2.0 metadata registration.
 
 ### Static Table Sizes
 
-Class: 32, Category: 32, Protocol: 32, Statics: 32, Hash: 512, Pool: 16. All statically allocated, no dynamic growth. Configurable via Kconfig.
+Class: 32, Category: 32, Protocol: 32, Hash: 512, Pool: 16. All statically allocated, no dynamic growth. Configurable via Kconfig.
 
 ## Coding Conventions
 
