@@ -2,18 +2,18 @@
 
 #include <zephyr/kernel.h>
 
-@implementation NXConstantString
+@implementation OZString
 
 ////////////////////////////////////////////////////////////////////////////////////
 // LIFECYCLE
 
 + (id)alloc {
-  return nil; // NXConstantString should not be allocated directly
+  return nil; /* OZString should not be allocated directly */
 }
 
 - (void)dealloc
 {
-        /* NXConstantString is a compile-time constant and must never be freed. */
+        /* OZString is a compile-time constant and must never be freed. */
         k_oops();
 
         /*
@@ -38,12 +38,12 @@
 // PUBLIC METHODS
 
 - (id)retain {
-  // NXConstantString is immutable, so we return self
+  /* OZString is immutable, so we return self */
   return self;
 }
 
 - (oneway void)release {
-  /* NXConstantString is immutable, so we do nothing */
+  /* OZString is immutable, so we do nothing */
 }
 
 - (BOOL)isEqual:(id)anObject {
@@ -51,10 +51,10 @@
     return YES;
   }
   if ([anObject class] == [self class]) {
-    if (self->_length != ((NXConstantString *)anObject)->_length) {
+    if (self->_length != ((OZString *)anObject)->_length) {
       return NO;
     }
-    return (memcmp(self->_data, ((NXConstantString *)anObject)->_data,
+    return (memcmp(self->_data, ((OZString *)anObject)->_data,
                    self->_length) == 0);
   }
   return NO;

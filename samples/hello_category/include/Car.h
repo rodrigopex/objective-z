@@ -10,15 +10,15 @@ struct color {
 
 @interface Car: Object {
 	struct color *_color;
-	NXConstantString *_model;
+	OZString *_model;
 	int _throttleLevel;
 	int _breakLevel;
 }
 
 @property(readonly) struct color *color;
 
-@property(readonly, atomic) NXConstantString *model;
-- (Car *)initWithColor:(struct color *)c andModel:(NXConstantString *)model;
+@property(readonly, atomic) OZString *model;
+- (Car *)initWithColor:(struct color *)c andModel:(OZString *)model;
 
 - (BOOL)throttleWithLevel:(int)level;
 

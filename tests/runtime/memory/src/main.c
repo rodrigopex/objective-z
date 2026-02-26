@@ -5,7 +5,7 @@
 
 /**
  * @file main.c
- * @brief Tests for memory (malloc.c), Object.m, and NXConstantString.m.
+ * @brief Tests for memory (malloc.c), Object.m, and OZString.m.
  */
 #include <zephyr/ztest.h>
 #include <objc/runtime.h>
@@ -164,7 +164,7 @@ ZTEST(memory, test_object_responds_to_selector)
 	test_mem_dealloc(obj);
 }
 
-/* ── NXConstantString tests ──────────────────────────────────────── */
+/* ── OZString tests ─────────────────────────────────────────────── */
 
 /* @"hello" has correct cStr and length */
 ZTEST(memory, test_constant_string_cstr)

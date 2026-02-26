@@ -6,7 +6,7 @@
 @synthesize color = _color;
 @synthesize model = _model;
 
-- (Car *)initWithColor:(struct color *)c andModel:(NXConstantString *)model
+- (Car *)initWithColor:(struct color *)c andModel:(OZString *)model
 {
 	self = [super init];
 

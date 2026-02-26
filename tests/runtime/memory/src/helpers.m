@@ -5,9 +5,9 @@
 
 /**
  * @file helpers.m
- * @brief ObjC helpers for memory/Object/NXConstantString tests.
+ * @brief ObjC helpers for memory/Object/OZString tests.
  */
-#import <objc/NXConstantString.h>
+#import <objc/OZString.h>
 
 /* ── TestItem: simple Object subclass with an ivar ───────────────── */
 
@@ -83,36 +83,36 @@ BOOL test_mem_responds_to_nonexistent(id obj)
 	return [obj respondsToSelector:@selector(thisMethodDoesNotExist)];
 }
 
-/* ── NXConstantString helpers ────────────────────────────────────── */
+/* ── OZString helpers ────────────────────────────────────── */
 
 const char *test_mem_cstr_get(void)
 {
-	NXConstantString *s = (NXConstantString *)(id)@"hello";
+	OZString *s = (OZString *)(id)@"hello";
 	return [s cStr];
 }
 
 unsigned int test_mem_cstr_length(void)
 {
-	NXConstantString *s = (NXConstantString *)(id)@"hello";
+	OZString *s = (OZString *)(id)@"hello";
 	return [s length];
 }
 
 BOOL test_mem_cstr_equal_same(void)
 {
-	NXConstantString *a = (NXConstantString *)(id)@"hello";
-	NXConstantString *b = (NXConstantString *)(id)@"hello";
+	OZString *a = (OZString *)(id)@"hello";
+	OZString *b = (OZString *)(id)@"hello";
 	return [a isEqual:(id)b];
 }
 
 BOOL test_mem_cstr_equal_diff(void)
 {
-	NXConstantString *a = (NXConstantString *)(id)@"hello";
-	NXConstantString *b = (NXConstantString *)(id)@"world";
+	OZString *a = (OZString *)(id)@"hello";
+	OZString *b = (OZString *)(id)@"world";
 	return [a isEqual:(id)b];
 }
 
 BOOL test_mem_cstr_identity(void)
 {
-	NXConstantString *s = (NXConstantString *)(id)@"hello";
+	OZString *s = (OZString *)(id)@"hello";
 	return [s isEqual:(id)s];
 }

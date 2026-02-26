@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include "objc/NXConstantString.h"
+#import <objc/OZString.h>
 #import <objc/objc.h>
 #include <zephyr/kernel.h>
 #include "TemperatureService.h"
@@ -34,7 +34,7 @@ int main(void)
 	int ret, temp;
 
 	while (1) {
-		NXConstantString *str = @"Requesting temperature";
+		OZString *str = @"Requesting temperature";
 
 		printk("%s:\n", str.cStr);
 

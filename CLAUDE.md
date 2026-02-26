@@ -42,7 +42,7 @@ Each sample registers the runtime via `ZEPHYR_EXTRA_MODULES` in its CMakeLists.t
 - **`src/category.c`** — Category table (32 slots), deferred loading until class is resolved
 - **`src/malloc.c`** — Dedicated `sys_heap` (default 4096 bytes via `CONFIG_OBJZ_MEM_POOL_SIZE`) with spinlock
 - **`src/Object.m`** — Root class: alloc/init/dealloc/class/respondsToSelector. Checks static pools before heap fallback.
-- **`src/NXConstantString.m`** — Backs `@"..."` literals; aliased to `NSString` under Clang
+- **`src/OZString.m`** — Backs `@"..."` literals; aliased to `NSString` under Clang
 
 ### Clang / gnustep-1.7 Dispatch
 

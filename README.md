@@ -8,7 +8,7 @@ Ported from [djthorpe/objc](https://github.com/djthorpe/objc) (minimal GCC-compa
 
 - Class and instance method dispatch (`objc_msg_lookup` / `objc_msgSend`)
 - Categories and protocols
-- `@"..."` string literals (NXConstantString / NSString alias under Clang)
+- `@"..."` string literals (OZString / NSString alias under Clang)
 - Manual Retain/Release (MRR) with `OZObject` root class
 - Automatic Reference Counting (ARC) with `-fobjc-arc`
 - `@autoreleasepool` blocks via per-thread pool stack

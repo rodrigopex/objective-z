@@ -135,8 +135,8 @@ unsigned int test_lit_dict_count(id d)
 
 id test_lit_dict_object_for_key_str(id d, const char *key_cstr)
 {
-	/* Create an NXConstantString to compare; use @"" literal matching */
-	/* We cannot construct arbitrary NXConstantString from C, so the
+	/* Create an OZString to compare; use @"" literal matching */
+	/* We cannot construct arbitrary OZString from C, so the
 	 * caller must use one of the known keys tested below. */
 	(void)key_cstr;
 	return nil;

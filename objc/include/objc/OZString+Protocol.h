@@ -1,11 +1,10 @@
 /**
- * @file NXConstantString+Protocol.h
- * @brief Defines the NXConstantStringProtocol for constant string
- * functionality.
+ * @file OZString+Protocol.h
+ * @brief Defines the OZStringProtocol for constant string functionality.
  *
- * This file defines the NXConstantStringProtocol which provides a standardized
- * interface for constant string objects in the NXFoundation framework. Classes
- * conforming to this protocol must implement basic string access methods.
+ * This file defines the OZStringProtocol which provides a standardized
+ * interface for constant string objects. Classes conforming to this protocol
+ * must implement basic string access methods.
  *
  * The protocol is designed to enable polymorphic behavior among different
  * constant string classes, allowing them to be used interchangeably in contexts
@@ -18,10 +17,10 @@
 
 /**
  * @brief Protocol for constant string objects.
- * @headerfile NXConstantString+Protocol.h objc/objc.h
- * @ingroup objc 
+ * @headerfile OZString+Protocol.h objc/objc.h
+ * @ingroup objc
  *
- * The NXConstantStringProtocol defines the minimal interface that constant
+ * The OZStringProtocol defines the minimal interface that constant
  * string objects must implement to provide basic string functionality. This
  * enables different string implementations to be used polymorphically
  * throughout the framework.
@@ -30,7 +29,7 @@
  * operations such as accessing the C string representation or getting the
  * length are required.
  */
-@protocol NXConstantStringProtocol
+@protocol OZStringProtocol
 
 @required
 

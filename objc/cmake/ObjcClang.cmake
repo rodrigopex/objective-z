@@ -95,6 +95,7 @@ function(_objz_build_clang_flags result_var)
     # ObjC runtime: GNUstep 1.7 (ABI compatible with GCC v8 __objc_exec_class,
     # but uses objc_msgSend dispatch and supports ARC)
     list(APPEND _flags -fobjc-runtime=gnustep-1.7)
+    list(APPEND _flags -fconstant-string-class=OZString)
 
     # Include dirs from zephyr_interface (skip generator expressions)
     get_property(_inc_dirs TARGET zephyr_interface

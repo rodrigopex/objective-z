@@ -1,24 +1,24 @@
 /**
- * @file NXConstantString.h
- * @brief Defines the NXConstantString class for constant strings.
+ * @file OZString.h
+ * @brief Defines the OZString class for constant strings.
  *
  * This class provides an immutable string object. It is a lightweight
  * alternative to more complex string classes.
  */
 #pragma once
-#include "NXConstantString+Protocol.h"
+#include "OZString+Protocol.h"
 #include "Object.h"
 
 /**
  * @brief A constant string class.
- * @headerfile NXConstantString.h objc/objc.h
+ * @headerfile OZString.h objc/objc.h
  * @ingroup objc
  *
  * This class is used to represent immutable strings. It stores a pointer
  * to a C-string and its length. For compatibility with modern Objective-C code,
  * it is aliased to `NSString` when compiling with Clang.
  */
-@interface NXConstantString : Object <NXConstantStringProtocol> {
+@interface OZString : Object <OZStringProtocol> {
 @private
   const char *_data;    ///< Pointer to the null-terminated C-string.
   unsigned int _length; ///< Length of the string in bytes, not including the
@@ -43,9 +43,9 @@
 /**
  * @brief Provides a compatibility alias for `NSString`.
  *
- * When compiling with Clang, `NXConstantString` is aliased to `NSString`
+ * When compiling with Clang, `OZString` is aliased to `NSString`
  * to allow for greater compatibility with modern Objective-C code and
  * frameworks.
  */
-@compatibility_alias NSString NXConstantString;
+@compatibility_alias NSString OZString;
 #endif

@@ -20,7 +20,7 @@ if(CONFIG_OBJZ)
     # ObjC files: Clang if enabled, else GCC
     objz_compile_objc_sources(${ZEPHYR_CURRENT_LIBRARY}
         "${ZEPHYR_CURRENT_MODULE_DIR}/src/init.m"
-        "${ZEPHYR_CURRENT_MODULE_DIR}/src/NXConstantString.m"
+        "${ZEPHYR_CURRENT_MODULE_DIR}/src/OZString.m"
         "${ZEPHYR_CURRENT_MODULE_DIR}/src/Object.m"
         "${ZEPHYR_CURRENT_MODULE_DIR}/src/Protocol.m"
     )

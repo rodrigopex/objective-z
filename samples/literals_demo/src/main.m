@@ -38,14 +38,14 @@ int main(void)
 		/* Array literal */
 		OZArray *arr = @[ @"hello", @42 ];
 		printk("array count=%u\n", [arr count]);
-		printk("arr[0]=%s\n", [(NXConstantString *)[arr objectAtIndex:0] cStr]);
+		printk("arr[0]=%s\n", [(OZString *)[arr objectAtIndex:0] cStr]);
 		printk("arr[1]=%d\n", [(OZNumber *)[arr objectAtIndex:1] intValue]);
 
 		/* Dictionary literal */
 		OZDictionary *dict = @{@"key" : @"value"};
 		printk("dict count=%u\n", [dict count]);
 		printk("dict[@\"key\"]=%s\n",
-		       [(NXConstantString *)[dict objectForKey:@"key"] cStr]);
+		       [(OZString *)[dict objectForKey:@"key"] cStr]);
 	}
 
 	printk("=== Demo complete ===\n");

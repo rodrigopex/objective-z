@@ -16,11 +16,11 @@
 #if __OBJC__
 
 // Protocols
-#include "NXConstantString+Protocol.h"
+#include "OZString+Protocol.h"
 #include "Object+Protocol.h"
 
 // Classes
-#include "NXConstantString.h"
+#include "OZString.h"
 #include "Object.h"
 #include "Protocol.h"
 
