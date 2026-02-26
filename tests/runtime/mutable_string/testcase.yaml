@@ -1,0 +1,6 @@
+tests:
+  test.objz.mutable_string:
+    tags:
+      - objz
+    integration_platforms:
+      - mps2/an385

@@ -11,6 +11,7 @@
  * Lookup is linear scan with -isEqual: on keys.
  */
 #import <objc/OZDictionary.h>
+#import <objc/OZMutableString.h>
 #import <objc/objc.h>
 
 #import <zephyr/logging/log.h>
@@ -65,6 +66,21 @@ LOG_MODULE_DECLARE(objz, CONFIG_OBJZ_LOG_LEVEL);
 - (id)objectForKeyedSubscript:(id)key
 {
 	return [self objectForKey:key];
+}
+
+- (id)description
+{
+	OZMutableString *desc = [OZMutableString stringWithCString:"{"];
+	for (unsigned int i = 0; i < _count; i++) {
+		if (i > 0) {
+			[desc appendCString:"; "];
+		}
+		[desc appendString:[_keys[i] description]];
+		[desc appendCString:" = "];
+		[desc appendString:[_values[i] description]];
+	}
+	[desc appendCString:"}"];
+	return desc;
 }
 
 - (void)dealloc

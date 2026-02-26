@@ -10,6 +10,7 @@
  * Elements are retained on creation and released on dealloc.
  */
 #import <objc/OZArray.h>
+#import <objc/OZMutableString.h>
 #import <objc/objc.h>
 
 #import <zephyr/logging/log.h>
@@ -56,6 +57,19 @@ LOG_MODULE_DECLARE(objz, CONFIG_OBJZ_LOG_LEVEL);
 - (id)objectAtIndexedSubscript:(unsigned int)index
 {
 	return [self objectAtIndex:index];
+}
+
+- (id)description
+{
+	OZMutableString *desc = [OZMutableString stringWithCString:"("];
+	for (unsigned int i = 0; i < _count; i++) {
+		if (i > 0) {
+			[desc appendCString:", "];
+		}
+		[desc appendString:[_items[i] description]];
+	}
+	[desc appendCString:")"];
+	return desc;
 }
 
 - (void)dealloc
