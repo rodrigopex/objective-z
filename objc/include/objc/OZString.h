@@ -2,27 +2,29 @@
  * @file OZString.h
  * @brief Defines the OZString class for constant strings.
  *
- * This class provides an immutable string object. It is a lightweight
- * alternative to more complex string classes.
+ * This class provides an immutable string object backed by Clang's
+ * gnustep-2.0 constant string layout: { isa, flags, length, size, hash, data }.
  */
 #pragma once
 #include "OZString+Protocol.h"
 #include "Object.h"
 
 /**
- * @brief A constant string class.
+ * @brief A constant string class (gnustep-2.0 layout).
  * @headerfile OZString.h objc/objc.h
  * @ingroup objc
  *
- * This class is used to represent immutable strings. It stores a pointer
- * to a C-string and its length. For compatibility with modern Objective-C code,
- * it is aliased to `NSString` when compiling with Clang.
+ * Ivar layout matches Clang's __objc_constant_string struct exactly.
+ * For compatibility with modern Objective-C code, it is aliased to
+ * `NSString` when compiling with Clang.
  */
 @interface OZString : Object <OZStringProtocol> {
 @private
-  const char *_data;    ///< Pointer to the null-terminated C-string.
-  unsigned int _length; ///< Length of the string in bytes, not including the
-                        ///< null terminator.
+  unsigned int _flags;  ///< Flags (reserved, currently 0).
+  unsigned int _length; ///< Number of bytes in the string (not including NUL).
+  unsigned int _size;   ///< Allocated size in bytes (same as length for constants).
+  unsigned int _hash;   ///< Cached hash value (0 = not computed).
+  const char *_data;    ///< Pointer to the null-terminated C-string data.
 }
 
 /**

@@ -4,11 +4,9 @@
 
 @implementation OZString
 
-////////////////////////////////////////////////////////////////////////////////////
-// LIFECYCLE
-
+/* OZString should not be allocated directly */
 + (id)alloc {
-  return nil; /* OZString should not be allocated directly */
+  return nil;
 }
 
 - (void)dealloc
@@ -16,15 +14,10 @@
         /* OZString is a compile-time constant and must never be freed. */
         k_oops();
 
-        /*
-         * Unreachable: satisfies GCC's "method possibly missing a [super dealloc] call"
-         * check without actually calling into Object's dealloc (which would free memory).
-         */
+        /* Unreachable: satisfies GCC's "method possibly missing a
+         * [super dealloc] call" check. */
         [super dealloc];
 }
-
-////////////////////////////////////////////////////////////////////////////////////
-// PROPERTIES
 
 - (const char *)cStr {
   return _data;
@@ -38,16 +31,12 @@
   return (id)self;
 }
 
-////////////////////////////////////////////////////////////////////////////////////
-// PUBLIC METHODS
-
 - (id)retain {
-  /* OZString is immutable, so we return self */
   return self;
 }
 
 - (oneway void)release {
-  /* OZString is immutable, so we do nothing */
+  /* no-op for immutable constant strings */
 }
 
 - (BOOL)isEqual:(id)anObject {
@@ -55,11 +44,15 @@
     return YES;
   }
   if ([anObject class] == [self class]) {
-    if (self->_length != ((OZString *)anObject)->_length) {
+    OZString *other = (OZString *)anObject;
+    /* Fast rejection: compare cached hash if both are non-zero */
+    if (self->_hash != 0 && other->_hash != 0 && self->_hash != other->_hash) {
       return NO;
     }
-    return (memcmp(self->_data, ((OZString *)anObject)->_data,
-                   self->_length) == 0);
+    if (self->_length != other->_length) {
+      return NO;
+    }
+    return (memcmp(self->_data, other->_data, self->_length) == 0);
   }
   return NO;
 }
