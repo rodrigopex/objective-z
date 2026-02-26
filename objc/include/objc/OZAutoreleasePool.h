@@ -2,8 +2,7 @@
  * @file OZAutoreleasePool.h
  * @brief Autorelease pool with per-thread stack.
  *
- * Provides @autoreleasepool {} support for gnustep-1.7 runtime,
- * and OZ_AUTORELEASEPOOL macro for non-ARC code.
+ * Provides @autoreleasepool {} support for gnustep-1.7 runtime.
  */
 #pragma once
 #import <objc/Object.h>
@@ -58,27 +57,3 @@ void *__objc_autoreleasepool_push(void);
  * @param token The value returned by __objc_autoreleasepool_push().
  */
 void __objc_autoreleasepool_pop(void *token);
-
-#if __OBJC__
-/**
- * @def OZ_AUTORELEASEPOOL
- * @brief Scoped autorelease pool macro for non-ARC code.
- *
- * Usage:
- *   OZ_AUTORELEASEPOOL {
- *       id obj = [[OZObject alloc] init];
- *       [obj autorelease];
- *   }
- */
-#define OZ_AUTORELEASEPOOL                                                                         \
-	for (OZAutoreleasePool *_oz_pool                                                           \
-	             __attribute__((cleanup(__objc_pool_cleanup))) =                                \
-	                     [[OZAutoreleasePool alloc] init],                                      \
-	                     *_oz_once = (id)(uintptr_t)1;                                          \
-	     _oz_once; _oz_once = nil)
-
-static inline void __objc_pool_cleanup(OZAutoreleasePool **pp)
-{
-	[*pp drain];
-}
-#endif /* __OBJC__ */

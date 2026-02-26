@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  *
  * ObjC boxed literals and collection literals demo.
- * Compiled without ARC — uses MRR with OZ_AUTORELEASEPOOL.
+ * Compiled without ARC — uses MRR with @autoreleasepool.
  */
 
 #import <objc/objc.h>
@@ -14,7 +14,7 @@ int main(void)
 {
 	printk("=== ObjC Literals Demo ===\n");
 
-	OZ_AUTORELEASEPOOL {
+	@autoreleasepool {
 		/* Boolean literals */
 		OZNumber *yes = @YES;
 		OZNumber *no = @NO;
@@ -42,7 +42,7 @@ int main(void)
 		printk("arr[1]=%d\n", [(OZNumber *)[arr objectAtIndex:1] intValue]);
 
 		/* Dictionary literal */
-		OZDictionary *dict = @{ @"key" : @"value" };
+		OZDictionary *dict = @{@"key" : @"value"};
 		printk("dict count=%u\n", [dict count]);
 		printk("dict[@\"key\"]=%s\n",
 		       [(NXConstantString *)[dict objectForKey:@"key"] cStr]);

@@ -81,7 +81,7 @@ static void __objc_arp_add_object(id obj)
 
 @end
 
-/* C helpers for ARC entry points and OZ_AUTORELEASEPOOL macro */
+/* C helpers for ARC entry points and @autoreleasepool {} syntax */
 
 void *__objc_autoreleasepool_push(void)
 {
