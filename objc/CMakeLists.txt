@@ -7,14 +7,13 @@ if(CONFIG_OBJZ)
 
     # C files: always GCC
     zephyr_library_sources("${ZEPHYR_CURRENT_MODULE_DIR}/src/malloc.c")
-    zephyr_library_sources("${ZEPHYR_CURRENT_MODULE_DIR}/src/module.c")
+    zephyr_library_sources("${ZEPHYR_CURRENT_MODULE_DIR}/src/load.c")
     zephyr_library_sources("${ZEPHYR_CURRENT_MODULE_DIR}/src/category.c")
     zephyr_library_sources("${ZEPHYR_CURRENT_MODULE_DIR}/src/class.c")
     zephyr_library_sources("${ZEPHYR_CURRENT_MODULE_DIR}/src/dtable.c")
     zephyr_library_sources("${ZEPHYR_CURRENT_MODULE_DIR}/src/hash.c")
     zephyr_library_sources("${ZEPHYR_CURRENT_MODULE_DIR}/src/message.c")
     zephyr_library_sources("${ZEPHYR_CURRENT_MODULE_DIR}/src/protocol.c")
-    zephyr_library_sources("${ZEPHYR_CURRENT_MODULE_DIR}/src/statics.c")
     zephyr_library_sources("${ZEPHYR_CURRENT_MODULE_DIR}/src/runtime.c")
 
     # ObjC files: Clang if enabled, else GCC
@@ -25,10 +24,8 @@ if(CONFIG_OBJZ)
         "${ZEPHYR_CURRENT_MODULE_DIR}/src/Protocol.m"
     )
 
-    # gnustep-1.7 dispatch support (Clang uses objc_msgSend instead of
-    # objc_msg_lookup + indirect call, and objc_slot_lookup_super for [super ...])
+    # gnustep-2.0 dispatch: objc_msgSend trampoline (ARM Thumb-2)
     zephyr_library_sources("${ZEPHYR_CURRENT_MODULE_DIR}/src/objc_msgSend.S")
-    zephyr_library_sources("${ZEPHYR_CURRENT_MODULE_DIR}/src/slot.c")
 
     # MRR memory management layer
     if(CONFIG_OBJZ_MRR)

@@ -95,12 +95,6 @@ config OBJZ_PROTOCOL_TABLE_SIZE
     help
       Maximum number of Objective-C protocols that can be registered.
 
-config OBJZ_STATICS_TABLE_SIZE
-    int "Static instances table size"
-    default 32
-    help
-      Maximum number of static instance lists that can be registered.
-
 config OBJZ_HASH_TABLE_SIZE
     int "Method hash table size"
     default 512
