@@ -56,12 +56,12 @@ Exit QEMU with `Ctrl+A`, then `x`.
 |---|---|---|
 | `hello_world` | Basic class/instance method dispatch | `CONFIG_OBJZ=y` |
 | `hello_category` | Categories (method extensions on existing classes) | `CONFIG_OBJZ=y` |
-| `mem_demo` | Manual Retain/Release lifecycle with `OZObject` | `+OBJZ_MRR` |
-| `arc_demo` | Automatic Reference Counting, scoped cleanup | `+OBJZ_MRR +OBJZ_ARC` |
-| `pool_demo` | Static allocation pools with `K_MEM_SLAB` | `+OBJZ_MRR +OBJZ_STATIC_POOLS` |
+| `mem_demo` | Manual Retain/Release lifecycle with `OZObject` | `CONFIG_OBJZ=y` |
+| `arc_demo` | Automatic Reference Counting, scoped cleanup | `+OBJZ_ARC` |
+| `pool_demo` | Static allocation pools with `K_MEM_SLAB` | `+OBJZ_STATIC_POOLS` |
 | `zbus_objc` | ObjC objects with Zephyr zbus pub/sub messaging | `+ZBUS` |
 | `zbus_service` | Request-response service pattern over zbus | `+ZBUS` |
-| `benchmark` | Cycle-accurate runtime performance benchmarks | `+OBJZ_MRR +OBJZ_ARC +OBJZ_STATIC_POOLS` |
+| `benchmark` | Cycle-accurate runtime performance benchmarks | `+OBJZ_ARC +OBJZ_STATIC_POOLS` |
 
 Build a specific sample:
 
@@ -196,9 +196,6 @@ set(ZEPHYR_EXTRA_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/../objc/")
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(my_app)
 
-# Include ObjC compilation helpers
-include(${CMAKE_CURRENT_SOURCE_DIR}/../objc/cmake/ObjcClang.cmake)
-
 # Compile .m sources with Clang
 objz_target_sources(app src/main.m)
 
@@ -209,13 +206,10 @@ objz_target_sources(app src/main.m)
 ### 3. prj.conf
 
 ```ini
-# Required
+# Required (MRR is enabled by default)
 CONFIG_OBJZ=y
 
-# Optional: Manual Retain/Release
-CONFIG_OBJZ_MRR=y
-
-# Optional: Automatic Reference Counting (requires MRR)
+# Optional: Automatic Reference Counting
 CONFIG_OBJZ_ARC=y
 
 # Optional: Static allocation pools
@@ -230,7 +224,7 @@ CONFIG_OBJZ_STATIC_POOLS=y
 #include <zephyr/kernel.h>
 ```
 
-Use `Object` as root class for lightweight objects. Use `OZObject` when you need reference counting (MRR or ARC).
+Use `OZObject` as the root class. It provides retain/release/autorelease out of the box.
 
 ### 5. Build
 
@@ -255,7 +249,7 @@ west build -p -b mps2/an385 .
 |---|---|---|
 | `CONFIG_OBJZ` | Enable Objective-C runtime | — |
 | `CONFIG_OBJZ_DISPATCH_CACHE` | Per-class dispatch table cache | `OBJZ` |
-| `CONFIG_OBJZ_MRR` | Manual Retain/Release with `OZObject` | `OBJZ` |
+| `CONFIG_OBJZ_MRR` | Manual Retain/Release with `OZObject` (default y) | `OBJZ` |
 | `CONFIG_OBJZ_ARC` | Automatic Reference Counting | `OBJZ_MRR` |
 | `CONFIG_OBJZ_STATIC_POOLS` | Per-class static allocation pools | `OBJZ` |
 
