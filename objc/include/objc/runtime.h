@@ -287,6 +287,6 @@ void objc_setPropertyStruct(void *dest, void *src, ptrdiff_t size, BOOL atomic, 
  * @ingroup objc
  *
  * Prints a table showing the configured size and current usage of each
- * internal runtime table (class, category, protocol, statics, hash).
+ * internal runtime table (class, category, protocol, hash).
  */
 void objc_print_table_stats(void);

@@ -10,204 +10,49 @@
 objc_class_t *class_table[CONFIG_OBJZ_CLASS_TABLE_SIZE + 1];
 
 /**
- * Advance past a single ObjC type-encoding element.
- * Returns a pointer to the next type in the encoding string.
- */
-static const char *__objc_skip_type(const char *type)
-{
-	if (type == NULL || *type == '\0') {
-		return type;
-	}
-	switch (*type) {
-	/* Single-character primitive types */
-	case 'c': case 'C': case 's': case 'S':
-	case 'i': case 'I': case 'f': case 'l': case 'L':
-	case 'q': case 'Q': case 'd':
-	case '#': case '@': case ':': case '*': case '?':
-	case 'v': case 'B':
-		return type + 1;
-	case '^':
-		/* Pointer to type */
-		return __objc_skip_type(type + 1);
-	case '[': {
-		/* Array: [NType] */
-		const char *p = type + 1;
-		while (*p >= '0' && *p <= '9') {
-			p++;
-		}
-		p = __objc_skip_type(p);
-		if (*p == ']') {
-			p++;
-		}
-		return p;
-	}
-	case '{':
-	case '(': {
-		/* Struct or union: {name=types} or (name=types) */
-		const char *p = type + 1;
-		int depth = 1;
-		while (*p && depth > 0) {
-			if (*p == '{' || *p == '(') {
-				depth++;
-			} else if (*p == '}' || *p == ')') {
-				depth--;
-			}
-			p++;
-		}
-		return p;
-	}
-	default:
-		return type + 1;
-	}
-}
-
-static size_t __objc_sizeof_type(const char *type);
-
-/**
- * Compute the size of a union type encoding: (name=type1type2...)
- * Returns the size of the largest member.
- */
-static size_t __objc_sizeof_union(const char *type)
-{
-	/* Skip past '(' and optional name to '=' */
-	const char *p = type + 1;
-	while (*p && *p != '=' && *p != ')') {
-		p++;
-	}
-	if (*p == '=') {
-		p++;
-	}
-
-	size_t max_size = 0;
-	while (*p && *p != ')') {
-		size_t msz = __objc_sizeof_type(p);
-		if (msz > max_size) {
-			max_size = msz;
-		}
-		p = __objc_skip_type(p);
-	}
-	return max_size > 0 ? max_size : sizeof(void *);
-}
-
-/**
- * Return the size (in bytes) of a single ObjC type-encoding element.
- * Handles the subset of types emitted by Clang for ivars on 32-bit ARM.
- */
-static size_t __objc_sizeof_type(const char *type)
-{
-	if (type == NULL || *type == '\0') {
-		return 0;
-	}
-	switch (*type) {
-	case 'c': /* char / BOOL */
-	case 'C': /* unsigned char */
-		return 1;
-	case 's': /* short */
-	case 'S': /* unsigned short */
-		return 2;
-	case 'i': /* int */
-	case 'I': /* unsigned int */
-	case 'f': /* float */
-	case 'l': /* long (32-bit ARM) */
-	case 'L': /* unsigned long */
-		return 4;
-	case 'q': /* long long */
-	case 'Q': /* unsigned long long */
-	case 'd': /* double */
-		return 8;
-	case '#': /* Class */
-	case '@': /* id */
-	case ':': /* SEL */
-	case '^': /* pointer */
-	case '*': /* char* */
-	case '?': /* function pointer */
-		return sizeof(void *);
-	case '[': {
-		/* Array type: [NType] e.g. [64@] = 64 id pointers */
-		unsigned long count = 0;
-		const char *p = type + 1;
-		while (*p >= '0' && *p <= '9') {
-			count = count * 10 + (*p - '0');
-			p++;
-		}
-		if (count == 0 || *p == '\0' || *p == ']') {
-			return sizeof(void *);
-		}
-		return count * __objc_sizeof_type(p);
-	}
-	case '(': /* union — compute from members */
-		return __objc_sizeof_union(type);
-	case '{': /* struct — fall back to pointer size */
-		return sizeof(void *);
-	default:
-		return sizeof(void *);
-	}
-}
-
-/**
- * Return the natural alignment for an ivar type.
- */
-static size_t __objc_alignof_type(const char *type)
-{
-	size_t sz = __objc_sizeof_type(type);
-	/* natural alignment = type size, capped at pointer size */
-	return (sz > sizeof(void *)) ? sizeof(void *) : sz;
-}
-
-/**
- * Round up v to next multiple of align.
- */
-static inline size_t __objc_align_up(size_t v, size_t align)
-{
-	return (v + align - 1) & ~(align - 1);
-}
-
-/**
- * Fix up ivar offsets for a gnustep-1.7 class (ABI version 9).
+ * Fix up ivar offsets for a gnustep-2.0 class.
  *
- * The compiler emits all ivar offsets as 0 and stores the class size
- * as a negative value.  The runtime must compute actual offsets based
- * on the superclass instance size and each ivar's type encoding.
+ * The compiler emits per-ivar offset globals initialised to zero and
+ * stores instance_size as a negative value for non-fragile classes.
+ * The runtime computes actual offsets based on the resolved superclass
+ * instance size and each ivar's explicit size field.
  *
- * This writes the correct offset into:
- *   - *(cls->ivar_offsets[i])   — the global __objc_ivar_offset_value_X.y
- *   - cls->ivars->ivars[i].offset  — the ivar list entry
- *
- * It also sets cls->size to the total instance size.
+ * Writes the correct offset into *(ivar->offset) and updates
+ * cls->instance_size to the total.
  */
 static void __objc_fixup_ivar_offsets(objc_class_t *cls)
 {
-	/* Only fixup non-meta classes with the extended fields */
 	if (cls == NULL || (cls->info & objc_class_flag_meta)) {
-		return;
-	}
-	if (cls->ivar_offsets == NULL) {
 		return;
 	}
 
 	/* Determine superclass instance size */
 	size_t offset = 0;
 	if (cls->superclass != NULL) {
-		offset = cls->superclass->size;
+		offset = cls->superclass->instance_size;
 	}
 
-	/* Walk each ivar and assign offsets */
 	struct objc_ivar_list *il = cls->ivars;
 	if (il != NULL) {
 		for (int i = 0; i < il->count; i++) {
 			struct objc_ivar *ivar = &il->ivars[i];
-			size_t ivar_size = __objc_sizeof_type(ivar->type);
-			size_t align = __objc_alignof_type(ivar->type);
+			uint32_t ivar_size = ivar->size;
+
+			/* Natural alignment = min(ivar_size, sizeof(void*)) */
+			size_t align = ivar_size;
+			if (align > sizeof(void *)) {
+				align = sizeof(void *);
+			}
+			if (align == 0) {
+				align = 1;
+			}
 
 			/* Align the current offset */
-			offset = __objc_align_up(offset, align);
+			offset = (offset + align - 1) & ~(align - 1);
 
-			/* Write the offset into the ivar list */
-			ivar->offset = (int)offset;
-
-			/* Write the offset into the global variable */
-			if (cls->ivar_offsets[i] != NULL) {
-				*(cls->ivar_offsets[i]) = (int)offset;
+			/* Write offset into the global variable */
+			if (ivar->offset != NULL) {
+				*(ivar->offset) = (int)offset;
 			}
 
 			offset += ivar_size;
@@ -215,16 +60,14 @@ static void __objc_fixup_ivar_offsets(objc_class_t *cls)
 	}
 
 	/* Update total instance size */
-	cls->size = offset;
+	cls->instance_size = (long)offset;
 }
 
-///////////////////////////////////////////////////////////////////////////////
-
-void __objc_class_init()
+void __objc_class_init(void)
 {
 	static BOOL init = NO;
 	if (init) {
-		return; // Already initialized
+		return;
 	}
 	init = YES;
 
@@ -240,34 +83,30 @@ void __objc_class_register(objc_class_t *p)
 	}
 
 	/*
-	 * gnustep-1.7 (ABI version 9) encodes instance size as negative
-	 * to indicate non-fragile ivar support. Convert to positive.
+	 * gnustep-2.0 encodes instance size as negative to indicate
+	 * non-fragile ivar support. Convert to positive.
 	 */
-	if ((long)p->size < 0) {
-		p->size = (unsigned long)(-(long)p->size);
+	if ((long)p->instance_size < 0) {
+		p->instance_size = -(long)p->instance_size;
 	}
 
 #ifdef OBJCDEBUG
-	printk("__objc_class_register %c[%s] @%p size=%lu\n",
-	       p->info & objc_class_flag_meta ? '+' : '-', p->name, p, p->size);
+	printk("__objc_class_register %c[%s] @%p size=%ld\n",
+	       p->info & objc_class_flag_meta ? '+' : '-', p->name, p, p->instance_size);
 #endif
 	for (int i = 0; i < CONFIG_OBJZ_CLASS_TABLE_SIZE; i++) {
 		if (class_table[i] == p) {
-			// Class is already registered, nothing to do
 			return;
 		}
 		if (class_table[i] == NULL) {
-			// Found empty slot, register the class
 			class_table[i] = p;
 
-			// Register protocols for the class
 			if (p->protocols != NULL) {
 				__objc_protocol_list_register(p->protocols);
 			}
 			return;
 		}
 
-		// Check for duplicate class names
 		if (strcmp(class_table[i]->name, p->name) == 0) {
 			printk("Duplicate class named: %s", p->name);
 		}
@@ -275,10 +114,6 @@ void __objc_class_register(objc_class_t *p)
 	printk("Class table is full, cannot register class: %s", p->name);
 }
 
-/**
- * Lookup the class in the class table by name.
- * Returns the class, or Nil if not found.
- */
 objc_class_t *__objc_lookup_class(const char *name)
 {
 	if (name == NULL) {
@@ -286,47 +121,55 @@ objc_class_t *__objc_lookup_class(const char *name)
 	}
 	for (int i = 0; i < CONFIG_OBJZ_CLASS_TABLE_SIZE; i++) {
 		if (class_table[i] == NULL || class_table[i]->name == NULL) {
-			continue; // Skip empty slots and continue searching
+			continue;
 		}
 		if (strcmp(class_table[i]->name, name) == 0) {
 			return class_table[i];
 		}
 	}
-	return Nil; // No class found
+	return Nil;
 }
 
 /**
  * Register a list of methods for a class.
- * This function registers all methods in the method list, for the named class.
+ *
+ * In gnustep-2.0 each method has { imp, selector, types } where
+ * selector points to a struct objc_selector { name, types }.
  */
 void __objc_class_register_method_list(objc_class_t *cls, struct objc_method_list *ml)
 {
 	if (ml == NULL) {
-		return; // Nothing to register
+		return;
 	}
 	for (int i = 0; i < ml->count; i++) {
 		struct objc_method *method = &ml->methods[i];
-		if (method == NULL || method->name == NULL || method->imp == NULL) {
-			continue; // Skip invalid methods
+		if (method == NULL || method->selector == NULL || method->imp == NULL) {
+			continue;
 		}
+
+		const char *method_name = method->selector->name;
+		if (method_name == NULL) {
+			continue;
+		}
+
 #ifdef OBJCDEBUG
-		sys_printf("    %c[%s %s] types=%s imp=%p\n",
-			   cls->info & objc_class_flag_meta ? '+' : '-', cls->name, method->name,
-			   method->types, method->imp);
+		printk("    %c[%s %s] types=%s imp=%p\n",
+		       cls->info & objc_class_flag_meta ? '+' : '-', cls->name, method_name,
+		       method->types, method->imp);
 #endif
-		// We register the version WITH the type
+		/* Register WITH type */
 		struct objc_hashitem *item =
-			__objc_hash_register(cls, method->name, method->types, method->imp);
+			__objc_hash_register(cls, method_name, method->types, method->imp);
 		if (item == NULL) {
-			printk("TODO: Failed to register method %s in class %s\n", method->name,
+			printk("TODO: Failed to register method %s in class %s\n", method_name,
 			       cls->name);
 			return;
 		}
 
-		// We register the version WITHOUT the type
-		item = __objc_hash_register(cls, method->name, NULL, method->imp);
+		/* Register WITHOUT type (for type-agnostic lookup) */
+		item = __objc_hash_register(cls, method_name, NULL, method->imp);
 		if (item == NULL) {
-			printk("TODO: Failed to register method %s in class %s\n", method->name,
+			printk("TODO: Failed to register method %s in class %s\n", method_name,
 			       cls->name);
 			return;
 		}
@@ -334,107 +177,80 @@ void __objc_class_register_method_list(objc_class_t *cls, struct objc_method_lis
 }
 
 /**
- * Register methods in the class for lookup objc_msg_lookup and
- * objc_msg_lookup_super.
+ * Register methods in the class for lookup via objc_msg_lookup.
  */
 void __objc_class_register_methods(objc_class_t *p)
 {
-	// Check if the class is already resolved
 	if (p->info & objc_class_flag_resolved) {
-		return; // Already resolved
+		return;
 	}
 
-	// Mark the class as being resolved to prevent circular resolution
 	p->info |= objc_class_flag_resolved;
 
 #ifdef OBJCDEBUG
-	sys_printf("  __objc_class_register_methods %c[%s] @%p size=%lu\n",
-		   p->info & objc_class_flag_meta ? '+' : '-', p->name, p, p->size);
+	printk("  __objc_class_register_methods %c[%s] @%p size=%ld\n",
+	       p->info & objc_class_flag_meta ? '+' : '-', p->name, p, p->instance_size);
 #endif
 
-	// Enumerate the class's methods and resolve them
 	for (struct objc_method_list *ml = p->methods; ml != NULL; ml = ml->next) {
 		__objc_class_register_method_list(p, ml);
 	}
 
-	// Resolve the superclass
+	/* Resolve the superclass name to a class pointer */
 	if (p->superclass != NULL) {
-		// Check if superclass is already a resolved class pointer vs a string
-		// If it's a metaclass and superclass looks like a class pointer, skip
-		// string resolution
 		if (p->info & objc_class_flag_meta) {
-			// For metaclasses, superclass should already be set by objc_lookup_class
-			// Skip string-based resolution
+			/* Metaclass superclass is set by objc_lookup_class */
 		} else {
-			// For instance classes, resolve the string-based superclass
 			Class superclass = objc_lookup_class((const char *)p->superclass);
 			if (superclass == Nil) {
 				printk("Superclass %s not found for class %s",
 				       (const char *)p->superclass, p->name);
 				return;
 			}
-			p->superclass = superclass; // Update the superclass pointer
+			p->superclass = superclass;
 		}
 	}
 }
 
-///////////////////////////////////////////////////////////////////////////////
-
 /**
- * Lookup the class with the specified name, and resolve all the methods for the
- * class and metaclass if that has not yet been done. If the class is not found,
- * Nil is returned.
+ * Lookup the class with the specified name, resolve methods and ivar offsets.
  */
 Class objc_lookup_class(const char *name)
 {
-	// Lookup the class by name
 	objc_class_t *cls = __objc_lookup_class(name);
 	if (cls == Nil) {
 		return Nil;
 	}
 #ifdef OBJCDEBUG
-	sys_printf("objc_lookup_class %c[%s] @%p\n", cls->info & objc_class_flag_meta ? '+' : '-',
-		   name, cls);
+	printk("objc_lookup_class %c[%s] @%p\n", cls->info & objc_class_flag_meta ? '+' : '-',
+	       name, cls);
 #endif
 
-	// Resolve the class
 	if (cls->info & objc_class_flag_resolved) {
-		// Check if metaclass also needs to be resolved
 		if (cls->metaclass != NULL && !(cls->metaclass->info & objc_class_flag_resolved)) {
-			// Need to resolve the metaclass
+			/* Need to resolve the metaclass */
 		} else {
-			return (Class)cls; // Both class and metaclass are resolved
+			return (Class)cls;
 		}
 	}
 
-	// Resolve the class methods (including superclass methods)
 	__objc_class_register_methods(cls);
 
-	// Set up the metaclass superclass BEFORE registering metaclass methods
+	/* Set up the metaclass superclass BEFORE registering metaclass methods */
 	if (cls->metaclass != NULL && cls->superclass != NULL) {
 		cls->metaclass->superclass = cls->superclass->metaclass;
 	}
 
-	// Resolve the metaclass methods (now that superclass is set)
 	if (cls->metaclass != NULL) {
 		__objc_class_register_methods(cls->metaclass);
 	}
 
-	/*
-	 * gnustep-1.7 non-fragile ivar fixup: compute ivar offsets and
-	 * instance size now that the superclass is resolved.
-	 */
+	/* gnustep-2.0 non-fragile ivar fixup */
 	__objc_fixup_ivar_offsets(cls);
 
-	// Return the class pointer
 	return (Class)cls;
 }
 
-///////////////////////////////////////////////////////////////////////////////
-
-/**
- * Class lookup function. Panics if the class is not found.
- */
 Class objc_get_class(const char *name)
 {
 	Class cls = objc_lookup_class(name);
@@ -445,42 +261,26 @@ Class objc_get_class(const char *name)
 	return cls;
 }
 
-/**
- * Looks up the class with the specified name. Returns Nil if the class is not
- * found.
- */
 Class objc_lookupClass(const char *name)
 {
 	return name ? objc_lookup_class(name) : Nil;
 }
 
-/**
- * Returns the name of the class, or NULL if the class is Nil.
- */
 const char *class_getName(Class cls)
 {
 	return cls ? cls->name : NULL;
 }
 
-/**
- * Returns the name of the class of the object, or NULL if the object is nil.
- */
 const char *object_getClassName(id obj)
 {
 	return obj ? obj->isa->name : NULL;
 }
 
-/**
- * Returns the class of the object. Returns Nil if the object is nil.
- */
 Class object_getClass(id object)
 {
 	return object ? object->isa : Nil;
 }
 
-/**
- * Sets the class of the object to the specified class.
- */
 void object_setClass(id object, Class cls)
 {
 	if (object == NULL || cls == NULL) {
@@ -491,12 +291,9 @@ void object_setClass(id object, Class cls)
 		printk("object_setClass: cannot set class to a metaclass");
 		return;
 	}
-	object->isa = cls; // Set the class of the object
+	object->isa = cls;
 }
 
-/**
- * Checks if an instance class matches, or subclass of another class.
- */
 BOOL object_isKindOfClass(id object, Class cls)
 {
 	if (object == nil) {
@@ -506,50 +303,31 @@ BOOL object_isKindOfClass(id object, Class cls)
 		printk("object_isKindOfClass: class is Nil");
 		return NO;
 	}
-	Class objClass = object->isa; // Get the class of the object
+	Class objClass = object->isa;
 	while (objClass != Nil) {
 		if (objClass == cls) {
-			return YES; // Found a match
+			return YES;
 		}
-		objClass = objClass->superclass; // Move up the superclass chain
+		objClass = objClass->superclass;
 	}
-	return NO; // No match found
+	return NO;
 }
 
-/**
- * Returns the size of an instance of the named class, in bytes. Returns 0 if
- * the class is Nil
- */
 size_t class_getInstanceSize(Class cls)
 {
-	return cls ? cls->size : 0;
+	return cls ? cls->instance_size : 0;
 }
 
-/**
- * Returns the superclass of an instance, or Nil if it is a root class
- */
 Class object_getSuperclass(id obj)
 {
 	return obj ? obj->isa->superclass : Nil;
 }
 
-/**
- * Returns the superclass of a class, or Nil if it is a root class
- */
 Class class_getSuperclass(Class cls)
 {
 	return cls ? cls->superclass : Nil;
 }
 
-/*
- * Structure copy function.  This is provided for compatibility with the Apple
- * APIs (it's an ABI function, so it's semi-public), but it's a bad design so
- * it's not used. The problem is that it does not identify which of the
- * pointers corresponds to the object, which causes some excessive locking to
- * be needed.
- * source
- * https://github.com/charlieMonroe/libobjc-kern/blob/a649de414d83145555e4ef635bdcd0affb5fbb1f/property.c#L166
- */
 void objc_copyPropertyStruct(void *dest, void *src, ptrdiff_t size, BOOL atomic, BOOL strong)
 {
 	if (atomic) {
@@ -562,10 +340,6 @@ void objc_copyPropertyStruct(void *dest, void *src, ptrdiff_t size, BOOL atomic,
 	}
 }
 
-/*
- * Get property structure function.  Copies a structure from an ivar to another
- * variable.  Locks on the address of src.
- */
 void objc_getPropertyStruct(void *dest, void *src, ptrdiff_t size, BOOL atomic, BOOL strong)
 {
 	if (atomic) {
@@ -578,10 +352,6 @@ void objc_getPropertyStruct(void *dest, void *src, ptrdiff_t size, BOOL atomic, 
 	}
 }
 
-/*
- * Set property structure function.  Copes a structure to an ivar.  Locks on
- * dest.
- */
 void objc_setPropertyStruct(void *dest, void *src, ptrdiff_t size, BOOL atomic, BOOL strong)
 {
 	if (atomic) {

@@ -3,18 +3,12 @@
 #include "api.h"
 #include <objc/objc.h>
 
-///////////////////////////////////////////////////////////////////////////////////
-// TYPES
-
 typedef struct objc_protocol objc_protocol_t;
-
-///////////////////////////////////////////////////////////////////////////////////
-// METHODS
 
 /*
  * Initializes the Objective-C runtime protocol table
  */
-void __objc_protocol_init();
+void __objc_protocol_init(void);
 
 /*
  * Register a protocol in the Objective-C runtime.

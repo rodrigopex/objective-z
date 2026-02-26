@@ -2,54 +2,42 @@
 #include "category.h"
 #include "class.h"
 #include "hash.h"
-#include "statics.h"
-#include "zephyr/sys/printk.h"
 #include <objc/objc.h>
 #include <zephyr/kernel.h>
+#include <zephyr/sys/printk.h>
 
-///////////////////////////////////////////////////////////////////////////////
-
-// This function is called when a message is sent to a nil object.
-static id __objc_nil_method(id receiver, SEL selector OBJC_UNUSED) {
-  return receiver;
+/* This function is called when a message is sent to a nil object. */
+static id __objc_nil_method(id receiver, SEL selector OBJC_UNUSED)
+{
+	return receiver;
 }
 
-static IMP __objc_msg_lookup(objc_class_t *cls, SEL selector) {
-  if (cls == Nil || selector == NULL) {
-    return NULL; // Invalid parameters
-  }
-
-  // TODO: Initialize the dispatch table for the class if it doesn't exist
-  // Consider mutex in multi-threaded environment
-  // TODO: Lookup selector->sel_id in the dispatch table first
-  // If found, return the IMP directly
+static IMP __objc_msg_lookup(objc_class_t *cls, SEL selector)
+{
+	if (cls == Nil || selector == NULL) {
+		return NULL;
+	}
 
 #ifdef OBJCDEBUG
-  printk("objc_msg_lookup %c[%s %s]\n",
-         cls->info & objc_class_flag_meta ? '+' : '-', cls->name,
-         sel_getName(selector));
+	printk("objc_msg_lookup %c[%s %s]\n", cls->info & objc_class_flag_meta ? '+' : '-',
+	       cls->name, sel_getName(selector));
 #endif
 
-  // Descend through the classes looking for the method
-  // TODO: Also look at the categories of the class
-  while (cls != Nil) {
+	/* Descend through the classes looking for the method */
+	while (cls != Nil) {
 #ifdef OBJCDEBUG
-    printk("  %c[%s %s] types=%s\n",
-           cls->info & objc_class_flag_meta ? '+' : '-', cls->name,
-           sel_getName(selector), selector->sel_type);
+		printk("  %c[%s %s] types=%s\n", cls->info & objc_class_flag_meta ? '+' : '-',
+		       cls->name, sel_getName(selector), selector->types);
 #endif
-    struct objc_hashitem *item =
-        __objc_hash_lookup(cls, selector->sel_id, selector->sel_type);
-    if (item != NULL) {
-      // Consider mutex in multi-threaded environment
-      // TODO: Lookup selector->sel_id in the dispatch table first
-      // If found, return the IMP directly
-      return item->imp; // Return the implementation pointer
-    }
-    cls = cls->superclass;
-  }
+		struct objc_hashitem *item =
+			__objc_hash_lookup(cls, selector->name, selector->types);
+		if (item != NULL) {
+			return item->imp;
+		}
+		cls = cls->superclass;
+	}
 
-  return NULL; // Method not found
+	return NULL;
 }
 
 /**
@@ -59,45 +47,36 @@ static IMP __objc_msg_lookup(objc_class_t *cls, SEL selector) {
  * the metaclass.  We look up the instance class via __objc_lookup_class
  * so that `self == [ClassName class]` works correctly in +initialize.
  */
-static void __objc_send_initialize(objc_class_t *metacls) {
-  if (metacls == Nil) {
-    return;
-  }
+static void __objc_send_initialize(objc_class_t *metacls)
+{
+	if (metacls == Nil) {
+		return;
+	}
 
-  /* Don't call initialize on the same class twice */
-  if (metacls->info & objc_class_flag_initialized) {
-    return;
-  }
+	if (metacls->info & objc_class_flag_initialized) {
+		return;
+	}
 
-  /* Mark as initialized early to prevent recursion */
-  metacls->info |= objc_class_flag_initialized;
+	metacls->info |= objc_class_flag_initialized;
 
-  /* If the superclass has an initialize method, call it first */
-  if (metacls->superclass) {
-    __objc_send_initialize(metacls->superclass);
-  }
+	if (metacls->superclass) {
+		__objc_send_initialize(metacls->superclass);
+	}
 
-  /* Find and call the initialize method.
-   * Use NULL type to match regardless of platform-specific type encoding
-   * (e.g. "v8@0:4" on 32-bit ARM vs "v16@0:8" on 64-bit). */
-  static struct objc_selector initialize = {
-      .sel_id = "initialize",
-      .sel_type = NULL,
-  };
-  IMP imp = __objc_msg_lookup(metacls, &initialize);
-  if (imp != NULL) {
-    /*
-     * Resolve the instance class: +initialize must receive the CLASS
-     * object (not metaclass) so that `self == [ClassName class]` holds.
-     */
-    objc_class_t *class_obj = __objc_lookup_class(metacls->name);
-    id receiver = class_obj ? (id)class_obj : (id)metacls;
+	static struct objc_selector initialize = {
+		.name = "initialize",
+		.types = NULL,
+	};
+	IMP imp = __objc_msg_lookup(metacls, &initialize);
+	if (imp != NULL) {
+		objc_class_t *class_obj = __objc_lookup_class(metacls->name);
+		id receiver = class_obj ? (id)class_obj : (id)metacls;
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wcast-function-type"
-    ((void (*)(id, SEL))imp)(receiver, &initialize);
+		((void (*)(id, SEL))imp)(receiver, &initialize);
 #pragma GCC diagnostic pop
-  }
+	}
 }
 
 /**
@@ -105,124 +84,117 @@ static void __objc_send_initialize(objc_class_t *metacls) {
  * the specified selector. Returns the nil_method if the receiver is nil,
  * and panics if the selector is not found.
  */
-IMP objc_msg_lookup(id receiver, SEL selector) {
-  if (receiver == NULL) {
-    return (IMP)__objc_nil_method;
-  }
+IMP objc_msg_lookup(id receiver, SEL selector)
+{
+	if (receiver == NULL) {
+		return (IMP)__objc_nil_method;
+	}
 
-  // First load the static instances and categories
-  static BOOL init = NO;
-  if (init == NO) {
-    init = YES; // Set init to YES to prevent multiple initializations
-    __objc_statics_load();
-    __objc_category_load();
-  }
+	/* Load categories on first message send */
+	static BOOL init = NO;
+	if (init == NO) {
+		init = YES;
+		__objc_category_load();
+	}
 
-  // Get the class of the receiver
-  objc_class_t *cls = receiver->isa;
-  if (cls == Nil) {
-    printk("objc_msg_lookup: receiver @%p class is Nil (selector=%s)", receiver,
-           sel_getName(selector));
-    return NULL;
-  }
+	objc_class_t *cls = receiver->isa;
+	if (cls == Nil) {
+		printk("objc_msg_lookup: receiver @%p class is Nil (selector=%s)", receiver,
+		       sel_getName(selector));
+		return NULL;
+	}
 
-  IMP imp = __objc_msg_lookup(cls, selector);
-  if (imp == NULL) {
-    printk("objc_msg_lookup: class=%c[%s %s] selector->types=%s cannot send "
-           "message\n",
-           receiver->isa->info & objc_class_flag_meta ? '+' : '-',
-           receiver->isa->name, sel_getName(selector), selector->sel_type);
-  } else {
+	IMP imp = __objc_msg_lookup(cls, selector);
+	if (imp == NULL) {
+		printk("objc_msg_lookup: class=%c[%s %s] selector->types=%s cannot send "
+		       "message\n",
+		       receiver->isa->info & objc_class_flag_meta ? '+' : '-',
+		       receiver->isa->name, sel_getName(selector), selector->types);
+	} else {
 #ifdef OBJCDEBUG
-    printk("    => IMP @%p\n", imp);
+		printk("    => IMP @%p\n", imp);
 #endif
-  }
+	}
 
-  // If the class has of the receiver not been initialized, then this is the
-  // time to do it
-  objc_class_t *meta_cls =
-      cls->info & objc_class_flag_meta ? cls : cls->metaclass;
-  if (!(meta_cls->info & objc_class_flag_initialized)) {
+	/* Send +initialize if not yet done */
+	objc_class_t *meta_cls = cls->info & objc_class_flag_meta ? cls : cls->metaclass;
+	if (!(meta_cls->info & objc_class_flag_initialized)) {
 #ifdef OBJCDEBUG
-    printk("  +[%s initialize] \n", cls->name);
+		printk("  +[%s initialize] \n", cls->name);
 #endif
-    // Call the class's initialize method
-    __objc_send_initialize(meta_cls);
-  }
+		__objc_send_initialize(meta_cls);
+	}
 
-  return imp;
+	return imp;
 }
 
 /**
- * Message superclass dispatch function. Returns the implementation pointer for
- * the specified selector, for the receiver superclass. Returns nil if the
- * receiver is nil.
+ * Message superclass dispatch function.
  */
-IMP objc_msg_lookup_super(struct objc_super *super, SEL selector) {
-  if (super == NULL || super->receiver == nil) {
-    return NULL;
-  }
-  IMP imp = __objc_msg_lookup(super->superclass, selector);
-  if (imp == NULL) {
-    printk("objc_msg_lookup: class=%c[%s %s] selector->types=%s not found\n",
-           super->receiver->isa->info & objc_class_flag_meta ? '+' : '-',
-           super->receiver->isa->name, sel_getName(selector),
-           selector->sel_type);
-  }
-  return imp;
+IMP objc_msg_lookup_super(struct objc_super *super, SEL selector)
+{
+	if (super == NULL || super->receiver == nil) {
+		return NULL;
+	}
+	IMP imp = __objc_msg_lookup(super->superclass, selector);
+	if (imp == NULL) {
+		printk("objc_msg_lookup: class=%c[%s %s] selector->types=%s not found\n",
+		       super->receiver->isa->info & objc_class_flag_meta ? '+' : '-',
+		       super->receiver->isa->name, sel_getName(selector), selector->types);
+	}
+	return imp;
 }
 
-///////////////////////////////////////////////////////////////////////////////
-
-BOOL class_respondsToSelector(Class cls, SEL selector) {
-  if (cls == Nil) {
-    return NO;
-  }
-  if (selector == NULL) {
-    printk("class_respondsToSelector: SEL is NULL");
-    return NO;
-  }
+BOOL class_respondsToSelector(Class cls, SEL selector)
+{
+	if (cls == Nil) {
+		return NO;
+	}
+	if (selector == NULL) {
+		printk("class_respondsToSelector: SEL is NULL");
+		return NO;
+	}
 #ifdef OBJCDEBUG
-  printk("class_respondsToSelector %c[%s %s] types=%s\n",
-         cls->info & objc_class_flag_meta ? '+' : '-', cls->name,
-         sel_getName(selector), selector->sel_type);
+	printk("class_respondsToSelector %c[%s %s] types=%s\n",
+	       cls->info & objc_class_flag_meta ? '+' : '-', cls->name, sel_getName(selector),
+	       selector->types);
 #endif
-  return __objc_msg_lookup(cls, selector) == NULL
-             ? NO
-             : YES; // Check if the class responds to the selector
+	return __objc_msg_lookup(cls, selector) == NULL ? NO : YES;
 }
 
-BOOL object_respondsToSelector(id object, SEL selector) {
-  if (object == NULL) {
-    return NO; // If the object is nil, it cannot respond to any selector
-  }
-  if (selector == NULL) {
-    printk("object_respondsToSelector: SEL is NULL");
-    return NO;
-  }
-  Class cls = object_getClass(object);
+BOOL object_respondsToSelector(id object, SEL selector)
+{
+	if (object == NULL) {
+		return NO;
+	}
+	if (selector == NULL) {
+		printk("object_respondsToSelector: SEL is NULL");
+		return NO;
+	}
+	Class cls = object_getClass(object);
 #ifdef OBJCDEBUG
-  printk("object_respondsToSelector %c[%s %s] types=%s\n",
-         cls->info & objc_class_flag_meta ? '+' : '-', cls->name,
-         sel_getName(selector), selector->sel_type);
+	printk("object_respondsToSelector %c[%s %s] types=%s\n",
+	       cls->info & objc_class_flag_meta ? '+' : '-', cls->name, sel_getName(selector),
+	       selector->types);
 #endif
-  return __objc_msg_lookup(cls, selector) == NULL ? NO : YES;
+	return __objc_msg_lookup(cls, selector) == NULL ? NO : YES;
 }
 
-BOOL class_metaclassRespondsToSelector(Class cls, SEL selector) {
-  if (cls == Nil) {
-    return NO;
-  }
-  if (!(cls->info & objc_class_flag_meta)) {
-    cls = cls->metaclass; // Use the metaclass for class methods
-  }
-  return class_respondsToSelector(
-      cls, selector); // Check if the class responds to the selector
+BOOL class_metaclassRespondsToSelector(Class cls, SEL selector)
+{
+	if (cls == Nil) {
+		return NO;
+	}
+	if (!(cls->info & objc_class_flag_meta)) {
+		cls = cls->metaclass;
+	}
+	return class_respondsToSelector(cls, selector);
 }
 
-const char *sel_getName(SEL sel) {
-  if (sel == NULL) {
-    return NULL;
-  }
-  return sel->sel_id; // Return the selector name
+const char *sel_getName(SEL sel)
+{
+	if (sel == NULL) {
+		return NULL;
+	}
+	return sel->name;
 }

@@ -2,7 +2,6 @@
 #include "class.h"
 #include "hash.h"
 #include "protocol.h"
-#include "statics.h"
 #include <objc/malloc.h>
 #include <zephyr/init.h>
 #include <zephyr/sys/printk.h>
@@ -69,7 +68,5 @@ void objc_print_table_stats(void)
 	printk("  %-12s %5d %5d\n", "category", CONFIG_OBJZ_CATEGORY_TABLE_SIZE,
 	       __objc_category_count());
 	printk("  %-12s %5d %5d\n", "protocol", CONFIG_OBJZ_PROTOCOL_TABLE_SIZE, protocol_used);
-	printk("  %-12s %5d %5d\n", "statics", CONFIG_OBJZ_STATICS_TABLE_SIZE,
-	       __objc_statics_count());
 	printk("  %-12s %5d %5d\n", "hash", CONFIG_OBJZ_HASH_TABLE_SIZE, hash_used);
 }

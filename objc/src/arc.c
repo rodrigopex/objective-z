@@ -49,8 +49,8 @@ static void __objc_arc_dealloc(id obj)
 	__objc_arc_call_cxx_destruct(obj);
 
 	static struct objc_selector dealloc_sel = {
-		.sel_id = "dealloc",
-		.sel_type = NULL,
+		.name = "dealloc",
+		.types = NULL,
 	};
 	IMP imp = objc_msg_lookup(obj, &dealloc_sel);
 	if (imp != NULL) {
