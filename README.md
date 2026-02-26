@@ -61,6 +61,7 @@ Exit QEMU with `Ctrl+A`, then `x`.
 | `pool_demo` | Static allocation pools with `K_MEM_SLAB` | `+OBJZ_MRR +OBJZ_STATIC_POOLS` |
 | `zbus_objc` | ObjC objects with Zephyr zbus pub/sub messaging | `+ZBUS` |
 | `zbus_service` | Request-response service pattern over zbus | `+ZBUS` |
+| `benchmark` | Cycle-accurate runtime performance benchmarks | `+OBJZ_MRR +OBJZ_ARC +OBJZ_STATIC_POOLS` |
 
 Build a specific sample:
 
@@ -93,6 +94,58 @@ int main(void) {
     return 0;
 }
 ```
+
+## Benchmark
+
+The `benchmark` sample measures key runtime operations with cycle-accurate timing using the DWT cycle counter. Results below are from QEMU (mps2/an385, ARM Cortex-M3, 25 MHz):
+
+```sh
+just project_dir=samples/benchmark rebuild
+just run
+```
+
+### Message Dispatch
+
+| Operation | Cycles | ns |
+|---|---:|---:|
+| C function call (baseline, cached IMP) | 13 | 520 |
+| `objc_msgSend` (instance method) | 551 | 22,040 |
+| `objc_msgSend` (class method) | 733 | 29,320 |
+| `objc_msgSend` (inherited depth=1) | 868 | 34,720 |
+| `objc_msgSend` (inherited depth=2) | 1,264 | 50,560 |
+
+### Object Lifecycle
+
+| Operation | Cycles | ns |
+|---|---:|---:|
+| alloc/init/release (heap, MRR) | 7,889 | 315,560 |
+| alloc/init/release (static pool) | 6,276 | 251,040 |
+
+### Reference Counting
+
+| Operation | Cycles | ns |
+|---|---:|---:|
+| retain (MRR, via dispatch) | 1,037 | 41,480 |
+| retain + release pair (MRR) | 2,132 | 85,280 |
+| `objc_retain` (ARC, direct C call) | 45 | 1,800 |
+| `objc_release` (ARC) | 109 | 4,360 |
+| `objc_storeStrong` (ARC) | 196 | 7,840 |
+
+### Introspection
+
+| Operation | Cycles | ns |
+|---|---:|---:|
+| `class_respondsToSelector` (YES) | 493 | 19,720 |
+| `class_respondsToSelector` (NO) | 1,604 | 64,160 |
+| `object_getClass` | 20 | 800 |
+
+**Key takeaways:**
+
+- **Dispatch overhead is ~42x** a direct C function call — the runtime has no method cache, so every send walks the hash table with `strcmp` matching. This is a deliberate trade-off for minimal RAM usage on constrained MCUs.
+- **Superclass chain cost**: each inheritance level adds ~300-400 cycles as the runtime traverses parent classes during lookup.
+- **ARC vs MRR retain**: `objc_retain` (45 cycles) vs `[obj retain]` (1,037 cycles) — ARC entry points bypass message dispatch entirely, making them ~23x faster.
+- **Static pools are ~20% faster** than heap allocation (`sys_heap` with spinlock).
+- **QEMU caveat**: these are instruction-accurate counts, not true cycle-accurate. Real hardware numbers will differ, but relative comparisons hold.
 
 ## Using in Your Project
 
