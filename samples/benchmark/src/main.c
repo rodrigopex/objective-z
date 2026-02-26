@@ -13,6 +13,7 @@
 #include <zephyr/timing/timing.h>
 #include <objc/runtime.h>
 #include <objc/arc.h>
+#include <objc/malloc.h>
 
 /* ── Configuration ────────────────────────────────────────────────── */
 
@@ -40,6 +41,7 @@ extern SEL bench_get_nop_sel(void);
 extern BOOL bench_responds_to_nop(id obj);
 extern BOOL bench_responds_to_missing(id obj);
 extern Class bench_get_class(id obj);
+extern void bench_flush_cache(id obj);
 
 /* ── Timing helpers ───────────────────────────────────────────────── */
 
@@ -113,6 +115,16 @@ static void bench_message_dispatch(void)
 	BENCH_LOOP("objc_msgSend (inherited depth=1)", bench_nop(child));
 
 	BENCH_LOOP("objc_msgSend (inherited depth=2)", bench_nop(gchild));
+
+	BENCH_LOOP("objc_msgSend (cold cache, depth=0)", {
+		bench_flush_cache(base);
+		bench_nop(base);
+	});
+
+	BENCH_LOOP("objc_msgSend (cold cache, depth=2)", {
+		bench_flush_cache(gchild);
+		bench_nop(gchild);
+	});
 
 	bench_dealloc(base);
 	bench_dealloc(child);
@@ -225,6 +237,16 @@ int main(void)
 	bench_introspection();
 
 	timing_stop();
+
+	printk("\n--- Memory ---\n");
+#ifdef CONFIG_SYS_HEAP_RUNTIME_STATS
+	struct sys_memory_stats heap_stats;
+
+	objc_stats(&heap_stats);
+	printk("ObjC heap: %zu allocated, %zu free, %zu max allocated\n",
+	       heap_stats.allocated_bytes, heap_stats.free_bytes,
+	       heap_stats.max_allocated_bytes);
+#endif
 
 	printk("\nPROJECT EXECUTION SUCCESSFUL\n");
 	return 0;

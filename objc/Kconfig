@@ -102,11 +102,34 @@ config OBJZ_HASH_TABLE_SIZE
       Size of the global method hash table. Uses open addressing
       for collision resolution.
 
-config OBJZ_DISPATCH_TABLE_SIZE
-    int "Dispatch table size"
-    default 64
+config OBJZ_DISPATCH_CACHE
+    bool "Per-class dispatch table cache"
+    default y
     help
-      Size of the per-class dispatch table. Must be a power of 2.
+      Enable per-class method dispatch caching. On first message
+      send the resolved IMP is cached in the receiver class dtable
+      for O(1) subsequent lookups using pointer hashing. Static
+      pool in BSS serves the first N classes; overflow falls back
+      to the sys_heap allocator.
+
+config OBJZ_DISPATCH_TABLE_SIZE
+    int "Dispatch table entries per class"
+    depends on OBJZ_DISPATCH_CACHE
+    default 16
+    help
+      Number of cache entries per class dispatch table. Must be a
+      power of 2. Each entry costs 8 bytes (ARM32). Memory per
+      class = size * 8 bytes. Typical: 8 (64B), 16 (128B), 32 (256B).
+
+config OBJZ_DISPATCH_CACHE_STATIC_COUNT
+    int "Number of static dispatch table blocks"
+    depends on OBJZ_DISPATCH_CACHE
+    default 8
+    help
+      Number of per-class dispatch tables pre-allocated in BSS.
+      First N classes get a dtable from this pool with zero heap
+      cost. Additional classes fall back to objc_malloc().
+      Total BSS = count * DISPATCH_TABLE_SIZE * 8 bytes.
 
 module = OBJZ
 module-str = objz

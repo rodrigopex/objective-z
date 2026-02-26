@@ -1,0 +1,6 @@
+tests:
+  test.objz.dispatch_cache:
+    tags:
+      - objz
+    integration_platforms:
+      - mps2/an385

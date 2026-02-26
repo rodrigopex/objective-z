@@ -1,6 +1,7 @@
 #include "api.h"
 #include "category.h"
 #include "class.h"
+#include "dtable.h"
 #include "hash.h"
 #include <objc/objc.h>
 #include <zephyr/kernel.h>
@@ -23,7 +24,16 @@ static IMP __objc_msg_lookup(objc_class_t *cls, SEL selector)
 	       cls->name, sel_getName(selector));
 #endif
 
-	/* Descend through the classes looking for the method */
+#ifdef CONFIG_OBJZ_DISPATCH_CACHE
+	/* Fast path: check receiver's dispatch table cache */
+	IMP cached = __objc_dtable_lookup(cls, selector->name);
+	if (cached != NULL) {
+		return cached;
+	}
+	objc_class_t *origin_cls = cls;
+#endif
+
+	/* Slow path: descend through the classes looking for the method */
 	while (cls != Nil) {
 #ifdef OBJCDEBUG
 		printk("  %c[%s %s] types=%s\n", cls->info & objc_class_flag_meta ? '+' : '-',
@@ -32,6 +42,10 @@ static IMP __objc_msg_lookup(objc_class_t *cls, SEL selector)
 		struct objc_hashitem *item =
 			__objc_hash_lookup(cls, selector->name, selector->types);
 		if (item != NULL) {
+#ifdef CONFIG_OBJZ_DISPATCH_CACHE
+			/* Cache at receiver's class level */
+			__objc_dtable_insert(origin_cls, item->method, item->imp);
+#endif
 			return item->imp;
 		}
 		cls = cls->superclass;

@@ -1,6 +1,7 @@
 #include "category.h"
 #include "api.h"
 #include "class.h"
+#include "dtable.h"
 #include <objc/objc.h>
 #include <zephyr/kernel.h>
 
@@ -79,6 +80,12 @@ BOOL __objc_category_load(void)
 		}
 		__objc_category_load_category(category);
 	}
+
+#ifdef CONFIG_OBJZ_DISPATCH_CACHE
+	/* Categories may have replaced methods in the global hash table.
+	 * Flush all dispatch caches so stale IMPs are never returned. */
+	__objc_dtable_flush_all();
+#endif
 
 	return YES;
 }

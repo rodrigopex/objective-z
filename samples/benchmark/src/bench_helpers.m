@@ -174,3 +174,16 @@ Class bench_get_class(id obj)
 {
 	return object_getClass(obj);
 }
+
+/*
+ * Flush the dispatch cache for the given object's class.
+ * Used to measure cold-cache dispatch overhead.
+ */
+void bench_flush_cache(id obj)
+{
+	(void)obj;
+#ifdef CONFIG_OBJZ_DISPATCH_CACHE
+	extern void __objc_dtable_flush(struct objc_class *cls);
+	__objc_dtable_flush(object_getClass(obj));
+#endif
+}

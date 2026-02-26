@@ -106,6 +106,20 @@ just run
 
 ### Message Dispatch
 
+With dispatch cache (`CONFIG_OBJZ_DISPATCH_CACHE=y`, default):
+
+| Operation | Cycles | ns |
+|---|---:|---:|
+| C function call (baseline, cached IMP) | 13 | 520 |
+| `objc_msgSend` (instance method) | 208 | 8,320 |
+| `objc_msgSend` (class method) | 215 | 8,600 |
+| `objc_msgSend` (inherited depth=1) | 208 | 8,320 |
+| `objc_msgSend` (inherited depth=2) | 208 | 8,320 |
+| `objc_msgSend` (cold cache, depth=0) | 2,400 | 96,000 |
+| `objc_msgSend` (cold cache, depth=2) | 3,120 | 124,800 |
+
+Without dispatch cache (`CONFIG_OBJZ_DISPATCH_CACHE=n`):
+
 | Operation | Cycles | ns |
 |---|---:|---:|
 | C function call (baseline, cached IMP) | 13 | 520 |
@@ -116,35 +130,44 @@ just run
 
 ### Object Lifecycle
 
-| Operation | Cycles | ns |
-|---|---:|---:|
-| alloc/init/release (heap, MRR) | 7,889 | 315,560 |
-| alloc/init/release (static pool) | 6,276 | 251,040 |
+| Operation | Cached | No cache | Unit |
+|---|---:|---:|---|
+| alloc/init/release (heap, MRR) | 4,477 | 8,257 | cycles |
+| alloc/init/release (static pool) | 2,496 | 6,276 | cycles |
 
 ### Reference Counting
 
-| Operation | Cycles | ns |
-|---|---:|---:|
-| retain (MRR, via dispatch) | 1,037 | 41,480 |
-| retain + release pair (MRR) | 2,132 | 85,280 |
-| `objc_retain` (ARC, direct C call) | 45 | 1,800 |
-| `objc_release` (ARC) | 109 | 4,360 |
-| `objc_storeStrong` (ARC) | 196 | 7,840 |
+| Operation | Cached | No cache | Unit |
+|---|---:|---:|---|
+| retain (MRR, via dispatch) | 256 | 1,037 | cycles |
+| retain + release pair (MRR) | 519 | 2,132 | cycles |
+| `objc_retain` (ARC, direct C call) | 45 | 45 | cycles |
+| `objc_release` (ARC) | 109 | 109 | cycles |
+| `objc_storeStrong` (ARC) | 196 | 196 | cycles |
 
 ### Introspection
 
-| Operation | Cycles | ns |
-|---|---:|---:|
-| `class_respondsToSelector` (YES) | 493 | 19,720 |
-| `class_respondsToSelector` (NO) | 1,604 | 64,160 |
-| `object_getClass` | 20 | 800 |
+| Operation | Cached | No cache | Unit |
+|---|---:|---:|---|
+| `class_respondsToSelector` (YES) | 151 | 493 | cycles |
+| `class_respondsToSelector` (NO) | 1,671 | 1,604 | cycles |
+| `object_getClass` | 20 | 20 | cycles |
+
+### Memory Footprint
+
+| Metric | Cached | No cache | Delta |
+|---|---:|---:|---:|
+| FLASH | 32,244 B | 31,940 B | +304 B |
+| RAM (BSS + data) | 30,824 B | 29,792 B | +1,032 B |
+| ObjC heap peak | 560 B | 48 B | +512 B |
 
 **Key takeaways:**
 
-- **Dispatch overhead is ~42x** a direct C function call — the runtime has no method cache, so every send walks the hash table with `strcmp` matching. This is a deliberate trade-off for minimal RAM usage on constrained MCUs.
-- **Superclass chain cost**: each inheritance level adds ~300-400 cycles as the runtime traverses parent classes during lookup.
-- **ARC vs MRR retain**: `objc_retain` (45 cycles) vs `[obj retain]` (1,037 cycles) — ARC entry points bypass message dispatch entirely, making them ~23x faster.
-- **Static pools are ~20% faster** than heap allocation (`sys_heap` with spinlock).
+- **Dispatch cache cuts overhead from ~42x to ~16x** a direct C function call. The per-class dispatch table (`CONFIG_OBJZ_DISPATCH_CACHE`) resolves method lookups via pointer hashing after the first call. Cold-cache sends fall back to the global hash table with `strcmp` matching.
+- **Inheritance depth is free** after warm-up: cached inherited methods (depth=1, depth=2) all resolve in ~208 cycles, the same as direct methods. The IMP is cached at the receiver's class level, eliminating the superclass chain walk. Without cache, each level adds ~300-400 cycles.
+- **Cache cost:** +1,032 B RAM (static BSS pool for 8 dtables), +512 B heap (overflow dtables), +304 B FLASH (code). Configurable via `CONFIG_OBJZ_DISPATCH_CACHE_STATIC_COUNT` and `CONFIG_OBJZ_DISPATCH_TABLE_SIZE`.
+- **ARC vs MRR retain**: `objc_retain` (45 cycles) vs `[obj retain]` (256 cycles cached, 1,037 uncached) — ARC entry points bypass message dispatch entirely.
+- **Static pools are ~44% faster** than heap allocation (`sys_heap` with spinlock).
 - **QEMU caveat**: these are instruction-accurate counts, not true cycle-accurate. Real hardware numbers will differ, but relative comparisons hold.
 
 ## Using in Your Project
@@ -231,6 +254,7 @@ west build -p -b mps2/an385 .
 | Kconfig | Description | Depends on |
 |---|---|---|
 | `CONFIG_OBJZ` | Enable Objective-C runtime | — |
+| `CONFIG_OBJZ_DISPATCH_CACHE` | Per-class dispatch table cache | `OBJZ` |
 | `CONFIG_OBJZ_MRR` | Manual Retain/Release with `OZObject` | `OBJZ` |
 | `CONFIG_OBJZ_ARC` | Automatic Reference Counting | `OBJZ_MRR` |
 | `CONFIG_OBJZ_STATIC_POOLS` | Per-class static allocation pools | `OBJZ` |
@@ -245,7 +269,8 @@ All tables are statically allocated. Tune via Kconfig if defaults are insufficie
 | `CONFIG_OBJZ_CATEGORY_TABLE_SIZE` | 32 | Max categories |
 | `CONFIG_OBJZ_PROTOCOL_TABLE_SIZE` | 32 | Max protocols |
 | `CONFIG_OBJZ_HASH_TABLE_SIZE` | 512 | Method hash table slots |
-| `CONFIG_OBJZ_DISPATCH_TABLE_SIZE` | 64 | Per-class dispatch table (power-of-2) |
+| `CONFIG_OBJZ_DISPATCH_TABLE_SIZE` | 16 | Entries per dispatch cache (power-of-2) |
+| `CONFIG_OBJZ_DISPATCH_CACHE_STATIC_COUNT` | 8 | Static dtable blocks in BSS |
 | `CONFIG_OBJZ_MEM_POOL_SIZE` | 4096 | Heap size in bytes |
 | `CONFIG_OBJZ_STATIC_POOL_TABLE_SIZE` | 16 | Max static pool registrations |
 

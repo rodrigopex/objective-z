@@ -36,10 +36,11 @@ Each sample registers the runtime via `ZEPHYR_EXTRA_MODULES` in its CMakeLists.t
 
 - **`src/api.h`** — ABI structures (`objc_class`, `objc_method`, `objc_selector`, `objc_init`), gnustep-2.0 types
 - **`src/load.c`** — Entry point: `__objc_load()` called via `.init_array` static constructor. Registers classes, categories, protocols, and fixes constant string isa pointers from gnustep-2.0 metadata sections.
-- **`src/message.c`** — Core dispatch: `objc_msg_lookup()` / `objc_msg_lookup_super()`, lazy class resolution, sends `+initialize` on first use
+- **`src/message.c`** — Core dispatch: `objc_msg_lookup()` / `objc_msg_lookup_super()`, lazy class resolution, sends `+initialize` on first use. Checks per-class dtable cache before global hash table.
+- **`src/dtable.c`** — Per-class dispatch table cache (`CONFIG_OBJZ_DISPATCH_CACHE`). Two-tier allocation: static BSS pool (first N classes), heap fallback. Pointer-hash lookup with `strcmp` fallback.
 - **`src/class.c`** — Class table (32 slots), lazy resolution of superclasses, gnustep-2.0 non-fragile ivar offset fixup
-- **`src/hash.c`** — Global method hash table (512 slots, open addressing)
-- **`src/category.c`** — Category table (32 slots), deferred loading until class is resolved
+- **`src/hash.c`** — Global method hash table (512 slots, open addressing). Slow path for cache misses.
+- **`src/category.c`** — Category table (32 slots), deferred loading until class is resolved. Flushes dispatch caches after loading.
 - **`src/malloc.c`** — Dedicated `sys_heap` (default 4096 bytes via `CONFIG_OBJZ_MEM_POOL_SIZE`) with spinlock
 - **`src/Object.m`** — Root class: alloc/init/dealloc/class/respondsToSelector. Checks static pools before heap fallback.
 - **`src/OZString.m`** — Backs `@"..."` literals; aliased to `NSString` under Clang
