@@ -8,6 +8,7 @@
  */
 #pragma once
 #import <objc/Object.h>
+#import <objc/NSFastEnumeration.h>
 
 /**
  * @brief Immutable ordered collection.
