@@ -185,6 +185,14 @@ Without dispatch cache (`CONFIG_OBJZ_DISPATCH_CACHE=n`):
 
 ### Memory Footprint
 
+Runtime cost vs bare Zephyr (mps2/an385):
+
+| Configuration | FLASH | RAM | FLASH delta | RAM delta |
+|---|---:|---:|---:|---:|
+| Bare Zephyr (no ObjC) | 12,104 B | 6,120 B | — | — |
+| `CONFIG_OBJZ=y` (minimal) | 26,168 B | 22,296 B | +14,064 B | +16,176 B |
+| All features enabled | 37,660 B | 24,016 B | +25,556 B | +17,896 B |
+
 Dispatch cache cost (`CONFIG_OBJZ_DISPATCH_CACHE`, default `y`):
 
 | Metric | Cached | No cache | Delta |
