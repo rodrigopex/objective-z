@@ -96,6 +96,11 @@ function(_objz_build_clang_flags result_var)
     list(APPEND _flags -fobjc-runtime=gnustep-2.0)
     list(APPEND _flags -fconstant-string-class=OZString)
 
+    # Blocks (closures) support
+    if(CONFIG_OBJZ_BLOCKS)
+        list(APPEND _flags -fblocks)
+    endif()
+
     # Include dirs from zephyr_interface (skip generator expressions)
     get_property(_inc_dirs TARGET zephyr_interface
         PROPERTY INTERFACE_INCLUDE_DIRECTORIES)

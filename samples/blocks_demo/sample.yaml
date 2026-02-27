@@ -1,0 +1,21 @@
+sample:
+  description: Blocks (closures) demo
+  name: ObjZ Blocks Demo
+common:
+  tags: objz
+  integration_platforms:
+    - mps2/an385
+  harness: console
+  harness_config:
+    type: multi_line
+    ordered: true
+    regex:
+      - "=== Blocks Demo ==="
+      - "Global block: 42"
+      - "Capturing block: 99"
+      - "Mutated counter: 3"
+      - "Nested block: 77"
+      - "=== Blocks Demo Complete ==="
+tests:
+  sample.objz.blocks_demo:
+    tags: objz blocks

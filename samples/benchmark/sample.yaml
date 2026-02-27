@@ -18,6 +18,8 @@ common:
       - "--- Reference Counting ---"
       - "--- ARC ---"
       - "--- Introspection ---"
+      - "--- Blocks: Memory \\(C func ptr vs Block\\) ---"
+      - "--- Blocks: Performance ---"
       - "PROJECT EXECUTION SUCCESSFUL"
 tests:
   sample.objz.benchmark:

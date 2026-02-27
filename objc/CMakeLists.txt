@@ -51,6 +51,11 @@ if(CONFIG_OBJZ)
         )
     endif()
 
+    # Blocks (closures) runtime
+    if(CONFIG_OBJZ_BLOCKS)
+        zephyr_library_sources("${ZEPHYR_CURRENT_MODULE_DIR}/src/blocks.c")
+    endif()
+
     # Static allocation pools
     if(CONFIG_OBJZ_STATIC_POOLS)
         zephyr_library_sources("${ZEPHYR_CURRENT_MODULE_DIR}/src/pool.c")

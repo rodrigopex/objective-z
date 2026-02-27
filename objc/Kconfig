@@ -26,6 +26,14 @@ config OBJZ_ARC
       objz_target_arc_sources() in CMake to compile .m files
       with -fobjc-arc.
 
+config OBJZ_BLOCKS
+    bool "Blocks (closures) support"
+    default n
+    help
+      Enable Objective-C/C blocks runtime. Provides _Block_copy,
+      _Block_release and related functions needed by Clang -fblocks.
+      When enabled, .m files are compiled with -fblocks.
+
 config OBJZ_STATIC_POOLS
     bool "Static allocation pools for ObjC classes"
     default n

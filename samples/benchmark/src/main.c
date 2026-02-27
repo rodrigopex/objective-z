@@ -217,6 +217,107 @@ static void bench_introspection(void)
 	bench_dealloc(obj);
 }
 
+/* ── Benchmark: Blocks ────────────────────────────────────────────── */
+
+#ifdef CONFIG_OBJZ_BLOCKS
+#include <objc/blocks.h>
+
+extern int (*bench_get_c_func(void))(void);
+extern void *bench_get_global_block(void);
+extern int bench_invoke_int_block(void *blk);
+extern unsigned long bench_block_size_int_capture(void);
+extern unsigned long bench_block_size_obj_capture(void);
+extern unsigned long bench_block_size_byref(void);
+extern void *bench_copy_int_block(int value);
+extern void *bench_copy_obj_block(id obj);
+extern void *bench_copy_byref_block(void);
+extern void bench_release_block(void *blk);
+extern void *bench_block_copy(void *blk);
+
+static void bench_blocks_memory(void)
+{
+	printk("\n--- Blocks: Memory (C func ptr vs Block) ---\n");
+	printk("%-52s: %5zu bytes\n", "C function pointer",
+	       sizeof(int (*)(void)));
+	printk("%-52s: %5zu bytes\n", "Block pointer (reference)",
+	       sizeof(void *));
+	printk("%-52s: %5zu bytes\n", "Block literal (struct Block_layout)",
+	       sizeof(struct Block_layout));
+	printk("%-52s: %5lu bytes\n", "Block + int capture (descriptor->size)",
+	       bench_block_size_int_capture());
+	printk("%-52s: %5lu bytes\n", "Block + ObjC object capture (descriptor->size)",
+	       bench_block_size_obj_capture());
+	printk("%-52s: %5lu bytes\n", "Block + __block int (descriptor->size)",
+	       bench_block_size_byref());
+
+#ifdef CONFIG_SYS_HEAP_RUNTIME_STATS
+	struct sys_memory_stats before, after;
+
+	/* Measure heap cost of _Block_copy (int capture) */
+	objc_stats(&before);
+	void *blk = bench_copy_int_block(42);
+	objc_stats(&after);
+	printk("%-52s: %5zu bytes\n", "Heap cost: _Block_copy (int capture)",
+	       after.allocated_bytes - before.allocated_bytes);
+	bench_release_block(blk);
+
+	/* Measure heap cost of _Block_copy (ObjC object capture) */
+	id obj = bench_create_base();
+	objc_stats(&before);
+	blk = bench_copy_obj_block(obj);
+	objc_stats(&after);
+	printk("%-52s: %5zu bytes\n", "Heap cost: _Block_copy (obj capture)",
+	       after.allocated_bytes - before.allocated_bytes);
+	bench_release_block(blk);
+	bench_dealloc(obj);
+
+	/* Measure heap cost of _Block_copy (__block variable) */
+	objc_stats(&before);
+	blk = bench_copy_byref_block();
+	objc_stats(&after);
+	printk("%-52s: %5zu bytes\n", "Heap cost: _Block_copy (__block int)",
+	       after.allocated_bytes - before.allocated_bytes);
+	bench_release_block(blk);
+#endif
+}
+
+static void bench_blocks_perf(void)
+{
+	printk("\n--- Blocks: Performance ---\n");
+
+	/* C function pointer invocation baseline */
+	int (*c_func)(void) = bench_get_c_func();
+
+	BENCH_LOOP("C function pointer call", (void)c_func());
+
+	/* Global block invocation */
+	void *global_blk = bench_get_global_block();
+
+	BENCH_LOOP("Global block invocation", bench_invoke_int_block(global_blk));
+
+	/* Heap block invocation (int capture) */
+	void *heap_blk = bench_copy_int_block(7);
+
+	BENCH_LOOP("Heap block invocation (int capture)",
+		   bench_invoke_int_block(heap_blk));
+	bench_release_block(heap_blk);
+
+	/* _Block_copy + _Block_release (int capture) */
+	BENCH_LOOP("_Block_copy + _Block_release (int capture)", {
+		void *b = bench_copy_int_block(7);
+		bench_release_block(b);
+	});
+
+	/* _Block_copy retain (already on heap) */
+	heap_blk = bench_copy_int_block(7);
+	BENCH_LOOP("_Block_copy (retain heap block)", {
+		void *b = bench_block_copy(heap_blk);
+		bench_release_block(b);
+	});
+	bench_release_block(heap_blk);
+}
+#endif /* CONFIG_OBJZ_BLOCKS */
+
 /* ── Main ─────────────────────────────────────────────────────────── */
 
 int main(void)
@@ -235,6 +336,11 @@ int main(void)
 	bench_refcount();
 	bench_arc_ops();
 	bench_introspection();
+
+#ifdef CONFIG_OBJZ_BLOCKS
+	bench_blocks_memory();
+	bench_blocks_perf();
+#endif
 
 	timing_stop();
 

@@ -106,6 +106,17 @@ id objc_retainAutorelease(id obj)
 	return objc_autorelease(objc_retain(obj));
 }
 
+/* ── Block support ────────────────────────────────────────────────── */
+
+#ifdef CONFIG_OBJZ_BLOCKS
+extern void *_Block_copy(const void *block);
+
+id objc_retainBlock(id block)
+{
+	return (id)_Block_copy((const void *)block);
+}
+#endif /* CONFIG_OBJZ_BLOCKS */
+
 /* ── Return-value optimisation ────────────────────────────────────── */
 
 /*

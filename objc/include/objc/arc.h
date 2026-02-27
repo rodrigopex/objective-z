@@ -43,6 +43,13 @@ id objc_retainAutoreleaseReturnValue(id obj);
 id objc_retainAutoreleasedReturnValue(id obj);
 
 /**
+ * Copy a block to the heap (or retain if already there).
+ * ARC calls this when assigning a block to a strong variable.
+ * Requires CONFIG_OBJZ_BLOCKS.
+ */
+id objc_retainBlock(id block);
+
+/**
  * @name Weak Reference Stubs
  * Weak references are not supported on this runtime.
  * These stubs call k_panic() if invoked.

@@ -187,3 +187,94 @@ void bench_flush_cache(id obj)
 	__objc_dtable_flush(object_getClass(obj));
 #endif
 }
+
+/* ── Blocks benchmark helpers ─────────────────────────────────────── */
+
+#ifdef CONFIG_OBJZ_BLOCKS
+#import <objc/blocks.h>
+
+typedef int (^IntBlock)(void);
+typedef void (^VoidBlock)(void);
+
+/* C function pointer baseline */
+static int c_func_return_42(void)
+{
+	return 42;
+}
+
+int (*bench_get_c_func(void))(void)
+{
+	return c_func_return_42;
+}
+
+/* Global block: no captures */
+void *bench_get_global_block(void)
+{
+	IntBlock blk = ^{ return 42; };
+	return (void *)blk;
+}
+
+int bench_invoke_int_block(void *blk)
+{
+	return ((IntBlock)blk)();
+}
+
+/* Block descriptor sizes for memory comparison */
+unsigned long bench_block_size_int_capture(void)
+{
+	int val = 99;
+	IntBlock blk = ^{ return val; };
+	struct Block_layout *layout = (struct Block_layout *)blk;
+	return layout->descriptor->size;
+}
+
+unsigned long bench_block_size_obj_capture(void)
+{
+	id obj = [[BenchBase alloc] init];
+	IntBlock blk = ^{ return [obj getValue]; };
+	struct Block_layout *layout = (struct Block_layout *)blk;
+	unsigned long sz = layout->descriptor->size;
+	[obj release];
+	return sz;
+}
+
+unsigned long bench_block_size_byref(void)
+{
+	__block int counter = 0;
+	VoidBlock blk = ^{ counter++; };
+	struct Block_layout *layout = (struct Block_layout *)blk;
+	(void)blk;
+	return layout->descriptor->size;
+}
+
+/* Copy/release wrappers */
+void *bench_copy_int_block(int value)
+{
+	IntBlock blk = ^{ return value; };
+	return _Block_copy(blk);
+}
+
+void *bench_copy_obj_block(id obj)
+{
+	IntBlock blk = ^{ return [obj getValue]; };
+	return _Block_copy(blk);
+}
+
+void *bench_copy_byref_block(void)
+{
+	__block int counter = 0;
+	VoidBlock blk = ^{ counter++; };
+	return _Block_copy(blk);
+}
+
+void bench_release_block(void *blk)
+{
+	_Block_release(blk);
+}
+
+void *bench_block_copy(void *blk)
+{
+	return _Block_copy(blk);
+}
+
+#endif /* CONFIG_OBJZ_BLOCKS */
