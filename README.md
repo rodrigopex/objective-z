@@ -2,24 +2,29 @@
 
 Objective-C runtime for Zephyr RTOS.
 
-Ported from [djthorpe/objc](https://github.com/djthorpe/objc) (minimal GCC-compatible ObjC runtime), packaged as a Zephyr module. Supports GCC ABI v8, gnustep-1.7 ABI v9, and gnustep-1.7+ARC ABI v10.
+Ported from [djthorpe/objc](https://github.com/djthorpe/objc) (minimal GCC-compatible ObjC runtime), packaged as a Zephyr module. Uses the gnustep-2.0 ABI with Clang for ObjC compilation.
 
 ## Features
 
 - Class and instance method dispatch (`objc_msg_lookup` / `objc_msgSend`)
 - Categories and protocols
 - `@"..."` string literals (OZString / NSString alias under Clang)
+- Boxed literals (`@42`, `@YES`, `@3.14`) and collection literals (`@[...]`, `@{...}`)
+- Blocks (closures) with `-fblocks` — global, stack, and heap blocks with `__block` variable support
+- Fast enumeration (`for...in` loops) on OZArray and OZDictionary
+- `enumerateObjectsUsingBlock:` for block-based iteration
 - Manual Retain/Release (MRR) built into the `Object` root class
 - Automatic Reference Counting (ARC) with `-fobjc-arc`
 - `@autoreleasepool` blocks via per-thread pool stack
 - Static allocation pools using Zephyr `K_MEM_SLAB` — zero heap allocation per class
+- `OZLog()` with `%@` format specifier and `-description` support
 - Zephyr zbus integration examples (pub/sub and request-response)
-- ARM Cortex-M Thumb-2 `objc_msgSend` trampoline for gnustep-1.7 direct dispatch
+- ARM Cortex-M Thumb-2 `objc_msgSend` trampoline for gnustep-2.0 direct dispatch
 
 ## Prerequisites
 
 - [Zephyr SDK](https://docs.zephyrproject.org/latest/develop/getting_started/index.html) and `west`
-- Clang (for compiling `.m` files with gnustep-1.7 ABI)
+- Clang (for compiling `.m` files with gnustep-2.0 ABI)
 - [just](https://github.com/casey/just) (build automation, optional)
 
 ## Quick Start
@@ -59,9 +64,11 @@ Exit QEMU with `Ctrl+A`, then `x`.
 | `mem_demo` | Manual Retain/Release lifecycle | `CONFIG_OBJZ=y` |
 | `arc_demo` | Automatic Reference Counting, scoped cleanup | `+OBJZ_ARC` |
 | `pool_demo` | Static allocation pools with `K_MEM_SLAB` | `+OBJZ_STATIC_POOLS` |
+| `literals_demo` | Boxed literals and collection literals (`@42`, `@[...]`, `@{...}`) | `+OBJZ_LITERALS` |
+| `blocks_demo` | Blocks, `__block` variables, fast enumeration, `enumerateObjectsUsingBlock:` | `+OBJZ_BLOCKS +OBJZ_LITERALS` |
 | `zbus_objc` | ObjC objects with Zephyr zbus pub/sub messaging | `+ZBUS` |
 | `zbus_service` | Request-response service pattern over zbus | `+ZBUS` |
-| `benchmark` | Cycle-accurate runtime performance benchmarks | `+OBJZ_ARC +OBJZ_STATIC_POOLS` |
+| `benchmark` | Cycle-accurate runtime performance benchmarks | `+OBJZ_ARC +OBJZ_BLOCKS +OBJZ_STATIC_POOLS` |
 
 Build a specific sample:
 
@@ -74,7 +81,6 @@ just run
 
 ```objc
 #import <objc/objc.h>
-#include <zephyr/kernel.h>
 
 @interface MyFirstObject : Object
 - (void)greet;
@@ -82,8 +88,8 @@ just run
 @end
 
 @implementation MyFirstObject
-- (void)greet { printk("Hello, world from object\n"); }
-+ (void)greet { printk("Hello, world from class\n"); }
+- (void)greet { OZLog("Hello, world from object"); }
++ (void)greet { OZLog("Hello, world from class"); }
 @end
 
 int main(void) {
@@ -153,13 +159,46 @@ Without dispatch cache (`CONFIG_OBJZ_DISPATCH_CACHE=n`):
 | `class_respondsToSelector` (NO) | 1,159 | 1,095 | cycles |
 | `object_getClass` | 20 | 20 | cycles |
 
+### Blocks
+
+| Operation | Cycles | ns |
+|---|---:|---:|
+| C function pointer call (baseline) | 11 | 440 |
+| Global block invocation | 20 | 800 |
+| Heap block invocation (int capture) | 20 | 800 |
+| `_Block_copy` + `_Block_release` (int capture) | 2,900 | 116,000 |
+| `_Block_copy` (retain heap block) | 154 | 6,160 |
+
+### Block Memory
+
+| Metric | Size |
+|---|---:|
+| C function pointer | 4 B |
+| Block pointer (reference) | 4 B |
+| `struct Block_layout` | 20 B |
+| Block + int capture (descriptor size) | 24 B |
+| Block + ObjC object capture (descriptor size) | 24 B |
+| Block + `__block` int (descriptor size) | 24 B |
+| Heap cost: `_Block_copy` (int capture) | 32 B |
+| Heap cost: `_Block_copy` (obj capture) | 32 B |
+| Heap cost: `_Block_copy` (`__block` int) | 56 B |
+
 ### Memory Footprint
+
+Dispatch cache cost (`CONFIG_OBJZ_DISPATCH_CACHE`, default `y`):
 
 | Metric | Cached | No cache | Delta |
 |---|---:|---:|---:|
 | FLASH | 31,916 B | 31,596 B | +320 B |
 | RAM (BSS + data) | 30,592 B | 29,568 B | +1,024 B |
 | ObjC heap peak | 288 B | 48 B | +240 B |
+
+Blocks runtime cost (`CONFIG_OBJZ_BLOCKS`, default `n`):
+
+| Metric | Blocks on | Blocks off | Delta |
+|---|---:|---:|---:|
+| FLASH | 34,596 B | 31,916 B | +2,680 B |
+| RAM (BSS + data) | 30,624 B | 30,592 B | +32 B |
 
 **Key takeaways:**
 
@@ -168,6 +207,7 @@ Without dispatch cache (`CONFIG_OBJZ_DISPATCH_CACHE=n`):
 - **Cache cost:** +1,024 B RAM (static BSS pool for 8 dtables), +240 B heap (overflow dtables), +320 B FLASH (code). Configurable via `CONFIG_OBJZ_DISPATCH_CACHE_STATIC_COUNT` and `CONFIG_OBJZ_DISPATCH_TABLE_SIZE`.
 - **ARC vs MRR retain**: `objc_retain` (58 cycles) vs `[obj retain]` (269 cycles cached, 1,018 uncached) — ARC entry points bypass message dispatch entirely.
 - **Static pools are ~51% faster** than heap allocation (`sys_heap` with spinlock).
+- **Block invocation matches C function pointers** at 20 cycles (vs 11 for a raw `call`). The overhead comes from `_Block_copy` (stack-to-heap promotion): 2,900 cycles per copy, but retaining an already-heap block is only 154 cycles. Each heap block costs 32 B (56 B with `__block` variables due to the `Block_byref` structure).
 - **QEMU caveat**: these are instruction-accurate counts, not true cycle-accurate. Real hardware numbers will differ, but relative comparisons hold.
 
 ## Using in Your Project
@@ -212,6 +252,12 @@ CONFIG_OBJZ=y
 # Optional: Automatic Reference Counting
 CONFIG_OBJZ_ARC=y
 
+# Optional: Blocks (closures)
+CONFIG_OBJZ_BLOCKS=y
+
+# Optional: Boxed/collection literals (@42, @[...], @{...})
+CONFIG_OBJZ_LITERALS=y
+
 # Optional: Static allocation pools
 CONFIG_OBJZ_STATIC_POOLS=y
 ```
@@ -249,6 +295,8 @@ west build -p -b mps2/an385 .
 | `CONFIG_OBJZ` | Enable Objective-C runtime (includes MRR) | — |
 | `CONFIG_OBJZ_DISPATCH_CACHE` | Per-class dispatch table cache | `OBJZ` |
 | `CONFIG_OBJZ_ARC` | Automatic Reference Counting | `OBJZ` |
+| `CONFIG_OBJZ_BLOCKS` | Blocks (closures) with `-fblocks` | `OBJZ` |
+| `CONFIG_OBJZ_LITERALS` | Boxed literals and collection literals | `OBJZ` |
 | `CONFIG_OBJZ_STATIC_POOLS` | Per-class static allocation pools | `OBJZ` |
 
 ### Table Sizes
@@ -264,6 +312,7 @@ All tables are statically allocated. Tune via Kconfig if defaults are insufficie
 | `CONFIG_OBJZ_DISPATCH_TABLE_SIZE` | 16 | Entries per dispatch cache (power-of-2) |
 | `CONFIG_OBJZ_DISPATCH_CACHE_STATIC_COUNT` | 8 | Static dtable blocks in BSS |
 | `CONFIG_OBJZ_MEM_POOL_SIZE` | 4096 | Heap size in bytes |
+| `CONFIG_OBJZ_LOG_BUFFER_SIZE` | 128 | OZLog format buffer size |
 | `CONFIG_OBJZ_STATIC_POOL_TABLE_SIZE` | 16 | Max static pool registrations |
 
 ## Build Commands
