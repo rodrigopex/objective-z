@@ -11,9 +11,12 @@
 #include <zephyr/kernel.h>
 #include <zephyr/sys/printk.h>
 #include <zephyr/timing/timing.h>
+#include <zephyr/logging/log.h>
 #include <objc/runtime.h>
 #include <objc/arc.h>
 #include <objc/malloc.h>
+
+LOG_MODULE_REGISTER(bench, LOG_LEVEL_INF);
 
 /* ── Configuration ────────────────────────────────────────────────── */
 
@@ -42,6 +45,10 @@ extern BOOL bench_responds_to_nop(id obj);
 extern BOOL bench_responds_to_missing(id obj);
 extern Class bench_get_class(id obj);
 extern void bench_flush_cache(id obj);
+extern void bench_ozlog_simple(void);
+extern void bench_ozlog_int(void);
+extern void bench_ozlog_string(void);
+extern void bench_ozlog_objat(id obj);
 
 /* ── Timing helpers ───────────────────────────────────────────────── */
 
@@ -318,6 +325,83 @@ static void bench_blocks_perf(void)
 }
 #endif /* CONFIG_OBJZ_BLOCKS */
 
+/* ── Benchmark: Logging ───────────────────────────────────────────── */
+
+/*
+ * Fewer iterations for logging benchmarks to limit console output.
+ * Each iteration produces a full printk/LOG_INF/OZLog line.
+ */
+#define LOG_ITERATIONS 50
+#define LOG_WARMUP     5
+
+#define LOG_BENCH_LOOP(desc, code)                                                                 \
+	do {                                                                                       \
+		timing_t _start, _end;                                                             \
+		uint64_t _total_cycles = 0;                                                        \
+                                                                                                   \
+		for (int _w = 0; _w < LOG_WARMUP; _w++) {                                          \
+			code;                                                                      \
+		}                                                                                  \
+                                                                                                   \
+		for (int _i = 0; _i < LOG_ITERATIONS; _i++) {                                      \
+			_start = timing_counter_get();                                              \
+			code;                                                                      \
+			_end = timing_counter_get();                                               \
+			_total_cycles += timing_cycles_get(&_start, &_end);                        \
+		}                                                                                  \
+                                                                                                   \
+		uint64_t _avg = _total_cycles / LOG_ITERATIONS;                                    \
+		if (_avg > timing_overhead_cycles) {                                                \
+			_avg -= timing_overhead_cycles;                                             \
+		}                                                                                  \
+		uint64_t _ns = timing_cycles_to_ns(_avg);                                          \
+		printk("%-52s: %5llu cycles , %5llu ns\n", desc,                                   \
+		       (unsigned long long)_avg, (unsigned long long)_ns);                          \
+	} while (0)
+
+static void bench_logging(void)
+{
+	printk("\n--- Logging ---\n");
+
+	/* Simple string (no format args) */
+	LOG_BENCH_LOOP("printk (simple string)",
+		       printk("Hello benchmark\n"));
+
+	LOG_BENCH_LOOP("LOG_INF (simple string)",
+		       LOG_INF("Hello benchmark"));
+
+	LOG_BENCH_LOOP("OZLog (simple string)",
+		       bench_ozlog_simple());
+
+	/* Integer formatting */
+	LOG_BENCH_LOOP("printk (integer format)",
+		       printk("Value: %d\n", 42));
+
+	LOG_BENCH_LOOP("LOG_INF (integer format)",
+		       LOG_INF("Value: %d", 42));
+
+	LOG_BENCH_LOOP("OZLog (integer format)",
+		       bench_ozlog_int());
+
+	/* String formatting */
+	LOG_BENCH_LOOP("printk (string format)",
+		       printk("Name: %s\n", "test"));
+
+	LOG_BENCH_LOOP("LOG_INF (string format)",
+		       LOG_INF("Name: %s", "test"));
+
+	LOG_BENCH_LOOP("OZLog (string format)",
+		       bench_ozlog_string());
+
+	/* OZLog-only: %@ object description */
+	id obj = bench_create_base();
+
+	LOG_BENCH_LOOP("OZLog (%@ object format)",
+		       bench_ozlog_objat(obj));
+
+	bench_dealloc(obj);
+}
+
 /* ── Main ─────────────────────────────────────────────────────────── */
 
 int main(void)
@@ -341,6 +425,8 @@ int main(void)
 	bench_blocks_memory();
 	bench_blocks_perf();
 #endif
+
+	bench_logging();
 
 	timing_stop();
 

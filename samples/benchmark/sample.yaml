@@ -20,6 +20,11 @@ common:
       - "--- Introspection ---"
       - "--- Blocks: Memory \\(C func ptr vs Block\\) ---"
       - "--- Blocks: Performance ---"
+      - "--- Logging ---"
+      - "printk \\(simple string\\)"
+      - "LOG_INF \\(simple string\\)"
+      - "OZLog \\(simple string\\)"
+      - "OZLog \\(%@ object format\\)"
       - "PROJECT EXECUTION SUCCESSFUL"
 tests:
   sample.objz.benchmark:

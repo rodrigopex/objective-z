@@ -183,6 +183,23 @@ Without dispatch cache (`CONFIG_OBJZ_DISPATCH_CACHE=n`):
 | Heap cost: `_Block_copy` (obj capture) | 32 B |
 | Heap cost: `_Block_copy` (`__block` int) | 56 B |
 
+### Logging
+
+Comparison of `printk`, Zephyr `LOG_INF` (minimal mode), and `OZLog` (50 iterations):
+
+| Operation | Cycles | ns |
+|---|---:|---:|
+| `printk` (simple string) | 2,301 | 92,040 |
+| `LOG_INF` (simple string) | 2,903 | 116,120 |
+| `OZLog` (simple string) | 9,511 | 380,440 |
+| `printk` (integer format) | 2,196 | 87,840 |
+| `LOG_INF` (integer format) | 2,797 | 111,880 |
+| `OZLog` (integer format) | 10,107 | 404,280 |
+| `printk` (string format) | 2,039 | 81,560 |
+| `LOG_INF` (string format) | 2,640 | 105,600 |
+| `OZLog` (string format) | 10,116 | 404,640 |
+| `OZLog` (`%@` object format) | 23,578 | 943,120 |
+
 ### Memory Footprint
 
 Runtime cost vs bare Zephyr (mps2/an385):
@@ -216,6 +233,7 @@ Blocks runtime cost (`CONFIG_OBJZ_BLOCKS`, default `n`):
 - **ARC vs MRR retain**: `objc_retain` (58 cycles) vs `[obj retain]` (269 cycles cached, 1,018 uncached) — ARC entry points bypass message dispatch entirely.
 - **Static pools are ~51% faster** than heap allocation (`sys_heap` with spinlock).
 - **Block invocation matches C function pointers** at 20 cycles (vs 11 for a raw `call`). The overhead comes from `_Block_copy` (stack-to-heap promotion): 2,900 cycles per copy, but retaining an already-heap block is only 154 cycles. Each heap block costs 32 B (56 B with `__block` variables due to the `Block_byref` structure).
+- **OZLog vs printk**: OZLog is ~4-5x slower than bare `printk` due to the custom format parser, `@autoreleasepool` push/pop, and per-specifier `snprintk`. The `%@` path adds ~10x overhead (message dispatch for `-description` and `-cStr`). `LOG_INF` in minimal mode adds ~26-29% over `printk` (prefix formatting).
 - **QEMU caveat**: these are instruction-accurate counts, not true cycle-accurate. Real hardware numbers will differ, but relative comparisons hold.
 
 ## Using in Your Project

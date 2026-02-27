@@ -278,3 +278,25 @@ void *bench_block_copy(void *blk)
 }
 
 #endif /* CONFIG_OBJZ_BLOCKS */
+
+/* ── Logging benchmark helpers ────────────────────────────────────── */
+
+void bench_ozlog_simple(void)
+{
+	OZLog("Hello benchmark");
+}
+
+void bench_ozlog_int(void)
+{
+	OZLog("Value: %d", 42);
+}
+
+void bench_ozlog_string(void)
+{
+	OZLog("Name: %s", "test");
+}
+
+void bench_ozlog_objat(id obj)
+{
+	OZLog("Object: %@", obj);
+}
