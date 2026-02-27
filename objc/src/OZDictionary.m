@@ -84,7 +84,7 @@ LOG_MODULE_DECLARE(objz, CONFIG_OBJZ_LOG_LEVEL);
 }
 
 - (unsigned long)countByEnumeratingWithState:(struct NSFastEnumerationState *)state
-				     objects:(id *)stackbuf
+				     objects:(__unsafe_unretained id *)stackbuf
 				       count:(unsigned long)len
 {
 	(void)stackbuf;

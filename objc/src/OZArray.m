@@ -79,7 +79,7 @@ void objc_enumerationMutation(id object)
 }
 
 - (unsigned long)countByEnumeratingWithState:(struct NSFastEnumerationState *)state
-				     objects:(id *)stackbuf
+				     objects:(__unsafe_unretained id *)stackbuf
 				       count:(unsigned long)len
 {
 	(void)stackbuf;

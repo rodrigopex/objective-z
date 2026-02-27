@@ -18,8 +18,8 @@
  * using -isEqual: on keys. Supports keyed subscript syntax (dict[@"k"]).
  */
 @interface OZDictionary : Object {
-	id *_keys;
-	id *_values;
+	__unsafe_unretained id *_keys;
+	__unsafe_unretained id *_values;
 	unsigned int _count;
 }
 
@@ -58,7 +58,7 @@
  * @return Number of keys returned, or 0 when done.
  */
 - (unsigned long)countByEnumeratingWithState:(struct NSFastEnumerationState *)state
-				     objects:(id *)stackbuf
+				     objects:(__unsafe_unretained id *)stackbuf
 				       count:(unsigned long)len;
 
 @end

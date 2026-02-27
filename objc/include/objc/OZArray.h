@@ -18,7 +18,7 @@
  * Supports indexed subscript syntax (arr[0]).
  */
 @interface OZArray : Object {
-	id *_items;
+	__unsafe_unretained id *_items;
 	unsigned int _count;
 }
 
@@ -54,7 +54,7 @@
  * @return Number of objects returned, or 0 when done.
  */
 - (unsigned long)countByEnumeratingWithState:(struct NSFastEnumerationState *)state
-				     objects:(id *)stackbuf
+				     objects:(__unsafe_unretained id *)stackbuf
 				       count:(unsigned long)len;
 
 #ifdef CONFIG_OBJZ_BLOCKS

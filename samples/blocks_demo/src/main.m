@@ -25,10 +25,9 @@ typedef void (^VoidBlock)(void);
 @interface Sensor : Object {
 	OZArray *_samples;
 }
-@property (readonly) OZArray *samples;
+@property (nonatomic, readonly) OZArray *samples;
 - (id)init;
 - (void)iterateSamplesUsingBlock:(void (^)(id obj, unsigned int idx, BOOL *stop))callback;
-- (void)dealloc;
 @end
 /**
  * @implementation Sensor
@@ -37,7 +36,7 @@ typedef void (^VoidBlock)(void);
 @synthesize samples = _samples;
 - (id)init
 {
-	_samples = [@[ @0, @1, @2, @3, @4, @5, @6, @7, @8, @9 ] retain];
+	_samples = @[ @0, @1, @2, @3, @4, @5, @6, @7, @8, @9 ];
 	return self;
 }
 
@@ -45,12 +44,6 @@ typedef void (^VoidBlock)(void);
 {
 	[_samples enumerateObjectsUsingBlock:callback];
 }
-- (void)dealloc
-{
-	[_samples release];
-	[super dealloc];
-}
-
 @end
 
 int main(void)
@@ -68,21 +61,17 @@ int main(void)
 	IntBlock capturing = ^{
 	  return value;
 	};
-	void *copied = _Block_copy(capturing);
-	printk("Capturing block: %d\n", ((IntBlock)copied)());
-	_Block_release(copied);
+	printk("Capturing block: %d\n", capturing());
 
 	/* __block variable — mutation across block invocations */
 	__block int counter = 0;
 	VoidBlock increment = ^{
 	  counter++;
 	};
-	void *inc_copy = _Block_copy(increment);
-	((VoidBlock)inc_copy)();
-	((VoidBlock)inc_copy)();
-	((VoidBlock)inc_copy)();
+	increment();
+	increment();
+	increment();
 	printk("Mutated counter: %d\n", counter);
-	_Block_release(inc_copy);
 
 	/* Nested block — outer captures inner */
 	int nested_val = 77;
@@ -92,9 +81,7 @@ int main(void)
 	IntBlock outer = ^{
 	  return inner();
 	};
-	void *outer_copy = _Block_copy(outer);
-	printk("Nested block: %d\n", ((IntBlock)outer_copy)());
-	_Block_release(outer_copy);
+	printk("Nested block: %d\n", outer());
 
 	/* enumerateObjectsUsingBlock: via Sensor */
 	Sensor *sensor = [[Sensor alloc] init];
@@ -112,7 +99,6 @@ int main(void)
 	}
 
 	printk("Sensor sum: %d\n", sum);
-	[sensor release];
 
 	printk("=== Blocks Demo Complete ===\n");
 	return 0;
