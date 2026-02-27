@@ -33,11 +33,15 @@ extern id test_arr_create_number(int v);
 extern id test_arr_retain(id obj);
 extern unsigned int test_arr_retain_count(id obj);
 
+extern int test_arr_fast_enum_sum(id arr);
+extern unsigned int test_arr_fast_enum_count(id arr);
+
 /* ── Test suites ──────────────────────────────────────────────────── */
 
 ZTEST_SUITE(arr_description, NULL, NULL, NULL, NULL, NULL);
 ZTEST_SUITE(arr_lifecycle, NULL, NULL, NULL, NULL, NULL);
 ZTEST_SUITE(arr_elements, NULL, NULL, NULL, NULL, NULL);
+ZTEST_SUITE(arr_fast_enum, NULL, NULL, NULL, NULL, NULL);
 
 /* ── Description tests ────────────────────────────────────────────── */
 
@@ -122,6 +126,41 @@ ZTEST(arr_elements, test_string_elements)
 	zassert_equal(strcmp(test_arr_string_cstr(s0), "alpha"), 0, "arr[0] should be alpha");
 	zassert_equal(strcmp(test_arr_string_cstr(s1), "beta"), 0, "arr[1] should be beta");
 	zassert_equal(strcmp(test_arr_string_cstr(s2), "gamma"), 0, "arr[2] should be gamma");
+
+	test_arr_pool_pop(pool);
+}
+
+/* ── Fast enumeration ────────────────────────────────────────────── */
+
+ZTEST(arr_fast_enum, test_fast_enum_sum)
+{
+	void *pool = test_arr_pool_push();
+
+	id arr = test_arr_multi(); /* @1, @2, @3 */
+	int sum = test_arr_fast_enum_sum(arr);
+	zassert_equal(sum, 6, "for...in sum of @[1,2,3] should be 6");
+
+	test_arr_pool_pop(pool);
+}
+
+ZTEST(arr_fast_enum, test_fast_enum_empty)
+{
+	void *pool = test_arr_pool_push();
+
+	id arr = test_arr_empty();
+	unsigned int n = test_arr_fast_enum_count(arr);
+	zassert_equal(n, 0, "for...in on empty array should iterate 0 times");
+
+	test_arr_pool_pop(pool);
+}
+
+ZTEST(arr_fast_enum, test_fast_enum_single)
+{
+	void *pool = test_arr_pool_push();
+
+	id arr = test_arr_single(); /* @42 */
+	int sum = test_arr_fast_enum_sum(arr);
+	zassert_equal(sum, 42, "for...in sum of @[42] should be 42");
 
 	test_arr_pool_pop(pool);
 }

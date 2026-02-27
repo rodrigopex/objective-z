@@ -109,3 +109,24 @@ unsigned int test_arr_retain_count(id obj)
 {
 	return [(id)obj retainCount];
 }
+
+/* ── Fast enumeration ────────────────────────────────────────────── */
+
+int test_arr_fast_enum_sum(id arr)
+{
+	int sum = 0;
+	for (id obj in (OZArray *)arr) {
+		sum += [(OZNumber *)obj intValue];
+	}
+	return sum;
+}
+
+unsigned int test_arr_fast_enum_count(id arr)
+{
+	unsigned int n = 0;
+	for (id obj in (OZArray *)arr) {
+		(void)obj;
+		n++;
+	}
+	return n;
+}

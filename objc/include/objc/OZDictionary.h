@@ -50,6 +50,17 @@
  */
 - (id)objectForKeyedSubscript:(id)key;
 
+/**
+ * @brief Fast enumeration over keys for for...in loops.
+ * @param state Compiler-managed iteration state.
+ * @param stackbuf Scratch buffer (unused — keys returned directly).
+ * @param len Size of stackbuf (unused).
+ * @return Number of keys returned, or 0 when done.
+ */
+- (unsigned long)countByEnumeratingWithState:(struct NSFastEnumerationState *)state
+				     objects:(id *)stackbuf
+				       count:(unsigned long)len;
+
 @end
 
 #ifdef __clang__

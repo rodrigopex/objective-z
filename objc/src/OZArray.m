@@ -16,6 +16,12 @@
 #import <zephyr/logging/log.h>
 LOG_MODULE_DECLARE(objz, CONFIG_OBJZ_LOG_LEVEL);
 
+void objc_enumerationMutation(id object)
+{
+	(void)object;
+	LOG_ERR("Collection mutated during for...in enumeration");
+}
+
 @implementation OZArray
 
 + (id)arrayWithObjects:(const id *)objects count:(unsigned int)count
@@ -71,6 +77,34 @@ LOG_MODULE_DECLARE(objz, CONFIG_OBJZ_LOG_LEVEL);
 	[desc appendCString:")"];
 	return desc;
 }
+
+- (unsigned long)countByEnumeratingWithState:(struct NSFastEnumerationState *)state
+				     objects:(id *)stackbuf
+				       count:(unsigned long)len
+{
+	(void)stackbuf;
+	(void)len;
+	if (state->state != 0) {
+		return 0;
+	}
+	state->itemsPtr = _items;
+	state->mutationsPtr = (unsigned long *)self;
+	state->state = 1;
+	return _count;
+}
+
+#ifdef CONFIG_OBJZ_BLOCKS
+- (void)enumerateObjectsUsingBlock:(void (^)(id obj, unsigned int idx, BOOL *stop))block
+{
+	BOOL stop = NO;
+	for (unsigned int i = 0; i < _count; i++) {
+		block(_items[i], i, &stop);
+		if (stop) {
+			break;
+		}
+	}
+}
+#endif
 
 - (void)dealloc
 {

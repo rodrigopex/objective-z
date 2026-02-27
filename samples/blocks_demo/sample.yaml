@@ -15,6 +15,7 @@ common:
       - "Capturing block: 99"
       - "Mutated counter: 3"
       - "Nested block: 77"
+      - "Sensor sum: 90"
       - "=== Blocks Demo Complete ==="
 tests:
   sample.objz.blocks_demo:

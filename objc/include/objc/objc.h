@@ -26,6 +26,7 @@
 #include "Protocol.h"
 
 #ifdef CONFIG_OBJZ_LITERALS
+#include "NSFastEnumeration.h"
 #include "OZNumber.h"
 #include "OZArray.h"
 #include "OZDictionary.h"

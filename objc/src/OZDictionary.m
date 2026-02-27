@@ -83,6 +83,21 @@ LOG_MODULE_DECLARE(objz, CONFIG_OBJZ_LOG_LEVEL);
 	return desc;
 }
 
+- (unsigned long)countByEnumeratingWithState:(struct NSFastEnumerationState *)state
+				     objects:(id *)stackbuf
+				       count:(unsigned long)len
+{
+	(void)stackbuf;
+	(void)len;
+	if (state->state != 0) {
+		return 0;
+	}
+	state->itemsPtr = _keys;
+	state->mutationsPtr = (unsigned long *)self;
+	state->state = 1;
+	return _count;
+}
+
 - (void)dealloc
 {
 	for (unsigned int i = 0; i < _count; i++) {

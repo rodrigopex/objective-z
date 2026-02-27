@@ -46,6 +46,26 @@
  */
 - (id)objectAtIndexedSubscript:(unsigned int)index;
 
+/**
+ * @brief Fast enumeration support for for...in loops.
+ * @param state Compiler-managed iteration state.
+ * @param stackbuf Scratch buffer (unused — items returned directly).
+ * @param len Size of stackbuf (unused).
+ * @return Number of objects returned, or 0 when done.
+ */
+- (unsigned long)countByEnumeratingWithState:(struct NSFastEnumerationState *)state
+				     objects:(id *)stackbuf
+				       count:(unsigned long)len;
+
+#ifdef CONFIG_OBJZ_BLOCKS
+/**
+ * @brief Enumerate all objects using a block callback.
+ * @param block Called for each element with the object, its index,
+ *              and a pointer to a BOOL that can be set to YES to stop.
+ */
+- (void)enumerateObjectsUsingBlock:(void (^)(id obj, unsigned int idx, BOOL *stop))block;
+#endif
+
 @end
 
 #ifdef __clang__
