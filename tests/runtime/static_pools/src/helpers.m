@@ -7,11 +7,11 @@
  * @file helpers.m
  * @brief ObjC helpers for static pool tests.
  */
-#import <objc/OZObject.h>
+#import <objc/objc.h>
 
 /* ── TestPooled: class with a static memory pool ─────────────────── */
 
-@interface TestPooled : OZObject {
+@interface TestPooled : Object {
 	int _tag;
 }
 - (id)initWithTag:(int)tag;
@@ -43,7 +43,7 @@
 
 /* ── TestUnpooled: class WITHOUT a static pool (heap fallback) ──── */
 
-@interface TestUnpooled : OZObject {
+@interface TestUnpooled : Object {
 	int _val;
 }
 - (id)initWithVal:(int)val;

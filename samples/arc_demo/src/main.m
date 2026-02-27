@@ -5,12 +5,12 @@
  * Compiled with -fobjc-arc — no manual retain/release needed.
  */
 
-#import <objc/OZObject.h>
+#import <objc/objc.h>
 #import <objc/OZAutoreleasePool.h>
 #include <objc/OZLog.h>
 #include <zephyr/kernel.h>
 
-@interface Sensor: OZObject {
+@interface Sensor: Object {
 	int _value;
 }
 - (void)setValue:(int)v;
@@ -50,7 +50,7 @@ static Sensor *createSensor(int v)
 	return s;
 }
 
-@interface Driver: OZObject {
+@interface Driver: Object {
 	Sensor *_sensor;
 }
 @property(nonatomic, strong) Sensor *sensor;

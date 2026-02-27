@@ -6,11 +6,6 @@ LOG_MODULE_DECLARE(objz, CONFIG_OBJZ_LOG_LEVEL);
 /* refcount.c callback registration */
 extern void __objc_refcount_set_autorelease_fn(void (*fn)(id));
 
-/* Forward-declare -release so Clang doesn't warn on [obj release] */
-@interface Object (MRR)
-- (oneway void)release;
-@end
-
 /* Per-thread pool stack (requires CONFIG_THREAD_LOCAL_STORAGE) */
 static __thread OZAutoreleasePool *_currentPool = nil;
 

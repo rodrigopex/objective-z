@@ -68,6 +68,14 @@ void __objc_load(struct objc_init *init)
 		__objc_protocol_register(proto);
 	}
 
+	/* Mark immortal classes: instances are statically emitted by the
+	 * compiler, so their ivar layout must not be shifted by the
+	 * non-fragile ABI fixup and refcount ops must be no-ops. */
+	objc_class_t *proto_cls = __objc_lookup_class("Protocol");
+	if (proto_cls != NULL) {
+		proto_cls->info |= objc_class_flag_immortal;
+	}
+
 	/* Fix constant string isa pointers.
 	 * Clang emits @"..." literals with isa pointing to the external
 	 * class symbol, but on our embedded target the class address is
@@ -75,6 +83,7 @@ void __objc_load(struct objc_init *init)
 	 * string section and patch each isa to the resolved OZString class. */
 	objc_class_t *string_cls = __objc_lookup_class("OZString");
 	if (string_cls != NULL) {
+		string_cls->info |= objc_class_flag_immortal;
 		for (struct objc_constant_string *str = init->str_begin;
 		     str < init->str_end; str++) {
 			str->isa = (id)string_cls;

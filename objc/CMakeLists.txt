@@ -29,16 +29,13 @@ if(CONFIG_OBJZ)
     # gnustep-2.0 dispatch: objc_msgSend trampoline (ARM Thumb-2)
     zephyr_library_sources("${ZEPHYR_CURRENT_MODULE_DIR}/src/objc_msgSend.S")
 
-    # MRR memory management layer
-    if(CONFIG_OBJZ_MRR)
-        zephyr_library_sources("${ZEPHYR_CURRENT_MODULE_DIR}/src/refcount.c")
-        objz_compile_objc_sources(${ZEPHYR_CURRENT_LIBRARY}
-            "${ZEPHYR_CURRENT_MODULE_DIR}/src/OZObject.m"
-            "${ZEPHYR_CURRENT_MODULE_DIR}/src/OZAutoreleasePool.m"
-            "${ZEPHYR_CURRENT_MODULE_DIR}/src/OZMutableString.m"
-            "${ZEPHYR_CURRENT_MODULE_DIR}/src/OZLog.m"
-        )
-    endif()
+    # Reference counting and autorelease pool
+    zephyr_library_sources("${ZEPHYR_CURRENT_MODULE_DIR}/src/refcount.c")
+    objz_compile_objc_sources(${ZEPHYR_CURRENT_LIBRARY}
+        "${ZEPHYR_CURRENT_MODULE_DIR}/src/OZAutoreleasePool.m"
+        "${ZEPHYR_CURRENT_MODULE_DIR}/src/OZMutableString.m"
+        "${ZEPHYR_CURRENT_MODULE_DIR}/src/OZLog.m"
+    )
 
     # ARC entry points (pure C, no -fobjc-arc)
     if(CONFIG_OBJZ_ARC)

@@ -5,7 +5,7 @@
 
 /**
  * @file main.c
- * @brief Tests for MRR reference counting (refcount.c, OZObject, OZAutoreleasePool).
+ * @brief Tests for MRR reference counting (refcount.c, Object, OZAutoreleasePool).
  */
 #include <zephyr/ztest.h>
 #include <objc/runtime.h>

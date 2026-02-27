@@ -7,13 +7,13 @@
  * Gadget has no pool — falls back to the sys_heap allocator.
  */
 
-#import <objc/OZObject.h>
+#import <objc/objc.h>
 #import <objc/OZAutoreleasePool.h>
 #include <objc/OZLog.h>
 
 /* ── Sensor class ─────────────────────────────────────────────────── */
 
-@interface Sensor : OZObject {
+@interface Sensor : Object {
 	int _value;
 }
 - (void)setValue:(int)v;
@@ -42,7 +42,7 @@
 
 /* ── Gadget class (no pool, uses heap fallback) ───────────────────── */
 
-@interface Gadget : OZObject {
+@interface Gadget : Object {
 	int _value;
 }
 - (void)setValue:(int)v;

@@ -7,7 +7,7 @@
  * Aliased to NSNumber under Clang for compiler literal codegen.
  */
 #pragma once
-#import <objc/OZObject.h>
+#import <objc/Object.h>
 
 enum oz_number_type {
 	OZNumberTypeBool,
@@ -30,11 +30,11 @@ enum oz_number_type {
  * @headerfile OZNumber.h objc/OZNumber.h
  * @ingroup objc
  *
- * Wraps C numeric types in an OZObject for use with ObjC boxed
+ * Wraps C numeric types in an Object for use with ObjC boxed
  * literals (@42, @YES, @3.14). Boolean and small integer values
  * are returned as immortal singletons.
  */
-@interface OZNumber : OZObject {
+@interface OZNumber : Object {
 	enum oz_number_type _type;
 	union {
 		BOOL boolVal;

@@ -2,10 +2,12 @@
  * @file Object.h
  * @brief The root class of all Objective-C classes.
  *
- * This class provides basic memory management and introspection capabilities.
+ * This class provides memory management with atomic reference counting
+ * and introspection capabilities.
  */
 #pragma once
 #include "Object+Protocol.h"
+#include <zephyr/sys/atomic.h>
 /**
  * @brief The root class of all Objective-C classes.
  * @headerfile Object.h objc/objc.h
@@ -25,6 +27,12 @@ OBJC_ROOT_CLASS
 	 * enabling dynamic dispatch and introspection.
 	 */
 	Class isa;
+
+	/**
+	 * @var _refcount
+	 * @brief Atomic reference count for retain/release memory management.
+	 */
+	atomic_t _refcount;
 }
 
 /**
@@ -138,8 +146,30 @@ OBJC_ROOT_CLASS
  * @return An autoreleased OZMutableString with "<ClassName: 0xADDR>".
  *
  * Subclasses may override to provide a more meaningful representation.
- * Requires CONFIG_OBJZ_MRR. Returns nil when MRR is disabled.
  */
 - (id)description;
+
+/**
+ * @brief Increment the reference count.
+ * @return self.
+ */
+- (id)retain;
+
+/**
+ * @brief Decrement the reference count. Calls dealloc when it reaches 0.
+ */
+- (oneway void)release;
+
+/**
+ * @brief Add self to the current autorelease pool.
+ * @return self.
+ */
+- (id)autorelease;
+
+/**
+ * @brief Return the current reference count.
+ * @return The reference count value.
+ */
+- (unsigned int)retainCount;
 
 @end

@@ -1,5 +1,5 @@
 sample:
-  description: ARC (Automatic Reference Counting) demo with OZObject
+  description: ARC (Automatic Reference Counting) demo
   name: ObjZ ARC Demo
 common:
   tags: objz

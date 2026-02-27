@@ -26,10 +26,17 @@ static void __objc_fixup_ivar_offsets(objc_class_t *cls)
 		return;
 	}
 
-	/* Determine superclass instance size */
+	/* Determine superclass instance size.
+	 * Immortal classes (OZString, Protocol) have statically-emitted
+	 * instances whose layout assumes Object has only { isa }.  Use
+	 * the isa-only size so their ivar offsets match the compiler. */
 	size_t offset = 0;
 	if (cls->superclass != NULL) {
-		offset = cls->superclass->instance_size;
+		if (cls->info & objc_class_flag_immortal) {
+			offset = sizeof(struct objc_object);
+		} else {
+			offset = cls->superclass->instance_size;
+		}
 	}
 
 	struct objc_ivar_list *il = cls->ivars;

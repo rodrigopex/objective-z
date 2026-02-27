@@ -1,6 +1,6 @@
 /**
  * @file refcount.c
- * @brief Atomic reference counting core for OZObject.
+ * @brief Atomic reference counting core for Object.
  *
  * Pure C — no Objective-C syntax. Uses Zephyr atomic API for
  * thread-safe refcount operations on Cortex-M (LDREX/STREX).
@@ -9,9 +9,9 @@
 #include <zephyr/sys/atomic.h>
 
 /*
- * OZObject layout (32-bit ARM):
- *   offset 0: Class isa       (4 bytes, inherited from Object)
- *   offset 4: atomic_t _refcount (4 bytes, OZObject's first ivar)
+ * Object layout (32-bit ARM):
+ *   offset 0: Class isa         (4 bytes)
+ *   offset 4: atomic_t _refcount (4 bytes)
  */
 #define REFCOUNT_OFFSET sizeof(struct objc_object)
 
@@ -22,7 +22,7 @@ static inline atomic_t *__objc_refcount_ptr(id obj)
 
 /**
  * @brief Increment the reference count of a managed object.
- * @param obj The object to retain. Must be an OZObject instance.
+ * @param obj The object to retain. Must not be an immortal instance.
  * @return obj.
  */
 id __objc_refcount_retain(id obj)
@@ -30,18 +30,24 @@ id __objc_refcount_retain(id obj)
 	if (obj == nil) {
 		return nil;
 	}
+	if (obj->isa->info & objc_class_flag_immortal) {
+		return obj;
+	}
 	atomic_inc(__objc_refcount_ptr(obj));
 	return obj;
 }
 
 /**
  * @brief Decrement the reference count of a managed object.
- * @param obj The object to release. Must be an OZObject instance.
+ * @param obj The object to release. Must not be an immortal instance.
  * @return true if the refcount reached zero (caller should dealloc).
  */
 bool __objc_refcount_release(id obj)
 {
 	if (obj == nil) {
+		return false;
+	}
+	if (obj->isa->info & objc_class_flag_immortal) {
 		return false;
 	}
 	atomic_val_t old = atomic_dec(__objc_refcount_ptr(obj));
@@ -51,7 +57,7 @@ bool __objc_refcount_release(id obj)
 
 /**
  * @brief Read the current reference count.
- * @param obj The object to query. Must be an OZObject instance.
+ * @param obj The object to query. Must not be an immortal instance.
  * @return The current reference count, or 0 if obj is nil.
  */
 unsigned int __objc_refcount_get(id obj)
@@ -64,7 +70,7 @@ unsigned int __objc_refcount_get(id obj)
 
 /**
  * @brief Set the reference count (used during +alloc).
- * @param obj The object. Must be an OZObject instance.
+ * @param obj The object. Must not be an immortal instance.
  * @param value The initial refcount value.
  */
 void __objc_refcount_set(id obj, atomic_val_t value)

@@ -4,7 +4,7 @@
  *
  * These functions are called by Clang-compiled code when -fobjc-arc
  * is enabled with -fobjc-runtime=gnustep-1.7.  The implementations
- * delegate to the MRR refcount layer (refcount.c / OZObject).
+ * delegate to the refcount layer (refcount.c / Object).
  */
 #pragma once
 #include <objc/objc.h>

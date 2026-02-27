@@ -1,5 +1,5 @@
 sample:
-  description: Manual retain/release memory management with OZObject
+  description: Manual retain/release memory management demo
   name: ObjZ Memory Management Demo
 common:
   tags: objz

@@ -7,7 +7,7 @@
  * Aliased to NSArray under Clang for compiler literal codegen.
  */
 #pragma once
-#import <objc/OZObject.h>
+#import <objc/Object.h>
 
 /**
  * @brief Immutable ordered collection.
@@ -17,7 +17,7 @@
  * Stores a retained copy of the objects passed to the factory method.
  * Supports indexed subscript syntax (arr[0]).
  */
-@interface OZArray : OZObject {
+@interface OZArray : Object {
 	id *_items;
 	unsigned int _count;
 }

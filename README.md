@@ -9,7 +9,7 @@ Ported from [djthorpe/objc](https://github.com/djthorpe/objc) (minimal GCC-compa
 - Class and instance method dispatch (`objc_msg_lookup` / `objc_msgSend`)
 - Categories and protocols
 - `@"..."` string literals (OZString / NSString alias under Clang)
-- Manual Retain/Release (MRR) with `OZObject` root class
+- Manual Retain/Release (MRR) built into the `Object` root class
 - Automatic Reference Counting (ARC) with `-fobjc-arc`
 - `@autoreleasepool` blocks via per-thread pool stack
 - Static allocation pools using Zephyr `K_MEM_SLAB` — zero heap allocation per class
@@ -56,7 +56,7 @@ Exit QEMU with `Ctrl+A`, then `x`.
 |---|---|---|
 | `hello_world` | Basic class/instance method dispatch | `CONFIG_OBJZ=y` |
 | `hello_category` | Categories (method extensions on existing classes) | `CONFIG_OBJZ=y` |
-| `mem_demo` | Manual Retain/Release lifecycle with `OZObject` | `CONFIG_OBJZ=y` |
+| `mem_demo` | Manual Retain/Release lifecycle | `CONFIG_OBJZ=y` |
 | `arc_demo` | Automatic Reference Counting, scoped cleanup | `+OBJZ_ARC` |
 | `pool_demo` | Static allocation pools with `K_MEM_SLAB` | `+OBJZ_STATIC_POOLS` |
 | `zbus_objc` | ObjC objects with Zephyr zbus pub/sub messaging | `+ZBUS` |
@@ -132,42 +132,42 @@ Without dispatch cache (`CONFIG_OBJZ_DISPATCH_CACHE=n`):
 
 | Operation | Cached | No cache | Unit |
 |---|---:|---:|---|
-| alloc/init/release (heap, MRR) | 4,477 | 8,257 | cycles |
-| alloc/init/release (static pool) | 2,496 | 6,276 | cycles |
+| alloc/init/release (heap, MRR) | 3,908 | 6,970 | cycles |
+| alloc/init/release (static pool) | 1,927 | 4,989 | cycles |
 
 ### Reference Counting
 
 | Operation | Cached | No cache | Unit |
 |---|---:|---:|---|
-| retain (MRR, via dispatch) | 256 | 1,037 | cycles |
-| retain + release pair (MRR) | 519 | 2,132 | cycles |
-| `objc_retain` (ARC, direct C call) | 45 | 45 | cycles |
-| `objc_release` (ARC) | 109 | 109 | cycles |
-| `objc_storeStrong` (ARC) | 196 | 196 | cycles |
+| retain (MRR, via dispatch) | 269 | 1,018 | cycles |
+| retain + release pair (MRR) | 544 | 2,093 | cycles |
+| `objc_retain` (ARC, direct C call) | 58 | 58 | cycles |
+| `objc_release` (ARC) | 135 | 135 | cycles |
+| `objc_storeStrong` (ARC) | 221 | 221 | cycles |
 
 ### Introspection
 
 | Operation | Cached | No cache | Unit |
 |---|---:|---:|---|
 | `class_respondsToSelector` (YES) | 151 | 493 | cycles |
-| `class_respondsToSelector` (NO) | 1,671 | 1,604 | cycles |
+| `class_respondsToSelector` (NO) | 1,159 | 1,095 | cycles |
 | `object_getClass` | 20 | 20 | cycles |
 
 ### Memory Footprint
 
 | Metric | Cached | No cache | Delta |
 |---|---:|---:|---:|
-| FLASH | 32,244 B | 31,940 B | +304 B |
-| RAM (BSS + data) | 30,824 B | 29,792 B | +1,032 B |
-| ObjC heap peak | 560 B | 48 B | +512 B |
+| FLASH | 31,916 B | 31,596 B | +320 B |
+| RAM (BSS + data) | 30,592 B | 29,568 B | +1,024 B |
+| ObjC heap peak | 288 B | 48 B | +240 B |
 
 **Key takeaways:**
 
 - **Dispatch cache cuts overhead from ~42x to ~16x** a direct C function call. The per-class dispatch table (`CONFIG_OBJZ_DISPATCH_CACHE`) resolves method lookups via pointer hashing after the first call. Cold-cache sends fall back to the global hash table with `strcmp` matching.
 - **Inheritance depth is free** after warm-up: cached inherited methods (depth=1, depth=2) all resolve in ~208 cycles, the same as direct methods. The IMP is cached at the receiver's class level, eliminating the superclass chain walk. Without cache, each level adds ~300-400 cycles.
-- **Cache cost:** +1,032 B RAM (static BSS pool for 8 dtables), +512 B heap (overflow dtables), +304 B FLASH (code). Configurable via `CONFIG_OBJZ_DISPATCH_CACHE_STATIC_COUNT` and `CONFIG_OBJZ_DISPATCH_TABLE_SIZE`.
-- **ARC vs MRR retain**: `objc_retain` (45 cycles) vs `[obj retain]` (256 cycles cached, 1,037 uncached) — ARC entry points bypass message dispatch entirely.
-- **Static pools are ~44% faster** than heap allocation (`sys_heap` with spinlock).
+- **Cache cost:** +1,024 B RAM (static BSS pool for 8 dtables), +240 B heap (overflow dtables), +320 B FLASH (code). Configurable via `CONFIG_OBJZ_DISPATCH_CACHE_STATIC_COUNT` and `CONFIG_OBJZ_DISPATCH_TABLE_SIZE`.
+- **ARC vs MRR retain**: `objc_retain` (58 cycles) vs `[obj retain]` (269 cycles cached, 1,018 uncached) — ARC entry points bypass message dispatch entirely.
+- **Static pools are ~51% faster** than heap allocation (`sys_heap` with spinlock).
 - **QEMU caveat**: these are instruction-accurate counts, not true cycle-accurate. Real hardware numbers will differ, but relative comparisons hold.
 
 ## Using in Your Project
@@ -220,11 +220,10 @@ CONFIG_OBJZ_STATIC_POOLS=y
 
 ```objc
 #import <objc/objc.h>       /* Core runtime: Object, id, SEL, Class */
-#import <objc/OZObject.h>   /* Managed root class (MRR/ARC) */
 #include <zephyr/kernel.h>
 ```
 
-Use `OZObject` as the root class. It provides retain/release/autorelease out of the box.
+Use `Object` as the root class. It provides retain/release/autorelease out of the box.
 
 ### 5. Build
 
@@ -247,10 +246,9 @@ west build -p -b mps2/an385 .
 
 | Kconfig | Description | Depends on |
 |---|---|---|
-| `CONFIG_OBJZ` | Enable Objective-C runtime | — |
+| `CONFIG_OBJZ` | Enable Objective-C runtime (includes MRR) | — |
 | `CONFIG_OBJZ_DISPATCH_CACHE` | Per-class dispatch table cache | `OBJZ` |
-| `CONFIG_OBJZ_MRR` | Manual Retain/Release with `OZObject` (default y) | `OBJZ` |
-| `CONFIG_OBJZ_ARC` | Automatic Reference Counting | `OBJZ_MRR` |
+| `CONFIG_OBJZ_ARC` | Automatic Reference Counting | `OBJZ` |
 | `CONFIG_OBJZ_STATIC_POOLS` | Per-class static allocation pools | `OBJZ` |
 
 ### Table Sizes

@@ -10,16 +10,16 @@
  * Compiled without -fobjc-arc so we can manually manage retain/release
  * and provide C-callable wrappers for the test harness.
  */
-#import <objc/OZObject.h>
+#import <objc/objc.h>
 #import <objc/OZAutoreleasePool.h>
 
 /* ── Dealloc tracking counter (read from C test code) ──────────── */
 
 int g_arc_dealloc_count = 0;
 
-/* ── ArcTestObj: subclass of OZObject ──────────────────────────── */
+/* ── ArcTestObj: subclass of Object ───────────────────────────── */
 
-@interface ArcTestObj : OZObject
+@interface ArcTestObj : Object
 @end
 
 @implementation ArcTestObj

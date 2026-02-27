@@ -2,14 +2,14 @@
  * SPDX-License-Identifier: Apache-2.0
  *
  * MRR (Manual Retain/Release) memory management demo.
- * Demonstrates OZObject retain/release/autorelease lifecycle.
+ * Demonstrates retain/release/autorelease lifecycle.
  */
 
-#import <objc/OZObject.h>
+#import <objc/objc.h>
 #import <objc/OZAutoreleasePool.h>
 #include <objc/OZLog.h>
 
-@interface Sensor : OZObject {
+@interface Sensor : Object {
 	int _value;
 }
 - (void)setValue:(int)v;

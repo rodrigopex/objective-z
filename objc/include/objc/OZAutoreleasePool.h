@@ -15,8 +15,7 @@
  * @brief Per-thread autorelease pool.
  * @ingroup objc
  *
- * Inherits from Object (not OZObject) because pools manage their own
- * lifetime via -drain, not refcounting.
+ * Pools manage their own lifetime via -drain rather than -release.
  */
 @interface OZAutoreleasePool : Object {
 	id _objects[OBJZ_ARP_CAPACITY];

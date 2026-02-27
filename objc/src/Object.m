@@ -1,7 +1,5 @@
 #import <objc/objc.h>
-#ifdef CONFIG_OBJZ_MRR
 #import <objc/OZMutableString.h>
-#endif
 #include <zephyr/sys/printk.h>
 #import <zephyr/logging/log.h>
 LOG_MODULE_DECLARE(objz, CONFIG_OBJZ_LOG_LEVEL);
@@ -11,11 +9,18 @@ extern void *__objc_pool_alloc(const char *class_name);
 extern _Bool __objc_pool_free(void *ptr);
 #endif
 
+/* refcount.c functions */
+extern id __objc_refcount_retain(id obj);
+extern bool __objc_refcount_release(id obj);
+extern unsigned int __objc_refcount_get(id obj);
+extern void __objc_refcount_set(id obj, long value);
+extern id __objc_autorelease_add(id obj);
+
 @implementation Object
 
 + (void)initialize
 {
-	// No-op
+	/* No-op */
 }
 
 + (id)alloc
@@ -35,6 +40,7 @@ extern _Bool __objc_pool_free(void *ptr);
 	}
 	if (obj) {
 		object_setClass(obj, self);
+		__objc_refcount_set(obj, 1);
 	}
 	return obj;
 }
@@ -54,6 +60,35 @@ extern _Bool __objc_pool_free(void *ptr);
 	}
 #endif
 	objc_free(self);
+}
+
+- (id)retain
+{
+	__objc_refcount_retain(self);
+	LOG_DBG("Object -retain %s rc=%u", class_getName([self class]),
+		__objc_refcount_get(self));
+	return self;
+}
+
+- (oneway void)release
+{
+	LOG_DBG("Object -release %s rc=%u", class_getName([self class]),
+		__objc_refcount_get(self));
+	if (__objc_refcount_release(self)) {
+		[self dealloc];
+	}
+}
+
+- (id)autorelease
+{
+	LOG_DBG("Object -autorelease %s rc=%u", class_getName([self class]),
+		__objc_refcount_get(self));
+	return __objc_autorelease_add(self);
+}
+
+- (unsigned int)retainCount
+{
+	return __objc_refcount_get(self);
 }
 
 - (Class)class
@@ -117,13 +152,9 @@ extern _Bool __objc_pool_free(void *ptr);
 
 - (id)description
 {
-#ifdef CONFIG_OBJZ_MRR
 	char buf[64];
 	snprintk(buf, sizeof(buf), "<%s: %p>", class_getName(object_getClass(self)), self);
 	return [OZMutableString stringWithCString:buf];
-#else
-	return nil;
-#endif
 }
 
 @end

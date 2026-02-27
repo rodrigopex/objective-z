@@ -1,35 +1,27 @@
 config OBJZ
     bool "Objective-C support"
     select STATIC_INIT_GNU
+    select THREAD_LOCAL_STORAGE
     default n
     help
       Enable Objective-C language support in Zephyr.
 
       This option enables the Objective-C compiler and related tools,
       allowing you to write and compile Objective-C code within the Zephyr
-      RTOS environment.
+      RTOS environment. Includes retain/release/autorelease memory
+      management and per-thread autorelease pool stack.
 
       Note: Enabling Objective-C support may increase the size of the
       compiled binaries and could impact performance.
 
 if OBJZ
 
-config OBJZ_MRR
-    bool "Manual Retain/Release memory management"
-    select THREAD_LOCAL_STORAGE
-    default y
-    help
-      Enable OZObject with retain/release/autorelease and
-      OZAutoreleasePool with per-thread pool stack.
-      Requires CONFIG_THREAD_LOCAL_STORAGE (auto-selected).
-
 config OBJZ_ARC
     bool "ARC (Automatic Reference Counting) support"
-    depends on OBJZ_MRR
     default n
     help
       Enable ARC entry points (objc_retain, objc_release,
-      objc_storeStrong, etc.). Requires MRR layer.
+      objc_storeStrong, etc.).
       Use objz_compile_objc_arc_sources() or
       objz_target_arc_sources() in CMake to compile .m files
       with -fobjc-arc.
@@ -52,7 +44,6 @@ config OBJZ_STATIC_POOL_TABLE_SIZE
 
 config OBJZ_LITERALS
     bool "ObjC boxed literals and collection literals"
-    depends on OBJZ_MRR
     help
       Enable OZNumber (@42, @YES, @3.14), OZArray (@[...]),
       and OZDictionary (@{k:v}) literal classes.

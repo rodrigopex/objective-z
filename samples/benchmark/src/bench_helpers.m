@@ -6,14 +6,14 @@
  * Compiled with Clang (non-ARC) for manual retain/release control.
  */
 
-#import <objc/OZObject.h>
+#import <objc/objc.h>
 #include <objc/runtime.h>
 
 extern IMP objc_msg_lookup(id receiver, SEL selector);
 
 /* ── BenchBase: direct methods (depth=0) ──────────────────────────── */
 
-@interface BenchBase : OZObject {
+@interface BenchBase : Object {
 	int _x;
 }
 - (void)nop;
@@ -61,7 +61,7 @@ extern IMP objc_msg_lookup(id receiver, SEL selector);
 
 /* ── PooledObj: uses static pool allocation ────────────────────────── */
 
-@interface PooledObj : OZObject {
+@interface PooledObj : Object {
 	int _x;
 }
 - (void)nop;

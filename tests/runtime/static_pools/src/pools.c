@@ -10,7 +10,7 @@
  * OZ_DEFINE_POOL must be in a .c file (not .m) because it uses
  * Zephyr's K_MEM_SLAB_DEFINE and SYS_INIT macros.
  *
- * TestPooled : OZObject has: isa (4) + _refcount (4) + _tag (4) = 12 bytes.
+ * TestPooled : Object has: isa (4) + _refcount (4) + _tag (4) = 12 bytes.
  * We define 4 slots of 12 bytes each, 4-byte aligned.
  */
 #include <objc/pool.h>

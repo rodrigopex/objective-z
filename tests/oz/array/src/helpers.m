@@ -76,7 +76,7 @@ const char *test_arr_description_cstr(id arr)
 unsigned int test_arr_element_retain_count(id arr, unsigned int idx)
 {
 	id obj = [(OZArray *)arr objectAtIndex:idx];
-	return [(OZObject *)obj retainCount];
+	return [(id)obj retainCount];
 }
 
 /* ── Number value helpers ─────────────────────────────────────────── */
@@ -102,10 +102,10 @@ id test_arr_create_number(int v)
 
 id test_arr_retain(id obj)
 {
-	return [(OZObject *)obj retain];
+	return [(id)obj retain];
 }
 
 unsigned int test_arr_retain_count(id obj)
 {
-	return [(OZObject *)obj retainCount];
+	return [(id)obj retainCount];
 }

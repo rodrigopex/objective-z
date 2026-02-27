@@ -7,7 +7,7 @@
  * Aliased to NSDictionary under Clang for compiler literal codegen.
  */
 #pragma once
-#import <objc/OZObject.h>
+#import <objc/Object.h>
 
 /**
  * @brief Immutable key-value collection.
@@ -17,7 +17,7 @@
  * Stores retained copies of keys and values. Lookup is linear scan
  * using -isEqual: on keys. Supports keyed subscript syntax (dict[@"k"]).
  */
-@interface OZDictionary : OZObject {
+@interface OZDictionary : Object {
 	id *_keys;
 	id *_values;
 	unsigned int _count;

@@ -11,7 +11,7 @@
  * Uses an inline buffer to avoid a secondary heap allocation.
  */
 #pragma once
-#import <objc/OZObject.h>
+#import <objc/Object.h>
 #import <objc/OZString+Protocol.h>
 
 /**
@@ -22,7 +22,7 @@
  * Used as the return type for -description methods.
  * Buffer grows via objc_realloc when capacity is exceeded.
  */
-@interface OZMutableString : OZObject <OZStringProtocol> {
+@interface OZMutableString : Object <OZStringProtocol> {
 	char *_buf;
 	unsigned int _length;
 	unsigned int _capacity;

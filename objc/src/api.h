@@ -102,6 +102,7 @@ enum objc_class_flags {
 	objc_class_flag_meta = (1 << 0),        /* 0x01 — metaclass marker */
 	objc_class_flag_resolved = (1 << 1),    /* 0x02 — runtime: methods registered */
 	objc_class_flag_initialized = (1 << 2), /* 0x04 — runtime: +initialize sent */
+	objc_class_flag_immortal = (1 << 3),    /* 0x08 — static instances, skip ivar fixup + refcount */
 };
 
 /*

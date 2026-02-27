@@ -2,7 +2,7 @@
  * @file helpers.m
  * @brief ObjC helper classes for refcount tests.
  */
-#import <objc/OZObject.h>
+#import <objc/objc.h>
 #import <objc/OZAutoreleasePool.h>
 
 /* ── Global dealloc tracking ────────────────────────────────────── */
@@ -11,9 +11,9 @@ int g_dealloc_count = 0;
 int g_dealloc_order[16];
 int g_dealloc_order_idx = 0;
 
-/* ── TestSensor: OZObject subclass with tag ─────────────────────── */
+/* ── TestSensor: Object subclass with tag ─────────────────────── */
 
-@interface TestSensor : OZObject {
+@interface TestSensor : Object {
 	int _tag;
 }
 - (id)initWithTag:(int)tag;

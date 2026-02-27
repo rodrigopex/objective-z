@@ -10,10 +10,10 @@
  * Compiled with -fobjc-arc.  When the local variable goes out of
  * scope, ARC inserts an objc_release that triggers dealloc.
  */
-#import <objc/OZObject.h>
+#import <objc/objc.h>
 
 /* Forward-declare the class defined in helpers.m (MRR side) */
-@interface ArcTestObj : OZObject
+@interface ArcTestObj : Object
 @end
 
 void test_arc_scope_cleanup(void)

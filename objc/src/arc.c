@@ -2,8 +2,8 @@
  * @file arc.c
  * @brief ARC entry point implementations.
  *
- * Pure C — compiled with -fno-objc-arc.  Delegates to the MRR
- * refcount layer and OZObject message sends via objc_msg_lookup.
+ * Pure C — compiled with -fno-objc-arc.  Delegates to the
+ * refcount layer and Object message sends via objc_msg_lookup.
  */
 #include "api.h"
 #include "hash.h"
