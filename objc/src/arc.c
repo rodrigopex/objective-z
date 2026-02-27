@@ -101,6 +101,96 @@ void objc_storeStrong(id *location, id val)
 	}
 }
 
+/* ── Atomic property accessors ─────────────────────────────────── */
+
+static struct k_spinlock __objc_property_lock;
+
+id objc_getProperty(id obj, SEL _cmd, ptrdiff_t offset, BOOL isAtomic)
+{
+	(void)_cmd;
+
+	if (obj == nil) {
+		return nil;
+	}
+
+	id *slot = (id *)((char *)obj + offset);
+
+	if (!isAtomic) {
+		return *slot;
+	}
+
+	k_spinlock_key_t key = k_spin_lock(&__objc_property_lock);
+	id val = *slot;
+	if (val != nil) {
+		__objc_refcount_retain(val);
+	}
+	k_spin_unlock(&__objc_property_lock, key);
+
+	return (val != nil) ? objc_autorelease(val) : nil;
+}
+
+void objc_setProperty(id obj, SEL _cmd, ptrdiff_t offset, id newValue,
+		      BOOL isAtomic, BOOL isCopy)
+{
+	(void)_cmd;
+	(void)isCopy; /* no NSCopying support — always retain semantics */
+
+	if (obj == nil) {
+		return;
+	}
+
+	id *slot = (id *)((char *)obj + offset);
+
+	if (!isAtomic) {
+		id old = *slot;
+		if (newValue != old) {
+			if (newValue != nil) {
+				objc_retain(newValue);
+			}
+			*slot = newValue;
+			if (old != nil) {
+				objc_release(old);
+			}
+		}
+		return;
+	}
+
+	if (newValue != nil) {
+		objc_retain(newValue);
+	}
+
+	k_spinlock_key_t key = k_spin_lock(&__objc_property_lock);
+	id old = *slot;
+	*slot = newValue;
+	k_spin_unlock(&__objc_property_lock, key);
+
+	if (old != nil) {
+		objc_release(old);
+	}
+}
+
+/* ── gnustep-2.0 specialized property entry points ─────────────── */
+
+void objc_setProperty_atomic(id obj, SEL _cmd, id arg, ptrdiff_t offset)
+{
+	objc_setProperty(obj, _cmd, offset, arg, YES, NO);
+}
+
+void objc_setProperty_nonatomic(id obj, SEL _cmd, id arg, ptrdiff_t offset)
+{
+	objc_setProperty(obj, _cmd, offset, arg, NO, NO);
+}
+
+void objc_setProperty_atomic_copy(id obj, SEL _cmd, id arg, ptrdiff_t offset)
+{
+	objc_setProperty(obj, _cmd, offset, arg, YES, YES);
+}
+
+void objc_setProperty_nonatomic_copy(id obj, SEL _cmd, id arg, ptrdiff_t offset)
+{
+	objc_setProperty(obj, _cmd, offset, arg, NO, YES);
+}
+
 id objc_retainAutorelease(id obj)
 {
 	return objc_autorelease(objc_retain(obj));

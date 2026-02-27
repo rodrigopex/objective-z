@@ -26,6 +26,14 @@ extern void test_arc_pool_pop(void *p);
 /* ── ARC helpers (defined in arc_helpers.m, compiled with -fobjc-arc) */
 
 extern void test_arc_scope_cleanup(void);
+extern void test_arc_atomic_property(void);
+
+/* ── Property helpers (defined in helpers.m) ───────────────────── */
+
+extern id test_prop_create(void);
+extern ptrdiff_t test_prop_offset(void);
+extern id test_prop_read_ivar(id obj);
+extern void test_prop_write_ivar(id obj, id val);
 
 /* ── Dealloc tracking counter ──────────────────────────────────── */
 
@@ -213,4 +221,180 @@ ZTEST(arc, test_arc_scope_cleanup)
 
 	zassert_equal(g_arc_dealloc_count, 1,
 		      "ARC should release object when scope ends");
+}
+
+/* ── Property accessor tests ───────────────────────────────────── */
+
+ZTEST_SUITE(arc_property, NULL, NULL, NULL, NULL, NULL);
+
+/* objc_getProperty(nil, ...) returns nil */
+ZTEST(arc_property, test_getProperty_nil)
+{
+	ptrdiff_t off = test_prop_offset();
+	id result = objc_getProperty(nil, NULL, off, NO);
+
+	zassert_is_null(result, "getProperty(nil) should return nil");
+}
+
+/* objc_setProperty(nil, ...) does not crash */
+ZTEST(arc_property, test_setProperty_nil)
+{
+	ptrdiff_t off = test_prop_offset();
+	id dummy = test_arc_create_obj();
+
+	objc_setProperty(nil, NULL, off, dummy, NO, NO);
+
+	/* If we get here, it did not crash */
+	zassert_true(true, "setProperty(nil) should not crash");
+
+	objc_release(dummy);
+}
+
+/* Non-atomic getProperty reads the ivar directly */
+ZTEST(arc_property, test_getProperty_nonatomic)
+{
+	id obj = test_prop_create();
+	id val = test_arc_create_obj();
+	ptrdiff_t off = test_prop_offset();
+
+	/* Write directly into the ivar */
+	test_prop_write_ivar(obj, val);
+
+	id result = objc_getProperty(obj, NULL, off, NO);
+
+	zassert_equal(result, val,
+		      "non-atomic getProperty should return ivar value");
+
+	/* Cleanup: nil out ivar before releasing obj */
+	test_prop_write_ivar(obj, nil);
+	objc_release(val);
+	objc_release(obj);
+}
+
+/* Non-atomic setProperty stores value, retains new, releases old */
+ZTEST(arc_property, test_setProperty_nonatomic)
+{
+	id obj = test_prop_create();
+	id val = test_arc_create_obj();
+	ptrdiff_t off = test_prop_offset();
+
+	zassert_equal(test_arc_get_rc(val), 1, "val initial rc should be 1");
+
+	objc_setProperty(obj, NULL, off, val, NO, NO);
+	zassert_equal(test_arc_get_rc(val), 2,
+		      "val rc should be 2 after setProperty");
+
+	id stored = test_prop_read_ivar(obj);
+
+	zassert_equal(stored, val,
+		      "ivar should hold the stored value");
+
+	/* Clear property (releases val: rc 2->1) */
+	objc_setProperty(obj, NULL, off, nil, NO, NO);
+	zassert_equal(test_arc_get_rc(val), 1,
+		      "val rc should be 1 after clearing property");
+
+	objc_release(val);
+	objc_release(obj);
+}
+
+/* Atomic getProperty retains + autoreleases the returned value */
+ZTEST(arc_property, test_getProperty_atomic)
+{
+	void *pool = test_arc_pool_push();
+	id obj = test_prop_create();
+	id val = test_arc_create_obj();
+	ptrdiff_t off = test_prop_offset();
+
+	/* Manually set ivar and retain for ownership */
+	objc_retain(val);
+	test_prop_write_ivar(obj, val);
+
+	zassert_equal(test_arc_get_rc(val), 2,
+		      "val rc should be 2 (alloc + manual retain)");
+
+	id result = objc_getProperty(obj, NULL, off, YES);
+
+	zassert_equal(result, val,
+		      "atomic getProperty should return ivar value");
+	/* retain inside lock + autorelease = rc goes up by 1 then pool owns it */
+	zassert_equal(test_arc_get_rc(val), 3,
+		      "val rc should be 3 (alloc + ivar + autorelease-retained)");
+
+	/* Drain pool: autoreleased ref released (rc 3->2) */
+	test_arc_pool_pop(pool);
+	zassert_equal(test_arc_get_rc(val), 2,
+		      "val rc should be 2 after pool drain");
+
+	/* Cleanup */
+	test_prop_write_ivar(obj, nil);
+	objc_release(val); /* ivar ownership */
+	objc_release(val); /* alloc ownership */
+	objc_release(obj);
+}
+
+/* Atomic setProperty swaps under lock, retains new, releases old */
+ZTEST(arc_property, test_setProperty_atomic)
+{
+	id obj = test_prop_create();
+	id val = test_arc_create_obj();
+	ptrdiff_t off = test_prop_offset();
+
+	zassert_equal(test_arc_get_rc(val), 1, "val initial rc should be 1");
+
+	objc_setProperty(obj, NULL, off, val, YES, NO);
+	zassert_equal(test_arc_get_rc(val), 2,
+		      "val rc should be 2 after atomic setProperty");
+
+	id stored = test_prop_read_ivar(obj);
+
+	zassert_equal(stored, val,
+		      "ivar should hold the stored value");
+
+	/* Clear property (releases val: rc 2->1) */
+	objc_setProperty(obj, NULL, off, nil, YES, NO);
+	zassert_equal(test_arc_get_rc(val), 1,
+		      "val rc should be 1 after clearing property");
+
+	objc_release(val);
+	objc_release(obj);
+}
+
+/* Atomic setProperty: overwrite A with B; A refcount drops, B rises */
+ZTEST(arc_property, test_setProperty_atomic_overwrites)
+{
+	id obj = test_prop_create();
+	id val_a = test_arc_create_obj();
+	id val_b = test_arc_create_obj();
+	ptrdiff_t off = test_prop_offset();
+
+	objc_setProperty(obj, NULL, off, val_a, YES, NO);
+	zassert_equal(test_arc_get_rc(val_a), 2,
+		      "val_a rc should be 2 after set");
+
+	objc_setProperty(obj, NULL, off, val_b, YES, NO);
+	zassert_equal(test_arc_get_rc(val_a), 1,
+		      "val_a rc should be 1 after overwrite");
+	zassert_equal(test_arc_get_rc(val_b), 2,
+		      "val_b rc should be 2 after overwrite");
+
+	/* Cleanup */
+	objc_setProperty(obj, NULL, off, nil, YES, NO);
+	objc_release(val_a);
+	objc_release(val_b);
+	objc_release(obj);
+}
+
+/*
+ * ARC integration: exercise actual Clang codegen for
+ * @property (atomic, strong) id thing;
+ */
+ZTEST(arc_property, test_arc_atomic_property)
+{
+	test_arc_reset_count();
+
+	test_arc_atomic_property();
+
+	zassert_equal(g_arc_dealloc_count, 2,
+		      "both PropHolder and stored object should be deallocated");
 }

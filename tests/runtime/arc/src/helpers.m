@@ -58,3 +58,44 @@ void test_arc_pool_pop(void *p)
 {
 	[(OZAutoreleasePool *)p drain];
 }
+
+/* ── PropTestObj: for property accessor tests ──────────────────── */
+
+@interface PropTestObj : Object {
+@public
+	id _prop;
+}
+@end
+
+@implementation PropTestObj
+
+- (void)dealloc
+{
+	[_prop release];
+	[super dealloc];
+}
+
+@end
+
+id test_prop_create(void)
+{
+	return [[PropTestObj alloc] init];
+}
+
+ptrdiff_t test_prop_offset(void)
+{
+	PropTestObj *dummy = [[PropTestObj alloc] init];
+	ptrdiff_t off = (char *)&dummy->_prop - (char *)dummy;
+	[dummy release];
+	return off;
+}
+
+id test_prop_read_ivar(id obj)
+{
+	return ((PropTestObj *)obj)->_prop;
+}
+
+void test_prop_write_ivar(id obj, id val)
+{
+	((PropTestObj *)obj)->_prop = val;
+}

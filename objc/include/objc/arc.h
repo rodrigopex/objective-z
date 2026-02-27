@@ -30,6 +30,33 @@ id objc_autorelease(id obj);
  */
 void objc_storeStrong(id *location, id val);
 
+/**
+ * Read an object-type property.
+ * Non-atomic: direct ivar read.
+ * Atomic: read under spinlock, retain+autorelease for safety.
+ */
+id objc_getProperty(id obj, SEL _cmd, ptrdiff_t offset, BOOL isAtomic);
+
+/**
+ * Write an object-type property.
+ * Non-atomic: swap with retain new + release old.
+ * Atomic: swap under spinlock, release old outside lock.
+ * @note isCopy is ignored (no NSCopying support).
+ */
+void objc_setProperty(id obj, SEL _cmd, ptrdiff_t offset, id newValue,
+		      BOOL isAtomic, BOOL isCopy);
+
+/**
+ * @name gnustep-2.0 Specialized Property Setters
+ * Clang emits these instead of objc_setProperty for gnustep-2.0 ABI.
+ * @{
+ */
+void objc_setProperty_atomic(id obj, SEL _cmd, id arg, ptrdiff_t offset);
+void objc_setProperty_nonatomic(id obj, SEL _cmd, id arg, ptrdiff_t offset);
+void objc_setProperty_atomic_copy(id obj, SEL _cmd, id arg, ptrdiff_t offset);
+void objc_setProperty_nonatomic_copy(id obj, SEL _cmd, id arg, ptrdiff_t offset);
+/** @} */
+
 /** Retain + autorelease. Returns obj. */
 id objc_retainAutorelease(id obj);
 

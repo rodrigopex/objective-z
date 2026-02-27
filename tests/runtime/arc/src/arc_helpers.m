@@ -12,6 +12,9 @@
  */
 #import <objc/objc.h>
 
+/* Dealloc tracking counter (defined in helpers.m) */
+extern int g_arc_dealloc_count;
+
 /* Forward-declare the class defined in helpers.m (MRR side) */
 @interface ArcTestObj : Object
 @end
@@ -22,4 +25,32 @@ void test_arc_scope_cleanup(void)
 	 * at end of scope — triggering dealloc. */
 	ArcTestObj *obj = [[ArcTestObj alloc] init];
 	(void)obj;
+}
+
+/* ── Atomic property integration test ──────────────────────────── */
+
+@interface PropHolder : Object
+@property (atomic, strong) id thing;
+@end
+
+@implementation PropHolder
+
+- (void)dealloc
+{
+	g_arc_dealloc_count++;
+}
+
+@end
+
+void test_arc_atomic_property(void)
+{
+	/*
+	 * ARC scope: create a PropHolder, assign an ArcTestObj to its
+	 * atomic property (exercises Clang-emitted objc_setProperty),
+	 * then let both go out of scope.  Both deallocs should fire.
+	 */
+	PropHolder *holder = [[PropHolder alloc] init];
+	ArcTestObj *val = [[ArcTestObj alloc] init];
+	holder.thing = val;
+	(void)holder;
 }
