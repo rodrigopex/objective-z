@@ -62,18 +62,20 @@ Each sample registers the runtime via `ZEPHYR_EXTRA_MODULES` in its CMakeLists.t
 ### Clang / gnustep-2.0 Dispatch
 
 - **`src/objc_msgSend.S`** — ARM Cortex-M Thumb-2 trampoline: `objc_msg_lookup(r0,r1)` + tail-call IMP
-- **`cmake/ObjcClang.cmake`** — Clang cross-compilation with `-fobjc-runtime=gnustep-2.0`, provides `objz_compile_objc_sources()`, `objz_compile_objc_arc_sources()`, `objz_target_sources()`, `objz_target_arc_sources()`
+- **`cmake/ObjcClang.cmake`** — Clang cross-compilation with `-fobjc-runtime=gnustep-2.0`, provides `objz_target_sources()` (always ARC), `objz_compile_objc_sources()` (MRR, runtime only)
 - **`cmake/objc_sections.ld`** — Linker script for gnustep-2.0 ObjC metadata sections (`__objc_selectors`, `__objc_classes`, etc.) with `__start_`/`__stop_` boundary symbols
 
-### ARC Layer (`CONFIG_OBJZ_ARC`)
+### ARC Layer (always enabled)
 
 - **`src/arc.c`** — ARC entry points: `objc_retain`, `objc_release`, `objc_storeStrong`, `objc_autorelease`, return-value optimization (ARM Thumb-2 `mov r7, r7` marker + TLS flag)
 - **`include/objc/arc.h`** — ARC entry point declarations. Weak stubs panic.
+- All user `.m` files compile with `-fobjc-arc` via `objz_target_sources()`. Runtime Foundation stays MRR.
 
 ### Static Allocation Pools (`CONFIG_OBJZ_STATIC_POOLS`)
 
-- **`src/pool.c`** — Pool registry: maps class names to `K_MEM_SLAB` instances
+- **`src/pool.c`** — Pool registry: maps class names to `K_MEM_SLAB` instances. `__objc_pool_get_slab()` API for runtime queries.
 - **`include/objc/pool.h`** — `OZ_DEFINE_POOL(ClassName, block_size, count, align)` macro. Must be in a `.c` file (not `.m`).
+- **`scripts/gen_pools.py`** — Auto-generates pool definitions from Clang AST analysis. All pools are auto-generated; no manual `pools.c` files needed.
 
 ### Init Order
 
