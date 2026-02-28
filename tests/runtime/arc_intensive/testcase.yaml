@@ -1,0 +1,6 @@
+tests:
+  test.objz.arc_intensive:
+    tags:
+      - objz
+    integration_platforms:
+      - mps2/an385
