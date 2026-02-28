@@ -262,11 +262,8 @@ set(ZEPHYR_EXTRA_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/../objc/")
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(my_app)
 
-# Compile .m sources with Clang
+# Compile .m sources with Clang (ARC is always enabled)
 objz_target_sources(app src/main.m)
-
-# For ARC-enabled sources, use instead:
-# objz_target_arc_sources(app src/main.m)
 ```
 
 ### 3. prj.conf
@@ -304,10 +301,7 @@ west build -p -b mps2/an385 .
 
 | Function | Description |
 |---|---|
-| `objz_target_sources(target, files...)` | Routes `.m` to Clang, `.c` to GCC |
-| `objz_target_arc_sources(target, files...)` | Same as above but adds `-fobjc-arc` to `.m` files |
-| `objz_compile_objc_sources(target, files...)` | Compile `.m` files only with Clang |
-| `objz_compile_objc_arc_sources(target, files...)` | Compile `.m` files only with ARC |
+| `objz_target_sources(target, files...)` | Routes `.m` to Clang (ARC), `.c` to GCC |
 
 ## Configuration
 

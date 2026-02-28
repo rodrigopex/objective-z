@@ -7,4 +7,4 @@ set(ZEPHYR_EXTRA_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/../../objc/")
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(arc_demo)
 
-objz_target_arc_sources(app src/main.m)
+objz_target_sources(app src/main.m)

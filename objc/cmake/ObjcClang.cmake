@@ -325,16 +325,6 @@ function(objz_target_sources target)
     endif()
 endfunction()
 
-# ─── Backward-compatible alias ───────────────────────────────────────
-#
-# objz_target_arc_sources(<target> <source1> [source2 ...])
-#
-# Alias for objz_target_sources (all .m files compile with ARC).
-#
-function(objz_target_arc_sources target)
-    objz_target_sources(${target} ${ARGN})
-endfunction()
-
 # ─── Build Clang flags for AST analysis (host-compatible) ───────────
 #
 # The AST dump only needs include paths, defines, and ObjC parsing.
