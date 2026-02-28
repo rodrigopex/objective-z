@@ -5,8 +5,8 @@
 LOG_MODULE_DECLARE(objz, CONFIG_OBJZ_LOG_LEVEL);
 
 #ifdef CONFIG_OBJZ_STATIC_POOLS
-extern void *__objc_pool_alloc(const char *class_name);
-extern _Bool __objc_pool_free(void *ptr);
+extern void *__objc_pool_alloc(Class cls);
+extern _Bool __objc_pool_free(id obj);
 #endif
 
 /* refcount.c functions */
@@ -30,7 +30,7 @@ extern id __objc_autorelease_add(id obj);
 	id obj = nil;
 
 #ifdef CONFIG_OBJZ_STATIC_POOLS
-	obj = (id)__objc_pool_alloc(class_getName(self));
+	obj = (id)__objc_pool_alloc(self);
 #endif
 	if (obj == nil) {
 		obj = (id)objc_malloc(size);

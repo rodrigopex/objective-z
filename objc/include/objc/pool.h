@@ -21,6 +21,7 @@
  */
 #pragma once
 
+#include <objc/runtime.h>
 #include <zephyr/kernel.h>
 
 /**
@@ -38,18 +39,22 @@ void __objc_pool_register(const char *class_name, struct k_mem_slab *slab,
 /**
  * @brief Allocate a block from the typed pool for a class.
  *
- * @param class_name  Name of the ObjC class.
+ * O(1) via cls->extra_data pointer set during class registration.
+ *
+ * @param cls  The ObjC class to allocate an instance for.
  * @return Pointer to zeroed memory, or NULL if pool full or no pool.
  */
-void *__objc_pool_alloc(const char *class_name);
+void *__objc_pool_alloc(Class cls);
 
 /**
  * @brief Free a block back to its typed pool.
  *
- * @param ptr  Pointer to the memory block.
+ * O(1) via obj->isa->extra_data pointer set during class registration.
+ *
+ * @param obj  The ObjC object to free.
  * @return true if the block was returned to a pool, false otherwise.
  */
-bool __objc_pool_free(void *ptr);
+bool __objc_pool_free(id obj);
 
 /**
  * @brief Get the slab backing a class pool.

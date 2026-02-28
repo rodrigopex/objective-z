@@ -4,6 +4,9 @@
 #include "protocol.h"
 #include "zephyr/spinlock.h"
 #include <objc/objc.h>
+#ifdef CONFIG_OBJZ_STATIC_POOLS
+#include <objc/pool.h>
+#endif
 #include <string.h>
 #include <zephyr/kernel.h>
 
@@ -108,6 +111,12 @@ void __objc_class_register(objc_class_t *p)
 		if (class_table[i] == NULL) {
 			class_table[i] = p;
 
+#ifdef CONFIG_OBJZ_STATIC_POOLS
+			if (!(p->info & objc_class_flag_meta)) {
+				p->extra_data =
+					(void *)__objc_pool_get_slab(p->name);
+			}
+#endif
 			if (p->protocols != NULL) {
 				__objc_protocol_list_register(p->protocols);
 			}
