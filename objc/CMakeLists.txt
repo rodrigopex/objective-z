@@ -5,6 +5,31 @@ if(CONFIG_OBJZ)
     zephyr_library()
     zephyr_include_directories("${ZEPHYR_CURRENT_MODULE_DIR}/include")
 
+    # ── Version ──────────────────────────────────────────────────────
+    file(READ "${ZEPHYR_CURRENT_MODULE_DIR}/VERSION" _objz_ver)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+        "${ZEPHYR_CURRENT_MODULE_DIR}/VERSION")
+
+    string(REGEX MATCH "VERSION_MAJOR = ([0-9]*)" _ ${_objz_ver})
+    set(OBJZ_VERSION_MAJOR ${CMAKE_MATCH_1})
+
+    string(REGEX MATCH "VERSION_MINOR = ([0-9]*)" _ ${_objz_ver})
+    set(OBJZ_VERSION_MINOR ${CMAKE_MATCH_1})
+
+    string(REGEX MATCH "PATCHLEVEL = ([0-9]*)" _ ${_objz_ver})
+    set(OBJZ_PATCHLEVEL ${CMAKE_MATCH_1})
+
+    set(OBJZ_VERSION_STRING "${OBJZ_VERSION_MAJOR}.${OBJZ_VERSION_MINOR}.${OBJZ_PATCHLEVEL}")
+    message(STATUS "Objective-Z: v${OBJZ_VERSION_STRING}")
+
+    set(_objz_generated_dir "${CMAKE_CURRENT_BINARY_DIR}/include/generated")
+    configure_file(
+        "${ZEPHYR_CURRENT_MODULE_DIR}/cmake/version.h.in"
+        "${_objz_generated_dir}/objc/version.h"
+        @ONLY
+    )
+    zephyr_include_directories("${_objz_generated_dir}")
+
     # C files: always GCC
     zephyr_library_sources("${ZEPHYR_CURRENT_MODULE_DIR}/src/malloc.c")
     zephyr_library_sources("${ZEPHYR_CURRENT_MODULE_DIR}/src/load.c")
