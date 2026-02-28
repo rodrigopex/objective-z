@@ -157,4 +157,9 @@ extern id __objc_autorelease_add(id obj);
 	return [OZMutableString stringWithCString:buf];
 }
 
+- (int)cDescription:(char *)buf maxLength:(int)maxLen
+{
+	return snprintk(buf, maxLen, "<%s: %p>", class_getName(object_getClass(self)), self);
+}
+
 @end

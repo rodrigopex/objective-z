@@ -86,6 +86,16 @@
 	return _length;
 }
 
+- (int)cDescription:(char *)buf maxLength:(int)maxLen
+{
+	if (!_buf || _length == 0) {
+		return 0;
+	}
+	int len = (_length < (unsigned int)maxLen) ? (int)_length : maxLen;
+	memcpy(buf, _buf, len);
+	return len;
+}
+
 - (void)dealloc
 {
 	if (_buf) {

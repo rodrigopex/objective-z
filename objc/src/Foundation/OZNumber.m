@@ -341,6 +341,26 @@ static OZNumber *_smallInts[SMALL_INT_COUNT];
 	}
 }
 
+- (int)cDescription:(char *)buf maxLength:(int)maxLen
+{
+	switch (_type) {
+	case OZNumberTypeBool:
+		return snprintk(buf, maxLen, "%s", _value.boolVal ? "YES" : "NO");
+	case OZNumberTypeFloat:
+	case OZNumberTypeDouble: {
+		double d = [self doubleValue];
+		int whole = (int)d;
+		int frac = (int)((d - (double)whole) * 100);
+		if (frac < 0) {
+			frac = -frac;
+		}
+		return snprintk(buf, maxLen, "%d.%02d", whole, frac);
+	}
+	default:
+		return snprintk(buf, maxLen, "%lld", [self longLongValue]);
+	}
+}
+
 /* ── Comparison ─────────────────────────────────────────────────── */
 
 - (BOOL)isEqual:(id)other

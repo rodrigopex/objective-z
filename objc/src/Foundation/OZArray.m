@@ -78,6 +78,25 @@ void objc_enumerationMutation(id object)
 	return desc;
 }
 
+- (int)cDescription:(char *)buf maxLength:(int)maxLen
+{
+	int pos = 0;
+	if (pos < maxLen) {
+		buf[pos++] = '(';
+	}
+	for (unsigned int i = 0; i < _count && pos < maxLen; i++) {
+		if (i > 0 && pos + 1 < maxLen) {
+			buf[pos++] = ',';
+			buf[pos++] = ' ';
+		}
+		pos += [_items[i] cDescription:buf + pos maxLength:maxLen - pos];
+	}
+	if (pos < maxLen) {
+		buf[pos++] = ')';
+	}
+	return pos;
+}
+
 - (unsigned long)countByEnumeratingWithState:(struct NSFastEnumerationState *)state
 				     objects:(__unsafe_unretained id *)stackbuf
 				       count:(unsigned long)len

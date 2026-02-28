@@ -32,6 +32,13 @@
   return (id)self;
 }
 
+- (int)cDescription:(char *)buf maxLength:(int)maxLen
+{
+	int len = (_length < (unsigned int)maxLen) ? (int)_length : maxLen;
+	memcpy(buf, _data, len);
+	return len;
+}
+
 - (id)retain {
   return self;
 }

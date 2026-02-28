@@ -150,6 +150,17 @@ OBJC_ROOT_CLASS
 - (id)description;
 
 /**
+ * @brief Write a description directly into a caller-provided buffer.
+ * @param buf    Destination buffer.
+ * @param maxLen Maximum number of bytes to write.
+ * @return Number of characters written.
+ *
+ * Does NOT NUL-terminate; the caller is responsible for termination.
+ * Default format: "<ClassName: 0xADDR>". Subclasses may override.
+ */
+- (int)cDescription:(char *)buf maxLength:(int)maxLen;
+
+/**
  * @brief Increment the reference count.
  * @return self.
  */
