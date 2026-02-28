@@ -31,16 +31,6 @@ config OBJZ_BOOT_BANNER_STRING
       The string printed in the boot banner. The version number
       is appended automatically.
 
-config OBJZ_ARC
-    bool "ARC (Automatic Reference Counting) support"
-    default n
-    help
-      Enable ARC entry points (objc_retain, objc_release,
-      objc_storeStrong, etc.).
-      Use objz_compile_objc_arc_sources() or
-      objz_target_arc_sources() in CMake to compile .m files
-      with -fobjc-arc.
-
 config OBJZ_BLOCKS
     bool "Blocks (closures) support"
     default n

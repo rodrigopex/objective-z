@@ -22,11 +22,6 @@ ZBUS_CHAN_ADD_OBS(chan_acc_data_consumed, msub_acc_consumed, 3);
 
 	return self;
 }
-- (void)dealloc
-{
-	[super dealloc];
-}
-
 - (void)sendData
 {
 	struct msg_acc_data msg = {
@@ -55,7 +50,7 @@ void thread_entry_producer(void *arg1, void *arg2, void *arg3)
 			OZLog("Producer: Received %d acknowledgments from Consumer. "
 			      "Stopping production.",
 			      producer.ackCount);
-			[producer dealloc];
+			producer = nil;
 
 			break;
 		}

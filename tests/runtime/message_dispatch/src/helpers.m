@@ -4,6 +4,7 @@
  */
 #import <Foundation/Foundation.h>
 #import <objc/objc.h>
+#include <objc/arc.h>
 
 /* ── Counters for +initialize tracking (read from C test code) ──── */
 int g_animal_init_count = 0;
@@ -69,19 +70,19 @@ int g_dog_init_count = 0;
 
 /* ── C-callable helpers ─────────────────────────────────────────── */
 
-id test_create_animal(void)
+__attribute__((ns_returns_retained)) id test_create_animal(void)
 {
 	return [[TestAnimal alloc] init];
 }
 
-id test_create_dog(void)
+__attribute__((ns_returns_retained)) id test_create_dog(void)
 {
 	return [[TestDog alloc] init];
 }
 
-void test_dealloc(id obj)
+void test_dealloc(__unsafe_unretained id obj)
 {
-	[obj dealloc];
+	objc_release(obj);
 }
 
 int test_call_speak(id obj)

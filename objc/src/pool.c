@@ -60,6 +60,15 @@ void *__objc_pool_alloc(const char *class_name)
 	return block;
 }
 
+struct k_mem_slab *__objc_pool_get_slab(const char *class_name)
+{
+	struct pool_entry *e = __objc_pool_find(class_name);
+	if (e == NULL) {
+		return NULL;
+	}
+	return e->slab;
+}
+
 bool __objc_pool_free(void *ptr)
 {
 	if (ptr == NULL) {

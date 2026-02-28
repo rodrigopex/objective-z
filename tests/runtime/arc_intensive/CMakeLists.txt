@@ -10,5 +10,4 @@ project(test_arc_intensive)
 FILE(GLOB app_sources src/*.c)
 target_sources(app PRIVATE ${app_sources})
 
-objz_target_sources(app src/helpers.m)
-objz_target_arc_sources(app src/arc_helpers.m)
+objz_target_sources(app src/helpers.m src/arc_helpers.m)

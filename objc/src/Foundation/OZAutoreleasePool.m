@@ -29,7 +29,7 @@ static void __objc_arp_add_object(id obj)
 + (void)addObject:(id)obj
 {
 	if (_currentPool == nil) {
-		LOG_ERR("autorelease with no pool in place — leaking %p", (void *)obj);
+		LOG_ERR("autorelease with no pool in place -- leaking %p", (void *)obj);
 		return;
 	}
 	if (_currentPool->_count >= OBJZ_ARP_CAPACITY) {

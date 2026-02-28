@@ -8,6 +8,7 @@
  * @brief ObjC helpers for memory/Object/OZString tests.
  */
 #import <Foundation/Foundation.h>
+#include <objc/arc.h>
 
 /* ── TestItem: simple Object subclass with an ivar ───────────────── */
 
@@ -38,7 +39,7 @@
 
 /* ── C-callable wrappers ─────────────────────────────────────────── */
 
-id test_mem_create_item(int data)
+__attribute__((ns_returns_retained)) id test_mem_create_item(int data)
 {
 	return [[TestItem alloc] initWithData:data];
 }
@@ -48,12 +49,12 @@ int test_mem_item_data(id obj)
 	return [(TestItem *)obj data];
 }
 
-void test_mem_dealloc(id obj)
+void test_mem_dealloc(__unsafe_unretained id obj)
 {
-	[obj dealloc];
+	objc_release(obj);
 }
 
-id test_mem_create_object(void)
+__attribute__((ns_returns_retained)) id test_mem_create_object(void)
 {
 	return [[Object alloc] init];
 }

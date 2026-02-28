@@ -8,7 +8,3 @@ find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(arc_demo)
 
 objz_target_arc_sources(app src/main.m)
-
-if(CONFIG_OBJZ_STATIC_POOLS)
-    objz_generate_arc_pools(app src/main.m)
-endif()

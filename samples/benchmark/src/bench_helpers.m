@@ -3,12 +3,13 @@
  * SPDX-License-Identifier: Apache-2.0
  *
  * Benchmark helper classes and C-callable wrappers.
- * Compiled with Clang (non-ARC) for manual retain/release control.
+ * Compiled with ARC.
  */
 
 #import <Foundation/Foundation.h>
 #import <objc/objc.h>
 #include <objc/runtime.h>
+#include <objc/arc.h>
 
 extern IMP objc_msg_lookup(id receiver, SEL selector);
 
@@ -35,11 +36,6 @@ extern IMP objc_msg_lookup(id receiver, SEL selector);
 
 + (void)classNop
 {
-}
-
-- (void)dealloc
-{
-	[super dealloc];
 }
 
 @end
@@ -74,30 +70,29 @@ extern IMP objc_msg_lookup(id receiver, SEL selector);
 {
 }
 
-- (void)dealloc
-{
-	[super dealloc];
-}
-
 @end
 
 /* ── C-callable wrapper functions ─────────────────────────────────── */
 
+__attribute__((ns_returns_retained))
 id bench_create_base(void)
 {
 	return [[BenchBase alloc] init];
 }
 
+__attribute__((ns_returns_retained))
 id bench_create_child(void)
 {
 	return [[BenchChild alloc] init];
 }
 
+__attribute__((ns_returns_retained))
 id bench_create_grandchild(void)
 {
 	return [[BenchGrandChild alloc] init];
 }
 
+__attribute__((ns_returns_retained))
 id bench_create_pooled(void)
 {
 	return [[PooledObj alloc] init];
@@ -118,19 +113,19 @@ void bench_class_nop(void)
 	[BenchBase classNop];
 }
 
-void bench_retain(id obj)
+void bench_retain(__unsafe_unretained id obj)
 {
-	[obj retain];
+	objc_retain(obj);
 }
 
-void bench_release(id obj)
+void bench_release(__unsafe_unretained id obj)
 {
-	[obj release];
+	objc_release(obj);
 }
 
-void bench_dealloc(id obj)
+void bench_dealloc(__unsafe_unretained id obj)
 {
-	[obj release];
+	objc_release(obj);
 }
 
 /*
@@ -185,7 +180,7 @@ void bench_flush_cache(id obj)
 	(void)obj;
 #ifdef CONFIG_OBJZ_DISPATCH_CACHE
 	extern void __objc_dtable_flush(struct objc_class *cls);
-	__objc_dtable_flush(object_getClass(obj));
+	__objc_dtable_flush((__bridge struct objc_class *)object_getClass(obj));
 #endif
 }
 
@@ -212,12 +207,12 @@ int (*bench_get_c_func(void))(void)
 void *bench_get_global_block(void)
 {
 	IntBlock blk = ^{ return 42; };
-	return (void *)blk;
+	return (__bridge void *)blk;
 }
 
 int bench_invoke_int_block(void *blk)
 {
-	return ((IntBlock)blk)();
+	return ((__bridge IntBlock)blk)();
 }
 
 /* Block descriptor sizes for memory comparison */
@@ -225,7 +220,7 @@ unsigned long bench_block_size_int_capture(void)
 {
 	int val = 99;
 	IntBlock blk = ^{ return val; };
-	struct Block_layout *layout = (struct Block_layout *)blk;
+	struct Block_layout *layout = (__bridge struct Block_layout *)blk;
 	return layout->descriptor->size;
 }
 
@@ -233,17 +228,15 @@ unsigned long bench_block_size_obj_capture(void)
 {
 	id obj = [[BenchBase alloc] init];
 	IntBlock blk = ^{ return [obj getValue]; };
-	struct Block_layout *layout = (struct Block_layout *)blk;
-	unsigned long sz = layout->descriptor->size;
-	[obj release];
-	return sz;
+	struct Block_layout *layout = (__bridge struct Block_layout *)blk;
+	return layout->descriptor->size;
 }
 
 unsigned long bench_block_size_byref(void)
 {
 	__block int counter = 0;
 	VoidBlock blk = ^{ counter++; };
-	struct Block_layout *layout = (struct Block_layout *)blk;
+	struct Block_layout *layout = (__bridge struct Block_layout *)blk;
 	(void)blk;
 	return layout->descriptor->size;
 }
@@ -252,30 +245,30 @@ unsigned long bench_block_size_byref(void)
 void *bench_copy_int_block(int value)
 {
 	IntBlock blk = ^{ return value; };
-	return _Block_copy(blk);
+	return _Block_copy((__bridge const void *)blk);
 }
 
 void *bench_copy_obj_block(id obj)
 {
 	IntBlock blk = ^{ return [obj getValue]; };
-	return _Block_copy(blk);
+	return _Block_copy((__bridge const void *)blk);
 }
 
 void *bench_copy_byref_block(void)
 {
 	__block int counter = 0;
 	VoidBlock blk = ^{ counter++; };
-	return _Block_copy(blk);
+	return _Block_copy((__bridge const void *)blk);
 }
 
 void bench_release_block(void *blk)
 {
-	_Block_release(blk);
+	_Block_release((const void *)blk);
 }
 
 void *bench_block_copy(void *blk)
 {
-	return _Block_copy(blk);
+	return _Block_copy((const void *)blk);
 }
 
 #endif /* CONFIG_OBJZ_BLOCKS */

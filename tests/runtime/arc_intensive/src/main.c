@@ -16,6 +16,7 @@
 #include <objc/runtime.h>
 #include <objc/arc.h>
 #include <objc/malloc.h>
+#include <objc/pool.h>
 
 /* ── MRR helpers (defined in helpers.m) ────────────────────────── */
 
@@ -27,7 +28,7 @@ extern void test_pool_pop(void *p);
 extern id test_create_pool_obj(int tag);
 extern id test_prop_create(void);
 extern ptrdiff_t test_prop_offset(void);
-extern id test_prop_read_ivar(id obj);
+extern void *test_prop_read_ivar(id obj);
 extern void test_prop_write_ivar(id obj, id val);
 extern id test_get_immortal_string(void);
 
@@ -37,10 +38,25 @@ extern int g_dealloc_count;
 extern int g_dealloc_tags[];
 extern int g_dealloc_tag_idx;
 
-/* ── Pool slab stat wrappers (defined in pools.c) ────────────── */
+/* ── Pool slab stat wrappers (via __objc_pool_get_slab API) ──── */
 
-extern uint32_t test_pool_slab_used(void);
-extern uint32_t test_pool_slab_free(void);
+static uint32_t test_pool_slab_used(void)
+{
+	struct k_mem_slab *slab = __objc_pool_get_slab("ArcPoolObj");
+	if (slab == NULL) {
+		return 0;
+	}
+	return k_mem_slab_num_used_get(slab);
+}
+
+static uint32_t test_pool_slab_free(void)
+{
+	struct k_mem_slab *slab = __objc_pool_get_slab("ArcPoolObj");
+	if (slab == NULL) {
+		return 0;
+	}
+	return k_mem_slab_num_free_get(slab);
+}
 
 /* ── ARC helpers (defined in arc_helpers.m) ───────────────────── */
 

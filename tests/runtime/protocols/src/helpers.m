@@ -8,6 +8,7 @@
  * @brief ObjC helper classes with protocols for protocol tests.
  */
 #import <Foundation/Object.h>
+#include <objc/arc.h>
 
 /* ── Protocols ───────────────────────────────────────────────────── */
 
@@ -94,17 +95,17 @@
 
 /* ── C-callable wrappers ─────────────────────────────────────────── */
 
-id test_proto_create_widget(int wid)
+__attribute__((ns_returns_retained)) id test_proto_create_widget(int wid)
 {
 	return [[TestWidget alloc] initWithId:wid];
 }
 
-id test_proto_create_button(int wid)
+__attribute__((ns_returns_retained)) id test_proto_create_button(int wid)
 {
 	return [[TestButton alloc] initWithId:wid];
 }
 
-id test_proto_create_label(int text)
+__attribute__((ns_returns_retained)) id test_proto_create_label(int text)
 {
 	return [[TestLabel alloc] initWithText:text];
 }
@@ -152,7 +153,7 @@ BOOL test_proto_class_conforms_resizable(const char *name)
 	return [cls conformsTo:@protocol(TestResizable)];
 }
 
-void test_proto_dealloc(id obj)
+void test_proto_dealloc(__unsafe_unretained id obj)
 {
-	[obj dealloc];
+	objc_release(obj);
 }

@@ -76,6 +76,12 @@ id objc_retainAutoreleasedReturnValue(id obj);
  */
 id objc_retainBlock(id block);
 
+/** Push a new autorelease pool. Returns an opaque token. */
+void *objc_autoreleasePoolPush(void);
+
+/** Pop and drain the pool identified by token. */
+void objc_autoreleasePoolPop(void *token);
+
 /**
  * @name Weak Reference Stubs
  * Weak references are not supported on this runtime.

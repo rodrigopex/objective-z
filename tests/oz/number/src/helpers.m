@@ -7,24 +7,26 @@
  * @file helpers.m
  * @brief ObjC helper functions for the oz_number test suite.
  *
- * Compiled without -fobjc-arc via objz_target_sources().
+ * Compiled with ARC via objz_target_sources().
  * Provides C-callable wrappers around OZNumber operations.
  */
 #import <Foundation/Foundation.h>
 #import <objc/objc.h>
 
+#include <objc/arc.h>
+#include <objc/runtime.h>
 #include <string.h>
 
 /* ── Pool management ──────────────────────────────────────────────── */
 
 void *test_num_pool_push(void)
 {
-	return [[OZAutoreleasePool alloc] init];
+	return objc_autoreleasePoolPush();
 }
 
 void test_num_pool_pop(void *p)
 {
-	[(OZAutoreleasePool *)p drain];
+	objc_autoreleasePoolPop(p);
 }
 
 /* ── Factory methods ──────────────────────────────────────────────── */
@@ -136,9 +138,9 @@ double test_num_double_value(id n)
 	return [(OZNumber *)n doubleValue];
 }
 
-unsigned int test_num_retain_count(id n)
+unsigned int test_num_retain_count(__unsafe_unretained id n)
 {
-	return [(OZNumber *)n retainCount];
+	return __objc_refcount_get(n);
 }
 
 /* ── Description ──────────────────────────────────────────────────── */

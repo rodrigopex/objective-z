@@ -7,24 +7,25 @@
  * @file helpers.m
  * @brief ObjC helper functions for the oz_dictionary test suite.
  *
- * Compiled without -fobjc-arc via objz_target_sources().
+ * Compiled with ARC via objz_target_sources().
  * Provides C-callable wrappers around OZDictionary operations.
  */
 #import <Foundation/Foundation.h>
 #import <objc/objc.h>
 
+#include <objc/arc.h>
 #include <string.h>
 
 /* ── Pool management ──────────────────────────────────────────────── */
 
 void *test_dict_pool_push(void)
 {
-	return [[OZAutoreleasePool alloc] init];
+	return objc_autoreleasePoolPush();
 }
 
 void test_dict_pool_pop(void *p)
 {
-	[(OZAutoreleasePool *)p drain];
+	objc_autoreleasePoolPop(p);
 }
 
 /* ── Creation ─────────────────────────────────────────────────────── */

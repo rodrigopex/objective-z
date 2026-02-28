@@ -4,6 +4,7 @@
  */
 #import <Foundation/Foundation.h>
 #import <objc/objc.h>
+#include <objc/arc.h>
 
 /* ── TestVehicle: root subclass of Object ───────────────────────── */
 
@@ -52,24 +53,24 @@
 
 /* ── C-callable helpers ─────────────────────────────────────────── */
 
-id test_create_vehicle(void)
+__attribute__((ns_returns_retained)) id test_create_vehicle(void)
 {
 	return [[TestVehicle alloc] init];
 }
 
-id test_create_car(void)
+__attribute__((ns_returns_retained)) id test_create_car(void)
 {
 	return [[TestCar alloc] init];
 }
 
-id test_create_bike(void)
+__attribute__((ns_returns_retained)) id test_create_bike(void)
 {
 	return [[TestBike alloc] init];
 }
 
-void test_dealloc(id obj)
+void test_dealloc(__unsafe_unretained id obj)
 {
-	[obj dealloc];
+	objc_release(obj);
 }
 
 int test_call_wheels(id obj)

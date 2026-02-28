@@ -11,6 +11,7 @@
  * many methods and verifying dispatch and respondsToSelector results.
  */
 #import <Foundation/Object.h>
+#include <objc/arc.h>
 
 /* ── TestCalc: class with many instance and class methods ────────── */
 
@@ -104,12 +105,12 @@
 
 /* ── C-callable wrappers ─────────────────────────────────────────── */
 
-id test_hash_create_calc(int val)
+__attribute__((ns_returns_retained)) id test_hash_create_calc(int val)
 {
 	return [[TestCalc alloc] initWithValue:val];
 }
 
-id test_hash_create_calc_sub(int val)
+__attribute__((ns_returns_retained)) id test_hash_create_calc_sub(int val)
 {
 	return [[TestCalcSub alloc] initWithValue:val];
 }
@@ -164,9 +165,9 @@ int test_hash_class_max(void)
 	return [TestCalc maxValue];
 }
 
-void test_hash_dealloc(id obj)
+void test_hash_dealloc(__unsafe_unretained id obj)
 {
-	[obj dealloc];
+	objc_release(obj);
 }
 
 /* ── respondsToSelector helpers (need @selector in ObjC) ─────────── */

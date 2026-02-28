@@ -32,7 +32,7 @@ extern void test_arc_atomic_property(void);
 
 extern id test_prop_create(void);
 extern ptrdiff_t test_prop_offset(void);
-extern id test_prop_read_ivar(id obj);
+extern void *test_prop_read_ivar(id obj);
 extern void test_prop_write_ivar(id obj, id val);
 
 /* ── Dealloc tracking counter ──────────────────────────────────── */

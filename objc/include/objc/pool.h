@@ -48,6 +48,14 @@ void *__objc_pool_alloc(const char *class_name);
 bool __objc_pool_free(void *ptr);
 
 /**
+ * @brief Get the slab backing a class pool.
+ *
+ * @param class_name  Name of the ObjC class.
+ * @return Pointer to the k_mem_slab, or NULL if no pool registered.
+ */
+struct k_mem_slab *__objc_pool_get_slab(const char *class_name);
+
+/**
  * @brief Define a static allocation pool for an Objective-C class.
  *
  * @param cls    Class name (unquoted identifier).

@@ -1,12 +1,14 @@
 /*
  * SPDX-License-Identifier: Apache-2.0
  *
- * MRR (Manual Retain/Release) memory management demo.
- * Demonstrates retain/release/autorelease lifecycle.
+ * ARC memory management demo.
+ * Demonstrates scope-based lifetime and autorelease pools.
  */
 
 #import <Foundation/Foundation.h>
 #import <objc/objc.h>
+#include <objc/arc.h>
+#include <objc/runtime.h>
 
 @interface Sensor : Object {
 	int _value;
@@ -30,36 +32,29 @@
 - (void)dealloc
 {
 	OZLog("Sensor dealloc (value=%d)", _value);
-	[super dealloc];
 }
 
 @end
 
 int main(void)
 {
-	OZLog("=== MRR Memory Management Demo ===");
+	OZLog("=== ARC Memory Management Demo ===");
 
-	/* Basic retain/release lifecycle */
-	Sensor *s = [[Sensor alloc] init];
-	[s setValue:42];
-	OZLog("retainCount after alloc: %u", [s retainCount]);
-
-	[s retain];
-	OZLog("retainCount after retain: %u", [s retainCount]);
-
-	[s release];
-	OZLog("retainCount after release: %u", [s retainCount]);
-
-	/* Final release triggers dealloc */
-	[s release];
+	/* ARC scope-based lifecycle */
+	{
+		Sensor *s = [[Sensor alloc] init];
+		[s setValue:42];
+		OZLog("rc after alloc: %u", __objc_refcount_get(s));
+		/* s released automatically at scope exit */
+	}
 
 	/* Autorelease pool test */
 	OZLog("=== Autorelease pool test ===");
 	@autoreleasepool {
-		Sensor *a = [[[Sensor alloc] init] autorelease];
+		Sensor *a = [[Sensor alloc] init];
 		[a setValue:99];
-		OZLog("autoreleased sensor value=%d, rc=%u", [a value], [a retainCount]);
-		/* a will be released when pool drains */
+		OZLog("sensor value=%d, rc=%u", [a value], __objc_refcount_get(a));
+		/* a released when pool drains */
 	}
 
 	OZLog("=== Demo complete ===");

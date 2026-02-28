@@ -241,7 +241,13 @@ def effective_allocs(func_key, allocs, call_graph, visited=None):
 
 
 def compute_pool_counts(allocs, call_graph, thread_entries):
-    """Max concurrent counts: main + thread entries (additive)."""
+    """Max concurrent counts: main + thread entries (additive).
+
+    When main() is not in the analyzed sources (e.g. test helpers where
+    main is in a separate .c file), fall back to treating every function
+    that allocates objects as a potential entry point and take the max
+    count per class across all functions.
+    """
     counts = defaultdict(int)
 
     main_a = effective_allocs("main", allocs, call_graph)
@@ -252,6 +258,19 @@ def compute_pool_counts(allocs, call_graph, thread_entries):
         entry_a = effective_allocs(entry, allocs, call_graph)
         for cls, cnt in entry_a.items():
             counts[cls] += cnt
+
+    if not counts:
+        for func_key in allocs:
+            ea = effective_allocs(func_key, allocs, call_graph)
+            for cls, cnt in ea.items():
+                if cnt > counts[cls]:
+                    counts[cls] = cnt
+        # When main() is absent, conservatively limit to classes
+        # whose name contains "Pool" (pool-intended by convention),
+        # excluding "Unpooled" variants.
+        counts = {cls: cnt for cls, cnt in counts.items()
+                  if "pool" in cls.lower()
+                  and "unpool" not in cls.lower()}
 
     return counts
 

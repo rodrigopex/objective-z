@@ -7,24 +7,26 @@
  * @file helpers.m
  * @brief ObjC helper functions for the oz_string test suite.
  *
- * Compiled without -fobjc-arc via objz_target_sources().
+ * Compiled with ARC via objz_target_sources().
  * Provides C-callable wrappers around OZString operations.
  */
 #import <Foundation/Foundation.h>
 #import <objc/objc.h>
 
+#include <objc/arc.h>
+#include <objc/runtime.h>
 #include <string.h>
 
 /* ── Pool management ──────────────────────────────────────────────── */
 
 void *test_str_pool_push(void)
 {
-	return [[OZAutoreleasePool alloc] init];
+	return objc_autoreleasePoolPush();
 }
 
 void test_str_pool_pop(void *p)
 {
-	[(OZAutoreleasePool *)p drain];
+	objc_autoreleasePoolPop(p);
 }
 
 /* ── Creation ─────────────────────────────────────────────────────── */
@@ -71,14 +73,14 @@ id test_str_description(id s)
 	return [(OZString *)s description];
 }
 
-id test_str_retain(id s)
+id test_str_retain(__unsafe_unretained id s)
 {
-	return [(OZString *)s retain];
+	return objc_retain(s);
 }
 
-void test_str_release(id s)
+void test_str_release(__unsafe_unretained id s)
 {
-	[(OZString *)s release];
+	objc_release(s);
 }
 
 /* ── Comparison ───────────────────────────────────────────────────── */

@@ -9,6 +9,7 @@
  */
 #import <Foundation/Foundation.h>
 #import <objc/objc.h>
+#include <objc/arc.h>
 
 /* ── TestPooled: class with a static memory pool ─────────────────── */
 
@@ -33,11 +34,6 @@
 - (int)tag
 {
 	return _tag;
-}
-
-- (void)dealloc
-{
-	[super dealloc];
 }
 
 @end
@@ -67,16 +63,11 @@
 	return _val;
 }
 
-- (void)dealloc
-{
-	[super dealloc];
-}
-
 @end
 
 /* ── C-callable wrappers ─────────────────────────────────────────── */
 
-id test_pool_create_pooled(int tag)
+__attribute__((ns_returns_retained)) id test_pool_create_pooled(int tag)
 {
 	return [[TestPooled alloc] initWithTag:tag];
 }
@@ -86,12 +77,12 @@ int test_pool_get_tag(id obj)
 	return [(TestPooled *)obj tag];
 }
 
-void test_pool_release_pooled(id obj)
+void test_pool_release_pooled(__unsafe_unretained id obj)
 {
-	[obj release];
+	objc_release(obj);
 }
 
-id test_pool_create_unpooled(int val)
+__attribute__((ns_returns_retained)) id test_pool_create_unpooled(int val)
 {
 	return [[TestUnpooled alloc] initWithVal:val];
 }
@@ -101,7 +92,7 @@ int test_pool_get_val(id obj)
 	return [(TestUnpooled *)obj val];
 }
 
-void test_pool_release_unpooled(id obj)
+void test_pool_release_unpooled(__unsafe_unretained id obj)
 {
-	[obj release];
+	objc_release(obj);
 }

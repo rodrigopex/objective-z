@@ -7,24 +7,26 @@
  * @file helpers.m
  * @brief ObjC helper functions for the oz_array test suite.
  *
- * Compiled without -fobjc-arc via objz_target_sources().
+ * Compiled with ARC via objz_target_sources().
  * Provides C-callable wrappers around OZArray operations.
  */
 #import <Foundation/Foundation.h>
 #import <objc/objc.h>
 
+#include <objc/arc.h>
+#include <objc/runtime.h>
 #include <string.h>
 
 /* ── Pool management ──────────────────────────────────────────────── */
 
 void *test_arr_pool_push(void)
 {
-	return [[OZAutoreleasePool alloc] init];
+	return objc_autoreleasePoolPush();
 }
 
 void test_arr_pool_pop(void *p)
 {
-	[(OZAutoreleasePool *)p drain];
+	objc_autoreleasePoolPop(p);
 }
 
 /* ── Creation ─────────────────────────────────────────────────────── */
@@ -73,8 +75,8 @@ const char *test_arr_description_cstr(id arr)
 
 unsigned int test_arr_element_retain_count(id arr, unsigned int idx)
 {
-	id obj = [(OZArray *)arr objectAtIndex:idx];
-	return [(id)obj retainCount];
+	__unsafe_unretained id obj = [(OZArray *)arr objectAtIndex:idx];
+	return __objc_refcount_get(obj);
 }
 
 /* ── Number value helpers ─────────────────────────────────────────── */
@@ -98,14 +100,14 @@ id test_arr_create_number(int v)
 	return [OZNumber numberWithInt:v];
 }
 
-id test_arr_retain(id obj)
+id test_arr_retain(__unsafe_unretained id obj)
 {
-	return [(id)obj retain];
+	return objc_retain(obj);
 }
 
-unsigned int test_arr_retain_count(id obj)
+unsigned int test_arr_retain_count(__unsafe_unretained id obj)
 {
-	return [(id)obj retainCount];
+	return __objc_refcount_get(obj);
 }
 
 /* ── Fast enumeration ────────────────────────────────────────────── */

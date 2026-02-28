@@ -63,9 +63,7 @@ if(CONFIG_OBJZ)
     )
 
     # ARC entry points (pure C, no -fobjc-arc)
-    if(CONFIG_OBJZ_ARC)
-        zephyr_library_sources("${ZEPHYR_CURRENT_MODULE_DIR}/src/arc.c")
-    endif()
+    zephyr_library_sources("${ZEPHYR_CURRENT_MODULE_DIR}/src/arc.c")
 
     # Boxed literals and collection literals
     if(CONFIG_OBJZ_LITERALS)

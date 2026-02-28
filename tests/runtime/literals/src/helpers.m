@@ -7,22 +7,25 @@
  * @file helpers.m
  * @brief ObjC helper functions for the literals test suite.
  *
- * Compiled without -fobjc-arc via objz_target_sources().
+ * Compiled with ARC via objz_target_sources().
  * Provides C-callable wrappers around ObjC literal syntax.
  */
 #import <Foundation/Foundation.h>
 #import <objc/objc.h>
 
+#include <objc/arc.h>
+#include <objc/runtime.h>
+
 /* ── Pool management ───────────────────────────────────────────── */
 
 void *test_lit_pool_push(void)
 {
-	return [[OZAutoreleasePool alloc] init];
+	return objc_autoreleasePoolPush();
 }
 
 void test_lit_pool_pop(void *p)
 {
-	[(OZAutoreleasePool *)p drain];
+	objc_autoreleasePoolPop(p);
 }
 
 /* ── OZNumber: creation ────────────────────────────────────────── */
@@ -76,7 +79,7 @@ BOOL test_lit_number_is_equal(id a, id b)
 
 unsigned int test_lit_number_retain_count(id n)
 {
-	return [(OZNumber *)n retainCount];
+	return __objc_refcount_get(n);
 }
 
 /* ── OZArray ───────────────────────────────────────────────────── */

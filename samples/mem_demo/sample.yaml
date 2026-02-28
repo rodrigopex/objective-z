@@ -1,5 +1,5 @@
 sample:
-  description: Manual retain/release memory management demo
+  description: ARC memory management demo
   name: ObjZ Memory Management Demo
 common:
   tags: objz
@@ -10,10 +10,8 @@ common:
     type: multi_line
     ordered: true
     regex:
-      - "=== MRR Memory Management Demo ==="
-      - "retainCount after alloc: 1"
-      - "retainCount after retain: 2"
-      - "retainCount after release: 1"
+      - "=== ARC Memory Management Demo ==="
+      - "rc after alloc: 1"
       - "Sensor dealloc"
       - "=== Autorelease pool test ==="
       - "Sensor dealloc"

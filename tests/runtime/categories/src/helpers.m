@@ -8,6 +8,7 @@
  * @brief ObjC helper classes with categories for category tests.
  */
 #import <Foundation/Object.h>
+#include <objc/arc.h>
 
 /* ── TestShape: base class ───────────────────────────────────────── */
 
@@ -92,7 +93,7 @@
 
 /* ── C-callable wrappers ─────────────────────────────────────────── */
 
-id test_cat_create_shape(int sides)
+__attribute__((ns_returns_retained)) id test_cat_create_shape(int sides)
 {
 	return [[TestShape alloc] initWithSides:sides];
 }
@@ -122,9 +123,9 @@ int test_cat_default_sides(void)
 	return [TestShape defaultSides];
 }
 
-void test_cat_dealloc(id obj)
+void test_cat_dealloc(__unsafe_unretained id obj)
 {
-	[obj dealloc];
+	objc_release(obj);
 }
 
 BOOL test_cat_responds_perimeter(void)

@@ -38,7 +38,5 @@ int main(void)
 
 	[hello greet];
 
-	[hello dealloc];
-
 	return 0;
 }

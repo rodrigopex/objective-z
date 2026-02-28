@@ -9,6 +9,7 @@
  */
 #import <Foundation/Foundation.h>
 #import <objc/objc.h>
+#include <objc/arc.h>
 
 /* ── CacheBase: direct methods (depth=0) ─────────────────────────── */
 
@@ -98,29 +99,29 @@
 
 /* ── C-callable wrappers ─────────────────────────────────────────── */
 
-id test_cache_create_base(void)
+__attribute__((ns_returns_retained)) id test_cache_create_base(void)
 {
 	return [[CacheBase alloc] init];
 }
 
-id test_cache_create_child(void)
+__attribute__((ns_returns_retained)) id test_cache_create_child(void)
 {
 	return [[CacheChild alloc] init];
 }
 
-id test_cache_create_grandchild(void)
+__attribute__((ns_returns_retained)) id test_cache_create_grandchild(void)
 {
 	return [[CacheGrandChild alloc] init];
 }
 
-id test_cache_create_peer(void)
+__attribute__((ns_returns_retained)) id test_cache_create_peer(void)
 {
 	return [[CachePeer alloc] init];
 }
 
-void test_cache_dealloc(id obj)
+void test_cache_dealloc(__unsafe_unretained id obj)
 {
-	[obj dealloc];
+	objc_release(obj);
 }
 
 int test_cache_call_value(id obj)

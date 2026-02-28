@@ -297,7 +297,7 @@ endfunction()
 #
 # objz_target_sources(<target> <source1> [source2 ...])
 #
-# Routes .m -> objz_compile_objc_sources (Clang or GCC)
+# Routes .m -> objz_compile_objc_arc_sources (Clang + -fobjc-arc)
 # Routes .c -> target_sources (always GCC)
 #
 function(objz_target_sources target)
@@ -318,37 +318,21 @@ function(objz_target_sources target)
     endforeach()
 
     if(_m_sources)
-        objz_compile_objc_sources(${target} ${_m_sources})
+        objz_compile_objc_arc_sources(${target} ${_m_sources})
+        if(CONFIG_OBJZ_STATIC_POOLS)
+            _objz_generate_pools_impl(${target} TRUE ${_m_sources})
+        endif()
     endif()
 endfunction()
 
-# ─── Public API for ARC samples ──────────────────────────────────────
+# ─── Backward-compatible alias ───────────────────────────────────────
 #
 # objz_target_arc_sources(<target> <source1> [source2 ...])
 #
-# Routes .m -> objz_compile_objc_arc_sources (Clang + -fobjc-arc)
-# Routes .c -> target_sources (always GCC)
+# Alias for objz_target_sources (all .m files compile with ARC).
 #
 function(objz_target_arc_sources target)
-    set(_m_sources "")
-    set(_c_sources "")
-
-    foreach(_src ${ARGN})
-        get_filename_component(_ext ${_src} EXT)
-        if("${_ext}" STREQUAL ".m")
-            list(APPEND _m_sources ${_src})
-        else()
-            list(APPEND _c_sources ${_src})
-        endif()
-    endforeach()
-
-    foreach(_src ${_c_sources})
-        target_sources(${target} PRIVATE ${_src})
-    endforeach()
-
-    if(_m_sources)
-        objz_compile_objc_arc_sources(${target} ${_m_sources})
-    endif()
+    objz_target_sources(${target} ${ARGN})
 endfunction()
 
 # ─── Build Clang flags for AST analysis (host-compatible) ───────────
@@ -428,6 +412,12 @@ function(_objz_build_ast_flags result_var)
 endfunction()
 
 # ─── Internal: generate pools from Clang AST ────────────────────────
+#
+# Each call produces a uniquely-named generated_pools_N.c so that
+# multiple calls per target (e.g. MRR + ARC sources) do not conflict.
+# Each generated file defines pools only for classes DEFINED in the
+# analyzed sources (size info required).
+#
 function(_objz_generate_pools_impl target use_arc)
     _objz_build_ast_flags(_ast_flags)
     if(use_arc)
@@ -476,7 +466,16 @@ function(_objz_generate_pools_impl target use_arc)
         set(_ptr_size 4)
     endif()
 
-    set(_pools_c ${CMAKE_CURRENT_BINARY_DIR}/generated_pools.c)
+    # Unique output name per call to avoid duplicate custom command errors
+    get_target_property(_pool_gen_count ${target} _OBJZ_POOL_GEN_COUNT)
+    if(NOT _pool_gen_count)
+        set(_pool_gen_count 0)
+    endif()
+    math(EXPR _pool_gen_count "${_pool_gen_count} + 1")
+    set_target_properties(${target} PROPERTIES
+        _OBJZ_POOL_GEN_COUNT ${_pool_gen_count})
+
+    set(_pools_c ${CMAKE_CURRENT_BINARY_DIR}/generated_pools_${_pool_gen_count}.c)
     set(_gen_script ${ZEPHYR_EXTRA_MODULES}/scripts/gen_pools.py)
 
     add_custom_command(
@@ -486,7 +485,7 @@ function(_objz_generate_pools_impl target use_arc)
                 --output=${_pools_c}
                 ${_ast_files}
         DEPENDS ${_ast_files} ${_gen_script}
-        COMMENT "Generating pools.c from AST analysis"
+        COMMENT "Generating pools from AST analysis"
         VERBATIM
     )
 
@@ -497,10 +496,7 @@ endfunction()
 #
 # objz_generate_pools(<target> <source1.m> [source2.m ...])
 #
-# For MRR (manual retain/release) sources.
-# Dumps Clang AST JSON for each .m file, then invokes gen_pools.py
-# to produce a generated_pools.c with OZ_DEFINE_POOL() macros.
-# The generated file is compiled with GCC and linked into the target.
+# Explicit call for MRR (manual retain/release) sources.
 #
 function(objz_generate_pools target)
     _objz_generate_pools_impl(${target} FALSE ${ARGN})

@@ -13,6 +13,8 @@
 #import <Foundation/Foundation.h>
 #import <objc/objc.h>
 #import <objc/blocks.h>
+#include <objc/arc.h>
+#include <objc/runtime.h>
 
 /* ── Dealloc tracking ──────────────────────────────────────────── */
 
@@ -44,7 +46,6 @@ int g_blocks_dealloc_count = 0;
 - (void)dealloc
 {
 	g_blocks_dealloc_count++;
-	[super dealloc];
 }
 
 @end
@@ -66,12 +67,12 @@ void *test_blocks_global_block(void)
 {
 	IntBlock blk = ^{ return 42; };
 	(void)global_block_result;
-	return (void *)blk;
+	return (__bridge void *)blk;
 }
 
 void *test_blocks_copy_global(void *blk)
 {
-	return _Block_copy(blk);
+	return _Block_copy((const void *)blk);
 }
 
 void test_blocks_release(void *blk)
@@ -81,7 +82,7 @@ void test_blocks_release(void *blk)
 
 int test_blocks_invoke_int_block(void *blk)
 {
-	return ((IntBlock)blk)();
+	return ((__bridge IntBlock)blk)();
 }
 
 /* ── Test: stack block with captures ───────────────────────────── */
@@ -95,7 +96,7 @@ void *test_blocks_copy_capturing_block(int value)
 	IntBlock blk = ^{
 		return value;
 	};
-	return _Block_copy(blk);
+	return _Block_copy((__bridge const void *)blk);
 }
 
 /* ── Test: block capturing ObjC object ─────────────────────────── */
@@ -104,17 +105,17 @@ typedef int (^ObjBlock)(void);
 
 void *test_blocks_create_obj(int tag)
 {
-	return [[BlockTestObj alloc] initWithTag:tag];
+	return (__bridge_retained void *)[[BlockTestObj alloc] initWithTag:tag];
 }
 
-unsigned int test_blocks_get_rc(id obj)
+unsigned int test_blocks_get_rc(__unsafe_unretained id obj)
 {
-	return [obj retainCount];
+	return __objc_refcount_get(obj);
 }
 
-void test_blocks_release_obj(id obj)
+void test_blocks_release_obj(__unsafe_unretained id obj)
 {
-	[obj release];
+	objc_release(obj);
 }
 
 void test_blocks_reset_dealloc_count(void)
@@ -131,7 +132,7 @@ void *test_blocks_copy_obj_capturing_block(id obj)
 	ObjBlock blk = ^{
 		return [obj tag];
 	};
-	return _Block_copy(blk);
+	return _Block_copy((__bridge const void *)blk);
 }
 
 /* ── Test: __block variable ────────────────────────────────────── */
@@ -149,7 +150,7 @@ void *test_blocks_byref_block(int *out_value)
 	VoidBlock blk = ^{
 		counter++;
 	};
-	void *copied = _Block_copy(blk);
+	void *copied = _Block_copy((__bridge const void *)blk);
 	*out_value = counter;
 	return copied;
 }
@@ -160,7 +161,7 @@ void *test_blocks_byref_block(int *out_value)
  */
 void test_blocks_invoke_void_block(void *blk)
 {
-	((VoidBlock)blk)();
+	((__bridge VoidBlock)blk)();
 }
 
 /* ── Test: nested blocks (block capturing block) ───────────────── */
@@ -173,5 +174,5 @@ void *test_blocks_nested(int value)
 	IntBlock outer = ^{
 		return inner();
 	};
-	return _Block_copy(outer);
+	return _Block_copy((__bridge const void *)outer);
 }

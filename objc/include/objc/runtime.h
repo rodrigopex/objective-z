@@ -283,6 +283,14 @@ void objc_getPropertyStruct(void *dest, void *src, ptrdiff_t size, BOOL atomic, 
 void objc_setPropertyStruct(void *dest, void *src, ptrdiff_t size, BOOL atomic, BOOL strong);
 
 /**
+ * @brief Read the current reference count of an object.
+ * @ingroup objc
+ * @param obj The object to query.
+ * @return The current reference count, or 0 if obj is nil.
+ */
+unsigned int __objc_refcount_get(id obj);
+
+/**
  * @brief Prints runtime table statistics.
  * @ingroup objc
  *

@@ -5,13 +5,14 @@
 
 /**
  * @file helpers.m
- * @brief MRR (non-ARC) helper classes for ARC tests.
+ * @brief Helper classes for ARC tests.
  *
- * Compiled without -fobjc-arc so we can manually manage retain/release
- * and provide C-callable wrappers for the test harness.
+ * Compiled with ARC. Provides C-callable wrappers for the test harness.
  */
 #import <Foundation/Foundation.h>
 #import <objc/objc.h>
+#include <objc/arc.h>
+#include <objc/runtime.h>
 
 /* ── Dealloc tracking counter (read from C test code) ──────────── */
 
@@ -27,21 +28,21 @@ int g_arc_dealloc_count = 0;
 - (void)dealloc
 {
 	g_arc_dealloc_count++;
-	[super dealloc];
 }
 
 @end
 
 /* ── C-callable helpers ────────────────────────────────────────── */
 
+__attribute__((ns_returns_retained))
 id test_arc_create_obj(void)
 {
 	return [[ArcTestObj alloc] init];
 }
 
-unsigned int test_arc_get_rc(id obj)
+unsigned int test_arc_get_rc(__unsafe_unretained id obj)
 {
-	return [obj retainCount];
+	return __objc_refcount_get(obj);
 }
 
 void test_arc_reset_count(void)
@@ -51,32 +52,26 @@ void test_arc_reset_count(void)
 
 void *test_arc_pool_push(void)
 {
-	return [[OZAutoreleasePool alloc] init];
+	return objc_autoreleasePoolPush();
 }
 
 void test_arc_pool_pop(void *p)
 {
-	[(OZAutoreleasePool *)p drain];
+	objc_autoreleasePoolPop(p);
 }
 
 /* ── PropTestObj: for property accessor tests ──────────────────── */
 
 @interface PropTestObj : Object {
 @public
-	id _prop;
+	__unsafe_unretained id _prop;
 }
 @end
 
 @implementation PropTestObj
-
-- (void)dealloc
-{
-	[_prop release];
-	[super dealloc];
-}
-
 @end
 
+__attribute__((ns_returns_retained))
 id test_prop_create(void)
 {
 	return [[PropTestObj alloc] init];
@@ -85,17 +80,16 @@ id test_prop_create(void)
 ptrdiff_t test_prop_offset(void)
 {
 	PropTestObj *dummy = [[PropTestObj alloc] init];
-	ptrdiff_t off = (char *)&dummy->_prop - (char *)dummy;
-	[dummy release];
+	ptrdiff_t off = (char *)(void *)&dummy->_prop - (char *)(__bridge void *)dummy;
 	return off;
 }
 
-id test_prop_read_ivar(id obj)
+void *test_prop_read_ivar(__unsafe_unretained id obj)
 {
-	return ((PropTestObj *)obj)->_prop;
+	return (__bridge void *)((PropTestObj *)obj)->_prop;
 }
 
-void test_prop_write_ivar(id obj, id val)
+void test_prop_write_ivar(__unsafe_unretained id obj, __unsafe_unretained id val)
 {
 	((PropTestObj *)obj)->_prop = val;
 }
