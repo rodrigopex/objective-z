@@ -350,3 +350,150 @@ function(objz_target_arc_sources target)
         objz_compile_objc_arc_sources(${target} ${_m_sources})
     endif()
 endfunction()
+
+# ─── Build Clang flags for AST analysis (host-compatible) ───────────
+#
+# The AST dump only needs include paths, defines, and ObjC parsing.
+# Architecture/codegen flags and -fobjc-runtime=gnustep-2.0 are
+# omitted because Apple Clang may crash with -ast-dump=json when
+# cross-compiling with gnustep-2.0.
+#
+function(_objz_build_ast_flags result_var)
+    set(_flags "")
+
+    list(APPEND _flags -fconstant-string-class=OZString)
+
+    # Include dirs from zephyr_interface (skip generator expressions)
+    get_property(_inc_dirs TARGET zephyr_interface
+        PROPERTY INTERFACE_INCLUDE_DIRECTORIES)
+    foreach(_dir ${_inc_dirs})
+        string(FIND "${_dir}" "$<" _is_genexpr)
+        if(_is_genexpr EQUAL -1)
+            list(APPEND _flags -I${_dir})
+        endif()
+    endforeach()
+
+    # System include dirs (skip generator expressions and GCC built-in paths)
+    get_property(_sys_inc_dirs TARGET zephyr_interface
+        PROPERTY INTERFACE_SYSTEM_INCLUDE_DIRECTORIES)
+    foreach(_dir ${_sys_inc_dirs})
+        string(FIND "${_dir}" "$<" _is_genexpr)
+        string(FIND "${_dir}" "lib/gcc/" _is_gcc)
+        if(_is_genexpr EQUAL -1 AND _is_gcc EQUAL -1)
+            list(APPEND _flags -isystem ${_dir})
+        endif()
+    endforeach()
+
+    # Compile definitions from zephyr_interface
+    get_property(_defs TARGET zephyr_interface
+        PROPERTY INTERFACE_COMPILE_DEFINITIONS)
+    foreach(_def ${_defs})
+        string(FIND "${_def}" "$<" _is_genexpr)
+        if(_is_genexpr EQUAL -1)
+            list(APPEND _flags -D${_def})
+        endif()
+    endforeach()
+
+    if(DEFINED AUTOCONF_H)
+        list(APPEND _flags -imacros ${AUTOCONF_H})
+    endif()
+
+    # Clang built-in headers (stddef.h, stdint.h, etc.)
+    execute_process(
+        COMMAND ${OBJZ_CLANG_COMPILER} -print-resource-dir
+        OUTPUT_VARIABLE _resource_dir OUTPUT_STRIP_TRAILING_WHITESPACE)
+    list(APPEND _flags -isystem ${_resource_dir}/include)
+
+    # SDK sysroot libc headers
+    if(SYSROOT_DIR)
+        list(APPEND _flags
+            -isystem ${SYSROOT_DIR}/include
+            -isystem ${SYSROOT_DIR}/sys-include
+        )
+    elseif(CMAKE_SYSROOT)
+        list(APPEND _flags
+            -isystem ${CMAKE_SYSROOT}/include
+            -isystem ${CMAKE_SYSROOT}/sys-include
+        )
+    endif()
+
+    list(APPEND _flags
+        -nostdinc
+        -fshort-enums
+        -Wall
+        -Wno-objc-macro-redefinition
+    )
+
+    set(${result_var} ${_flags} PARENT_SCOPE)
+endfunction()
+
+# ─── Generate static pools from Clang AST analysis ──────────────────
+#
+# objz_generate_pools(<target> <source1.m> [source2.m ...])
+#
+# Dumps Clang AST JSON for each .m file, then invokes gen_pools.py
+# to produce a generated_pools.c with OZ_DEFINE_POOL() macros.
+# The generated file is compiled with GCC and linked into the target.
+#
+function(objz_generate_pools target)
+    _objz_build_ast_flags(_ast_flags)
+    list(APPEND _ast_flags -fobjc-arc)
+    set(_ast_files "")
+
+    foreach(_src ${ARGN})
+        get_filename_component(_name ${_src} NAME)
+        get_filename_component(_abs  ${_src} ABSOLUTE)
+        string(MAKE_C_IDENTIFIER "${_name}" _safe)
+        set(_ast ${CMAKE_CURRENT_BINARY_DIR}/clang_ast/${_safe}.ast.json)
+
+        get_target_property(_target_incs ${target} INCLUDE_DIRECTORIES)
+        set(_extra "")
+        if(_target_incs)
+            foreach(_dir ${_target_incs})
+                string(FIND "${_dir}" "$<" _g)
+                if(_g EQUAL -1)
+                    list(APPEND _extra -I${_dir})
+                endif()
+            endforeach()
+        endif()
+
+        # Clang may report errors for host-incompatible ELF section
+        # attributes in Zephyr headers, but the JSON AST output is still
+        # valid for ObjC analysis.  The '|| true' ignores those errors.
+        add_custom_command(
+            OUTPUT  ${_ast}
+            COMMAND ${CMAKE_COMMAND} -E make_directory
+                    ${CMAKE_CURRENT_BINARY_DIR}/clang_ast
+            COMMAND ${OBJZ_CLANG_COMPILER}
+                    ${_ast_flags} ${_extra}
+                    -fsyntax-only -Xclang -ast-dump=json
+                    ${_abs} > ${_ast} || true
+            DEPENDS ${_abs}
+            COMMENT "Clang AST dump: ${_name}"
+        )
+        list(APPEND _ast_files ${_ast})
+    endforeach()
+
+    _objz_get_clang_target_triple(_triple)
+    if("${_triple}" MATCHES "aarch64")
+        set(_ptr_size 8)
+    else()
+        set(_ptr_size 4)
+    endif()
+
+    set(_pools_c ${CMAKE_CURRENT_BINARY_DIR}/generated_pools.c)
+    set(_gen_script ${ZEPHYR_EXTRA_MODULES}/scripts/gen_pools.py)
+
+    add_custom_command(
+        OUTPUT  ${_pools_c}
+        COMMAND ${Python3_EXECUTABLE} ${_gen_script}
+                --pointer-size=${_ptr_size}
+                --output=${_pools_c}
+                ${_ast_files}
+        DEPENDS ${_ast_files} ${_gen_script}
+        COMMENT "Generating pools.c from AST analysis"
+        VERBATIM
+    )
+
+    target_sources(${target} PRIVATE ${_pools_c})
+endfunction()
