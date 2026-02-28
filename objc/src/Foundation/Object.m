@@ -65,14 +65,14 @@ extern id __objc_autorelease_add(id obj);
 - (id)retain
 {
 	__objc_refcount_retain(self);
-	LOG_DBG("Object -retain %s rc=%u", class_getName([self class]),
+	LOG_DBG("Object -retain %s rc=%u", class_getName(object_getClass(self)),
 		__objc_refcount_get(self));
 	return self;
 }
 
 - (oneway void)release
 {
-	LOG_DBG("Object -release %s rc=%u", class_getName([self class]),
+	LOG_DBG("Object -release %s rc=%u", class_getName(object_getClass(self)),
 		__objc_refcount_get(self));
 	if (__objc_refcount_release(self)) {
 		[self dealloc];
@@ -81,7 +81,7 @@ extern id __objc_autorelease_add(id obj);
 
 - (id)autorelease
 {
-	LOG_DBG("Object -autorelease %s rc=%u", class_getName([self class]),
+	LOG_DBG("Object -autorelease %s rc=%u", class_getName(object_getClass(self)),
 		__objc_refcount_get(self));
 	return __objc_autorelease_add(self);
 }
@@ -152,9 +152,14 @@ extern id __objc_autorelease_add(id obj);
 
 - (id)description
 {
-	char buf[64];
-	snprintk(buf, sizeof(buf), "<%s: %p>", class_getName(object_getClass(self)), self);
-	return [OZMutableString stringWithCString:buf];
+	char ptr[16];
+	snprintk(ptr, sizeof(ptr), "%p", self);
+	id desc = [OZMutableString stringWithCString:"<"];
+	[desc appendCString:class_getName(object_getClass(self))];
+	[desc appendCString:": "];
+	[desc appendCString:ptr];
+	[desc appendCString:">"];
+	return desc;
 }
 
 - (int)cDescription:(char *)buf maxLength:(int)maxLen
