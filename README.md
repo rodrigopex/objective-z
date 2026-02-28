@@ -187,20 +187,21 @@ Without dispatch cache (`CONFIG_OBJZ_DISPATCH_CACHE=n`):
 
 ### Logging
 
-Comparison of `printk`, Zephyr `LOG_INF` (minimal mode), and `OZLog` (50 iterations):
+Comparison of `printk`, Zephyr `LOG_INF` (minimal mode), and `OZLog` (50 iterations).
+`OZLog` uses `-cDescription:maxLength:` for zero-alloc `%@` formatting (no autorelease pool or heap strings):
 
 | Operation | Cycles | ns |
 |---|---:|---:|
 | `printk` (simple string) | 2,301 | 92,040 |
 | `LOG_INF` (simple string) | 2,903 | 116,120 |
-| `OZLog` (simple string) | 13,133 | 525,320 |
+| `OZLog` (simple string) | 3,280 | 131,200 |
 | `printk` (integer format) | 2,196 | 87,840 |
 | `LOG_INF` (integer format) | 2,797 | 111,880 |
-| `OZLog` (integer format) | 29,599 | 1,183,960 |
-| `printk` (string format) | 5,562 | 222,480 |
-| `LOG_INF` (string format) | 5,826 | 233,040 |
-| `OZLog` (string format) | 42,553 | 1,702,120 |
-| `OZLog` (`%@` object format) | 108,197 | 4,327,880 |
+| `OZLog` (integer format) | 3,883 | 155,320 |
+| `printk` (string format) | 2,039 | 81,560 |
+| `LOG_INF` (string format) | 2,640 | 105,600 |
+| `OZLog` (string format) | 3,892 | 155,680 |
+| `OZLog` (`%@` object format) | 8,484 | 339,360 |
 
 ### Memory Footprint
 
@@ -209,21 +210,21 @@ Runtime cost vs bare Zephyr (mps2/an385, benchmark sample with all features):
 | Configuration | FLASH | RAM | FLASH delta | RAM delta |
 |---|---:|---:|---:|---:|
 | Bare Zephyr (no ObjC) | 12,172 B | 6,120 B | — | — |
-| All features enabled | 38,568 B | 30,508 B | +26,396 B | +24,388 B |
+| All features enabled | 38,808 B | 30,532 B | +26,636 B | +24,412 B |
 
 Dispatch cache cost (`CONFIG_OBJZ_DISPATCH_CACHE`, default `y`):
 
 | Metric | Cached | No cache | Delta |
 |---|---:|---:|---:|
-| FLASH | 38,568 B | 38,112 B | +456 B |
-| RAM (BSS + data) | 30,508 B | 29,476 B | +1,032 B |
+| FLASH | 38,808 B | 38,352 B | +456 B |
+| RAM (BSS + data) | 30,532 B | 29,500 B | +1,032 B |
 
 Blocks runtime cost (`CONFIG_OBJZ_BLOCKS`, default `n`):
 
 | Metric | Blocks on | Blocks off | Delta |
 |---|---:|---:|---:|
-| FLASH | 38,568 B | 35,560 B | +3,008 B |
-| RAM (BSS + data) | 30,508 B | 30,476 B | +32 B |
+| FLASH | 38,808 B | 35,800 B | +3,008 B |
+| RAM (BSS + data) | 30,532 B | 30,500 B | +32 B |
 
 **Key takeaways:**
 
@@ -233,7 +234,7 @@ Blocks runtime cost (`CONFIG_OBJZ_BLOCKS`, default `n`):
 - **ARC retain vs message dispatch**: `objc_retain` (59 cycles) vs `[obj retain]` (240 cycles cached) — ARC entry points bypass message dispatch entirely.
 - **Static pools are ~38% faster** than heap allocation (`sys_heap` with spinlock).
 - **Block invocation matches C function pointers** at 20 cycles (vs 10 for a raw `call`). The overhead comes from `_Block_copy` (stack-to-heap promotion): 413 cycles per copy, but retaining an already-heap block is only 48 cycles. Each heap block costs 32 B (56 B with `__block` variables due to the `Block_byref` structure).
-- **OZLog vs printk**: OZLog is ~6x slower than bare `printk` for simple strings, scaling up with format complexity. The `%@` object format specifier (108k cycles) is the most expensive due to `-description` dispatch and string conversion. `LOG_INF` in minimal mode adds ~26% over `printk` (prefix formatting).
+- **OZLog vs printk**: OZLog is ~1.4x `printk` for simple strings thanks to zero-alloc `-cDescription:maxLength:`. The `%@` object format (8.5k cycles) adds message dispatch overhead but avoids all heap allocation. `LOG_INF` in minimal mode adds ~26% over `printk` (prefix formatting).
 - **QEMU caveat**: these are instruction-accurate counts, not true cycle-accurate. Real hardware numbers will differ, but relative comparisons hold.
 
 ## Using in Your Project
