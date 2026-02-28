@@ -6,8 +6,8 @@
   - [x] `objc/VERSION` following Zephyr pattern
   - [x] CMake generates `objc/version.h` with `OBJZ_VERSION_*` macros
   - [x] Boot banner via CONFIG_OBJZ_BOOT_BANNER
-- [ ] Generated slabs to reduce heap usage and do not require manual sizing from the developer.
-  - [ ] Remove MRR support. Force user to use only ARC + (generated pools)
+- [x] Generated slabs to reduce heap usage and do not require manual sizing from the developer.
+  - [x] Remove MRR support. Force user to use only ARC + (generated pools)
 - [ ] Add collections config (CONFIG_OBJZ_COLLECTIONS)
   - [ ] OZArray/OZDictionary available without literals
   - [ ] CONFIG_OBJZ_LITERALS depends on CONFIG_OBJZ_COLLECTIONS

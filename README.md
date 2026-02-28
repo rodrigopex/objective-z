@@ -196,10 +196,11 @@ Comparison of `printk`, Zephyr `LOG_INF` (minimal mode), and `OZLog` (50 iterati
 | `OZLog` (simple string) | 13,133 | 525,320 |
 | `printk` (integer format) | 2,196 | 87,840 |
 | `LOG_INF` (integer format) | 2,797 | 111,880 |
-| `OZLog` (integer format) | 13,728 | 549,120 |
-| `printk` (string format) | 2,039 | 81,560 |
-| `LOG_INF` (string format) | 2,640 | 105,600 |
-| `OZLog` (string format) | 13,738 | 549,520 |
+| `OZLog` (integer format) | 29,599 | 1,183,960 |
+| `printk` (string format) | 5,562 | 222,480 |
+| `LOG_INF` (string format) | 5,826 | 233,040 |
+| `OZLog` (string format) | 42,553 | 1,702,120 |
+| `OZLog` (`%@` object format) | 108,197 | 4,327,880 |
 
 ### Memory Footprint
 
@@ -232,7 +233,7 @@ Blocks runtime cost (`CONFIG_OBJZ_BLOCKS`, default `n`):
 - **ARC retain vs message dispatch**: `objc_retain` (59 cycles) vs `[obj retain]` (240 cycles cached) — ARC entry points bypass message dispatch entirely.
 - **Static pools are ~38% faster** than heap allocation (`sys_heap` with spinlock).
 - **Block invocation matches C function pointers** at 20 cycles (vs 10 for a raw `call`). The overhead comes from `_Block_copy` (stack-to-heap promotion): 413 cycles per copy, but retaining an already-heap block is only 48 cycles. Each heap block costs 32 B (56 B with `__block` variables due to the `Block_byref` structure).
-- **OZLog vs printk**: OZLog is ~6-7x slower than bare `printk` due to the custom format parser, `@autoreleasepool` push/pop, and per-specifier `snprintk`. `LOG_INF` in minimal mode adds ~26-29% over `printk` (prefix formatting).
+- **OZLog vs printk**: OZLog is ~6x slower than bare `printk` for simple strings, scaling up with format complexity. The `%@` object format specifier (108k cycles) is the most expensive due to `-description` dispatch and string conversion. `LOG_INF` in minimal mode adds ~26% over `printk` (prefix formatting).
 - **QEMU caveat**: these are instruction-accurate counts, not true cycle-accurate. Real hardware numbers will differ, but relative comparisons hold.
 
 ## Using in Your Project
