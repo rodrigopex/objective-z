@@ -18,7 +18,7 @@
  * Stores retained copies of keys and values. Lookup is linear scan
  * using -isEqual: on keys. Supports keyed subscript syntax (dict[@"k"]).
  */
-@interface OZDictionary : Object {
+@interface OZDictionary<__covariant KeyType, __covariant ObjectType> : Object {
 	__unsafe_unretained id *_keys;
 	__unsafe_unretained id *_values;
 	unsigned int _count;
@@ -44,12 +44,12 @@
  * @brief Return the value associated with a key, or nil.
  * @param key The key to look up (compared via -isEqual:).
  */
-- (id)objectForKey:(id)key;
+- (ObjectType)objectForKey:(KeyType)key;
 
 /**
  * @brief Subscript support: dict[key].
  */
-- (id)objectForKeyedSubscript:(id)key;
+- (ObjectType)objectForKeyedSubscript:(KeyType)key;
 
 /**
  * @brief Fast enumeration over keys for for...in loops.

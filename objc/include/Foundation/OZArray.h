@@ -18,7 +18,7 @@
  * Stores a retained copy of the objects passed to the factory method.
  * Supports indexed subscript syntax (arr[0]).
  */
-@interface OZArray : Object {
+@interface OZArray<__covariant ObjectType> : Object {
 	__unsafe_unretained id *_items;
 	unsigned int _count;
 }
@@ -40,12 +40,12 @@
  * @brief Return the object at the given index.
  * @param index Zero-based index. Must be < count.
  */
-- (id)objectAtIndex:(unsigned int)index;
+- (ObjectType)objectAtIndex:(unsigned int)index;
 
 /**
  * @brief Subscript support: arr[index].
  */
-- (id)objectAtIndexedSubscript:(unsigned int)index;
+- (ObjectType)objectAtIndexedSubscript:(unsigned int)index;
 
 /**
  * @brief Fast enumeration support for for...in loops.
@@ -64,7 +64,7 @@
  * @param block Called for each element with the object, its index,
  *              and a pointer to a BOOL that can be set to YES to stop.
  */
-- (void)enumerateObjectsUsingBlock:(void (^)(id obj, unsigned int idx, BOOL *stop))block;
+- (void)enumerateObjectsUsingBlock:(void (^)(ObjectType obj, unsigned int idx, BOOL *stop))block;
 #endif
 
 @end

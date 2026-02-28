@@ -1,0 +1,26 @@
+sample:
+  description: Lightweight generics demo
+  name: ObjZ Generics Demo
+common:
+  tags: objz
+  integration_platforms:
+    - mps2/an385
+  harness: console
+  harness_config:
+    type: multi_line
+    ordered: true
+    regex:
+      - "=== Generics Demo ==="
+      - "numbers\\[0\\] = 10"
+      - "numbers count = 3"
+      - "name: Zephyr"
+      - "name: Objective-Z"
+      - "name: RTOS"
+      - "alpha score = 100"
+      - "sum = 60"
+      - "generic\\[0\\] = Zephyr"
+      - "matrix\\[0\\]\\[1\\] = 2"
+      - "=== Generics Demo Complete ==="
+tests:
+  sample.objz.generics_demo:
+    tags: objz generics
