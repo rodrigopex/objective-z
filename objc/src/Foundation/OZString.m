@@ -1,3 +1,4 @@
+#import <Foundation/OZString.h>
 #include <objc/objc.h>
 
 #include <zephyr/kernel.h>

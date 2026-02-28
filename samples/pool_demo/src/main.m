@@ -7,9 +7,8 @@
  * Gadget has no pool — falls back to the sys_heap allocator.
  */
 
+#import <Foundation/Foundation.h>
 #import <objc/objc.h>
-#import <objc/OZAutoreleasePool.h>
-#include <objc/OZLog.h>
 
 /* ── Sensor class ─────────────────────────────────────────────────── */
 

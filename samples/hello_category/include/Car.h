@@ -1,5 +1,5 @@
 
-#import <objc/objc.h>
+#import <Foundation/Foundation.h>
 #import <objc/objc.h>
 #include <zephyr/kernel.h>
 

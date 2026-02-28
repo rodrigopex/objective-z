@@ -10,7 +10,7 @@
 #include <zephyr/sys/atomic.h>
 /**
  * @brief The root class of all Objective-C classes.
- * @headerfile Object.h objc/objc.h
+ * @headerfile Object.h Foundation/Foundation.h
  * @ingroup objc
  *
  * This class is the base class for all objects in Objective-C.

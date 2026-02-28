@@ -7,6 +7,7 @@
  * @file helpers.m
  * @brief ObjC helpers for static pool tests.
  */
+#import <Foundation/Foundation.h>
 #import <objc/objc.h>
 
 /* ── TestPooled: class with a static memory pool ─────────────────── */

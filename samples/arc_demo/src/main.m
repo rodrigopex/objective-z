@@ -5,9 +5,8 @@
  * Compiled with -fobjc-arc — no manual retain/release needed.
  */
 
+#import <Foundation/Foundation.h>
 #import <objc/objc.h>
-#import <objc/OZAutoreleasePool.h>
-#include <objc/OZLog.h>
 #include <zephyr/kernel.h>
 
 @interface Sensor: Object {

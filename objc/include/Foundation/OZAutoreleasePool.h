@@ -5,7 +5,7 @@
  * Provides @autoreleasepool {} support for gnustep-1.7 runtime.
  */
 #pragma once
-#import <objc/Object.h>
+#import "Object.h"
 
 #ifndef OBJZ_ARP_CAPACITY
 #define OBJZ_ARP_CAPACITY 64

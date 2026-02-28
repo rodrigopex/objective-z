@@ -10,8 +10,8 @@
  * Singletons for @YES/@NO and small integers 0..15 are allocated in
  * +initialize with refcount set to INT32_MAX (immortal).
  */
-#import <objc/OZNumber.h>
-#import <objc/OZMutableString.h>
+#import <Foundation/OZNumber.h>
+#import <Foundation/OZMutableString.h>
 #import <objc/objc.h>
 #include <stdint.h>
 #include <string.h>

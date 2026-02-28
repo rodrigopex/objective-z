@@ -7,12 +7,12 @@
  * Aliased to NSArray under Clang for compiler literal codegen.
  */
 #pragma once
-#import <objc/Object.h>
-#import <objc/NSFastEnumeration.h>
+#import "Object.h"
+#import "NSFastEnumeration.h"
 
 /**
  * @brief Immutable ordered collection.
- * @headerfile OZArray.h objc/OZArray.h
+ * @headerfile OZArray.h Foundation/Foundation.h
  * @ingroup objc
  *
  * Stores a retained copy of the objects passed to the factory method.

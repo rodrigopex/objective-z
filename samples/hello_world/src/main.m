@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#import <Foundation/Foundation.h>
 #import <objc/objc.h>
 
 @interface MyFirstObject: Object

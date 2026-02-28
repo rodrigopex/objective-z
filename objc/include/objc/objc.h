@@ -3,8 +3,9 @@
  * @brief Defines the Objective-C runtime.
  * @defgroup objc Objective-C Runtime
  *
- * Objective-C runtime, providing class introspection, protocols and resolution
- * of selectors to the methods.
+ * Pure C runtime interface: class introspection, protocols and resolution
+ * of selectors to the methods. For Foundation classes (Object, OZString, etc.),
+ * use #import <Foundation/Foundation.h>.
  */
 #pragma once
 
@@ -12,24 +13,4 @@
 #include "malloc.h"
 #include "mutex.h"
 #include "runtime.h"
-#include "OZLog.h"
 
-#if __OBJC__
-
-// Protocols
-#include "OZString+Protocol.h"
-#include "Object+Protocol.h"
-
-// Classes
-#include "OZString.h"
-#include "Object.h"
-#include "Protocol.h"
-
-#ifdef CONFIG_OBJZ_LITERALS
-#include "NSFastEnumeration.h"
-#include "OZNumber.h"
-#include "OZArray.h"
-#include "OZDictionary.h"
-#endif
-
-#endif // __OBJC__

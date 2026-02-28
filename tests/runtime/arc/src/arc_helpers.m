@@ -10,6 +10,7 @@
  * Compiled with -fobjc-arc.  When the local variable goes out of
  * scope, ARC inserts an objc_release that triggers dealloc.
  */
+#import <Foundation/Foundation.h>
 #import <objc/objc.h>
 
 /* Dealloc tracking counter (defined in helpers.m) */

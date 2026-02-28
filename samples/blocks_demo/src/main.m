@@ -10,6 +10,7 @@
  * Demonstrates global blocks, capturing blocks, __block variables,
  * and nested blocks on Zephyr RTOS.
  */
+#import <Foundation/Foundation.h>
 #import <objc/objc.h>
 #import <objc/blocks.h>
 #include <zephyr/kernel.h>
@@ -25,7 +26,7 @@ typedef void (^VoidBlock)(void);
 @interface Sensor : Object {
 	OZArray *_samples;
 }
-@property (nonatomic, readonly) OZArray *samples;
+@property (nonatomic, readonly) OZArray * _Nonnull samples;
 - (id)init;
 - (void)iterateSamplesUsingBlock:(void (^)(id obj, unsigned int idx, BOOL *stop))callback;
 @end

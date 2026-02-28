@@ -7,7 +7,7 @@
  * @file helpers.m
  * @brief ObjC helpers for memory/Object/OZString tests.
  */
-#import <objc/OZString.h>
+#import <Foundation/Foundation.h>
 
 /* ── TestItem: simple Object subclass with an ivar ───────────────── */
 

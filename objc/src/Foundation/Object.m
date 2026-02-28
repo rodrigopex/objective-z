@@ -1,5 +1,5 @@
+#import <Foundation/OZMutableString.h>
 #import <objc/objc.h>
-#import <objc/OZMutableString.h>
 #include <zephyr/sys/printk.h>
 #import <zephyr/logging/log.h>
 LOG_MODULE_DECLARE(objz, CONFIG_OBJZ_LOG_LEVEL);

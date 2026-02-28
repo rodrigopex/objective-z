@@ -6,8 +6,8 @@
  * Compiled without ARC — uses MRR with @autoreleasepool.
  */
 
+#import <Foundation/Foundation.h>
 #import <objc/objc.h>
-#import <objc/OZAutoreleasePool.h>
 
 int main(void)
 {

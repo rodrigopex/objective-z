@@ -5,9 +5,8 @@
  * Demonstrates retain/release/autorelease lifecycle.
  */
 
+#import <Foundation/Foundation.h>
 #import <objc/objc.h>
-#import <objc/OZAutoreleasePool.h>
-#include <objc/OZLog.h>
 
 @interface Sensor : Object {
 	int _value;

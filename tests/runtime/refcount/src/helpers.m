@@ -2,8 +2,8 @@
  * @file helpers.m
  * @brief ObjC helper classes for refcount tests.
  */
+#import <Foundation/Foundation.h>
 #import <objc/objc.h>
-#import <objc/OZAutoreleasePool.h>
 
 /* ── Global dealloc tracking ────────────────────────────────────── */
 

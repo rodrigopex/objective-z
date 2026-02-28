@@ -7,7 +7,7 @@
  * Aliased to NSNumber under Clang for compiler literal codegen.
  */
 #pragma once
-#import <objc/Object.h>
+#import "Object.h"
 
 enum oz_number_type {
 	OZNumberTypeBool,
@@ -27,7 +27,7 @@ enum oz_number_type {
 
 /**
  * @brief Boxed number with type-preserving storage.
- * @headerfile OZNumber.h objc/OZNumber.h
+ * @headerfile OZNumber.h Foundation/Foundation.h
  * @ingroup objc
  *
  * Wraps C numeric types in an Object for use with ObjC boxed

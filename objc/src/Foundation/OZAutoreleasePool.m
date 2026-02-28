@@ -1,4 +1,4 @@
-#import <objc/OZAutoreleasePool.h>
+#import <Foundation/OZAutoreleasePool.h>
 #import <objc/objc.h>
 #import <zephyr/logging/log.h>
 LOG_MODULE_DECLARE(objz, CONFIG_OBJZ_LOG_LEVEL);

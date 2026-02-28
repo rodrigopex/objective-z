@@ -10,8 +10,8 @@
  * Compiled without -fobjc-arc via objz_target_sources().
  * Provides C-callable wrappers around ObjC literal syntax.
  */
+#import <Foundation/Foundation.h>
 #import <objc/objc.h>
-#import <objc/OZAutoreleasePool.h>
 
 /* ── Pool management ───────────────────────────────────────────── */
 

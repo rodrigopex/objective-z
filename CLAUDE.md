@@ -34,6 +34,8 @@ Each sample registers the runtime via `ZEPHYR_EXTRA_MODULES` in its CMakeLists.t
 
 ### Runtime Module (`objc/`)
 
+- **`include/objc/objc.h`** — Pure C runtime umbrella: assert, malloc, mutex, runtime
+- **`include/objc/runtime.h`** — Runtime types (`id`, `SEL`, `Class`, `IMP`, `BOOL`), introspection functions
 - **`src/api.h`** — ABI structures (`objc_class`, `objc_method`, `objc_selector`, `objc_init`), gnustep-2.0 types, `objc_class_flag_immortal` for statically-emitted objects
 - **`src/load.c`** — Entry point: `__objc_load()` called via `.init_array` static constructor. Registers classes, categories, protocols, and fixes constant string isa pointers from gnustep-2.0 metadata sections.
 - **`src/message.c`** — Core dispatch: `objc_msg_lookup()` / `objc_msg_lookup_super()`, lazy class resolution, sends `+initialize` on first use. Checks per-class dtable cache before global hash table.
@@ -42,20 +44,26 @@ Each sample registers the runtime via `ZEPHYR_EXTRA_MODULES` in its CMakeLists.t
 - **`src/hash.c`** — Global method hash table (512 slots, open addressing). Slow path for cache misses.
 - **`src/category.c`** — Category table (32 slots), deferred loading until class is resolved. Flushes dispatch caches after loading.
 - **`src/malloc.c`** — Dedicated `sys_heap` (default 4096 bytes via `CONFIG_OBJZ_MEM_POOL_SIZE`) with spinlock
-- **`src/Object.m`** — Root class: alloc (sets rc=1)/init/dealloc/retain/release/autorelease/retainCount/class/respondsToSelector. Checks static pools before heap fallback.
 - **`src/refcount.c`** — Atomic refcount core (pure C, Zephyr `atomic_inc/dec/get/set`). Guards immortal classes (OZString, Protocol).
-- **`src/OZString.m`** — Backs `@"..."` literals; aliased to `NSString` under Clang
+
+### Foundation Layer (`objc/include/Foundation/`, `objc/src/Foundation/`)
+
+- **`include/Foundation/Foundation.h`** — Umbrella header importing all Foundation classes
+- **`src/Foundation/Object.m`** — Root class: alloc (sets rc=1)/init/dealloc/retain/release/autorelease/retainCount/class/respondsToSelector. Checks static pools before heap fallback.
+- **`src/Foundation/Protocol.m`** — Protocol class: name, conformsTo, isEqual
+- **`src/Foundation/OZString.m`** — Backs `@"..."` literals; aliased to `NSString` under Clang
+- **`src/Foundation/OZMutableString.m`** — Heap-allocated mutable string for -description
+- **`src/Foundation/OZAutoreleasePool.m`** — Per-thread pool stack (`__thread`), `@autoreleasepool {}` via `objc_autoreleasePoolPush/Pop`
+- **`src/Foundation/OZLog.m`** — Formatted logging with `%@` object specifier
+- **`src/Foundation/OZNumber.m`** — Boxed number class for `@42`, `@YES` literals
+- **`src/Foundation/OZArray.m`** — Immutable array for `@[...]` literals
+- **`src/Foundation/OZDictionary.m`** — Immutable dictionary for `@{...}` literals
 
 ### Clang / gnustep-2.0 Dispatch
 
 - **`src/objc_msgSend.S`** — ARM Cortex-M Thumb-2 trampoline: `objc_msg_lookup(r0,r1)` + tail-call IMP
 - **`cmake/ObjcClang.cmake`** — Clang cross-compilation with `-fobjc-runtime=gnustep-2.0`, provides `objz_compile_objc_sources()`, `objz_compile_objc_arc_sources()`, `objz_target_sources()`, `objz_target_arc_sources()`
 - **`cmake/objc_sections.ld`** — Linker script for gnustep-2.0 ObjC metadata sections (`__objc_selectors`, `__objc_classes`, etc.) with `__start_`/`__stop_` boundary symbols
-
-### Autorelease Pool
-
-- **`src/OZAutoreleasePool.m`** — Per-thread pool stack (`__thread`), `@autoreleasepool {}` via `objc_autoreleasePoolPush/Pop`
-- **`include/objc/OZAutoreleasePool.h`** — Public header
 
 ### ARC Layer (`CONFIG_OBJZ_ARC`)
 

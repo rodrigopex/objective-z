@@ -7,7 +7,7 @@
  * @file helpers.m
  * @brief ObjC helper classes with protocols for protocol tests.
  */
-#import <objc/Object.h>
+#import <Foundation/Object.h>
 
 /* ── Protocols ───────────────────────────────────────────────────── */
 

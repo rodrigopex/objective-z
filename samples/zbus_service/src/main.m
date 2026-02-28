@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#import <objc/OZString.h>
+#import <Foundation/Foundation.h>
 #import <objc/objc.h>
 #include <zephyr/kernel.h>
 #include "TemperatureService.h"

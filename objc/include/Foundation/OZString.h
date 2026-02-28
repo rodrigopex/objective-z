@@ -11,7 +11,7 @@
 
 /**
  * @brief A constant string class (gnustep-2.0 layout).
- * @headerfile OZString.h objc/objc.h
+ * @headerfile OZString.h Foundation/Foundation.h
  * @ingroup objc
  *
  * Ivar layout matches Clang's __objc_constant_string struct exactly.

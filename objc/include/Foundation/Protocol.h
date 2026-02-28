@@ -6,11 +6,12 @@
  * declare and implement Objective-C protocols.
  */
 #pragma once
+#import "Object.h"
 
 /**
  * @brief Protocol class definition
- * @headerfile Protocol.h objc/objc.h
- * @ingroup objc  
+ * @headerfile Protocol.h Foundation/Foundation.h
+ * @ingroup objc
  */
 @interface Protocol : Object {
 @private

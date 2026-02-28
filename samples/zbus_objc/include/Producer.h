@@ -1,3 +1,4 @@
+#include <Foundation/Foundation.h>
 #include <objc/objc.h>
 #include "channels.h"
 

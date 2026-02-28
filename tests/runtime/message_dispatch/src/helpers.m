@@ -2,6 +2,7 @@
  * @file helpers.m
  * @brief ObjC helper classes for message dispatch tests.
  */
+#import <Foundation/Foundation.h>
 #import <objc/objc.h>
 
 /* ── Counters for +initialize tracking (read from C test code) ──── */

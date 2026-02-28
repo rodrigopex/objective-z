@@ -10,7 +10,7 @@
  * Compiled without -fobjc-arc via objz_target_sources().
  * Provides C-callable wrappers around OZString operations.
  */
-#import <objc/OZAutoreleasePool.h>
+#import <Foundation/Foundation.h>
 #import <objc/objc.h>
 
 #include <string.h>

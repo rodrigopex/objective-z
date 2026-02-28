@@ -7,12 +7,12 @@
  * Aliased to NSDictionary under Clang for compiler literal codegen.
  */
 #pragma once
-#import <objc/Object.h>
-#import <objc/NSFastEnumeration.h>
+#import "Object.h"
+#import "NSFastEnumeration.h"
 
 /**
  * @brief Immutable key-value collection.
- * @headerfile OZDictionary.h objc/OZDictionary.h
+ * @headerfile OZDictionary.h Foundation/Foundation.h
  * @ingroup objc
  *
  * Stores retained copies of keys and values. Lookup is linear scan

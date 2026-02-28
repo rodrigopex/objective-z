@@ -10,6 +10,7 @@
  * Compiled with Clang + -fblocks (via objz_target_sources).
  * Provides C-callable wrappers for block operations.
  */
+#import <Foundation/Foundation.h>
 #import <objc/objc.h>
 #import <objc/blocks.h>
 

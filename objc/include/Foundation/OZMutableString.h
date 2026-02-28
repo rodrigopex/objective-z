@@ -11,12 +11,12 @@
  * Uses an inline buffer to avoid a secondary heap allocation.
  */
 #pragma once
-#import <objc/Object.h>
-#import <objc/OZString+Protocol.h>
+#import "Object.h"
+#import "OZString+Protocol.h"
 
 /**
  * @brief Mutable string with heap-allocated dynamic buffer.
- * @headerfile OZMutableString.h objc/OZMutableString.h
+ * @headerfile OZMutableString.h Foundation/Foundation.h
  * @ingroup objc
  *
  * Used as the return type for -description methods.

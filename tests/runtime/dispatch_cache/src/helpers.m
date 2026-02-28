@@ -7,6 +7,7 @@
  * @file helpers.m
  * @brief ObjC helper classes for dispatch cache tests.
  */
+#import <Foundation/Foundation.h>
 #import <objc/objc.h>
 
 /* ── CacheBase: direct methods (depth=0) ─────────────────────────── */

@@ -10,7 +10,7 @@
  * Tests the method hash table indirectly by defining classes with
  * many methods and verifying dispatch and respondsToSelector results.
  */
-#import <objc/Object.h>
+#import <Foundation/Object.h>
 
 /* ── TestCalc: class with many instance and class methods ────────── */
 

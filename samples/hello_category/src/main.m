@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 #import "Car+Maintenance.h"
+#import <Foundation/Foundation.h>
 #import <objc/objc.h>
 #import <assert.h>
 

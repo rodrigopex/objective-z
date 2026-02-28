@@ -7,7 +7,7 @@
  * @file OZMutableString.m
  * @brief Mutable string class implementation with heap-allocated buffer.
  */
-#import <objc/OZMutableString.h>
+#import <Foundation/OZMutableString.h>
 #import <objc/objc.h>
 #include <string.h>
 

@@ -10,8 +10,8 @@
  * Keys and values are retained on creation and released on dealloc.
  * Lookup is linear scan with -isEqual: on keys.
  */
-#import <objc/OZDictionary.h>
-#import <objc/OZMutableString.h>
+#import <Foundation/OZDictionary.h>
+#import <Foundation/OZMutableString.h>
 #import <objc/objc.h>
 
 #import <zephyr/logging/log.h>

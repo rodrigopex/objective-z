@@ -6,6 +6,7 @@
  * Compiled with Clang (non-ARC) for manual retain/release control.
  */
 
+#import <Foundation/Foundation.h>
 #import <objc/objc.h>
 #include <objc/runtime.h>
 

@@ -1,3 +1,4 @@
+#import <Foundation/Protocol.h>
 #include <objc/objc.h>
 
 @implementation Protocol

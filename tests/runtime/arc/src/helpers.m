@@ -10,8 +10,8 @@
  * Compiled without -fobjc-arc so we can manually manage retain/release
  * and provide C-callable wrappers for the test harness.
  */
+#import <Foundation/Foundation.h>
 #import <objc/objc.h>
-#import <objc/OZAutoreleasePool.h>
 
 /* ── Dealloc tracking counter (read from C test code) ──────────── */
 

@@ -7,7 +7,7 @@
  * @file helpers.m
  * @brief ObjC helper classes with categories for category tests.
  */
-#import <objc/Object.h>
+#import <Foundation/Object.h>
 
 /* ── TestShape: base class ───────────────────────────────────────── */
 

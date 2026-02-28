@@ -1,3 +1,4 @@
+#import <Foundation/Foundation.h>
 #include <objc/objc.h>
 
 /* Generate references to Object and OZString classes since they are

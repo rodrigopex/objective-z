@@ -9,8 +9,8 @@
  *
  * Elements are retained on creation and released on dealloc.
  */
-#import <objc/OZArray.h>
-#import <objc/OZMutableString.h>
+#import <Foundation/OZArray.h>
+#import <Foundation/OZMutableString.h>
 #import <objc/objc.h>
 
 #import <zephyr/logging/log.h>

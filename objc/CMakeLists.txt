@@ -21,9 +21,9 @@ if(CONFIG_OBJZ)
     # ObjC files: Clang if enabled, else GCC
     objz_compile_objc_sources(${ZEPHYR_CURRENT_LIBRARY}
         "${ZEPHYR_CURRENT_MODULE_DIR}/src/init.m"
-        "${ZEPHYR_CURRENT_MODULE_DIR}/src/OZString.m"
-        "${ZEPHYR_CURRENT_MODULE_DIR}/src/Object.m"
-        "${ZEPHYR_CURRENT_MODULE_DIR}/src/Protocol.m"
+        "${ZEPHYR_CURRENT_MODULE_DIR}/src/Foundation/OZString.m"
+        "${ZEPHYR_CURRENT_MODULE_DIR}/src/Foundation/Object.m"
+        "${ZEPHYR_CURRENT_MODULE_DIR}/src/Foundation/Protocol.m"
     )
 
     # gnustep-2.0 dispatch: objc_msgSend trampoline (ARM Thumb-2)
@@ -32,9 +32,9 @@ if(CONFIG_OBJZ)
     # Reference counting and autorelease pool
     zephyr_library_sources("${ZEPHYR_CURRENT_MODULE_DIR}/src/refcount.c")
     objz_compile_objc_sources(${ZEPHYR_CURRENT_LIBRARY}
-        "${ZEPHYR_CURRENT_MODULE_DIR}/src/OZAutoreleasePool.m"
-        "${ZEPHYR_CURRENT_MODULE_DIR}/src/OZMutableString.m"
-        "${ZEPHYR_CURRENT_MODULE_DIR}/src/OZLog.m"
+        "${ZEPHYR_CURRENT_MODULE_DIR}/src/Foundation/OZAutoreleasePool.m"
+        "${ZEPHYR_CURRENT_MODULE_DIR}/src/Foundation/OZMutableString.m"
+        "${ZEPHYR_CURRENT_MODULE_DIR}/src/Foundation/OZLog.m"
     )
 
     # ARC entry points (pure C, no -fobjc-arc)
@@ -45,9 +45,9 @@ if(CONFIG_OBJZ)
     # Boxed literals and collection literals
     if(CONFIG_OBJZ_LITERALS)
         objz_compile_objc_sources(${ZEPHYR_CURRENT_LIBRARY}
-            "${ZEPHYR_CURRENT_MODULE_DIR}/src/OZNumber.m"
-            "${ZEPHYR_CURRENT_MODULE_DIR}/src/OZArray.m"
-            "${ZEPHYR_CURRENT_MODULE_DIR}/src/OZDictionary.m"
+            "${ZEPHYR_CURRENT_MODULE_DIR}/src/Foundation/OZNumber.m"
+            "${ZEPHYR_CURRENT_MODULE_DIR}/src/Foundation/OZArray.m"
+            "${ZEPHYR_CURRENT_MODULE_DIR}/src/Foundation/OZDictionary.m"
         )
     endif()
 

@@ -17,7 +17,7 @@
 
 /**
  * @brief Protocol for constant string objects.
- * @headerfile OZString+Protocol.h objc/objc.h
+ * @headerfile OZString+Protocol.h Foundation/Foundation.h
  * @ingroup objc
  *
  * The OZStringProtocol defines the minimal interface that constant

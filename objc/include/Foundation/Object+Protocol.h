@@ -9,7 +9,7 @@
 
 /**
  * @brief Protocol for objects.
- * @headerfile Object+Protocol.h objc/objc.h
+ * @headerfile Object+Protocol.h Foundation/Foundation.h
  * @ingroup objc
  *
  * The ObjectProtocol defines the minimal interface that objects must

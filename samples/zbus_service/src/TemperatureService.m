@@ -1,6 +1,6 @@
 #include "TemperatureService.h"
 
-#include <objc/OZLog.h>
+#include <Foundation/OZLog.h>
 #include <zephyr/kernel.h>
 #include <zephyr/zbus/zbus.h>
 #include <zephyr/random/random.h>

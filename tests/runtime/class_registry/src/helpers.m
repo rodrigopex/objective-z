@@ -2,6 +2,7 @@
  * @file helpers.m
  * @brief ObjC helper classes for class registry tests.
  */
+#import <Foundation/Foundation.h>
 #import <objc/objc.h>
 
 /* ── TestVehicle: root subclass of Object ───────────────────────── */
