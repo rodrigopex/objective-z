@@ -18,7 +18,7 @@
 #include <objc/malloc.h>
 #include <objc/pool.h>
 
-/* ── MRR helpers (defined in helpers.m) ────────────────────────── */
+/* ── Helpers (defined in helpers.m) ────────────────────────────── */
 
 extern id test_create_tracked(int tag);
 extern unsigned int test_get_rc(id obj);
@@ -480,12 +480,12 @@ ZTEST(arc_slab, test_cycle_consistency)
 		      "slab free count should be unchanged after cycles");
 }
 
-ZTEST(arc_slab, test_mrr_alloc_arc_release)
+ZTEST(arc_slab, test_alloc_arc_release)
 {
 	test_reset_tracking();
 	uint32_t used_before = test_pool_slab_used();
 
-	/* Alloc via MRR wrapper, release via ARC entry point */
+	/* Alloc via helper, release via ARC entry point */
 	id obj = test_create_pool_obj(42);
 	zassert_not_null(obj, "pool alloc should succeed");
 

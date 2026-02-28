@@ -51,7 +51,11 @@ void *__objc_pool_alloc(Class cls)
 	struct objc_class *c = (struct objc_class *)cls;
 	struct k_mem_slab *slab = (struct k_mem_slab *)c->extra_data;
 	if (slab == NULL) {
-		return NULL;
+		slab = __objc_pool_get_slab(c->name);
+		if (slab == NULL) {
+			return NULL;
+		}
+		c->extra_data = (void *)slab;
 	}
 	void *block = NULL;
 	int ret = k_mem_slab_alloc(slab, &block, K_NO_WAIT);
