@@ -427,17 +427,12 @@ function(_objz_build_ast_flags result_var)
     set(${result_var} ${_flags} PARENT_SCOPE)
 endfunction()
 
-# ─── Generate static pools from Clang AST analysis ──────────────────
-#
-# objz_generate_pools(<target> <source1.m> [source2.m ...])
-#
-# Dumps Clang AST JSON for each .m file, then invokes gen_pools.py
-# to produce a generated_pools.c with OZ_DEFINE_POOL() macros.
-# The generated file is compiled with GCC and linked into the target.
-#
-function(objz_generate_pools target)
+# ─── Internal: generate pools from Clang AST ────────────────────────
+function(_objz_generate_pools_impl target use_arc)
     _objz_build_ast_flags(_ast_flags)
-    list(APPEND _ast_flags -fobjc-arc)
+    if(use_arc)
+        list(APPEND _ast_flags -fobjc-arc)
+    endif()
     set(_ast_files "")
 
     foreach(_src ${ARGN})
@@ -496,4 +491,27 @@ function(objz_generate_pools target)
     )
 
     target_sources(${target} PRIVATE ${_pools_c})
+endfunction()
+
+# ─── Generate static pools from Clang AST analysis ──────────────────
+#
+# objz_generate_pools(<target> <source1.m> [source2.m ...])
+#
+# For MRR (manual retain/release) sources.
+# Dumps Clang AST JSON for each .m file, then invokes gen_pools.py
+# to produce a generated_pools.c with OZ_DEFINE_POOL() macros.
+# The generated file is compiled with GCC and linked into the target.
+#
+function(objz_generate_pools target)
+    _objz_generate_pools_impl(${target} FALSE ${ARGN})
+endfunction()
+
+# ─── Generate static pools from Clang AST (ARC sources) ─────────────
+#
+# objz_generate_arc_pools(<target> <source1.m> [source2.m ...])
+#
+# Same as objz_generate_pools but adds -fobjc-arc for the AST dump.
+#
+function(objz_generate_arc_pools target)
+    _objz_generate_pools_impl(${target} TRUE ${ARGN})
 endfunction()
