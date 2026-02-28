@@ -10,7 +10,7 @@
  * ObjC implementation using -description for %@ format specifiers.
  * Wrapped in @autoreleasepool to clean up temporary strings.
  */
-#import <objc/objc.h>
+#import <Foundation/Foundation.h>
 #include <stdarg.h>
 #include <zephyr/sys/printk.h>
 
