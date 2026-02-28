@@ -133,23 +133,25 @@ Without dispatch cache (`CONFIG_OBJZ_DISPATCH_CACHE=n`):
 | `objc_msgSend` (class method) | 733 | 29,320 |
 | `objc_msgSend` (inherited depth=1) | 868 | 34,720 |
 | `objc_msgSend` (inherited depth=2) | 1,264 | 50,560 |
+| `objc_msgSend` (cold cache, depth=0) | 560 | 22,400 |
+| `objc_msgSend` (cold cache, depth=2) | 1,274 | 50,960 |
 
 ### Object Lifecycle
 
 | Operation | Cached | No cache | Unit |
 |---|---:|---:|---|
-| alloc/init/release (heap, MRR) | 3,908 | 6,970 | cycles |
-| alloc/init/release (static pool) | 1,927 | 4,989 | cycles |
+| alloc/init/release (heap) | 5,456 | 6,647 | cycles |
+| alloc/init/release (static pool) | 3,373 | 4,564 | cycles |
 
 ### Reference Counting
 
-| Operation | Cached | No cache | Unit |
-|---|---:|---:|---|
-| retain (MRR, via dispatch) | 269 | 1,018 | cycles |
-| retain + release pair (MRR) | 544 | 2,093 | cycles |
-| `objc_retain` (ARC, direct C call) | 58 | 58 | cycles |
-| `objc_release` (ARC) | 135 | 135 | cycles |
-| `objc_storeStrong` (ARC) | 221 | 221 | cycles |
+| Operation | Cycles | ns |
+|---|---:|---:|
+| retain (via dispatch) | 240 | 9,600 |
+| retain + release pair | 320 | 12,800 |
+| `objc_retain` (ARC, direct C call) | 59 | 2,360 |
+| `objc_release` (ARC) | 135 | 5,400 |
+| `objc_storeStrong` (ARC) | 221 | 8,840 |
 
 ### Introspection
 
@@ -163,11 +165,11 @@ Without dispatch cache (`CONFIG_OBJZ_DISPATCH_CACHE=n`):
 
 | Operation | Cycles | ns |
 |---|---:|---:|
-| C function pointer call (baseline) | 11 | 440 |
+| C function pointer call (baseline) | 10 | 400 |
 | Global block invocation | 20 | 800 |
 | Heap block invocation (int capture) | 20 | 800 |
-| `_Block_copy` + `_Block_release` (int capture) | 2,900 | 116,000 |
-| `_Block_copy` (retain heap block) | 154 | 6,160 |
+| `_Block_copy` + `_Block_release` (int capture) | 413 | 16,520 |
+| `_Block_copy` (retain heap block) | 48 | 1,920 |
 
 ### Block Memory
 
@@ -191,49 +193,46 @@ Comparison of `printk`, Zephyr `LOG_INF` (minimal mode), and `OZLog` (50 iterati
 |---|---:|---:|
 | `printk` (simple string) | 2,301 | 92,040 |
 | `LOG_INF` (simple string) | 2,903 | 116,120 |
-| `OZLog` (simple string) | 9,511 | 380,440 |
+| `OZLog` (simple string) | 13,133 | 525,320 |
 | `printk` (integer format) | 2,196 | 87,840 |
 | `LOG_INF` (integer format) | 2,797 | 111,880 |
-| `OZLog` (integer format) | 10,107 | 404,280 |
+| `OZLog` (integer format) | 13,728 | 549,120 |
 | `printk` (string format) | 2,039 | 81,560 |
 | `LOG_INF` (string format) | 2,640 | 105,600 |
-| `OZLog` (string format) | 10,116 | 404,640 |
-| `OZLog` (`%@` object format) | 23,578 | 943,120 |
+| `OZLog` (string format) | 13,738 | 549,520 |
 
 ### Memory Footprint
 
-Runtime cost vs bare Zephyr (mps2/an385):
+Runtime cost vs bare Zephyr (mps2/an385, benchmark sample with all features):
 
 | Configuration | FLASH | RAM | FLASH delta | RAM delta |
 |---|---:|---:|---:|---:|
-| Bare Zephyr (no ObjC) | 12,104 B | 6,120 B | — | — |
-| `CONFIG_OBJZ=y` (minimal) | 26,168 B | 22,296 B | +14,064 B | +16,176 B |
-| All features enabled | 37,660 B | 24,016 B | +25,556 B | +17,896 B |
+| Bare Zephyr (no ObjC) | 12,172 B | 6,120 B | — | — |
+| All features enabled | 38,568 B | 30,508 B | +26,396 B | +24,388 B |
 
 Dispatch cache cost (`CONFIG_OBJZ_DISPATCH_CACHE`, default `y`):
 
 | Metric | Cached | No cache | Delta |
 |---|---:|---:|---:|
-| FLASH | 31,916 B | 31,596 B | +320 B |
-| RAM (BSS + data) | 30,592 B | 29,568 B | +1,024 B |
-| ObjC heap peak | 288 B | 48 B | +240 B |
+| FLASH | 38,568 B | 38,112 B | +456 B |
+| RAM (BSS + data) | 30,508 B | 29,476 B | +1,032 B |
 
 Blocks runtime cost (`CONFIG_OBJZ_BLOCKS`, default `n`):
 
 | Metric | Blocks on | Blocks off | Delta |
 |---|---:|---:|---:|
-| FLASH | 34,596 B | 31,916 B | +2,680 B |
-| RAM (BSS + data) | 30,624 B | 30,592 B | +32 B |
+| FLASH | 38,568 B | 35,560 B | +3,008 B |
+| RAM (BSS + data) | 30,508 B | 30,476 B | +32 B |
 
 **Key takeaways:**
 
 - **Dispatch cache cuts overhead from ~42x to ~16x** a direct C function call. The per-class dispatch table (`CONFIG_OBJZ_DISPATCH_CACHE`) resolves method lookups via pointer hashing after the first call. Cold-cache sends fall back to the global hash table with `strcmp` matching.
 - **Inheritance depth is free** after warm-up: cached inherited methods (depth=1, depth=2) all resolve in ~208 cycles, the same as direct methods. The IMP is cached at the receiver's class level, eliminating the superclass chain walk. Without cache, each level adds ~300-400 cycles.
-- **Cache cost:** +1,024 B RAM (static BSS pool for 8 dtables), +240 B heap (overflow dtables), +320 B FLASH (code). Configurable via `CONFIG_OBJZ_DISPATCH_CACHE_STATIC_COUNT` and `CONFIG_OBJZ_DISPATCH_TABLE_SIZE`.
-- **ARC vs MRR retain**: `objc_retain` (58 cycles) vs `[obj retain]` (269 cycles cached, 1,018 uncached) — ARC entry points bypass message dispatch entirely.
-- **Static pools are ~51% faster** than heap allocation (`sys_heap` with spinlock).
-- **Block invocation matches C function pointers** at 20 cycles (vs 11 for a raw `call`). The overhead comes from `_Block_copy` (stack-to-heap promotion): 2,900 cycles per copy, but retaining an already-heap block is only 154 cycles. Each heap block costs 32 B (56 B with `__block` variables due to the `Block_byref` structure).
-- **OZLog vs printk**: OZLog is ~4-5x slower than bare `printk` due to the custom format parser, `@autoreleasepool` push/pop, and per-specifier `snprintk`. The `%@` path adds ~10x overhead (message dispatch for `-description` and `-cStr`). `LOG_INF` in minimal mode adds ~26-29% over `printk` (prefix formatting).
+- **Cache cost:** +1,032 B RAM (static BSS pool for 8 dtables), +456 B FLASH (code). Configurable via `CONFIG_OBJZ_DISPATCH_CACHE_STATIC_COUNT` and `CONFIG_OBJZ_DISPATCH_TABLE_SIZE`.
+- **ARC retain vs message dispatch**: `objc_retain` (59 cycles) vs `[obj retain]` (240 cycles cached) — ARC entry points bypass message dispatch entirely.
+- **Static pools are ~38% faster** than heap allocation (`sys_heap` with spinlock).
+- **Block invocation matches C function pointers** at 20 cycles (vs 10 for a raw `call`). The overhead comes from `_Block_copy` (stack-to-heap promotion): 413 cycles per copy, but retaining an already-heap block is only 48 cycles. Each heap block costs 32 B (56 B with `__block` variables due to the `Block_byref` structure).
+- **OZLog vs printk**: OZLog is ~6-7x slower than bare `printk` due to the custom format parser, `@autoreleasepool` push/pop, and per-specifier `snprintk`. `LOG_INF` in minimal mode adds ~26-29% over `printk` (prefix formatting).
 - **QEMU caveat**: these are instruction-accurate counts, not true cycle-accurate. Real hardware numbers will differ, but relative comparisons hold.
 
 ## Using in Your Project
