@@ -362,6 +362,172 @@ just project_dir=samples/arc_demo board=nucleo_f429zi rebuild
 just flash
 ```
 
+## ARC Guide
+
+Automatic Reference Counting (ARC) lets the compiler manage `retain`/`release` calls for you. Enable it with `CONFIG_OBJZ_ARC=y` and compile your `.m` files with `objz_target_arc_sources()`.
+
+### How it works
+
+Under ARC, Clang inserts `objc_retain`/`objc_release` calls at compile time. You never call `retain`, `release`, or `autorelease` explicitly — the compiler does it.
+
+```objc
+#import <Foundation/Foundation.h>
+
+@interface Sensor : Object
+@property (nonatomic, strong) id delegate;
+- (void)measure;
+@end
+
+@implementation Sensor
+@synthesize delegate = _delegate;
+
+- (void)measure
+{
+    OZLog("Measuring...");
+}
+
+- (void)dealloc
+{
+    OZLog("Sensor deallocated");
+    /* ARC auto-inserts [super dealloc] — do NOT call it yourself */
+}
+@end
+
+void demo(void)
+{
+    Sensor *s = [[Sensor alloc] init]; /* rc=1 */
+    [s measure];
+    /* ARC releases s here — dealloc fires automatically */
+}
+```
+
+### Strong properties and `.cxx_destruct`
+
+When a class has `strong` properties (or ivars), ARC generates a hidden `.cxx_destruct` method that releases them before `-dealloc` runs. This works through the entire class hierarchy:
+
+```objc
+@interface Driver : Object
+@property (nonatomic, strong) Sensor *sensor;
+@end
+
+@implementation Driver
+@synthesize sensor = _sensor;
+
+- (void)dealloc
+{
+    OZLog("Driver deallocated");
+    /* .cxx_destruct already released _sensor before we get here */
+}
+@end
+
+void demo(void)
+{
+    Driver *d = [[Driver alloc] init];
+    d.sensor = [[Sensor alloc] init];
+    /* ARC releases d → .cxx_destruct releases sensor → both dealloc */
+}
+```
+
+### `@autoreleasepool` — when you need it
+
+ARC handles most cases, but `@autoreleasepool` is critical in **loops that create many temporary objects**. Without it, temporaries accumulate until the enclosing scope ends — a serious problem on memory-constrained embedded systems.
+
+```objc
+/* BAD: all 1000 temporaries live until function returns */
+void process_bad(void)
+{
+    for (int i = 0; i < 1000; i++) {
+        id tmp = [SomeFactory create]; /* autoreleased by factory */
+        /* tmp stays alive... */
+    }
+    /* all 1000 objects released here — peak memory is huge */
+}
+
+/* GOOD: each iteration drains its pool */
+void process_good(void)
+{
+    for (int i = 0; i < 1000; i++) {
+        @autoreleasepool {
+            id tmp = [SomeFactory create];
+            /* tmp released at end of @autoreleasepool block */
+        }
+    }
+    /* peak memory: only 1 object at a time */
+}
+```
+
+Use `@autoreleasepool` when:
+- **Loops** create temporary objects (factory methods, `-description`, string operations)
+- **Worker threads** — each thread needs its own pool before any autorelease happens
+- **Batch processing** — any code path that allocates many short-lived objects
+
+### Retain cycles — the one thing ARC cannot fix
+
+ARC has no weak references on this runtime. If two objects hold `strong` references to each other, neither can be deallocated:
+
+```objc
+@interface Node : Object
+@property (nonatomic, strong) Node *next;
+@end
+
+void leak(void)
+{
+    Node *a = [[Node alloc] init];
+    Node *b = [[Node alloc] init];
+    a.next = b;
+    b.next = a; /* cycle: a→b→a */
+    /* ARC releases locals, but the cycle keeps both alive — LEAK */
+}
+```
+
+Avoid cycles by breaking the reference chain before the owner goes out of scope:
+
+```objc
+void no_leak(void)
+{
+    Node *a = [[Node alloc] init];
+    Node *b = [[Node alloc] init];
+    a.next = b;
+    b.next = a;
+
+    /* Break cycle before scope exit */
+    b.next = nil;
+    /* Now: a→b, b→nil. ARC releases a → releases b → both dealloc */
+}
+```
+
+### ARC rules summary
+
+| Do | Don't |
+|---|---|
+| Use `objz_target_arc_sources()` in CMake | Call `retain`, `release`, or `autorelease` |
+| Let the compiler manage object lifetime | Call `[super dealloc]` — ARC inserts it |
+| Use `@autoreleasepool` in loops/threads | Create strong reference cycles |
+| Use `strong` properties for ownership | Mix MRR and ARC in the same `.m` file |
+| Break cycles manually before scope exit | Assume temporaries are released immediately |
+
+### Static pools with ARC
+
+Static allocation pools (`CONFIG_OBJZ_STATIC_POOLS`) work transparently with ARC. Define the pool in a `.c` file (not `.m`), and ARC-managed objects automatically allocate from and return to the slab:
+
+```c
+/* pools.c — compiled with GCC */
+#include <objc/pool.h>
+
+/* 8 Sensor instances, 16 bytes each, 4-byte aligned */
+OZ_DEFINE_POOL(Sensor, 16, 8, 4);
+```
+
+```objc
+/* main.m — compiled with ARC */
+void demo(void)
+{
+    Sensor *s = [[Sensor alloc] init]; /* allocated from slab */
+    [s measure];
+    /* ARC releases s → dealloc returns block to slab */
+}
+```
+
 ## License
 
 Apache-2.0
