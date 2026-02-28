@@ -16,6 +16,21 @@ config OBJZ
 
 if OBJZ
 
+config OBJZ_BOOT_BANNER
+    bool "Objective-Z boot banner"
+    default y
+    help
+      Print a boot banner at runtime initialization.
+      The banner includes the module name and version number.
+
+config OBJZ_BOOT_BANNER_STRING
+    string "Boot banner string"
+    depends on OBJZ_BOOT_BANNER
+    default "Objective-Z Runtime"
+    help
+      The string printed in the boot banner. The version number
+      is appended automatically.
+
 config OBJZ_ARC
     bool "ARC (Automatic Reference Counting) support"
     default n

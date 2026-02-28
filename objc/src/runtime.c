@@ -3,6 +3,7 @@
 #include "hash.h"
 #include "protocol.h"
 #include <objc/malloc.h>
+#include <objc/version.h>
 #include <zephyr/init.h>
 #include <zephyr/sys/printk.h>
 
@@ -30,6 +31,10 @@ int __gnustep_objc_personality_v0(int version, int actions, long long exn_class,
 int objz_init(void)
 {
 	objc_heap_init();
+
+#if defined(CONFIG_OBJZ_BOOT_BANNER)
+	printk("*** " CONFIG_OBJZ_BOOT_BANNER_STRING " v" OBJZ_VERSION_STRING " ***\n");
+#endif
 
 	return 0;
 }
