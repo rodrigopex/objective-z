@@ -38,24 +38,18 @@ extern int g_dealloc_count;
 extern int g_dealloc_tags[];
 extern int g_dealloc_tag_idx;
 
-/* ── Pool slab stat wrappers (via __objc_pool_get_slab API) ──── */
+/* ── Pool slab stat wrappers (compile-time via OBJZ_POOL) ────── */
+
+OBJZ_POOL_DECLARE(ArcPoolObj);
 
 static uint32_t test_pool_slab_used(void)
 {
-	struct k_mem_slab *slab = __objc_pool_get_slab("ArcPoolObj");
-	if (slab == NULL) {
-		return 0;
-	}
-	return k_mem_slab_num_used_get(slab);
+	return k_mem_slab_num_used_get(&OBJZ_POOL(ArcPoolObj));
 }
 
 static uint32_t test_pool_slab_free(void)
 {
-	struct k_mem_slab *slab = __objc_pool_get_slab("ArcPoolObj");
-	if (slab == NULL) {
-		return 0;
-	}
-	return k_mem_slab_num_free_get(slab);
+	return k_mem_slab_num_free_get(&OBJZ_POOL(ArcPoolObj));
 }
 
 /* ── ARC helpers (defined in arc_helpers.m) ───────────────────── */

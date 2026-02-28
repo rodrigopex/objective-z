@@ -7,9 +7,13 @@
  * The runtime checks the pool registry in +alloc before falling
  * back to the sys_heap allocator.
  *
- * Usage:
- *   OZ_DEFINE_POOL(Sensor, 8, 4)
- *   // Creates a slab for 8 Sensor instances, 4-byte aligned.
+ * Usage (pool definition — must be in a .c file, not .m):
+ *   OZ_DEFINE_POOL(Sensor, 16, 8, 4)
+ *   // 8 blocks of 16 bytes each, 4-byte aligned
+ *
+ * Usage (compile-time pool access — avoids runtime string lookup):
+ *   OBJZ_POOL_DECLARE(Sensor);
+ *   uint32_t used = k_mem_slab_num_used_get(&OBJZ_POOL(Sensor));
  *
  * The block_size parameter is the instance size of the class
  * (sizeof(isa) + ivars). Use class_getInstanceSize() to determine
@@ -56,6 +60,26 @@ bool __objc_pool_free(void *ptr);
 struct k_mem_slab *__objc_pool_get_slab(const char *class_name);
 
 /**
+ * @brief Resolve the pool slab symbol for a class at compile time.
+ *
+ * Expands to the slab variable name directly, avoiding the O(n) string
+ * lookup of __objc_pool_get_slab(). Use with & to get a pointer:
+ *   k_mem_slab_num_used_get(&OBJZ_POOL(MyClass));
+ *
+ * If the class has no pool, the build fails with a link error (safer
+ * than a silent runtime NULL).
+ */
+#define OBJZ_POOL(cls) _objz_pool_##cls
+
+/**
+ * @brief Forward-declare the pool slab for a class defined elsewhere.
+ *
+ * Place in any C file that needs compile-time pool access:
+ *   OBJZ_POOL_DECLARE(MyClass);
+ */
+#define OBJZ_POOL_DECLARE(cls) extern struct k_mem_slab _objz_pool_##cls
+
+/**
  * @brief Define a static allocation pool for an Objective-C class.
  *
  * @param cls    Class name (unquoted identifier).
@@ -68,7 +92,7 @@ struct k_mem_slab *__objc_pool_get_slab(const char *class_name);
  *   // 8 blocks of 16 bytes each, 4-byte aligned
  */
 #define OZ_DEFINE_POOL(cls, bsz, cnt, align)                                                       \
-	K_MEM_SLAB_DEFINE_STATIC(_objz_pool_##cls, bsz, cnt, align);                              \
+	K_MEM_SLAB_DEFINE(_objz_pool_##cls, bsz, cnt, align);                                     \
 	static int _objz_pool_init_##cls(void)                                                     \
 	{                                                                                          \
 		__objc_pool_register(#cls, &_objz_pool_##cls, bsz);                                \
