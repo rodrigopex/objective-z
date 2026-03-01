@@ -39,7 +39,8 @@ Each sample registers the runtime via `ZEPHYR_EXTRA_MODULES` in its CMakeLists.t
 - **`src/api.h`** — ABI structures (`objc_class`, `objc_method`, `objc_selector`, `objc_init`), gnustep-2.0 types, `objc_class_flag_immortal` for statically-emitted objects
 - **`src/load.c`** — Entry point: `__objc_load()` called via `.init_array` static constructor. Registers classes, categories, protocols, and fixes constant string isa pointers from gnustep-2.0 metadata sections.
 - **`src/message.c`** — Core dispatch: `objc_msg_lookup()` / `objc_msg_lookup_super()`, lazy class resolution, sends `+initialize` on first use. Checks per-class dtable cache before global hash table.
-- **`src/dtable.c`** — Per-class dispatch table cache (`CONFIG_OBJZ_DISPATCH_CACHE`). Two-tier allocation: static BSS pool (first N classes), heap fallback. Pointer-hash lookup with `strcmp` fallback.
+- **`src/dtable.c`** — Per-class dispatch table cache (`CONFIG_OBJZ_DISPATCH_CACHE`). Per-class sized dtables via `OZ_DEFINE_DTABLE` registry (static BSS), heap fallback for unregistered classes. Pointer-hash lookup with `strcmp` fallback.
+- **`include/objc/dtable.h`** — `OZ_DEFINE_DTABLE(ClassName, cls_size, meta_size)` macro and `struct objc_dtable` type. Must be in a `.c` file (not `.m`).
 - **`src/class.c`** — Class table (auto-sized), lazy resolution of superclasses, gnustep-2.0 non-fragile ivar offset fixup (skips immortal classes)
 - **`src/hash.c`** — Global method hash table (auto-sized, open addressing). Slow path for cache misses.
 - **`src/category.c`** — Category table (auto-sized), deferred loading until class is resolved. Flushes dispatch caches after loading.
@@ -76,12 +77,12 @@ Each sample registers the runtime via `ZEPHYR_EXTRA_MODULES` in its CMakeLists.t
 - **`src/pool.c`** — Pool registry: maps class names to `K_MEM_SLAB` instances. `__objc_pool_get_slab()` API for runtime queries.
 - **`include/objc/pool.h`** — `OZ_DEFINE_POOL(ClassName, block_size, count, align)` macro. Must be in a `.c` file (not `.m`).
 - **`scripts/objz_gen_pools.py`** — Auto-generates pool definitions from Clang AST analysis. All pools are auto-generated; no manual `pools.c` files needed.
-- **`scripts/objz_gen_table_sizes.py`** — Auto-computes runtime table sizes via tree-sitter source analysis. Generates `table_sizes.h`. No Clang AST dumps needed.
+- **`scripts/objz_gen_table_sizes.py`** — Auto-computes runtime table sizes via tree-sitter source analysis. Generates `table_sizes.h` and `dtable_pool.c` (per-class dispatch table sizing). No Clang AST dumps needed.
 - **`scripts/requirements.txt`** — Python deps: `tree-sitter`, `tree-sitter-objc`.
 
 ### Init Order
 
-`SYS_INIT(objz_init, APPLICATION, 99)` initializes the heap. Static pools register at priority 98. `STATIC_INIT_GNU` runs static constructors (`.init_array`) which trigger `__objc_load()` for gnustep-2.0 metadata registration.
+`SYS_INIT(objz_init, APPLICATION, 99)` initializes the heap. Per-class dtables register at priority 97 via `OZ_DEFINE_DTABLE`. Static pools register at priority 98. `STATIC_INIT_GNU` runs static constructors (`.init_array`) which trigger `__objc_load()` for gnustep-2.0 metadata registration.
 
 ### Static Table Sizes
 

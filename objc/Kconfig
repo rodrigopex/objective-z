@@ -133,25 +133,24 @@ config OBJZ_DISPATCH_CACHE
       to the sys_heap allocator.
 
 config OBJZ_DISPATCH_TABLE_SIZE
-    int "Dispatch table entries per class"
+    int "Maximum per-class dispatch cache entries (upper clamp)"
     depends on OBJZ_DISPATCH_CACHE
     default 0
     help
-      Number of cache entries per class dispatch table. Must be a
-      power of 2. Each entry costs 8 bytes (ARM32). Memory per
-      class = size * 8 bytes. Typical: 8 (64B), 16 (128B), 32 (256B).
-      0 = auto-computed from AST analysis.
+      Maximum per-class dispatch cache entries. Individual classes
+      are sized to their method count (power of 2, minimum 8) and
+      clamped to this value. Must be a power of 2.
+      0 = auto (32).
 
-config OBJZ_DISPATCH_CACHE_STATIC_COUNT
-    int "Number of static dispatch table blocks"
+config OBJZ_DISPATCH_CACHE_REGISTRY_SIZE
+    int "Dispatch table registry size"
     depends on OBJZ_DISPATCH_CACHE
     default 0
     help
-      Number of per-class dispatch tables pre-allocated in BSS.
-      First N classes get a dtable from this pool with zero heap
-      cost. Additional classes fall back to objc_malloc().
-      Total BSS = count * DISPATCH_TABLE_SIZE * 8 bytes.
-      0 = auto-computed from AST analysis.
+      Maximum number of OZ_DEFINE_DTABLE registrations. Each entry
+      maps a class name to its pre-allocated instance and metaclass
+      dispatch tables.
+      0 = auto-computed from source analysis.
 
 module = OBJZ
 module-str = objz

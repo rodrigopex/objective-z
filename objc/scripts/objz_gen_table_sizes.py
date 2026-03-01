@@ -2,17 +2,20 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 #
-# objz_gen_table_sizes.py - Generate runtime table_sizes.h from tree-sitter
-#                           analysis of Objective-C source files.
+# objz_gen_table_sizes.py - Generate runtime table_sizes.h and dtable_pool.c
+#                           from tree-sitter analysis of Objective-C sources.
 #
 # Parses .m files directly (no Clang AST dumps needed) to count:
 #   - @implementation declarations  → class table size
 #   - @implementation Foo(Cat)      → category table size
 #   - @protocol declarations        → protocol table size
 #   - method definitions            → hash table + dispatch cache sizes
+#   - instance vs class methods     → per-class dtable sizing
 #
 # Usage:
 #   python3 objz_gen_table_sizes.py --output=table_sizes.h file1.m file2.m ...
+#   python3 objz_gen_table_sizes.py --output=table_sizes.h \
+#       --dtable-output=dtable_pool.c file1.m file2.m ...
 
 import argparse
 import math
@@ -35,6 +38,8 @@ def parse_args():
     p.add_argument("--pointer-size", type=int, default=4, choices=[4, 8])
     p.add_argument("--output", required=True,
                    help="Output path for generated table_sizes.h")
+    p.add_argument("--dtable-output", default=None,
+                   help="Output path for generated dtable_pool.c")
     p.add_argument("--n-pools", type=int, default=0,
                    help="Number of static pools (from objz_gen_pools.py)")
     p.add_argument("sources", nargs="+",
@@ -42,11 +47,18 @@ def parse_args():
     return p.parse_args()
 
 
+def _is_class_method(method_node):
+    """Check if a method_definition is a class method (+) vs instance (-)."""
+    text = method_node.text.decode()
+    stripped = text.lstrip()
+    return stripped.startswith("+")
+
+
 def count_metadata(source_paths):
     """Parse .m files with tree-sitter and count ObjC metadata.
 
     Returns dict with n_classes, n_categories, n_protocols,
-    n_methods, max_methods_per_class.
+    n_methods, max_methods_per_class, per_class_methods.
     """
     parser = Parser(OBJC_LANGUAGE)
 
@@ -55,6 +67,8 @@ def count_metadata(source_paths):
     protocol_names = set()
     n_methods = 0
     methods_per_class = defaultdict(int)
+    instance_methods_per_class = defaultdict(int)
+    class_methods_per_class = defaultdict(int)
 
     for path in source_paths:
         with open(path, "rb") as f:
@@ -84,6 +98,11 @@ def count_metadata(source_paths):
             n_methods += len(methods)
             if not is_cat:
                 methods_per_class[class_name] += len(methods)
+                for m in methods:
+                    if _is_class_method(m):
+                        class_methods_per_class[class_name] += 1
+                    else:
+                        instance_methods_per_class[class_name] += 1
 
         # Count protocol declarations
         protos = QueryCursor(Q_PROTO).captures(root).get("proto", [])
@@ -101,6 +120,9 @@ def count_metadata(source_paths):
         "n_protocols": len(protocol_names),
         "n_methods": n_methods,
         "max_methods_per_class": max_mpc,
+        "impl_names": impl_names,
+        "instance_methods_per_class": dict(instance_methods_per_class),
+        "class_methods_per_class": dict(class_methods_per_class),
     }
 
 
@@ -137,14 +159,14 @@ def compute_table_sizes(counts, n_pools):
     hash_ts = max(raw_hash, 64)
     hash_f = f"max(ceil({nm}/0.6), 64)" if nm > 0 else "default(64)"
 
-    # Dispatch cache entries per class: power-of-2, clamp [8, 32]
+    # Dispatch table max cap: power-of-2, clamp [8, 32]
     dispatch_ts = _next_power_of_2(max_mpc)
     dispatch_ts = max(8, min(dispatch_ts, 32))
     dispatch_f = f"clamp(p2({max_mpc}), 8, 32)"
 
-    # Static dispatch table blocks: cover all classes + metaclasses
-    dispatch_static = 2 * nc + 2 if nc > 0 else 8
-    dispatch_static_f = f"2*{nc} + 2" if nc > 0 else "default(8)"
+    # Dispatch cache registry: cover all classes + margin
+    registry_ts = max(nc + 2, 4)
+    registry_f = f"max({nc} + 2, 4)"
 
     # Pool table: n_pools + margin
     pool_ts = max(n_pools + 2, 4)
@@ -156,7 +178,7 @@ def compute_table_sizes(counts, n_pools):
         "PROTOCOL_TABLE_SIZE": (protocol_ts, protocol_f),
         "HASH_TABLE_SIZE": (hash_ts, hash_f),
         "DISPATCH_TABLE_SIZE": (dispatch_ts, dispatch_f),
-        "DISPATCH_CACHE_STATIC_COUNT": (dispatch_static, dispatch_static_f),
+        "DISPATCH_CACHE_REGISTRY_SIZE": (registry_ts, registry_f),
         "STATIC_POOL_TABLE_SIZE": (pool_ts, pool_f),
     }
 
@@ -174,6 +196,58 @@ def generate_header(sizes, output_path):
             f.write(f"#define {macro} {value}\n")
             f.write(f"#endif\n\n")
         f.write("#endif /* OBJZ_TABLE_SIZES_H */\n")
+
+
+def compute_per_class_dtable_sizes(counts, max_cap):
+    """Compute per-class dtable sizes for instance and class methods.
+
+    Returns list of (class_name, cls_size, meta_size) tuples.
+    """
+    instance_mpc = counts["instance_methods_per_class"]
+    class_mpc = counts["class_methods_per_class"]
+    all_classes = counts["impl_names"]
+
+    result = []
+    for name in sorted(all_classes):
+        n_inst = instance_mpc.get(name, 0)
+        n_cls = class_mpc.get(name, 0)
+
+        cls_size = _next_power_of_2(n_inst) if n_inst > 0 else 8
+        cls_size = max(8, min(cls_size, max_cap))
+
+        meta_size = _next_power_of_2(n_cls) if n_cls > 0 else 8
+        meta_size = max(8, min(meta_size, max_cap))
+
+        result.append((name, cls_size, meta_size))
+    return result
+
+
+def generate_dtable_pool(counts, max_cap, output_path):
+    """Write generated dtable_pool.c with OZ_DEFINE_DTABLE calls."""
+    entries = compute_per_class_dtable_sizes(counts, max_cap)
+
+    with open(output_path, "w") as f:
+        f.write("/* Auto-generated by objz_gen_table_sizes.py — do not edit */\n")
+        f.write("#include <objc/dtable.h>\n\n")
+        for name, cls_size, meta_size in entries:
+            f.write(f"OZ_DEFINE_DTABLE({name}, {cls_size}, {meta_size});\n")
+
+    # Print per-class sizing table to stderr
+    p = lambda *a, **kw: print(*a, file=sys.stderr, **kw)
+    p(f"objz_gen_table_sizes: per-class dtable sizing ({len(entries)} classes)")
+
+    if entries:
+        name_w = max(len(e[0]) for e in entries)
+        p(f"  {'CLASS':<{name_w}}  {'INST':>4}  {'META':>4}  INST_BSS  META_BSS")
+        p(f"  {'-' * (name_w + 30)}")
+        total_bss = 0
+        for name, cls_size, meta_size in entries:
+            inst_bss = cls_size * 8  # sizeof(objc_dtable_entry) on ARM32
+            meta_bss = meta_size * 8
+            total_bss += inst_bss + meta_bss
+            p(f"  {name:<{name_w}}  {cls_size:>4}  {meta_size:>4}  "
+              f"{inst_bss:>6} B  {meta_bss:>6} B")
+        p(f"  {'TOTAL':<{name_w}}  {'':>4}  {'':>4}  {total_bss:>6} B (+ mask overhead)")
 
 
 def _print_table(counts, sizes):
@@ -205,6 +279,11 @@ def main():
     sizes = compute_table_sizes(counts, args.n_pools)
     generate_header(sizes, args.output)
     _print_table(counts, sizes)
+
+    if args.dtable_output:
+        # Use DISPATCH_TABLE_SIZE as max cap
+        max_cap = sizes["DISPATCH_TABLE_SIZE"][0]
+        generate_dtable_pool(counts, max_cap, args.dtable_output)
 
 
 if __name__ == "__main__":

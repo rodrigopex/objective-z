@@ -442,22 +442,35 @@ function(_objz_create_table_sizes_target)
     set(_ts_header ${_gen_dir}/objc/table_sizes.h)
     set(_gen_script ${ZEPHYR_EXTRA_MODULES}/scripts/objz_gen_table_sizes.py)
 
+    # Per-class dtable pool generation when dispatch cache is enabled
+    set(_dtable_flag "")
+    set(_dtable_outputs "")
+    if(CONFIG_OBJZ_DISPATCH_CACHE)
+        set(_dtable_c ${_gen_dir}/dtable_pool.c)
+        set(_dtable_flag --dtable-output=${_dtable_c})
+        set(_dtable_outputs ${_dtable_c})
+    endif()
+
     add_custom_command(
-        OUTPUT  ${_ts_header}
+        OUTPUT  ${_ts_header} ${_dtable_outputs}
         COMMAND ${CMAKE_COMMAND} -E make_directory ${_gen_dir}/objc
         COMMAND ${Python3_EXECUTABLE} ${_gen_script}
                 --pointer-size=${_ptr_size}
                 --output=${_ts_header}
+                ${_dtable_flag}
                 ${_all_m_files}
         DEPENDS ${_all_m_files} ${_gen_script}
         COMMENT "Generating table sizes (tree-sitter)"
         VERBATIM
     )
 
-    add_custom_target(objz_table_sizes DEPENDS ${_ts_header})
+    add_custom_target(objz_table_sizes DEPENDS ${_ts_header} ${_dtable_outputs})
     get_property(_lib_target GLOBAL PROPERTY OBJZ_LIBRARY_TARGET)
     if(_lib_target)
         add_dependencies(${_lib_target} objz_table_sizes)
+        if(CONFIG_OBJZ_DISPATCH_CACHE AND _dtable_c)
+            target_sources(${_lib_target} PRIVATE ${_dtable_c})
+        endif()
     endif()
 endfunction()
 
