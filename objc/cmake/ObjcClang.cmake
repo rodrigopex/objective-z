@@ -407,15 +407,29 @@ endfunction()
 # Parses all .m files (Foundation + user) directly with tree-sitter.
 # No Clang AST dumps needed — fast source-level structural analysis.
 #
+# Accumulates user .m files across multiple objz_target_sources() calls
+# and defers target creation until all sources are collected.
+#
 function(_objz_generate_table_sizes target use_arc)
-    get_property(_foundation_files GLOBAL PROPERTY OBJZ_FOUNDATION_M_FILES)
-
-    # Collect absolute paths for user .m files
-    set(_all_m_files ${_foundation_files})
+    # Accumulate user .m files across multiple calls
     foreach(_src ${ARGN})
         get_filename_component(_abs ${_src} ABSOLUTE)
-        list(APPEND _all_m_files ${_abs})
+        set_property(GLOBAL APPEND PROPERTY OBJZ_USER_M_FILES ${_abs})
     endforeach()
+
+    # Defer actual target creation until all sources are accumulated
+    get_property(_deferred GLOBAL PROPERTY _OBJZ_TABLE_SIZES_DEFERRED)
+    if(NOT _deferred)
+        set_property(GLOBAL PROPERTY _OBJZ_TABLE_SIZES_DEFERRED TRUE)
+        cmake_language(DEFER DIRECTORY ${CMAKE_SOURCE_DIR}
+            CALL _objz_create_table_sizes_target)
+    endif()
+endfunction()
+
+function(_objz_create_table_sizes_target)
+    get_property(_foundation_files GLOBAL PROPERTY OBJZ_FOUNDATION_M_FILES)
+    get_property(_user_files GLOBAL PROPERTY OBJZ_USER_M_FILES)
+    set(_all_m_files ${_foundation_files} ${_user_files})
 
     _objz_get_clang_target_triple(_triple)
     if("${_triple}" MATCHES "aarch64")
