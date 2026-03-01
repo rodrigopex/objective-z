@@ -16,6 +16,10 @@
   - [x] objz_gen_table_sizes.py using tree-sitter queries (no Clang AST dumps)
   - [x] Kconfig defaults to 0 (auto), non-zero overrides
   - [x] Deferred CMake target for multiple objz_target_sources() calls
+- [x] Per-class dispatch table sizing via OZ_DEFINE_DTABLE
+  - [x] `objc/include/objc/dtable.h`: `OZ_DEFINE_DTABLE(ClassName, cls_size, meta_size)` macro
+  - [x] Registry-based lookup with heap fallback for unregistered classes
+  - [x] `objz_gen_table_sizes.py` auto-generates `dtable_pool.c` per-class entries
 - [ ] Add singleton helper (`+shared` via dispatch_once)
   - [ ] dispatch_once implementation
   - [ ] Macro or pattern for declaring shared instances
