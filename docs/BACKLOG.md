@@ -13,7 +13,7 @@
   - [x] CONFIG_OBJZ_LITERALS depends on CONFIG_OBJZ_COLLECTIONS && CONFIG_OBJZ_NUMBERS
 - [x] Add generics usage in tests and samples
 - [x] Auto-compute runtime table sizes via tree-sitter source analysis
-  - [x] gen_table_sizes.py using tree-sitter queries (no Clang AST dumps)
+  - [x] objz_gen_table_sizes.py using tree-sitter queries (no Clang AST dumps)
   - [x] Kconfig defaults to 0 (auto), non-zero overrides
   - [x] Deferred CMake target for multiple objz_target_sources() calls
 - [ ] Add singleton helper (`+shared` via dispatch_once)

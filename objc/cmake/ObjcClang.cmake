@@ -440,7 +440,7 @@ function(_objz_create_table_sizes_target)
 
     get_property(_gen_dir GLOBAL PROPERTY OBJZ_GENERATED_DIR)
     set(_ts_header ${_gen_dir}/objc/table_sizes.h)
-    set(_gen_script ${ZEPHYR_EXTRA_MODULES}/scripts/gen_table_sizes.py)
+    set(_gen_script ${ZEPHYR_EXTRA_MODULES}/scripts/objz_gen_table_sizes.py)
 
     add_custom_command(
         OUTPUT  ${_ts_header}
@@ -526,7 +526,7 @@ function(_objz_generate_pools_impl target use_arc)
         _OBJZ_POOL_GEN_COUNT ${_pool_gen_count})
 
     set(_pools_c ${CMAKE_CURRENT_BINARY_DIR}/generated_pools_${_pool_gen_count}.c)
-    set(_gen_script ${ZEPHYR_EXTRA_MODULES}/scripts/gen_pools.py)
+    set(_gen_script ${ZEPHYR_EXTRA_MODULES}/scripts/objz_gen_pools.py)
 
     add_custom_command(
         OUTPUT  ${_pools_c}

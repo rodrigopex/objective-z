@@ -75,8 +75,8 @@ Each sample registers the runtime via `ZEPHYR_EXTRA_MODULES` in its CMakeLists.t
 
 - **`src/pool.c`** — Pool registry: maps class names to `K_MEM_SLAB` instances. `__objc_pool_get_slab()` API for runtime queries.
 - **`include/objc/pool.h`** — `OZ_DEFINE_POOL(ClassName, block_size, count, align)` macro. Must be in a `.c` file (not `.m`).
-- **`scripts/gen_pools.py`** — Auto-generates pool definitions from Clang AST analysis. All pools are auto-generated; no manual `pools.c` files needed.
-- **`scripts/gen_table_sizes.py`** — Auto-computes runtime table sizes via tree-sitter source analysis. Generates `table_sizes.h`. No Clang AST dumps needed.
+- **`scripts/objz_gen_pools.py`** — Auto-generates pool definitions from Clang AST analysis. All pools are auto-generated; no manual `pools.c` files needed.
+- **`scripts/objz_gen_table_sizes.py`** — Auto-computes runtime table sizes via tree-sitter source analysis. Generates `table_sizes.h`. No Clang AST dumps needed.
 - **`scripts/requirements.txt`** — Python deps: `tree-sitter`, `tree-sitter-objc`.
 
 ### Init Order
