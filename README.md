@@ -25,6 +25,7 @@ Ported from [djthorpe/objc](https://github.com/djthorpe/objc) (minimal GCC-compa
 
 - [Zephyr SDK](https://docs.zephyrproject.org/latest/develop/getting_started/index.html) and `west`
 - Clang (for compiling `.m` files with gnustep-2.0 ABI)
+- Python 3 with `tree-sitter` and `tree-sitter-objc` (`pip install -r objc/scripts/requirements.txt`)
 - [just](https://github.com/casey/just) (build automation, optional)
 
 ## Quick Start
@@ -324,21 +325,16 @@ west build -p -b mps2/an385 .
 | `CONFIG_OBJZ_LITERALS` | Boxed literals and collection literals | `OBJZ_COLLECTIONS`, `OBJZ_NUMBERS` |
 | `CONFIG_OBJZ_STATIC_POOLS` | Per-class static allocation pools | `OBJZ` |
 
-### Table Sizes
+### Tuning
 
-All tables are statically allocated. Tune via Kconfig if defaults are insufficient:
+Runtime table sizes (class, category, protocol, hash, dispatch) are
+auto-computed from source analysis at build time via tree-sitter.
+Set a non-zero value in `prj.conf` to override any auto-computed size.
 
 | Kconfig | Default | Description |
 |---|---|---|
-| `CONFIG_OBJZ_CLASS_TABLE_SIZE` | 32 | Max registered classes |
-| `CONFIG_OBJZ_CATEGORY_TABLE_SIZE` | 32 | Max categories |
-| `CONFIG_OBJZ_PROTOCOL_TABLE_SIZE` | 32 | Max protocols |
-| `CONFIG_OBJZ_HASH_TABLE_SIZE` | 512 | Method hash table slots |
-| `CONFIG_OBJZ_DISPATCH_TABLE_SIZE` | 16 | Entries per dispatch cache (power-of-2) |
-| `CONFIG_OBJZ_DISPATCH_CACHE_STATIC_COUNT` | 8 | Static dtable blocks in BSS |
 | `CONFIG_OBJZ_MEM_POOL_SIZE` | 4096 | Heap size in bytes |
 | `CONFIG_OBJZ_LOG_BUFFER_SIZE` | 128 | OZLog format buffer size |
-| `CONFIG_OBJZ_STATIC_POOL_TABLE_SIZE` | 16 | Max static pool registrations |
 
 ## Build Commands
 

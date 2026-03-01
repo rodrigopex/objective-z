@@ -40,9 +40,9 @@ Each sample registers the runtime via `ZEPHYR_EXTRA_MODULES` in its CMakeLists.t
 - **`src/load.c`** — Entry point: `__objc_load()` called via `.init_array` static constructor. Registers classes, categories, protocols, and fixes constant string isa pointers from gnustep-2.0 metadata sections.
 - **`src/message.c`** — Core dispatch: `objc_msg_lookup()` / `objc_msg_lookup_super()`, lazy class resolution, sends `+initialize` on first use. Checks per-class dtable cache before global hash table.
 - **`src/dtable.c`** — Per-class dispatch table cache (`CONFIG_OBJZ_DISPATCH_CACHE`). Two-tier allocation: static BSS pool (first N classes), heap fallback. Pointer-hash lookup with `strcmp` fallback.
-- **`src/class.c`** — Class table (32 slots), lazy resolution of superclasses, gnustep-2.0 non-fragile ivar offset fixup (skips immortal classes)
-- **`src/hash.c`** — Global method hash table (512 slots, open addressing). Slow path for cache misses.
-- **`src/category.c`** — Category table (32 slots), deferred loading until class is resolved. Flushes dispatch caches after loading.
+- **`src/class.c`** — Class table (auto-sized), lazy resolution of superclasses, gnustep-2.0 non-fragile ivar offset fixup (skips immortal classes)
+- **`src/hash.c`** — Global method hash table (auto-sized, open addressing). Slow path for cache misses.
+- **`src/category.c`** — Category table (auto-sized), deferred loading until class is resolved. Flushes dispatch caches after loading.
 - **`src/malloc.c`** — Dedicated `sys_heap` (default 4096 bytes via `CONFIG_OBJZ_MEM_POOL_SIZE`) with spinlock
 - **`src/refcount.c`** — Atomic refcount core (pure C, Zephyr `atomic_inc/dec/get/set`). Guards immortal classes (OZString, Protocol).
 
@@ -76,6 +76,8 @@ Each sample registers the runtime via `ZEPHYR_EXTRA_MODULES` in its CMakeLists.t
 - **`src/pool.c`** — Pool registry: maps class names to `K_MEM_SLAB` instances. `__objc_pool_get_slab()` API for runtime queries.
 - **`include/objc/pool.h`** — `OZ_DEFINE_POOL(ClassName, block_size, count, align)` macro. Must be in a `.c` file (not `.m`).
 - **`scripts/gen_pools.py`** — Auto-generates pool definitions from Clang AST analysis. All pools are auto-generated; no manual `pools.c` files needed.
+- **`scripts/gen_table_sizes.py`** — Auto-computes runtime table sizes via tree-sitter source analysis. Generates `table_sizes.h`. No Clang AST dumps needed.
+- **`scripts/requirements.txt`** — Python deps: `tree-sitter`, `tree-sitter-objc`.
 
 ### Init Order
 
@@ -83,7 +85,7 @@ Each sample registers the runtime via `ZEPHYR_EXTRA_MODULES` in its CMakeLists.t
 
 ### Static Table Sizes
 
-Class: 32, Category: 32, Protocol: 32, Hash: 512, Pool: 16. All statically allocated, no dynamic growth. Configurable via Kconfig.
+Auto-computed via tree-sitter at build time. Kconfig defaults to 0 (auto); non-zero overrides. Statically allocated, no dynamic growth.
 
 ## Coding Conventions
 
