@@ -3,6 +3,7 @@
 #include "hash.h"
 #include "protocol.h"
 #include <objc/malloc.h>
+#include <objc/table_sizes.h>
 #include <objc/version.h>
 #include <zephyr/init.h>
 #include <zephyr/sys/printk.h>

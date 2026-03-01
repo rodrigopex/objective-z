@@ -65,12 +65,18 @@ if(CONFIG_OBJZ)
     # ARC entry points (pure C, no -fobjc-arc)
     zephyr_library_sources("${ZEPHYR_CURRENT_MODULE_DIR}/src/arc.c")
 
-    # Boxed literals and collection literals
-    if(CONFIG_OBJZ_LITERALS)
+    # Collection classes (OZArray, OZDictionary)
+    if(CONFIG_OBJZ_COLLECTIONS)
         objz_compile_objc_sources(${ZEPHYR_CURRENT_LIBRARY}
-            "${ZEPHYR_CURRENT_MODULE_DIR}/src/Foundation/OZNumber.m"
             "${ZEPHYR_CURRENT_MODULE_DIR}/src/Foundation/OZArray.m"
             "${ZEPHYR_CURRENT_MODULE_DIR}/src/Foundation/OZDictionary.m"
+        )
+    endif()
+
+    # Number class (OZNumber)
+    if(CONFIG_OBJZ_NUMBERS)
+        objz_compile_objc_sources(${ZEPHYR_CURRENT_LIBRARY}
+            "${ZEPHYR_CURRENT_MODULE_DIR}/src/Foundation/OZNumber.m"
         )
     endif()
 
@@ -83,6 +89,31 @@ if(CONFIG_OBJZ)
     if(CONFIG_OBJZ_STATIC_POOLS)
         zephyr_library_sources("${ZEPHYR_CURRENT_MODULE_DIR}/src/pool.c")
     endif()
+
+    # ── Foundation .m file list for AST table-size analysis ─────────
+    set(_foundation_m_files
+        "${ZEPHYR_CURRENT_MODULE_DIR}/src/init.m"
+        "${ZEPHYR_CURRENT_MODULE_DIR}/src/Foundation/Object.m"
+        "${ZEPHYR_CURRENT_MODULE_DIR}/src/Foundation/OZString.m"
+        "${ZEPHYR_CURRENT_MODULE_DIR}/src/Foundation/Protocol.m"
+        "${ZEPHYR_CURRENT_MODULE_DIR}/src/Foundation/OZAutoreleasePool.m"
+        "${ZEPHYR_CURRENT_MODULE_DIR}/src/Foundation/OZMutableString.m"
+        "${ZEPHYR_CURRENT_MODULE_DIR}/src/Foundation/OZLog.m"
+    )
+    if(CONFIG_OBJZ_COLLECTIONS)
+        list(APPEND _foundation_m_files
+            "${ZEPHYR_CURRENT_MODULE_DIR}/src/Foundation/OZArray.m"
+            "${ZEPHYR_CURRENT_MODULE_DIR}/src/Foundation/OZDictionary.m"
+        )
+    endif()
+    if(CONFIG_OBJZ_NUMBERS)
+        list(APPEND _foundation_m_files
+            "${ZEPHYR_CURRENT_MODULE_DIR}/src/Foundation/OZNumber.m"
+        )
+    endif()
+    set_property(GLOBAL PROPERTY OBJZ_FOUNDATION_M_FILES ${_foundation_m_files})
+    set_property(GLOBAL PROPERTY OBJZ_LIBRARY_TARGET ${ZEPHYR_CURRENT_LIBRARY})
+    set_property(GLOBAL PROPERTY OBJZ_GENERATED_DIR ${_objz_generated_dir})
 
     # gnustep-2.0 ObjC metadata sections (__objc_selectors, __objc_classes, etc.)
     zephyr_linker_sources(DATA_SECTIONS ${ZEPHYR_CURRENT_MODULE_DIR}/cmake/objc_sections.ld)

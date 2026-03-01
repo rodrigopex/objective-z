@@ -4,6 +4,7 @@
 #include "protocol.h"
 #include "zephyr/spinlock.h"
 #include <objc/objc.h>
+#include <objc/table_sizes.h>
 #ifdef CONFIG_OBJZ_STATIC_POOLS
 #include <objc/pool.h>
 #endif

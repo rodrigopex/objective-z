@@ -64,8 +64,8 @@ Exit QEMU with `Ctrl+A`, then `x`.
 | `mem_demo` | Manual Retain/Release lifecycle | `CONFIG_OBJZ=y` |
 | `arc_demo` | Automatic Reference Counting, scoped cleanup | `+OBJZ_ARC` |
 | `pool_demo` | Static allocation pools with `K_MEM_SLAB` | `+OBJZ_STATIC_POOLS` |
-| `literals_demo` | Boxed literals and collection literals (`@42`, `@[...]`, `@{...}`) | `+OBJZ_LITERALS` |
-| `blocks_demo` | Blocks, `__block` variables, fast enumeration, `enumerateObjectsUsingBlock:` | `+OBJZ_BLOCKS +OBJZ_LITERALS` |
+| `literals_demo` | Boxed literals and collection literals (`@42`, `@[...]`, `@{...}`) | `+OBJZ_COLLECTIONS +OBJZ_NUMBERS +OBJZ_LITERALS` |
+| `blocks_demo` | Blocks, `__block` variables, fast enumeration, `enumerateObjectsUsingBlock:` | `+OBJZ_BLOCKS +OBJZ_COLLECTIONS +OBJZ_NUMBERS +OBJZ_LITERALS` |
 | `zbus_objc` | ObjC objects with Zephyr zbus pub/sub messaging | `+ZBUS` |
 | `zbus_service` | Request-response service pattern over zbus | `+ZBUS` |
 | `benchmark` | Cycle-accurate runtime performance benchmarks | `+OBJZ_ARC +OBJZ_BLOCKS +OBJZ_STATIC_POOLS` |
@@ -276,6 +276,12 @@ CONFIG_OBJZ=y
 # Optional: Blocks (closures)
 CONFIG_OBJZ_BLOCKS=y
 
+# Optional: Collection classes (OZArray, OZDictionary)
+CONFIG_OBJZ_COLLECTIONS=y
+
+# Optional: Number class (OZNumber)
+CONFIG_OBJZ_NUMBERS=y
+
 # Optional: Boxed/collection literals (@42, @[...], @{...})
 CONFIG_OBJZ_LITERALS=y
 
@@ -313,7 +319,9 @@ west build -p -b mps2/an385 .
 | `CONFIG_OBJZ` | Enable Objective-C runtime (ARC always on) | — |
 | `CONFIG_OBJZ_DISPATCH_CACHE` | Per-class dispatch table cache | `OBJZ` |
 | `CONFIG_OBJZ_BLOCKS` | Blocks (closures) with `-fblocks` | `OBJZ` |
-| `CONFIG_OBJZ_LITERALS` | Boxed literals and collection literals | `OBJZ` |
+| `CONFIG_OBJZ_COLLECTIONS` | Collection classes (OZArray, OZDictionary) | `OBJZ` |
+| `CONFIG_OBJZ_NUMBERS` | Number class (OZNumber) | `OBJZ` |
+| `CONFIG_OBJZ_LITERALS` | Boxed literals and collection literals | `OBJZ_COLLECTIONS`, `OBJZ_NUMBERS` |
 | `CONFIG_OBJZ_STATIC_POOLS` | Per-class static allocation pools | `OBJZ` |
 
 ### Table Sizes

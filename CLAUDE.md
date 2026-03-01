@@ -55,9 +55,9 @@ Each sample registers the runtime via `ZEPHYR_EXTRA_MODULES` in its CMakeLists.t
 - **`src/Foundation/OZMutableString.m`** — Heap-allocated mutable string for -description
 - **`src/Foundation/OZAutoreleasePool.m`** — Per-thread pool stack (`__thread`), `@autoreleasepool {}` via `objc_autoreleasePoolPush/Pop`
 - **`src/Foundation/OZLog.m`** — Formatted logging with `%@` object specifier
-- **`src/Foundation/OZNumber.m`** — Boxed number class for `@42`, `@YES` literals
-- **`src/Foundation/OZArray.m`** — Immutable array for `@[...]` literals
-- **`src/Foundation/OZDictionary.m`** — Immutable dictionary for `@{...}` literals
+- **`src/Foundation/OZNumber.m`** — Boxed number class for `@42`, `@YES` literals (`CONFIG_OBJZ_NUMBERS`)
+- **`src/Foundation/OZArray.m`** — Immutable array for `@[...]` literals (`CONFIG_OBJZ_COLLECTIONS`)
+- **`src/Foundation/OZDictionary.m`** — Immutable dictionary for `@{...}` literals (`CONFIG_OBJZ_COLLECTIONS`)
 
 ### Clang / gnustep-2.0 Dispatch
 

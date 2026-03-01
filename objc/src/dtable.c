@@ -12,6 +12,7 @@
 #ifdef CONFIG_OBJZ_DISPATCH_CACHE
 
 #include <objc/malloc.h>
+#include <objc/table_sizes.h>
 #include <string.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>

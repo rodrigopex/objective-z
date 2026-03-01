@@ -13,7 +13,6 @@
 
 import argparse
 import json
-import re
 import sys
 from collections import defaultdict
 
@@ -25,9 +24,11 @@ SKIP_CLASSES = frozenset({
 
 
 def parse_args():
-    p = argparse.ArgumentParser(description="Generate pools.c from Clang AST")
+    p = argparse.ArgumentParser(
+        description="Generate pools.c from Clang AST")
     p.add_argument("--pointer-size", type=int, default=4, choices=[4, 8])
-    p.add_argument("--output", required=True)
+    p.add_argument("--output", required=True,
+                   help="Output path for generated pools.c")
     p.add_argument("ast_files", nargs="+")
     return p.parse_args()
 
@@ -265,9 +266,6 @@ def compute_pool_counts(allocs, call_graph, thread_entries):
             for cls, cnt in ea.items():
                 if cnt > counts[cls]:
                     counts[cls] = cnt
-        # When main() is absent, conservatively limit to classes
-        # whose name contains "Pool" (pool-intended by convention),
-        # excluding "Unpooled" variants.
         counts = {cls: cnt for cls, cnt in counts.items()
                   if "pool" in cls.lower()
                   and "unpool" not in cls.lower()}
@@ -276,7 +274,7 @@ def compute_pool_counts(allocs, call_graph, thread_entries):
 
 
 # -------------------------------------------------------------------
-# Phase C: generate pools.c
+# Generate pools.c
 # -------------------------------------------------------------------
 
 def generate(pools, output_path):
@@ -303,10 +301,10 @@ def main():
     classes = parse_classes(ast_roots)
     sizes = compute_class_sizes(classes, ptr)
     allocs, call_graph, thread_entries = analyze_ast(ast_roots)
-    counts = compute_pool_counts(allocs, call_graph, thread_entries)
+    pool_counts = compute_pool_counts(allocs, call_graph, thread_entries)
 
     pools = {}
-    for cls, cnt in counts.items():
+    for cls, cnt in pool_counts.items():
         if cls in SKIP_CLASSES or cnt <= 0:
             continue
         bsz = align_up(sizes.get(cls, ptr + 4), ptr)

@@ -8,9 +8,9 @@
   - [x] Boot banner via CONFIG_OBJZ_BOOT_BANNER
 - [x] Generated slabs to reduce heap usage and do not require manual sizing from the developer.
   - [x] Remove MRR support. Force user to use only ARC + (generated pools)
-- [ ] Add collections config (CONFIG_OBJZ_COLLECTIONS)
-  - [ ] OZArray/OZDictionary available without literals
-  - [ ] CONFIG_OBJZ_LITERALS depends on CONFIG_OBJZ_COLLECTIONS
+- [x] Add collections config (CONFIG_OBJZ_COLLECTIONS)
+  - [x] OZArray/OZDictionary available without literals
+  - [x] CONFIG_OBJZ_LITERALS depends on CONFIG_OBJZ_COLLECTIONS && CONFIG_OBJZ_NUMBERS
 - [x] Add generics usage in tests and samples
 - [ ] Add singleton helper (`+shared` via dispatch_once)
   - [ ] dispatch_once implementation

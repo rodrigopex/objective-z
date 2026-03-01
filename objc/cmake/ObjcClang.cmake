@@ -319,6 +319,7 @@ function(objz_target_sources target)
 
     if(_m_sources)
         objz_compile_objc_arc_sources(${target} ${_m_sources})
+        _objz_generate_table_sizes(${target} TRUE ${_m_sources})
         if(CONFIG_OBJZ_STATIC_POOLS)
             _objz_generate_pools_impl(${target} TRUE ${_m_sources})
         endif()
@@ -399,6 +400,51 @@ function(_objz_build_ast_flags result_var)
     )
 
     set(${result_var} ${_flags} PARENT_SCOPE)
+endfunction()
+
+# ─── Internal: generate table sizes header via tree-sitter ───────────
+#
+# Parses all .m files (Foundation + user) directly with tree-sitter.
+# No Clang AST dumps needed — fast source-level structural analysis.
+#
+function(_objz_generate_table_sizes target use_arc)
+    get_property(_foundation_files GLOBAL PROPERTY OBJZ_FOUNDATION_M_FILES)
+
+    # Collect absolute paths for user .m files
+    set(_all_m_files ${_foundation_files})
+    foreach(_src ${ARGN})
+        get_filename_component(_abs ${_src} ABSOLUTE)
+        list(APPEND _all_m_files ${_abs})
+    endforeach()
+
+    _objz_get_clang_target_triple(_triple)
+    if("${_triple}" MATCHES "aarch64")
+        set(_ptr_size 8)
+    else()
+        set(_ptr_size 4)
+    endif()
+
+    get_property(_gen_dir GLOBAL PROPERTY OBJZ_GENERATED_DIR)
+    set(_ts_header ${_gen_dir}/objc/table_sizes.h)
+    set(_gen_script ${ZEPHYR_EXTRA_MODULES}/scripts/gen_table_sizes.py)
+
+    add_custom_command(
+        OUTPUT  ${_ts_header}
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${_gen_dir}/objc
+        COMMAND ${Python3_EXECUTABLE} ${_gen_script}
+                --pointer-size=${_ptr_size}
+                --output=${_ts_header}
+                ${_all_m_files}
+        DEPENDS ${_all_m_files} ${_gen_script}
+        COMMENT "Generating table sizes (tree-sitter)"
+        VERBATIM
+    )
+
+    add_custom_target(objz_table_sizes DEPENDS ${_ts_header})
+    get_property(_lib_target GLOBAL PROPERTY OBJZ_LIBRARY_TARGET)
+    if(_lib_target)
+        add_dependencies(${_lib_target} objz_table_sizes)
+    endif()
 endfunction()
 
 # ─── Internal: generate pools from Clang AST ────────────────────────

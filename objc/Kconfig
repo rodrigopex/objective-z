@@ -51,15 +51,27 @@ config OBJZ_STATIC_POOLS
 config OBJZ_STATIC_POOL_TABLE_SIZE
     int "Maximum number of static pool registrations"
     depends on OBJZ_STATIC_POOLS
-    default 16
+    default 0
     help
       Maximum number of OZ_DEFINE_POOL registrations.
+      0 = auto-computed from AST analysis.
+
+config OBJZ_COLLECTIONS
+    bool "Foundation collection classes (OZArray, OZDictionary)"
+    help
+      Enable OZArray and OZDictionary with NSFastEnumeration.
+
+config OBJZ_NUMBERS
+    bool "Foundation number class (OZNumber)"
+    help
+      Enable OZNumber for boxed numeric values.
 
 config OBJZ_LITERALS
     bool "ObjC boxed literals and collection literals"
+    depends on OBJZ_COLLECTIONS && OBJZ_NUMBERS
     help
-      Enable OZNumber (@42, @YES, @3.14), OZArray (@[...]),
-      and OZDictionary (@{k:v}) literal classes.
+      Enable @42, @YES, @3.14, @[...], and @{k:v} literal syntax.
+      Requires both collection and number classes.
 
 config OBJZ_LOG_BUFFER_SIZE
     int "OZLog format buffer size"
@@ -83,28 +95,32 @@ config OBJZ_MEMORY_POOL_ZEPHYR_REGION_NAME
 
 config OBJZ_CLASS_TABLE_SIZE
     int "Class table size"
-    default 32
+    default 0
     help
       Maximum number of Objective-C classes that can be registered.
+      0 = auto-computed from AST analysis.
 
 config OBJZ_CATEGORY_TABLE_SIZE
     int "Category table size"
-    default 32
+    default 0
     help
       Maximum number of Objective-C categories that can be registered.
+      0 = auto-computed from AST analysis.
 
 config OBJZ_PROTOCOL_TABLE_SIZE
     int "Protocol table size"
-    default 32
+    default 0
     help
       Maximum number of Objective-C protocols that can be registered.
+      0 = auto-computed from AST analysis.
 
 config OBJZ_HASH_TABLE_SIZE
     int "Method hash table size"
-    default 512
+    default 0
     help
       Size of the global method hash table. Uses open addressing
       for collision resolution.
+      0 = auto-computed from AST analysis.
 
 config OBJZ_DISPATCH_CACHE
     bool "Per-class dispatch table cache"
@@ -119,21 +135,23 @@ config OBJZ_DISPATCH_CACHE
 config OBJZ_DISPATCH_TABLE_SIZE
     int "Dispatch table entries per class"
     depends on OBJZ_DISPATCH_CACHE
-    default 16
+    default 0
     help
       Number of cache entries per class dispatch table. Must be a
       power of 2. Each entry costs 8 bytes (ARM32). Memory per
       class = size * 8 bytes. Typical: 8 (64B), 16 (128B), 32 (256B).
+      0 = auto-computed from AST analysis.
 
 config OBJZ_DISPATCH_CACHE_STATIC_COUNT
     int "Number of static dispatch table blocks"
     depends on OBJZ_DISPATCH_CACHE
-    default 8
+    default 0
     help
       Number of per-class dispatch tables pre-allocated in BSS.
       First N classes get a dtable from this pool with zero heap
       cost. Additional classes fall back to objc_malloc().
       Total BSS = count * DISPATCH_TABLE_SIZE * 8 bytes.
+      0 = auto-computed from AST analysis.
 
 module = OBJZ
 module-str = objz

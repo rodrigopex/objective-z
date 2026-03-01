@@ -3,6 +3,7 @@
 #include "class.h"
 #include "dtable.h"
 #include <objc/objc.h>
+#include <objc/table_sizes.h>
 #include <zephyr/kernel.h>
 
 static struct objc_category *category_table[CONFIG_OBJZ_CATEGORY_TABLE_SIZE + 1];

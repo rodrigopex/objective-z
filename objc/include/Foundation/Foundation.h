@@ -19,11 +19,14 @@
 #include "OZMutableString.h"
 #include "Protocol.h"
 
-#ifdef CONFIG_OBJZ_LITERALS
+#ifdef CONFIG_OBJZ_COLLECTIONS
 #include "NSFastEnumeration.h"
-#include "OZNumber.h"
 #include "OZArray.h"
 #include "OZDictionary.h"
+#endif
+
+#ifdef CONFIG_OBJZ_NUMBERS
+#include "OZNumber.h"
 #endif
 
 #endif /* __OBJC__ */

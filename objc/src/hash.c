@@ -1,5 +1,6 @@
 #include "hash.h"
 #include <objc/objc.h>
+#include <objc/table_sizes.h>
 #include <string.h>
 #include <zephyr/kernel.h>
 

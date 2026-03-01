@@ -7,13 +7,10 @@
  * back to the sys_heap allocator.
  */
 #include <objc/pool.h>
+#include <objc/table_sizes.h>
 #include "api.h"
 #include <string.h>
 #include <zephyr/kernel.h>
-
-#ifndef CONFIG_OBJZ_STATIC_POOL_TABLE_SIZE
-#define CONFIG_OBJZ_STATIC_POOL_TABLE_SIZE 16
-#endif
 
 struct pool_entry {
 	const char *class_name;
