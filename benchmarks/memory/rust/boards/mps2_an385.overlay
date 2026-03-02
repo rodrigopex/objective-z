@@ -1,0 +1,16 @@
+/*
+ * Override LED/button compatible strings to prevent zephyr-lang-rust
+ * code generator from matching gpio-leds/gpio-keys nodes.
+ * Works around #gpio-cells = <1> incompatibility with GpioPin::new().
+ * GPIO controllers and pinctrl remain intact.
+ */
+
+/ {
+	leds {
+		compatible = "gpio-leds-unused";
+	};
+
+	gpio_keys {
+		compatible = "gpio-keys-unused";
+	};
+};

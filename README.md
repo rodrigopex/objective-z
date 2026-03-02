@@ -188,6 +188,7 @@ Cycle-accurate benchmarks using the DWT cycle counter. Results from QEMU (mps2/a
 just bench       # ObjC benchmark
 just bench-cpp   # C++ comparison benchmark
 just bench-rust  # Rust comparison benchmark
+just bench-mem   # Memory comparison (C, C++, Rust, ObjC)
 ```
 
 ### Message Dispatch
@@ -463,6 +464,61 @@ rustup target add thumbv7m-none-eabi
 
 > Rust non-capturing closures are zero-sized types (0 B). Closures with captures store only the captured data (4 B for an int). `&dyn Fn` and `Box<dyn Fn>` are fat pointers (data + vtable = 8 B). ObjC blocks carry a fixed `Block_layout` header (20 B minimum).
 
+### Memory Comparison
+
+Per-object memory cost across C, C++, Rust, and Objective-C (`just bench-mem`). All values from the same board (mps2/an385, ARM Cortex-M3). Each language uses a dedicated 8 KB `sys_heap` with identical allocator overhead.
+
+#### Object Sizes
+
+| Metric                     |    C |  C++ | Rust | ObjC |
+| -------------------------- | ---: | ---: | ---: | ---: |
+| Base object (sizeof)       |  8 B |  8 B |  4 B |  8 B |
+| Child (+ 1 int)            | 12 B | 12 B |  8 B | 12 B |
+| GrandChild (+ 2 ints)      | 16 B | 16 B | 12 B | 16 B |
+| Dispatch mechanism         |  4 B |  4 B |  8 B |  4 B |
+| Refcount field             |  4 B |  4 B |  4 B |  4 B |
+
+> C, C++, and ObjC all carry a 4 B pointer per object for dispatch (vtable\*, vptr, isa). Rust structs have no embedded dispatch pointer — dispatch goes through fat pointers (`&dyn Trait` = 8 B) on the stack instead, so objects are 4 B smaller at the cost of larger references.
+
+#### Single Allocation (heap delta)
+
+| Object type   |     C |   C++ |  Rust |  ObjC |
+| ------------- | ----: | ----: | ----: | ----: |
+| Base          | 16 B  | 16 B  |  8 B  | 16 B  |
+| Child         | 16 B  | 16 B  | 16 B  | 16 B  |
+| GrandChild    | 24 B  | 24 B  | 16 B  | 24 B  |
+
+> The `sys_heap` allocator adds ~8 B overhead per allocation (chunk header). Rust's smaller structs stay under the allocator's minimum chunk size, resulting in lower totals.
+
+#### Bulk Allocation (20 objects)
+
+| Object type        |      C |    C++ |   Rust |   ObjC |
+| ------------------ | -----: | -----: | -----: | -----: |
+| 20x Child          | 320 B  | 320 B  | 320 B  | 320 B  |
+| 20x GrandChild     | 480 B  | 480 B  | 320 B  | 480 B  |
+| Per GrandChild avg |  24 B  |  24 B  |  16 B  |  24 B  |
+
+#### Smart Pointers / Reference Counting
+
+| Metric                          |        C |               C++ |        Rust |          ObjC |
+| ------------------------------- | -------: | ----------------: | ----------: | ------------: |
+| `sizeof` pointer on stack       |      4 B |     4 B (unique)  |   4 B (Box) |    4 B (id)   |
+|                                 |        — |     8 B (shared)  |   4 B (Arc) |             — |
+| Control block (heap)            |      0 B | ~16 B (make_shared) | ~8 B (Arc) |          0 B |
+| `shared_ptr(new T)` total heap  |        — |              40 B |           — |             — |
+| Refcount storage                | inline   |            inline |  ctrl block |        inline |
+
+> ObjC and C store the refcount inline (0 extra heap). C++ `make_shared` fuses object + control block into one allocation (24 B for an 8 B object); `shared_ptr(new T)` is 40 B (two allocations). Rust `Arc` adds an 8 B control block (strong + weak counts).
+
+#### Binary Size
+
+| Metric |       C |     C++ |    Rust |    ObjC |
+| ------ | ------: | ------: | ------: | ------: |
+| FLASH  | 14.1 KB | 15.6 KB | 22.3 KB | 29.8 KB |
+| RAM    | 17.4 KB | 21.4 KB | 30.8 KB | 25.4 KB |
+
+> C is the smallest baseline. C++ adds vtable/RTTI/libcpp overhead. Rust includes its core runtime and allocator. ObjC includes the full Objective-Z runtime (class tables, flat dispatch, Foundation classes, ARC).
+
 ## Using in Your Project
 
 ### 1. Directory layout
@@ -577,6 +633,7 @@ Requires [just](https://github.com/casey/just). Default board: `mps2/an385`.
 | `just bench`      | Run ObjC benchmark            |
 | `just bench-cpp`  | Run C++ comparison benchmark  |
 | `just bench-rust` | Run Rust comparison benchmark |
+| `just bench-mem`  | Run memory comparison (all 4) |
 
 Override defaults:
 
