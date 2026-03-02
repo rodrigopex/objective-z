@@ -22,6 +22,19 @@ Features that require unbounded runtime allocation — KVO, method swizzling, dy
 
 Built on Zephyr primitives (`K_MEM_SLAB`, `SYS_INIT`, `k_spinlock_t`, `atomic_t`), not POSIX. No libc `malloc` dependency.
 
+### Why not just C++?
+
+C++ virtual dispatch is ~12x faster than `objc_msgSend` (see [C++ Comparison](#c-comparison)). Objective-Z trades raw dispatch speed for:
+
+- **ARC** — Compiler-managed reference counting eliminates use-after-free, double-free, and leak classes of bugs. C++ offers `unique_ptr` (single-owner only) or `shared_ptr` (2,740 cycles per copy due to heap-allocated control block — 47x slower than `objc_retain` at 58 cycles). ARC handles shared ownership naturally with zero manual bookkeeping.
+- **Simpler object model** — No constructors, destructors, move semantics, copy constructors, RAII, or smart pointer APIs. One root class, one way to create objects (`alloc`/`init`), one way to manage lifetime (ARC does it). Lower barrier for embedded teams coming from C.
+- **Blocks** — First-class closures with ARC-managed captured objects. Block invocation (20 cycles) beats `std::function` (32 cycles). In C++, capturing shared objects requires `shared_ptr` which is expensive; in ObjC, ARC handles captured object lifetime automatically.
+- **Categories** — Add methods to existing classes without subclassing, wrapping, or modifying the original source. No C++ equivalent — you'd need inheritance, free functions, or CRTP.
+- **Protocols** — Lightweight interfaces without vtable-per-protocol overhead or diamond inheritance. A class can adopt any number of protocols with no runtime cost beyond the methods it implements.
+- **Runtime introspection** — `respondsToSelector:`, `isKindOfClass:` are always available. C++ RTTI is often disabled in embedded (`-fno-rtti`) to save binary size, leaving zero introspection capability.
+
+The target use case: teams that want a **high-level object model with automatic memory safety** on a microcontroller, and accept ~200 cycles per method call for that ergonomics.
+
 ## How It Compares
 
 ### Runtime Features
