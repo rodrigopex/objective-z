@@ -103,11 +103,49 @@ static uint16_t __objc_sel_to_id(const char *name)
 	return UINT16_MAX;
 }
 
+/* ── Direct-mapped pointer-hash cache: SEL pointer → sel_id ───── */
+
+#define SEL_CACHE_SIZE 64 /* power of 2, 512 B BSS */
+
+struct sel_cache_entry {
+	const char *sel_name;
+	uint16_t sel_id;
+};
+
+static struct sel_cache_entry __sel_cache[SEL_CACHE_SIZE];
+
+static inline uint32_t __sel_ptr_hash(const char *name)
+{
+	uintptr_t p = (uintptr_t)name;
+	return (uint32_t)((p >> 2) ^ (p >> 11));
+}
+
+static uint16_t __objc_sel_to_id_cached(const char *name)
+{
+	if (name == NULL) {
+		return UINT16_MAX;
+	}
+
+	uint32_t idx = __sel_ptr_hash(name) & (SEL_CACHE_SIZE - 1);
+
+	if (__sel_cache[idx].sel_name == name) {
+		return __sel_cache[idx].sel_id; /* pointer match */
+	}
+
+	/* Slow path: djb2 string hash (first call or collision) */
+	uint16_t sid = __objc_sel_to_id(name);
+	if (sid != UINT16_MAX) {
+		__sel_cache[idx].sel_name = name;
+		__sel_cache[idx].sel_id = sid;
+	}
+	return sid;
+}
+
 /* ── Lookup ─────────────────────────────────────────────────────── */
 
 IMP __objc_dispatch_lookup(objc_class_t *cls, const char *sel_name)
 {
-	uint16_t sel_id = __objc_sel_to_id(sel_name);
+	uint16_t sel_id = __objc_sel_to_id_cached(sel_name);
 	if (sel_id == UINT16_MAX) {
 		return NULL;
 	}

@@ -175,12 +175,12 @@ With flat dispatch table (`CONFIG_OBJZ_FLAT_DISPATCH=y`, default):
 | Operation | Cycles | ns |
 |---|---:|---:|
 | C function call (baseline, cached IMP) | 13 | 520 |
-| `objc_msgSend` (instance method) | 381 | 15,240 |
-| `objc_msgSend` (class method) | 564 | 22,560 |
-| `objc_msgSend` (inherited depth=1) | 381 | 15,240 |
-| `objc_msgSend` (inherited depth=2) | 381 | 15,240 |
+| `objc_msgSend` (instance method) | 205 | 8,200 |
+| `objc_msgSend` (class method) | 212 | 8,480 |
+| `objc_msgSend` (inherited depth=1) | 205 | 8,200 |
+| `objc_msgSend` (inherited depth=2) | 205 | 8,200 |
 
-> **Key result:** Inherited methods at any depth resolve in the same number of cycles (381) as direct methods — inheritance depth is free with flat dispatch.
+> **Key result:** Inherited methods at any depth resolve in the same number of cycles (205) as direct methods — inheritance depth is free with flat dispatch.
 
 Without flat dispatch (`CONFIG_OBJZ_FLAT_DISPATCH=n`):
 
@@ -196,8 +196,8 @@ Without flat dispatch (`CONFIG_OBJZ_FLAT_DISPATCH=n`):
 
 | Operation | Cycles | ns |
 |---|---:|---:|
-| alloc/init/release (heap) | 5,076 | 203,040 |
-| alloc/init/release (static pool) | 2,752 | 110,080 |
+| alloc/init/release (heap) | 4,474 | 178,960 |
+| alloc/init/release (static pool) | 2,151 | 86,040 |
 
 ### Reference Counting
 
@@ -213,8 +213,8 @@ Without flat dispatch (`CONFIG_OBJZ_FLAT_DISPATCH=n`):
 
 | Operation | Cycles | ns |
 |---|---:|---:|
-| `class_respondsToSelector` (YES) | 324 | 12,960 |
-| `class_respondsToSelector` (NO) | 445 | 17,800 |
+| `class_respondsToSelector` (YES) | 148 | 5,920 |
+| `class_respondsToSelector` (NO) | 461 | 18,440 |
 | `object_getClass` | 20 | 800 |
 
 ### Blocks
@@ -257,7 +257,7 @@ Comparison of `printk`, Zephyr `LOG_INF` (minimal mode), and `OZLog` (50 iterati
 | `printk` (string format) | 2,039 | 81,560 |
 | `LOG_INF` (string format) | 2,640 | 105,600 |
 | `OZLog` (string format) | 3,892 | 155,680 |
-| `OZLog` (`%@` object format) | 9,428 | 377,120 |
+| `OZLog` (`%@` object format) | 8,480 | 339,200 |
 
 ### Memory Footprint
 
@@ -266,28 +266,28 @@ Runtime cost vs bare Zephyr (mps2/an385, benchmark sample with all features):
 | Configuration | FLASH | RAM | FLASH delta | RAM delta |
 |---|---:|---:|---:|---:|
 | Bare Zephyr (no ObjC) | 12,104 B | 6,120 B | — | — |
-| All features enabled | 39,520 B | 25,508 B | +27,416 B | +19,388 B |
+| All features enabled | 39,568 B | 26,020 B | +27,464 B | +19,900 B |
 
 Flat dispatch table cost (`CONFIG_OBJZ_FLAT_DISPATCH`, default `y`):
 
 | Metric | Flat dispatch | No flat dispatch | Delta |
 |---|---:|---:|---:|
-| FLASH | 39,520 B | 38,384 B | +1,136 B |
-| RAM (BSS + data) | 25,508 B | 22,180 B | +3,328 B |
+| FLASH | 39,568 B | 38,384 B | +1,184 B |
+| RAM (BSS + data) | 26,020 B | 22,180 B | +3,840 B |
 
 Blocks runtime cost (`CONFIG_OBJZ_BLOCKS`, default `n`):
 
 | Metric | Blocks on | Blocks off | Delta |
 |---|---:|---:|---:|
-| FLASH | 39,520 B | 36,528 B | +2,992 B |
-| RAM (BSS + data) | 25,508 B | 25,484 B | +24 B |
+| FLASH | 39,568 B | 36,576 B | +2,992 B |
+| RAM (BSS + data) | 26,020 B | 25,996 B | +24 B |
 
 **Key takeaways:**
 
-- **Flat dispatch: 32% faster, depth-independent.** Instance method dispatch drops from 560 to 381 cycles (32% faster). Inherited methods at depth=2 drop from 1,328 to 381 cycles (71% faster). Inheritance depth is free — all depths resolve in identical cycles.
-- **Table cost: +3.3 KB RAM.** The flat dispatch table costs +1,136 B FLASH (code) and +3,328 B RAM (BSS table + sel_map). The table size is `CLASS_TABLE_SIZE * SEL_COUNT * sizeof(IMP)` bytes, bounded by `CONFIG_OBJZ_FLAT_DISPATCH_MAX_BYTES` (default 8192).
+- **Flat dispatch: 63% faster, depth-independent.** Instance method dispatch drops from 560 to 205 cycles (63% faster). Inherited methods at depth=2 drop from 1,328 to 205 cycles (85% faster). Inheritance depth is free — all depths resolve in identical cycles. A pointer-hash sel_id cache avoids the djb2 string hash on ~100% of warm lookups.
+- **Table cost: +3.8 KB RAM.** The flat dispatch table costs +1,184 B FLASH (code) and +3,840 B RAM (BSS table + sel_map + 512 B pointer cache). The table size is `CLASS_TABLE_SIZE * SEL_COUNT * sizeof(IMP)` bytes, bounded by `CONFIG_OBJZ_FLAT_DISPATCH_MAX_BYTES` (default 8192).
 - **ARC retain vs message dispatch**: `objc_retain` (58 cycles) vs `[obj retain]` (240 cycles) — ARC entry points bypass message dispatch entirely, 4x faster.
-- **Static pools are ~46% faster** than heap allocation: 2,752 vs 5,076 cycles for alloc/init/release.
+- **Static pools are ~52% faster** than heap allocation: 2,151 vs 4,474 cycles for alloc/init/release.
 - **Block invocation matches C function pointers** at 20 cycles (vs 10 for a raw `call`). Each heap block costs 32 B (56 B with `__block` variables due to the `Block_byref` structure).
 - **OZLog vs printk**: OZLog is ~1.4x `printk` for simple strings thanks to zero-alloc `-cDescription:maxLength:`. `LOG_INF` in minimal mode adds ~26% over `printk` (prefix formatting).
 - **QEMU caveat**: these are instruction-accurate counts, not true cycle-accurate. Real hardware numbers will differ, but relative comparisons hold.
