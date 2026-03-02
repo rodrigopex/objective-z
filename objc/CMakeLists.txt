@@ -52,7 +52,7 @@ if(CONFIG_OBJZ)
     )
 
     # gnustep-2.0 dispatch: objc_msgSend trampoline (ARM Thumb-2)
-    zephyr_library_sources("${ZEPHYR_CURRENT_MODULE_DIR}/src/objc_msgSend.S")
+    zephyr_library_sources("${ZEPHYR_CURRENT_MODULE_DIR}/src/arch/arm/objc_msgSend.S")
 
     # Reference counting and autorelease pool
     zephyr_library_sources("${ZEPHYR_CURRENT_MODULE_DIR}/src/refcount.c")
