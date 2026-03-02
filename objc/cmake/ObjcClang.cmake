@@ -320,6 +320,9 @@ function(objz_target_sources target)
     if(_m_sources)
         objz_compile_objc_arc_sources(${target} ${_m_sources})
         _objz_generate_table_sizes(${target} TRUE ${_m_sources})
+        if(CONFIG_OBJZ_CYCLE_CHECK)
+            _objz_check_retain_cycles(${target} ${_m_sources})
+        endif()
         if(CONFIG_OBJZ_STATIC_POOLS)
             _objz_generate_pools_impl(${target} TRUE ${_m_sources})
         endif()
@@ -471,6 +474,66 @@ function(_objz_create_table_sizes_target)
         if(CONFIG_OBJZ_FLAT_DISPATCH AND _dispatch_c)
             target_sources(${_lib_target} PRIVATE ${_dispatch_c})
         endif()
+    endif()
+endfunction()
+
+# ─── Internal: retain cycle detection via tree-sitter ────────────────
+#
+# Accumulates user .m files and defers cycle check target creation
+# until all sources are collected.  Follows the same pattern as
+# _objz_generate_table_sizes / _objz_create_table_sizes_target.
+#
+function(_objz_check_retain_cycles target)
+    # Collect target include dirs for #import resolution
+    get_target_property(_target_incs ${target} INCLUDE_DIRECTORIES)
+    if(_target_incs)
+        foreach(_dir ${_target_incs})
+            string(FIND "${_dir}" "$<" _is_genexpr)
+            if(_is_genexpr EQUAL -1)
+                set_property(GLOBAL APPEND PROPERTY OBJZ_USER_INC_DIRS ${_dir})
+            endif()
+        endforeach()
+    endif()
+
+    get_property(_deferred GLOBAL PROPERTY _OBJZ_CYCLE_CHECK_DEFERRED)
+    if(NOT _deferred)
+        set_property(GLOBAL PROPERTY _OBJZ_CYCLE_CHECK_DEFERRED TRUE)
+        cmake_language(DEFER DIRECTORY ${CMAKE_SOURCE_DIR}
+            CALL _objz_create_cycle_check_target)
+    endif()
+endfunction()
+
+function(_objz_create_cycle_check_target)
+    get_property(_user_files GLOBAL PROPERTY OBJZ_USER_M_FILES)
+    get_property(_inc_dirs GLOBAL PROPERTY OBJZ_USER_INC_DIRS)
+
+    set(_inc_flags "")
+    if(_inc_dirs)
+        list(REMOVE_DUPLICATES _inc_dirs)
+        foreach(_dir ${_inc_dirs})
+            list(APPEND _inc_flags --include-dir=${_dir})
+        endforeach()
+    endif()
+
+    set(_gen_script ${ZEPHYR_EXTRA_MODULES}/scripts/objz_check_cycles.py)
+    set(_stamp ${CMAKE_CURRENT_BINARY_DIR}/objz_cycle_check.stamp)
+
+    add_custom_command(
+        OUTPUT  ${_stamp}
+        COMMAND ${Python3_EXECUTABLE} ${_gen_script}
+                ${_inc_flags}
+                ${_user_files}
+        COMMAND ${CMAKE_COMMAND} -E touch ${_stamp}
+        DEPENDS ${_user_files} ${_gen_script}
+        COMMENT "Checking for retain cycles (tree-sitter)"
+        COMMAND_ERROR_IS_FATAL ANY
+        VERBATIM
+    )
+
+    add_custom_target(objz_cycle_check DEPENDS ${_stamp})
+    get_property(_lib_target GLOBAL PROPERTY OBJZ_LIBRARY_TARGET)
+    if(_lib_target)
+        add_dependencies(${_lib_target} objz_cycle_check)
     endif()
 endfunction()
 

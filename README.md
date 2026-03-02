@@ -596,24 +596,96 @@ Use `@autoreleasepool` when:
 
 ### Retain cycles — the one thing ARC cannot fix
 
-ARC has no weak references on this runtime. If two objects hold `strong` references to each other, neither can be deallocated:
+ARC has no weak references on this runtime (`__weak` panics at runtime). If two objects hold `strong` references to each other, neither can be deallocated:
 
 ```objc
-@interface Node : Object
-@property (nonatomic, strong) Node *next;
+/* PROBLEM: direct cycle — Parent ↔ Child */
+@interface Parent : Object
+@property (nonatomic) Child *child;   /* strong by default */
+@end
+
+@interface Child : Object
+@property (nonatomic) Parent *parent; /* strong by default — creates cycle! */
 @end
 
 void leak(void)
 {
-    Node *a = [[Node alloc] init];
-    Node *b = [[Node alloc] init];
-    a.next = b;
-    b.next = a; /* cycle: a→b→a */
+    Parent *p = [[Parent alloc] init];
+    Child  *c = [[Child alloc] init];
+    p.child  = c;
+    c.parent = p; /* cycle: p→c→p */
     /* ARC releases locals, but the cycle keeps both alive — LEAK */
 }
 ```
 
-Avoid cycles by breaking the reference chain before the owner goes out of scope:
+```objc
+/* PROBLEM: indirect cycle — A → B → C → A */
+@interface A : Object
+@property (nonatomic) B *b;
+@end
+
+@interface B : Object
+@property (nonatomic) C *c;
+@end
+
+@interface C : Object
+@property (nonatomic) A *a; /* completes the cycle */
+@end
+```
+
+#### Build-time cycle detection (`CONFIG_OBJZ_CYCLE_CHECK`)
+
+Objective-Z detects retain cycles at build time via tree-sitter analysis of `@interface` declarations. When a cycle is found the build fails with an error:
+
+```
+error: 1 retain cycle(s) detected
+
+  cycle: Parent -> Child -> Parent
+    Parent.child (Child *) — strong
+    Child.parent (Parent *) — strong
+
+hint: add __unsafe_unretained to one reference to break the cycle
+      (__weak is not supported and panics at runtime)
+```
+
+Enabled by default. Disable with `CONFIG_OBJZ_CYCLE_CHECK=n` in `prj.conf`.
+
+#### Fix: use `__unsafe_unretained` for back-references
+
+Since `__weak` is not available, use `__unsafe_unretained` on the non-owning side of the relationship:
+
+```objc
+/* FIX: Parent owns Child, Child has a non-owning back-reference */
+@interface Parent : Object
+@property (nonatomic) Child *child;                          /* strong — owns */
+@end
+
+@interface Child : Object
+@property (nonatomic, unsafe_unretained) Parent *parent;     /* NOT strong — no cycle */
+@end
+```
+
+Or equivalently for ivars:
+
+```objc
+@interface Child : Object {
+    __unsafe_unretained Parent *_parent; /* non-owning back-reference */
+}
+@end
+```
+
+> **Caution:** `__unsafe_unretained` pointers are not zeroed on dealloc. Ensure the owner outlives the child, or set the back-reference to `nil` before the owner is released.
+
+#### Limitations
+
+The build-time checker has two known limitations:
+
+1. **`id`-typed references** — the target class is unknown statically, so `id`-typed ivars/properties are skipped. A cycle through `id` fields will not be caught.
+2. **Block capture cycles** — a block ivar that captures `self` (e.g. `self->_callback = ^{ [self doWork]; }`) creates a retain cycle that is not detected. Avoid capturing `self` strongly in blocks stored as ivars.
+
+#### Alternative: break the cycle manually
+
+If you cannot use `__unsafe_unretained` (e.g. both sides need to keep the other alive temporarily), break the cycle before the owner goes out of scope:
 
 ```objc
 void no_leak(void)

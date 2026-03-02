@@ -31,6 +31,15 @@ config OBJZ_BOOT_BANNER_STRING
       The string printed in the boot banner. The version number
       is appended automatically.
 
+config OBJZ_CYCLE_CHECK
+    bool "Retain cycle detection at build time"
+    default y
+    help
+      Detect retain cycles via tree-sitter analysis of @interface
+      declarations. Fails the build if strong reference cycles are
+      found between classes. Since __weak panics at runtime, this
+      check prevents memory leaks that cannot be fixed at runtime.
+
 config OBJZ_BLOCKS
     bool "Blocks (closures) support"
     default n
