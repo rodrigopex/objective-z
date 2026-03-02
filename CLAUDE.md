@@ -14,7 +14,7 @@ Objective-Z is an Objective-C runtime for Zephyr RTOS, packaged as a Zephyr modu
 
 ## Build Commands
 
-Default board: `mps2/an385`. Requires Zephyr SDK, west, and Clang (for ObjC files).
+Default board: `mps2/an385` (ARM). RISC-V: `qemu_riscv32`. Requires Zephyr SDK, west, and Clang (for ObjC files). RISC-V requires LLVM Clang (not Apple Clang) — auto-detected from Homebrew.
 
 | Command                    | Description                        |
 | -------------------------- | ---------------------------------- |
@@ -24,12 +24,15 @@ Default board: `mps2/an385`. Requires Zephyr SDK, west, and Clang (for ObjC file
 | `just flash` / `just f`   | Flash to hardware                  |
 | `just monitor` / `just m` | Serial monitor via tio             |
 | `just clean` / `just c`   | Remove build dir                   |
-| `just test` / `just t`    | Run twister on all samples         |
+| `just test` / `just t`    | Run twister on all samples (ARM)   |
+| `just test-riscv`         | Run twister on all samples (RV32)  |
+| `just test-all`           | Run twister on ARM + RISC-V        |
 | `just bench`              | Run ObjC benchmark                 |
 | `just bench-cpp`          | Run C++ comparison benchmark       |
 | `just bench-rust`         | Run Rust comparison benchmark      |
 
 Build a specific sample: `just project_dir=samples/arc_demo rebuild`
+Build for RISC-V: `just board=qemu_riscv32 rebuild`
 
 Each sample registers the runtime via `ZEPHYR_EXTRA_MODULES` in its CMakeLists.txt and enables it with `CONFIG_OBJZ=y` in prj.conf.
 
@@ -65,13 +68,15 @@ Each sample registers the runtime via `ZEPHYR_EXTRA_MODULES` in its CMakeLists.t
 
 ### Clang / gnustep-2.0 Dispatch
 
-- **`src/objc_msgSend.S`** — ARM Cortex-M Thumb-2 trampoline: `objc_msg_lookup(r0,r1)` + tail-call IMP
-- **`cmake/ObjcClang.cmake`** — Clang cross-compilation with `-fobjc-runtime=gnustep-2.0`, provides `objz_target_sources()` (always ARC), `objz_compile_objc_sources()` (MRR, runtime only)
+- **`src/arch/arm/objc_msgSend.S`** — ARM Cortex-M Thumb-2 trampoline: `objc_msg_lookup(r0,r1)` + tail-call IMP
+- **`src/arch/riscv/objc_msgSend.S`** — RISC-V trampoline: unified RV32/RV64 via `__riscv_xlen`
+- **`src/message.c`** — Also provides `objc_msg_lookup_sender()` returning `struct objc_slot *` (gnustep-2.0 slot-based dispatch for RISC-V where Clang doesn't use the trampoline)
+- **`cmake/ObjcClang.cmake`** — Clang cross-compilation with `-fobjc-runtime=gnustep-2.0`, provides `objz_target_sources()` (always ARC), `objz_compile_objc_sources()` (MRR, runtime only). Auto-detects Homebrew LLVM when Apple Clang lacks RISC-V backend.
 - **`cmake/objc_sections.ld`** — Linker script for gnustep-2.0 ObjC metadata sections (`__objc_selectors`, `__objc_classes`, etc.) with `__start_`/`__stop_` boundary symbols
 
 ### ARC Layer (always enabled)
 
-- **`src/arc.c`** — ARC entry points: `objc_retain`, `objc_release`, `objc_storeStrong`, `objc_autorelease`, return-value optimization (ARM Thumb-2 `mov r7, r7` marker + TLS flag)
+- **`src/arc.c`** — ARC entry points: `objc_retain`, `objc_release`, `objc_storeStrong`, `objc_autorelease`, return-value optimization (ARM-only: Thumb-2 `mov r7, r7` marker + TLS flag; RISC-V: always autorelease/retain)
 - **`include/objc/arc.h`** — ARC entry point declarations. Weak stubs panic.
 - All user `.m` files compile with `-fobjc-arc` via `objz_target_sources()`. Runtime Foundation stays MRR.
 
