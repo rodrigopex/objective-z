@@ -30,7 +30,7 @@ Built on Zephyr primitives (`K_MEM_SLAB`, `SYS_INIT`, `k_spinlock_t`, `atomic_t`
 |---|---|---|---|---|---|
 | Target | macOS/iOS | Linux/Windows | Portable desktop + consoles | Anywhere C runs | Zephyr RTOS (Cortex-M) |
 | Object allocation | Heap (`malloc_zone`) | Heap (`malloc`) | Heap (`malloc`) | Heap (`malloc`) | Static `K_MEM_SLAB` pools; heap fallback |
-| Dispatch tables | Heap, dynamic | Heap sparse array | Heap 2/3-level array | Heap hash | Static BSS, per-class sized at build time |
+| Dispatch tables | Heap, dynamic | Heap sparse array | Heap 2/3-level array | Heap hash | Global flat BSS table, O(1) lookup |
 | Runtime tables | Heap / VM | Heap | Heap | Heap | Static BSS, auto-computed via tree-sitter |
 | Build-time sizing | No | No | No | No | Yes (tree-sitter + Clang AST) |
 | Dynamic class creation | Yes | Yes | Yes | Limited | No |
@@ -170,19 +170,19 @@ just run
 
 ### Message Dispatch
 
-With dispatch cache (`CONFIG_OBJZ_DISPATCH_CACHE=y`, default):
+With flat dispatch table (`CONFIG_OBJZ_FLAT_DISPATCH=y`, default):
 
 | Operation | Cycles | ns |
 |---|---:|---:|
 | C function call (baseline, cached IMP) | 13 | 520 |
-| `objc_msgSend` (instance method) | 298 | 11,920 |
-| `objc_msgSend` (class method) | 231 | 9,240 |
-| `objc_msgSend` (inherited depth=1) | 299 | 11,960 |
-| `objc_msgSend` (inherited depth=2) | 298 | 11,920 |
-| `objc_msgSend` (cold cache, depth=0) | 1,636 | 65,440 |
-| `objc_msgSend` (cold cache, depth=2) | 2,410 | 96,400 |
+| `objc_msgSend` (instance method) | — | — |
+| `objc_msgSend` (class method) | — | — |
+| `objc_msgSend` (inherited depth=1) | — | — |
+| `objc_msgSend` (inherited depth=2) | — | — |
 
-Without dispatch cache (`CONFIG_OBJZ_DISPATCH_CACHE=n`):
+> **Note:** Benchmark numbers for the flat dispatch table will be updated after first benchmarking run. The flat table provides O(1) lookup via `(class_id << SEL_BITS) | sel_id` with no superclass chain walk and deterministic timing regardless of inheritance depth.
+
+Without flat dispatch (`CONFIG_OBJZ_FLAT_DISPATCH=n`):
 
 | Operation | Cycles | ns |
 |---|---:|---:|
@@ -191,15 +191,13 @@ Without dispatch cache (`CONFIG_OBJZ_DISPATCH_CACHE=n`):
 | `objc_msgSend` (class method) | 743 | 29,720 |
 | `objc_msgSend` (inherited depth=1) | 887 | 35,480 |
 | `objc_msgSend` (inherited depth=2) | 1,328 | 53,120 |
-| `objc_msgSend` (cold cache, depth=0) | 571 | 22,840 |
-| `objc_msgSend` (cold cache, depth=2) | 1,338 | 53,520 |
 
 ### Object Lifecycle
 
-| Operation | Cached | No cache | Unit |
-|---|---:|---:|---|
-| alloc/init/release (heap) | 5,607 | 6,685 | cycles |
-| alloc/init/release (static pool) | 3,280 | 4,608 | cycles |
+| Operation | Cycles | Unit |
+|---|---:|---|
+| alloc/init/release (heap) | — | cycles |
+| alloc/init/release (static pool) | — | cycles |
 
 ### Reference Counting
 
@@ -213,11 +211,11 @@ Without dispatch cache (`CONFIG_OBJZ_DISPATCH_CACHE=n`):
 
 ### Introspection
 
-| Operation | Cached | No cache | Unit |
-|---|---:|---:|---|
-| `class_respondsToSelector` (YES) | 167 | 503 | cycles |
-| `class_respondsToSelector` (NO) | 1,348 | 1,195 | cycles |
-| `object_getClass` | 20 | 20 | cycles |
+| Operation | Cycles | Unit |
+|---|---:|---|
+| `class_respondsToSelector` (YES) | — | cycles |
+| `class_respondsToSelector` (NO) | — | cycles |
+| `object_getClass` | 20 | cycles |
 
 ### Blocks
 
@@ -270,12 +268,12 @@ Runtime cost vs bare Zephyr (mps2/an385, benchmark sample with all features):
 | Bare Zephyr (no ObjC) | 12,104 B | 6,120 B | — | — |
 | All features enabled | 39,404 B | 23,604 B | +27,300 B | +17,484 B |
 
-Dispatch cache cost (`CONFIG_OBJZ_DISPATCH_CACHE`, default `y`):
+Flat dispatch table cost (`CONFIG_OBJZ_FLAT_DISPATCH`, default `y`):
 
-| Metric | Cached | No cache | Delta |
+| Metric | Flat dispatch | No flat dispatch | Delta |
 |---|---:|---:|---:|
-| FLASH | 39,404 B | 38,384 B | +1,020 B |
-| RAM (BSS + data) | 23,604 B | 22,180 B | +1,424 B |
+| FLASH | — | — | — |
+| RAM (BSS + data) | — | — | — |
 
 Blocks runtime cost (`CONFIG_OBJZ_BLOCKS`, default `n`):
 
@@ -286,9 +284,9 @@ Blocks runtime cost (`CONFIG_OBJZ_BLOCKS`, default `n`):
 
 **Key takeaways:**
 
-- **Dispatch cache cuts overhead from ~43x to ~23x** a direct C function call. The per-class dispatch table (`CONFIG_OBJZ_DISPATCH_CACHE`) resolves method lookups via pointer hashing after the first call. Cold-cache sends fall back to the global hash table with `strcmp` matching.
-- **Inheritance depth is free** after warm-up: cached inherited methods (depth=1, depth=2) all resolve in ~298 cycles, the same as direct methods. The IMP is cached at the receiver's class level, eliminating the superclass chain walk. Without cache, each level adds ~150-400 cycles.
-- **Cache cost:** +1,424 B RAM (per-class sized static dtables), +1,020 B FLASH (code + registry). Per-class dtable sizing via `OZ_DEFINE_DTABLE` — each class gets a table sized to its method count instead of a single global size.
+- **Flat dispatch table provides O(1) method lookup** with deterministic timing. The global table (`CONFIG_OBJZ_FLAT_DISPATCH`) is built once at init time by flattening the inheritance hierarchy: parent method rows are copied to child rows, then overwritten with own methods. Lookup is a single array index: `(class_id << SEL_BITS) | sel_id`.
+- **Inheritance depth is free**: inherited methods at any depth resolve in the same number of cycles as direct methods. No superclass chain walk at dispatch time.
+- **Table cost:** `CLASS_TABLE_SIZE * SEL_COUNT * sizeof(IMP)` bytes BSS, bounded by `CONFIG_OBJZ_FLAT_DISPATCH_MAX_BYTES` (default 8192).
 - **ARC retain vs message dispatch**: `objc_retain` (58 cycles) vs `[obj retain]` (240 cycles cached) — ARC entry points bypass message dispatch entirely.
 - **Static pools are ~41% faster** than heap allocation (`sys_heap` with spinlock).
 - **Block invocation matches C function pointers** at 20 cycles (vs 10 for a raw `call`). The overhead comes from `_Block_copy` (stack-to-heap promotion): 414 cycles per copy, but retaining an already-heap block is only 48 cycles. Each heap block costs 32 B (56 B with `__block` variables due to the `Block_byref` structure).
@@ -375,7 +373,7 @@ west build -p -b mps2/an385 .
 | Kconfig | Description | Depends on |
 |---|---|---|
 | `CONFIG_OBJZ` | Enable Objective-C runtime (ARC always on) | — |
-| `CONFIG_OBJZ_DISPATCH_CACHE` | Per-class dispatch table cache | `OBJZ` |
+| `CONFIG_OBJZ_FLAT_DISPATCH` | Global flat dispatch table (O(1) lookup) | `OBJZ` |
 | `CONFIG_OBJZ_BLOCKS` | Blocks (closures) with `-fblocks` | `OBJZ` |
 | `CONFIG_OBJZ_COLLECTIONS` | Collection classes (OZArray, OZDictionary) | `OBJZ` |
 | `CONFIG_OBJZ_NUMBERS` | Number class (OZNumber) | `OBJZ` |

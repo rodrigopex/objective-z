@@ -2,20 +2,20 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 #
-# objz_gen_table_sizes.py - Generate runtime table_sizes.h and dtable_pool.c
+# objz_gen_table_sizes.py - Generate runtime table_sizes.h and dispatch_init.c
 #                           from tree-sitter analysis of Objective-C sources.
 #
 # Parses .m files directly (no Clang AST dumps needed) to count:
 #   - @implementation declarations  → class table size
 #   - @implementation Foo(Cat)      → category table size
 #   - @protocol declarations        → protocol table size
-#   - method definitions            → hash table + dispatch cache sizes
-#   - instance vs class methods     → per-class dtable sizing
+#   - method definitions            → hash table size
+#   - unique selector names         → flat dispatch table sizing
 #
 # Usage:
 #   python3 objz_gen_table_sizes.py --output=table_sizes.h file1.m file2.m ...
 #   python3 objz_gen_table_sizes.py --output=table_sizes.h \
-#       --dtable-output=dtable_pool.c file1.m file2.m ...
+#       --dispatch-init-output=dispatch_init.c file1.m file2.m ...
 
 import argparse
 import math
@@ -30,6 +30,8 @@ OBJC_LANGUAGE = Language(tsobjc.language())
 Q_IMPL = Query(OBJC_LANGUAGE, "(class_implementation) @impl")
 Q_PROTO = Query(OBJC_LANGUAGE, "(protocol_declaration) @proto")
 Q_METHOD = Query(OBJC_LANGUAGE, "(method_definition) @m")
+Q_IFACE = Query(OBJC_LANGUAGE, "(class_interface) @iface")
+Q_PROP = Query(OBJC_LANGUAGE, "(property_declaration) @prop")
 
 
 def parse_args():
@@ -38,8 +40,8 @@ def parse_args():
     p.add_argument("--pointer-size", type=int, default=4, choices=[4, 8])
     p.add_argument("--output", required=True,
                    help="Output path for generated table_sizes.h")
-    p.add_argument("--dtable-output", default=None,
-                   help="Output path for generated dtable_pool.c")
+    p.add_argument("--dispatch-init-output", default=None,
+                   help="Output path for generated dispatch_init.c")
     p.add_argument("--n-pools", type=int, default=0,
                    help="Number of static pools (from objz_gen_pools.py)")
     p.add_argument("sources", nargs="+",
@@ -54,11 +56,106 @@ def _is_class_method(method_node):
     return stripped.startswith("+")
 
 
+def _extract_selector_name(method_node):
+    """Extract the full selector name from a method_definition node.
+
+    tree-sitter-objc structure:
+      Unary:   method_definition -> ... method_type identifier compound_statement
+      Keyword: method_definition -> ... method_type identifier method_parameter
+                                                   identifier method_parameter ...
+
+    Unary selectors: single identifier after method_type (e.g. 'init').
+    Keyword selectors: interleaved identifier + method_parameter nodes.
+    Full selector = join(keyword + ':' for each identifier/method_parameter pair).
+    """
+    parts = []
+    saw_method_type = False
+    for child in method_node.children:
+        if child.type == "method_type":
+            saw_method_type = True
+            continue
+        if not saw_method_type:
+            continue
+        if child.type == "compound_statement":
+            break
+        if child.type == "identifier":
+            parts.append(child.text.decode())
+        elif child.type == "method_parameter":
+            if parts:
+                parts[-1] += ":"
+            else:
+                parts.append(":")
+    return "".join(parts) if parts else None
+
+
+def _extract_property_selectors(prop_node):
+    """Extract getter/setter selector names from a property_declaration.
+
+    Returns a list of selector names (getter, and setter if not readonly).
+    Property structure: @property (attrs) type name;
+    The name is inside a struct_declaration child.
+    """
+    is_readonly = False
+    custom_getter = None
+    custom_setter = None
+
+    # Check property attributes
+    for child in prop_node.children:
+        if child.type == "property_attributes_declaration":
+            text = child.text.decode()
+            if "readonly" in text:
+                is_readonly = True
+            # Parse custom getter=name or setter=name:
+            for part in text.strip("()").split(","):
+                part = part.strip()
+                if part.startswith("getter="):
+                    custom_getter = part[len("getter="):]
+                elif part.startswith("setter="):
+                    custom_setter = part[len("setter="):]
+
+    # Extract property name from struct_declaration
+    prop_name = None
+    for child in prop_node.children:
+        if child.type == "struct_declaration":
+            # Last identifier in the struct_declaration is the property name
+            for sc in reversed(child.children):
+                if sc.type == "identifier":
+                    prop_name = sc.text.decode()
+                    break
+                elif sc.type == "struct_declarator":
+                    for ssc in reversed(sc.children):
+                        if ssc.type == "identifier":
+                            prop_name = ssc.text.decode()
+                            break
+                    if prop_name:
+                        break
+            break
+
+    if not prop_name:
+        return []
+
+    selectors = []
+    # Getter
+    getter = custom_getter if custom_getter else prop_name
+    selectors.append(getter)
+
+    # Setter (unless readonly)
+    if not is_readonly:
+        if custom_setter:
+            setter = custom_setter
+        else:
+            setter = "set" + prop_name[0].upper() + prop_name[1:] + ":"
+        selectors.append(setter)
+
+    return selectors
+
+
 def count_metadata(source_paths):
     """Parse .m files with tree-sitter and count ObjC metadata.
 
     Returns dict with n_classes, n_categories, n_protocols,
-    n_methods, max_methods_per_class, per_class_methods.
+    n_methods, max_methods_per_class, per_class_methods,
+    selector_names.
     """
     parser = Parser(OBJC_LANGUAGE)
 
@@ -69,6 +166,7 @@ def count_metadata(source_paths):
     methods_per_class = defaultdict(int)
     instance_methods_per_class = defaultdict(int)
     class_methods_per_class = defaultdict(int)
+    selector_names = set()
 
     for path in source_paths:
         with open(path, "rb") as f:
@@ -96,13 +194,28 @@ def count_metadata(source_paths):
             # Count methods inside this implementation
             methods = QueryCursor(Q_METHOD).captures(impl_node).get("m", [])
             n_methods += len(methods)
-            if not is_cat:
-                methods_per_class[class_name] += len(methods)
-                for m in methods:
+
+            for m in methods:
+                sel_name = _extract_selector_name(m)
+                if sel_name:
+                    selector_names.add(sel_name)
+
+                if not is_cat:
                     if _is_class_method(m):
                         class_methods_per_class[class_name] += 1
                     else:
                         instance_methods_per_class[class_name] += 1
+
+            if not is_cat:
+                methods_per_class[class_name] += len(methods)
+
+        # Extract property declarations from @interface blocks
+        ifaces = QueryCursor(Q_IFACE).captures(root).get("iface", [])
+        for iface_node in ifaces:
+            props = QueryCursor(Q_PROP).captures(iface_node).get("prop", [])
+            for prop_node in props:
+                for sel in _extract_property_selectors(prop_node):
+                    selector_names.add(sel)
 
         # Count protocol declarations
         protos = QueryCursor(Q_PROTO).captures(root).get("proto", [])
@@ -123,6 +236,7 @@ def count_metadata(source_paths):
         "impl_names": impl_names,
         "instance_methods_per_class": dict(instance_methods_per_class),
         "class_methods_per_class": dict(class_methods_per_class),
+        "selector_names": selector_names,
     }
 
 
@@ -143,6 +257,7 @@ def compute_table_sizes(counts, n_pools):
     nprot = counts["n_protocols"]
     nm = counts["n_methods"]
     max_mpc = counts["max_methods_per_class"]
+    n_sels = len(counts["selector_names"])
 
     # Each class + metaclass = 2 entries, +4 margin
     class_ts = 2 * nc + 4 if nc > 0 else 8
@@ -159,28 +274,29 @@ def compute_table_sizes(counts, n_pools):
     hash_ts = max(raw_hash, 64)
     hash_f = f"max(ceil({nm}/0.6), 64)" if nm > 0 else "default(64)"
 
-    # Dispatch table max cap: power-of-2, clamp [8, 32]
-    dispatch_ts = _next_power_of_2(max_mpc)
-    dispatch_ts = max(8, min(dispatch_ts, 32))
-    dispatch_f = f"clamp(p2({max_mpc}), 8, 32)"
-
-    # Dispatch cache registry: cover all classes + margin
-    registry_ts = max(nc + 2, 4)
-    registry_f = f"max({nc} + 2, 4)"
-
     # Pool table: n_pools + margin
     pool_ts = max(n_pools + 2, 4)
     pool_f = f"max({n_pools} + 2, 4)"
 
-    return {
+    # Flat dispatch: selector enumeration
+    sel_bits = max(1, (n_sels - 1).bit_length()) if n_sels > 0 else 1
+    sel_count = 1 << sel_bits
+    flat_ts = class_ts * sel_count
+    sel_bits_f = f"ceil(log2({n_sels}))" if n_sels > 1 else "1"
+
+    sizes = {
         "CLASS_TABLE_SIZE": (class_ts, class_f),
         "CATEGORY_TABLE_SIZE": (category_ts, category_f),
         "PROTOCOL_TABLE_SIZE": (protocol_ts, protocol_f),
         "HASH_TABLE_SIZE": (hash_ts, hash_f),
-        "DISPATCH_TABLE_SIZE": (dispatch_ts, dispatch_f),
-        "DISPATCH_CACHE_REGISTRY_SIZE": (registry_ts, registry_f),
         "STATIC_POOL_TABLE_SIZE": (pool_ts, pool_f),
+        "NUM_SELECTORS": (n_sels, f"{n_sels} unique selectors"),
+        "SEL_BITS": (sel_bits, sel_bits_f),
+        "SEL_COUNT": (sel_count, f"1 << {sel_bits}"),
+        "FLAT_DISPATCH_TABLE_SIZE": (flat_ts, f"{class_ts} * {sel_count}"),
     }
+
+    return sizes
 
 
 def generate_header(sizes, output_path):
@@ -198,56 +314,26 @@ def generate_header(sizes, output_path):
         f.write("#endif /* OBJZ_TABLE_SIZES_H */\n")
 
 
-def compute_per_class_dtable_sizes(counts, max_cap):
-    """Compute per-class dtable sizes for instance and class methods.
-
-    Returns list of (class_name, cls_size, meta_size) tuples.
-    """
-    instance_mpc = counts["instance_methods_per_class"]
-    class_mpc = counts["class_methods_per_class"]
-    all_classes = counts["impl_names"]
-
-    result = []
-    for name in sorted(all_classes):
-        n_inst = instance_mpc.get(name, 0)
-        n_cls = class_mpc.get(name, 0)
-
-        cls_size = _next_power_of_2(n_inst) if n_inst > 0 else 8
-        cls_size = max(8, min(cls_size, max_cap))
-
-        meta_size = _next_power_of_2(n_cls) if n_cls > 0 else 8
-        meta_size = max(8, min(meta_size, max_cap))
-
-        result.append((name, cls_size, meta_size))
-    return result
-
-
-def generate_dtable_pool(counts, max_cap, output_path):
-    """Write generated dtable_pool.c with OZ_DEFINE_DTABLE calls."""
-    entries = compute_per_class_dtable_sizes(counts, max_cap)
+def generate_dispatch_init(counts, output_path):
+    """Write generated dispatch_init.c with selector init table."""
+    selectors = sorted(counts["selector_names"])
 
     with open(output_path, "w") as f:
         f.write("/* Auto-generated by objz_gen_table_sizes.py — do not edit */\n")
-        f.write("#include <objc/dtable.h>\n\n")
-        for name, cls_size, meta_size in entries:
-            f.write(f"OZ_DEFINE_DTABLE({name}, {cls_size}, {meta_size});\n")
+        f.write("#include <objc/dispatch.h>\n\n")
+        f.write("const struct objz_sel_init_entry __objz_sel_init_table[] = {\n")
+        for i, sel in enumerate(selectors):
+            f.write(f'\t{{"{sel}", {i}}},\n')
+        f.write("};\n\n")
+        f.write(f"const uint16_t __objz_sel_init_count = {len(selectors)};\n")
 
-    # Print per-class sizing table to stderr
+    # Print selector table to stderr
     p = lambda *a, **kw: print(*a, file=sys.stderr, **kw)
-    p(f"objz_gen_table_sizes: per-class dtable sizing ({len(entries)} classes)")
-
-    if entries:
-        name_w = max(len(e[0]) for e in entries)
-        p(f"  {'CLASS':<{name_w}}  {'INST':>4}  {'META':>4}  INST_BSS  META_BSS")
-        p(f"  {'-' * (name_w + 30)}")
-        total_bss = 0
-        for name, cls_size, meta_size in entries:
-            inst_bss = cls_size * 8  # sizeof(objc_dtable_entry) on ARM32
-            meta_bss = meta_size * 8
-            total_bss += inst_bss + meta_bss
-            p(f"  {name:<{name_w}}  {cls_size:>4}  {meta_size:>4}  "
-              f"{inst_bss:>6} B  {meta_bss:>6} B")
-        p(f"  {'TOTAL':<{name_w}}  {'':>4}  {'':>4}  {total_bss:>6} B (+ mask overhead)")
+    p(f"objz_gen_table_sizes: flat dispatch ({len(selectors)} selectors)")
+    if selectors:
+        id_w = len(str(len(selectors) - 1))
+        for i, sel in enumerate(selectors):
+            p(f"  {i:>{id_w}}  {sel}")
 
 
 def _print_table(counts, sizes):
@@ -257,11 +343,13 @@ def _print_table(counts, sizes):
     nprot = counts["n_protocols"]
     nm = counts["n_methods"]
     max_mpc = counts["max_methods_per_class"]
+    n_sels = len(counts["selector_names"])
 
     p = lambda *a, **kw: print(*a, file=sys.stderr, **kw)
 
     p(f"objz_gen_table_sizes: {nc} classes, {ncat} categories, "
-      f"{nprot} protocols, {nm} methods (max {max_mpc}/class)")
+      f"{nprot} protocols, {nm} methods (max {max_mpc}/class), "
+      f"{n_sels} unique selectors")
 
     name_w = max(len(n) for n in sizes)
     val_w = max(len(str(v)) for v, _f in sizes.values())
@@ -280,10 +368,8 @@ def main():
     generate_header(sizes, args.output)
     _print_table(counts, sizes)
 
-    if args.dtable_output:
-        # Use DISPATCH_TABLE_SIZE as max cap
-        max_cap = sizes["DISPATCH_TABLE_SIZE"][0]
-        generate_dtable_pool(counts, max_cap, args.dtable_output)
+    if args.dispatch_init_output:
+        generate_dispatch_init(counts, args.dispatch_init_output)
 
 
 if __name__ == "__main__":

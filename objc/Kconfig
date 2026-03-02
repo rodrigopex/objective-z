@@ -122,35 +122,22 @@ config OBJZ_HASH_TABLE_SIZE
       for collision resolution.
       0 = auto-computed from AST analysis.
 
-config OBJZ_DISPATCH_CACHE
-    bool "Per-class dispatch table cache"
+config OBJZ_FLAT_DISPATCH
+    bool "Global flat dispatch table"
     default y
     help
-      Enable per-class method dispatch caching. On first message
-      send the resolved IMP is cached in the receiver class dtable
-      for O(1) subsequent lookups using pointer hashing. Static
-      pool in BSS serves the first N classes; overflow falls back
-      to the sys_heap allocator.
+      Enable a single global flat dispatch table for O(1) method
+      lookup via (class_id << SEL_BITS) | sel_id. Inheritance is
+      flattened at init time (parent rows copied to children).
+      Deterministic timing, no superclass chain walk.
 
-config OBJZ_DISPATCH_TABLE_SIZE
-    int "Maximum per-class dispatch cache entries (upper clamp)"
-    depends on OBJZ_DISPATCH_CACHE
-    default 0
+config OBJZ_FLAT_DISPATCH_MAX_BYTES
+    int "Maximum flat dispatch table size in bytes"
+    depends on OBJZ_FLAT_DISPATCH
+    default 8192
     help
-      Maximum per-class dispatch cache entries. Individual classes
-      are sized to their method count (power of 2, minimum 8) and
-      clamped to this value. Must be a power of 2.
-      0 = auto (32).
-
-config OBJZ_DISPATCH_CACHE_REGISTRY_SIZE
-    int "Dispatch table registry size"
-    depends on OBJZ_DISPATCH_CACHE
-    default 0
-    help
-      Maximum number of OZ_DEFINE_DTABLE registrations. Each entry
-      maps a class name to its pre-allocated instance and metaclass
-      dispatch tables.
-      0 = auto-computed from source analysis.
+      Upper bound for the flat dispatch table BSS allocation.
+      Build fails if the auto-computed table exceeds this limit.
 
 module = OBJZ
 module-str = objz

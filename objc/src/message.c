@@ -1,7 +1,7 @@
 #include "api.h"
 #include "category.h"
 #include "class.h"
-#include "dtable.h"
+#include "dispatch.h"
 #include "hash.h"
 #include <objc/objc.h>
 #include <zephyr/kernel.h>
@@ -24,15 +24,10 @@ static IMP __objc_msg_lookup(objc_class_t *cls, SEL selector)
 	       cls->name, sel_getName(selector));
 #endif
 
-#ifdef CONFIG_OBJZ_DISPATCH_CACHE
-	/* Fast path: check receiver's dispatch table cache */
-	IMP cached = __objc_dtable_lookup(cls, selector->name);
-	if (cached != NULL) {
-		return cached;
-	}
-	objc_class_t *origin_cls = cls;
-#endif
-
+#ifdef CONFIG_OBJZ_FLAT_DISPATCH
+	/* O(1) flat dispatch: (class_id << SEL_BITS) | sel_id */
+	return __objc_dispatch_lookup(cls, selector->name);
+#else
 	/* Slow path: descend through the classes looking for the method */
 	while (cls != Nil) {
 #ifdef OBJCDEBUG
@@ -42,16 +37,13 @@ static IMP __objc_msg_lookup(objc_class_t *cls, SEL selector)
 		struct objc_hashitem *item =
 			__objc_hash_lookup(cls, selector->name, selector->types);
 		if (item != NULL) {
-#ifdef CONFIG_OBJZ_DISPATCH_CACHE
-			/* Cache at receiver's class level */
-			__objc_dtable_insert(origin_cls, item->method, item->imp);
-#endif
 			return item->imp;
 		}
 		cls = cls->superclass;
 	}
 
 	return NULL;
+#endif
 }
 
 /**
@@ -104,11 +96,14 @@ IMP objc_msg_lookup(id receiver, SEL selector)
 		return (IMP)__objc_nil_method;
 	}
 
-	/* Load categories on first message send */
+	/* One-shot init on first message send */
 	static BOOL init = NO;
 	if (init == NO) {
 		init = YES;
 		__objc_category_load();
+#ifdef CONFIG_OBJZ_FLAT_DISPATCH
+		__objc_dispatch_table_fill();
+#endif
 	}
 
 	objc_class_t *cls = receiver->isa;

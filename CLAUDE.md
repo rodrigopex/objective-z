@@ -38,12 +38,12 @@ Each sample registers the runtime via `ZEPHYR_EXTRA_MODULES` in its CMakeLists.t
 - **`include/objc/runtime.h`** — Runtime types (`id`, `SEL`, `Class`, `IMP`, `BOOL`), introspection functions
 - **`src/api.h`** — ABI structures (`objc_class`, `objc_method`, `objc_selector`, `objc_init`), gnustep-2.0 types, `objc_class_flag_immortal` for statically-emitted objects
 - **`src/load.c`** — Entry point: `__objc_load()` called via `.init_array` static constructor. Registers classes, categories, protocols, and fixes constant string isa pointers from gnustep-2.0 metadata sections.
-- **`src/message.c`** — Core dispatch: `objc_msg_lookup()` / `objc_msg_lookup_super()`, lazy class resolution, sends `+initialize` on first use. Checks per-class dtable cache before global hash table.
-- **`src/dtable.c`** — Per-class dispatch table cache (`CONFIG_OBJZ_DISPATCH_CACHE`). Per-class sized dtables via `OZ_DEFINE_DTABLE` registry (static BSS), heap fallback for unregistered classes. Pointer-hash lookup with `strcmp` fallback.
-- **`include/objc/dtable.h`** — `OZ_DEFINE_DTABLE(ClassName, cls_size, meta_size)` macro and `struct objc_dtable` type. Must be in a `.c` file (not `.m`).
+- **`src/message.c`** — Core dispatch: `objc_msg_lookup()` / `objc_msg_lookup_super()`, lazy class resolution, sends `+initialize` on first use. Uses flat dispatch table for O(1) lookup.
+- **`src/dispatch.c`** — Global flat dispatch table (`CONFIG_OBJZ_FLAT_DISPATCH`). Single 1D BSS table indexed by `(class_id << SEL_BITS) | sel_id`. Inheritance flattened at init: parent rows copied to children. Sel_name→sel_id hash table (pointer hash + strcmp fallback). Class ID stored in repurposed `cls->dtable` field.
+- **`include/objc/dispatch.h`** — `struct objz_sel_init_entry` type for generated `dispatch_init.c`.
 - **`src/class.c`** — Class table (auto-sized), lazy resolution of superclasses, gnustep-2.0 non-fragile ivar offset fixup (skips immortal classes)
-- **`src/hash.c`** — Global method hash table (auto-sized, open addressing). Slow path for cache misses.
-- **`src/category.c`** — Category table (auto-sized), deferred loading until class is resolved. Flushes dispatch caches after loading.
+- **`src/hash.c`** — Global method hash table (auto-sized, open addressing). Used during init to populate flat dispatch table.
+- **`src/category.c`** — Category table (auto-sized), deferred loading until class is resolved.
 - **`src/malloc.c`** — Dedicated `sys_heap` (default 4096 bytes via `CONFIG_OBJZ_MEM_POOL_SIZE`) with spinlock
 - **`src/refcount.c`** — Atomic refcount core (pure C, Zephyr `atomic_inc/dec/get/set`). Guards immortal classes (OZString, Protocol).
 
@@ -77,12 +77,12 @@ Each sample registers the runtime via `ZEPHYR_EXTRA_MODULES` in its CMakeLists.t
 - **`src/pool.c`** — Pool registry: maps class names to `K_MEM_SLAB` instances. `__objc_pool_get_slab()` API for runtime queries.
 - **`include/objc/pool.h`** — `OZ_DEFINE_POOL(ClassName, block_size, count, align)` macro. Must be in a `.c` file (not `.m`).
 - **`scripts/objz_gen_pools.py`** — Auto-generates pool definitions from Clang AST analysis. All pools are auto-generated; no manual `pools.c` files needed.
-- **`scripts/objz_gen_table_sizes.py`** — Auto-computes runtime table sizes via tree-sitter source analysis. Generates `table_sizes.h` and `dtable_pool.c` (per-class dispatch table sizing). No Clang AST dumps needed.
+- **`scripts/objz_gen_table_sizes.py`** — Auto-computes runtime table sizes and selector enumeration via tree-sitter source analysis. Generates `table_sizes.h` and `dispatch_init.c` (selector→ID mapping for flat dispatch). No Clang AST dumps needed.
 - **`scripts/requirements.txt`** — Python deps: `tree-sitter`, `tree-sitter-objc`.
 
 ### Init Order
 
-`SYS_INIT(objz_init, APPLICATION, 99)` initializes the heap. Per-class dtables register at priority 97 via `OZ_DEFINE_DTABLE`. Static pools register at priority 98. `STATIC_INIT_GNU` runs static constructors (`.init_array`) which trigger `__objc_load()` for gnustep-2.0 metadata registration.
+`SYS_INIT(objz_init, APPLICATION, 99)` initializes the heap. Static pools register at priority 98. `STATIC_INIT_GNU` runs static constructors (`.init_array`) which trigger `__objc_load()` for gnustep-2.0 metadata registration. On first message send, categories are loaded and the flat dispatch table is built (resolving all classes, assigning class IDs, and flattening inheritance).
 
 ### Static Table Sizes
 

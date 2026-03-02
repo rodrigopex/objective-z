@@ -173,15 +173,11 @@ Class bench_get_class(id obj)
 
 /*
  * Flush the dispatch cache for the given object's class.
- * Used to measure cold-cache dispatch overhead.
+ * With flat dispatch, the table is immutable after init — no-op.
  */
 void bench_flush_cache(id obj)
 {
 	(void)obj;
-#ifdef CONFIG_OBJZ_DISPATCH_CACHE
-	extern void __objc_dtable_flush(struct objc_class *cls);
-	__objc_dtable_flush((__bridge struct objc_class *)object_getClass(obj));
-#endif
 }
 
 /* ── Blocks benchmark helpers ─────────────────────────────────────── */

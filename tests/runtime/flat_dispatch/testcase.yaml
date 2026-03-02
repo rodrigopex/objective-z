@@ -1,5 +1,5 @@
 tests:
-  test.objz.dispatch_cache:
+  test.objz.flat_dispatch:
     tags:
       - objz
     integration_platforms:
