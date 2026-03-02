@@ -49,6 +49,37 @@ static Sensor *createSensor(int v)
 	return s;
 }
 
+/* Singleton via +initialize — called once on first class message */
+@interface AppConfig: Object {
+	int _refreshRate;
+}
++ (instancetype)shared;
+- (int)refreshRate;
+@end
+
+static AppConfig *_sharedConfig;
+
+@implementation AppConfig
++ (void)initialize
+{
+	_sharedConfig = [[self alloc] init];
+}
++ (instancetype)shared
+{
+	return _sharedConfig;
+}
+- (id)init
+{
+	self = [super init];
+	_refreshRate = 60;
+	return self;
+}
+- (int)refreshRate
+{
+	return _refreshRate;
+}
+@end
+
 @interface Driver: Object {
 	Sensor *_sensor;
 }
@@ -73,6 +104,12 @@ static Sensor *createSensor(int v)
 int main(void)
 {
 	OZLog("=== ARC Memory Management Demo ===");
+
+	/* Singleton test: +initialize creates instance on first access */
+	AppConfig *c1 = [AppConfig shared];
+	AppConfig *c2 = [AppConfig shared];
+	OZLog("singleton refreshRate=%d same=%s", [c1 refreshRate],
+	      c1 == c2 ? "yes" : "no");
 
 	/* Scope test: ARC releases s when it goes out of scope */
 	{

@@ -11,6 +11,7 @@ common:
     ordered: true
     regex:
       - "=== ARC Memory Management Demo ==="
+      - "singleton refreshRate=60 same=yes"
       - "Sensor created, value=42"
       - "Sensor dealloc"
       - "@autoreleasepool test"

@@ -20,9 +20,9 @@
   - [x] `objc/include/objc/dtable.h`: `OZ_DEFINE_DTABLE(ClassName, cls_size, meta_size)` macro
   - [x] Registry-based lookup with heap fallback for unregistered classes
   - [x] `objz_gen_table_sizes.py` auto-generates `dtable_pool.c` per-class entries
-- [ ] Add singleton helper (`+shared` via dispatch_once)
-  - [ ] dispatch_once implementation
-  - [ ] Macro or pattern for declaring shared instances
+- [x] Add singleton helper (`+shared` via `+initialize`)
+  - [x] `+initialize` pattern (called once on first class message, zero runtime code)
+  - [x] Demo in `samples/arc_demo` with `AppConfig` singleton
 
 ## v0.3.0 — Singleton & Advanced Patterns
 
