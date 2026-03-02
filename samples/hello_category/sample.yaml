@@ -5,6 +5,7 @@ common:
   tags: objz
   integration_platforms:
     - mps2/an385
+    - qemu_riscv32
   harness: console
   harness_config:
     type: one_line

@@ -2,5 +2,8 @@ tests:
   test.objz.arc_intensive:
     tags:
       - objz
+    # RVO subtestsuite requires ARM Thumb-2 mov r7,r7 marker
+    platform_allow:
+      - mps2/an385
     integration_platforms:
       - mps2/an385

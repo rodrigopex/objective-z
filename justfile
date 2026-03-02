@@ -7,6 +7,7 @@ alias t := test
 
 project_dir := "samples/hello_world"
 board := "mps2/an385"
+riscv_board := "qemu_riscv32"
 flags := ""
 tty := "/dev/tty.usbmodem0006850372581"
 
@@ -30,6 +31,12 @@ monitor:
 
 test:
     west twister -T samples/ -T tests/ -p {{ board }} -O /tmp/twister-out
+
+test-riscv:
+    west twister -T samples/ -T tests/ -p {{ riscv_board }} -O /tmp/twister-out
+
+test-all:
+    west twister -T samples/ -T tests/ -p {{ board }} -p {{ riscv_board }} -O /tmp/twister-out
 
 bench:
     west build -p -b {{ board }} benchmarks/objc && west build -t run

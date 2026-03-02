@@ -142,6 +142,49 @@ IMP objc_msg_lookup(id receiver, SEL selector)
 	return imp;
 }
 
+/*
+ * gnustep-2.0 method slot.
+ *
+ * On architectures without a native objc_msgSend trampoline (e.g. RISC-V),
+ * Clang's codegen uses objc_msg_lookup_sender which returns a slot pointer.
+ * The compiler loads the IMP from slot->method (offset 16 on 32-bit).
+ */
+struct objc_slot {
+	void *owner;
+	void *cachedFor;
+	const char *types;
+	unsigned int version;
+	IMP method;
+};
+
+static struct objc_slot __objc_nil_slot = {
+	.method = (IMP)__objc_nil_method,
+};
+
+static __thread struct objc_slot __objc_msg_slot;
+
+/**
+ * Sender-aware message dispatch function.
+ *
+ * On architectures without a native objc_msgSend trampoline (e.g. RISC-V),
+ * Clang's gnustep-2.0 codegen calls this instead of objc_msgSend.
+ * Returns a slot whose .method field contains the IMP.
+ *
+ * @param receiver Pointer to the receiver (not the receiver itself).
+ * @param selector The selector to look up.
+ * @param sender   The calling object (unused in this runtime).
+ * @return Slot containing the IMP, or the nil slot if receiver is nil.
+ */
+struct objc_slot *objc_msg_lookup_sender(id *receiver, SEL selector, id sender)
+{
+	(void)sender;
+	if (receiver == NULL || *receiver == nil) {
+		return &__objc_nil_slot;
+	}
+	__objc_msg_slot.method = objc_msg_lookup(*receiver, selector);
+	return &__objc_msg_slot;
+}
+
 /**
  * Message superclass dispatch function.
  */

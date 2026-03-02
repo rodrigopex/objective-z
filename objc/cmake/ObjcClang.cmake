@@ -20,6 +20,32 @@ function(objz_find_clang)
             "Set -DOBJZ_CLANG_PATH=/path/to/clang/bin or ensure clang is in PATH.")
     endif()
 
+    # Apple Clang lacks RISC-V backend. When targeting RISC-V, verify the
+    # found Clang supports the target; if not, try Homebrew LLVM as fallback.
+    if(CONFIG_RISCV)
+        _objz_get_clang_target_triple(_check_triple)
+        execute_process(
+            COMMAND ${OBJZ_CLANG_COMPILER} --target=${_check_triple} -x c -c /dev/null
+                    -o /dev/null
+            RESULT_VARIABLE _target_result
+            ERROR_QUIET OUTPUT_QUIET)
+        if(NOT _target_result EQUAL 0)
+            message(STATUS "Objective-Z: ${OBJZ_CLANG_COMPILER} lacks RISC-V backend, "
+                           "searching for LLVM Clang...")
+            unset(OBJZ_CLANG_COMPILER CACHE)
+            find_program(OBJZ_CLANG_COMPILER clang
+                PATHS /opt/homebrew/opt/llvm/bin
+                      /usr/local/opt/llvm/bin
+                NO_DEFAULT_PATH)
+            if(NOT OBJZ_CLANG_COMPILER)
+                message(FATAL_ERROR
+                    "CONFIG_OBJZ on RISC-V requires Clang with RISC-V backend.\n"
+                    "Install LLVM: brew install llvm\n"
+                    "Or set -DOBJZ_CLANG_PATH=/path/to/llvm/bin")
+            endif()
+        endif()
+    endif()
+
     execute_process(
         COMMAND ${OBJZ_CLANG_COMPILER} --version
         OUTPUT_VARIABLE _ver OUTPUT_STRIP_TRAILING_WHITESPACE)
@@ -53,6 +79,12 @@ function(_objz_get_clang_target_triple result)
     elseif(CONFIG_CPU_CORTEX_A53 OR CONFIG_CPU_CORTEX_A55
            OR CONFIG_CPU_CORTEX_A72 OR CONFIG_CPU_CORTEX_A76)
         set(_triple "aarch64-none-elf")
+    elseif(CONFIG_RISCV)
+        if(CONFIG_64BIT)
+            set(_triple "riscv64-unknown-elf")
+        else()
+            set(_triple "riscv32-unknown-elf")
+        endif()
     else()
         message(FATAL_ERROR
             "Objective-Z: Unsupported CPU for Clang compilation. "
@@ -80,7 +112,7 @@ function(_objz_build_clang_flags result_var)
         list(APPEND _flags -mthumb)
     endif()
 
-    # FPU
+    # FPU (ARM)
     if(CONFIG_FPU AND DEFINED GCC_M_FPU)
         list(APPEND _flags -mfpu=${GCC_M_FPU})
         if(CONFIG_FP_HARDABI)
@@ -90,6 +122,26 @@ function(_objz_build_clang_flags result_var)
         endif()
     elseif(NOT CONFIG_FPU AND "${ARCH}" STREQUAL "arm")
         list(APPEND _flags -mfpu=none -mfloat-abi=soft)
+    endif()
+
+    # RISC-V ISA and ABI
+    if(CONFIG_RISCV)
+        set(_rv_march "rv32i")
+        set(_rv_mabi "ilp32")
+        if(CONFIG_64BIT)
+            set(_rv_march "rv64i")
+            set(_rv_mabi "lp64")
+        endif()
+        if(CONFIG_RISCV_ISA_EXT_M)
+            string(APPEND _rv_march "m")
+        endif()
+        if(CONFIG_RISCV_ISA_EXT_A)
+            string(APPEND _rv_march "a")
+        endif()
+        if(CONFIG_RISCV_ISA_EXT_C)
+            string(APPEND _rv_march "c")
+        endif()
+        list(APPEND _flags -march=${_rv_march} -mabi=${_rv_mabi} -mno-relax)
     endif()
 
     # ObjC runtime: GNUstep 2.0 (section-based metadata, __objc_load entry point)
@@ -435,7 +487,7 @@ function(_objz_create_table_sizes_target)
     set(_all_m_files ${_foundation_files} ${_user_files})
 
     _objz_get_clang_target_triple(_triple)
-    if("${_triple}" MATCHES "aarch64")
+    if("${_triple}" MATCHES "aarch64|riscv64")
         set(_ptr_size 8)
     else()
         set(_ptr_size 4)
@@ -586,7 +638,7 @@ function(_objz_generate_pools_impl target use_arc)
     endforeach()
 
     _objz_get_clang_target_triple(_triple)
-    if("${_triple}" MATCHES "aarch64")
+    if("${_triple}" MATCHES "aarch64|riscv64")
         set(_ptr_size 8)
     else()
         set(_ptr_size 4)

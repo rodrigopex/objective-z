@@ -51,8 +51,12 @@ if(CONFIG_OBJZ)
         "${ZEPHYR_CURRENT_MODULE_DIR}/src/Foundation/Protocol.m"
     )
 
-    # gnustep-2.0 dispatch: objc_msgSend trampoline (ARM Thumb-2)
-    zephyr_library_sources("${ZEPHYR_CURRENT_MODULE_DIR}/src/arch/arm/objc_msgSend.S")
+    # gnustep-2.0 dispatch: objc_msgSend trampoline
+    if(CONFIG_ARM OR CONFIG_ARM64)
+        zephyr_library_sources("${ZEPHYR_CURRENT_MODULE_DIR}/src/arch/arm/objc_msgSend.S")
+    elseif(CONFIG_RISCV)
+        zephyr_library_sources("${ZEPHYR_CURRENT_MODULE_DIR}/src/arch/riscv/objc_msgSend.S")
+    endif()
 
     # Reference counting and autorelease pool
     zephyr_library_sources("${ZEPHYR_CURRENT_MODULE_DIR}/src/refcount.c")
@@ -120,10 +124,18 @@ if(CONFIG_OBJZ)
 
     # STATIC_INIT_GNU creates segments that newer binutils (>=2.39) flag as
     # having RWX permissions. Suppress the linker warning.
-    zephyr_link_libraries(-Wl,--no-warn-rwx-segments)
+    # The RISC-V SDK ld.bfd may be too old to support this flag.
+    execute_process(
+        COMMAND ${CMAKE_LINKER} --no-warn-rwx-segments --version
+        RESULT_VARIABLE _rwx_result ERROR_QUIET OUTPUT_QUIET)
+    if(_rwx_result EQUAL 0)
+        zephyr_link_libraries(-Wl,--no-warn-rwx-segments)
+    endif()
 
     # libgcc objects (unwind-arm.o, _arm_fixunsdfsi.o) trigger linker
     # warnings that --fatal-warnings (used by twister) turns into errors.
-    zephyr_link_libraries(-Wl,--no-warn-execstack)
+    if(CONFIG_ARM OR CONFIG_ARM64)
+        zephyr_link_libraries(-Wl,--no-warn-execstack)
+    endif()
     zephyr_link_libraries(-Wl,--orphan-handling=place)
 endif()

@@ -1,5 +1,6 @@
 config OBJZ
     bool "Objective-C support"
+    depends on CPU_CORTEX_M || CPU_CORTEX_A || (RISCV && !RISCV_ISA_RV32E)
     select STATIC_INIT_GNU
     select THREAD_LOCAL_STORAGE
     default n

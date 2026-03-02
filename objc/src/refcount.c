@@ -3,7 +3,7 @@
  * @brief Atomic reference counting core for Object.
  *
  * Pure C — no Objective-C syntax. Uses Zephyr atomic API for
- * thread-safe refcount operations on Cortex-M (LDREX/STREX).
+ * thread-safe refcount operations (LDREX/STREX on ARM, AMO on RISC-V).
  */
 #include "api.h"
 #include <zephyr/sys/atomic.h>

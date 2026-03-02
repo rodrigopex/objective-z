@@ -209,6 +209,7 @@ id objc_retainBlock(id block)
 
 /* ── Return-value optimisation ────────────────────────────────────── */
 
+#if defined(CONFIG_ARM) || defined(CONFIG_ARM64)
 /*
  * RV optimisation: when the caller of the returning function has
  * placed the marker "mov r7, r7" (0x463F) right before calling
@@ -247,11 +248,6 @@ id objc_autoreleaseReturnValue(id obj)
 	return objc_autorelease(obj);
 }
 
-id objc_retainAutoreleaseReturnValue(id obj)
-{
-	return objc_autorelease(objc_retain(obj));
-}
-
 id objc_retainAutoreleasedReturnValue(id obj)
 {
 	if (_rv_flag) {
@@ -259,6 +255,28 @@ id objc_retainAutoreleasedReturnValue(id obj)
 		return obj;
 	}
 	return objc_retain(obj);
+}
+
+#else /* !ARM: no RVO marker — always autorelease/retain */
+
+id objc_autoreleaseReturnValue(id obj)
+{
+	if (obj == nil) {
+		return nil;
+	}
+	return objc_autorelease(obj);
+}
+
+id objc_retainAutoreleasedReturnValue(id obj)
+{
+	return objc_retain(obj);
+}
+
+#endif /* CONFIG_ARM || CONFIG_ARM64 */
+
+id objc_retainAutoreleaseReturnValue(id obj)
+{
+	return objc_autorelease(objc_retain(obj));
 }
 
 /* ── Weak reference stubs ─────────────────────────────────────────── */

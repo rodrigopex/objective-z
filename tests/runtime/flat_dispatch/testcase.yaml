@@ -4,3 +4,4 @@ tests:
       - objz
     integration_platforms:
       - mps2/an385
+      - qemu_riscv32
