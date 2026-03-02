@@ -30,3 +30,9 @@ monitor:
 
 test:
     west twister -T samples/ -T tests/ -p {{ board }} -O /tmp/twister-out
+
+bench:
+    west build -p -b {{ board }} benchmarks/objc && west build -t run
+
+bench-cpp:
+    west build -p -b {{ board }} benchmarks/cpp && west build -t run

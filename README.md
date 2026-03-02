@@ -126,7 +126,6 @@ Exit QEMU with `Ctrl+A`, then `x`.
 | `generics_demo` | Lightweight generics with typed collections | `+OBJZ_BLOCKS +OBJZ_COLLECTIONS +OBJZ_NUMBERS +OBJZ_LITERALS` |
 | `zbus_objc` | ObjC objects with Zephyr zbus pub/sub messaging | `+ZBUS` |
 | `zbus_service` | Request-response service pattern over zbus | `+ZBUS` |
-| `benchmark` | Cycle-accurate runtime performance benchmarks | `+OBJZ_ARC +OBJZ_BLOCKS +OBJZ_STATIC_POOLS` |
 
 Build a specific sample:
 
@@ -161,11 +160,11 @@ int main(void) {
 
 ## Benchmark
 
-The `benchmark` sample measures key runtime operations with cycle-accurate timing using the DWT cycle counter. Results below are from QEMU (mps2/an385, ARM Cortex-M3, 25 MHz):
+Cycle-accurate benchmarks using the DWT cycle counter. Results from QEMU (mps2/an385, ARM Cortex-M3, 25 MHz):
 
 ```sh
-just project_dir=samples/benchmark rebuild
-just run
+just bench      # ObjC benchmark
+just bench-cpp  # C++ comparison benchmark
 ```
 
 ### Message Dispatch
@@ -292,6 +291,76 @@ Blocks runtime cost (`CONFIG_OBJZ_BLOCKS`, default `n`):
 - **OZLog vs printk**: OZLog is ~1.4x `printk` for simple strings thanks to zero-alloc `-cDescription:maxLength:`. `LOG_INF` in minimal mode adds ~26% over `printk` (prefix formatting).
 - **QEMU caveat**: these are instruction-accurate counts, not true cycle-accurate. Real hardware numbers will differ, but relative comparisons hold.
 
+### C++ Comparison
+
+Side-by-side C++ vs Objective-Z (same board, same iteration count, `just bench-cpp` vs `just bench`). All values in cycles.
+
+#### Dispatch
+
+| Operation | C++ | ObjC | Ratio |
+|---|---:|---:|---|
+| C function call (baseline) | 13 | 13 | 1.0x |
+| Static / class method | ~0 | 212 | C++ fully inlined |
+| Virtual / `objc_msgSend` (depth=0) | 16 | 205 | 12.8x |
+| Virtual / `objc_msgSend` (depth=1) | 16 | 205 | 12.8x |
+| Virtual / `objc_msgSend` (depth=2) | 16 | 205 | 12.8x |
+
+> C++ vtable dispatch is a single indirect call (16 cycles). ObjC flat dispatch does pointer-hash cache lookup + table index (205 cycles) — 12.8x slower but depth-independent (same cost at any inheritance depth). C++ static methods inline to zero; ObjC class methods go through full `objc_msgSend`.
+
+#### Object Lifecycle
+
+| Operation | C++ | ObjC | Ratio |
+|---|---:|---:|---|
+| Heap alloc/dealloc | 2,548 | 4,474 | 1.8x |
+| Static pool (slab) | 170 | 2,151 | 12.7x |
+| `unique_ptr` create/destroy | 2,612 | — | ~`new`/`delete` |
+
+> C++ `new`/`delete` is 1.8x faster than ObjC heap alloc/init/release (no message dispatch, no refcount init). Static pool gap is wider (12.7x) because ObjC still sends `init`/`release` messages through dispatch; C++ placement new + explicit dtor is pure memory ops. `unique_ptr` confirms zero-cost abstraction — within 2.5% of raw `new`/`delete`.
+
+#### Reference Counting
+
+| Operation | C++ | ObjC | Ratio |
+|---|---:|---:|---|
+| Atomic increment | 29 | 58 | 2.0x |
+| Atomic inc + dec pair | 52 | 135 | 2.6x |
+| `shared_ptr` copy / — | 2,740 | — | Heap-dominated |
+| — / retain (via dispatch) | — | 240 | Message dispatch |
+| — / `objc_storeStrong` | — | 221 | ARC strong store |
+
+> Raw `atomic_fetch_add` is 2x faster than `objc_retain` (which adds immortal-object guard + function call overhead). ObjC retain-via-dispatch (240 cycles) pays the full `objc_msgSend` cost. `shared_ptr` is expensive (2,740 cycles) because each copy touches the control block's heap allocation — not a fair comparison to ObjC intrusive refcounting.
+
+#### Introspection
+
+| Operation | C++ | ObjC | Ratio |
+|---|---:|---:|---|
+| `dynamic_cast` (hit) | 4 | 148 | 37.0x |
+| `dynamic_cast` (miss) | 4 | 461 | 115.3x |
+| `typeid` / `object_getClass` | 10 | 20 | 2.0x |
+
+> C++ RTTI is resolved via vtable pointer comparison (4 cycles). ObjC `respondsToSelector:` walks the method list / hash table — much slower, especially on miss (461 cycles). `object_getClass` (20 cycles) is a simple isa dereference, comparable to `typeid` (10 cycles).
+
+#### Closures
+
+| Operation | C++ | ObjC | Ratio |
+|---|---:|---:|---|
+| C function pointer | 13 | 10 | ~1.0x |
+| Lambda (no capture) / global block | 13 | 20 | 1.5x |
+| `std::function` / heap block invoke | 32 | 20 | 0.6x |
+| Copy + destroy | 167 | 3,060 | 18.3x |
+
+> Block invocation (20 cycles) beats `std::function` (32 cycles) because blocks use a direct function pointer in the block struct, while `std::function` has type-erasure indirection. However, `_Block_copy` + `_Block_release` (3,060 cycles) is 18x slower than `std::function` copy + destroy (167 cycles) due to heap allocation per copy.
+
+#### Closure Memory
+
+| Metric | C++ | ObjC |
+|---|---:|---:|
+| Function pointer | 4 B | 4 B |
+| Lambda / block pointer | 4 B | 4 B |
+| Lambda + int capture / block + int capture | 4 B | 24 B |
+| `std::function<int()>` / `Block_layout` | 16 B | 20 B |
+
+> C++ lambdas with captures are remarkably compact (4 B for an int capture on ARM32) because the compiler generates a unique type with no metadata. ObjC blocks carry a fixed `Block_layout` header (isa, flags, reserved, invoke, descriptor) at 20 B minimum, plus captures.
+
 ## Using in Your Project
 
 ### 1. Directory layout
@@ -403,6 +472,8 @@ Requires [just](https://github.com/casey/just). Default board: `mps2/an385`.
 | `just monitor` | Serial monitor (tio) |
 | `just clean` | Remove build directory |
 | `just test` | Run twister on all samples |
+| `just bench` | Run ObjC benchmark |
+| `just bench-cpp` | Run C++ comparison benchmark |
 
 Override defaults:
 

@@ -25,6 +25,8 @@ Default board: `mps2/an385`. Requires Zephyr SDK, west, and Clang (for ObjC file
 | `just monitor` / `just m` | Serial monitor via tio             |
 | `just clean` / `just c`   | Remove build dir                   |
 | `just test` / `just t`    | Run twister on all samples         |
+| `just bench`              | Run ObjC benchmark                 |
+| `just bench-cpp`          | Run C++ comparison benchmark       |
 
 Build a specific sample: `just project_dir=samples/arc_demo rebuild`
 
