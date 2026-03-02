@@ -36,3 +36,6 @@ bench:
 
 bench-cpp:
     west build -p -b {{ board }} benchmarks/cpp && west build -t run
+
+bench-rust:
+    west build -p -b {{ board }} benchmarks/rust && west build -t run

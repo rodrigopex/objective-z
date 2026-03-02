@@ -35,44 +35,54 @@ C++ virtual dispatch is ~12x faster than `objc_msgSend` (see [C++ Comparison](#c
 
 The target use case: teams that want a **high-level object model with automatic memory safety** on a microcontroller, and accept ~200 cycles per method call for that ergonomics.
 
+### Why not just Rust?
+
+Rust on Zephyr (`zephyr-lang-rust`) is faster than Objective-Z in every micro-benchmark (see [Rust Comparison](#rust-comparison)). Trait object dispatch is 9x faster, `Arc` is 2–3x faster, heap lifecycle is 1.8x faster. Rust also brings compile-time ownership/borrowing guarantees that neither ObjC nor C++ can match. So why Objective-Z?
+
+- **Incremental adoption from C** — ObjC is a strict superset of C. Existing C firmware can adopt Objective-Z one file at a time: rename `.c` to `.m`, add `#import <objc/objc.h>`, and start using objects where useful. Rust requires rewriting entire modules, a new build system integration, and a different mental model.
+- **Simpler object model** — One root class, `alloc`/`init`/ARC, categories, protocols. Rust's ownership model (`Box`, `Arc`, `Rc`, `RefCell`, `Pin`, lifetimes, `Send`/`Sync` bounds) is more powerful but has a steeper learning curve. ObjC's runtime model is closer to what embedded C developers already understand.
+- **Blocks with ARC-managed captures** — ObjC blocks automatically retain/release captured objects. In Rust, closures that share ownership require `Arc<Mutex<T>>` or channel-based patterns — more explicit, but also more boilerplate for common embedded patterns like callbacks with shared state.
+
+Rust is the better choice when you need compile-time memory safety guarantees, zero-cost abstractions, or `async`/`await`. Objective-Z is the better choice when you want a **familiar, minimal object system** that drops into an existing C/Zephyr codebase with no friction.
+
 ## How It Compares
 
 ### Runtime Features
 
-| Feature | Apple libobjc | GNUstep libobjc2 | ObjFW | mulle-objc | Objective-Z |
-|---|---|---|---|---|---|
-| Target | macOS/iOS | Linux/Windows | Portable desktop + consoles | Anywhere C runs | Zephyr RTOS (Cortex-M) |
-| Object allocation | Heap (`malloc_zone`) | Heap (`malloc`) | Heap (`malloc`) | Heap (`malloc`) | Static `K_MEM_SLAB` pools; heap fallback |
-| Dispatch tables | Heap, dynamic | Heap sparse array | Heap 2/3-level array | Heap hash | Global flat BSS table, O(1) lookup |
-| Runtime tables | Heap / VM | Heap | Heap | Heap | Static BSS, auto-computed via tree-sitter |
-| Build-time sizing | No | No | No | No | Yes (tree-sitter + Clang AST) |
-| Dynamic class creation | Yes | Yes | Yes | Limited | No |
-| Method swizzling | Yes | Yes | Yes | Discouraged | No |
-| KVO | Yes (isa-swizzling) | Yes | Minimal | No | No |
-| Weak references | Yes | Yes | Yes | No | No |
-| Associated objects | Yes | Yes | Yes | No | No |
-| Message forwarding | Yes | Yes | Yes (platform-dep.) | No | No |
-| ARC | Yes | Yes | Yes | AAM / optional | Yes (always on) |
-| Blocks | Yes | Yes | Yes | Partial | Yes (optional) |
-| RTOS integration | No | No | No | No | Yes (Zephyr-native) |
+| Feature                | Apple libobjc        | GNUstep libobjc2  | ObjFW                       | mulle-objc      | Objective-Z                               |
+| ---------------------- | -------------------- | ----------------- | --------------------------- | --------------- | ----------------------------------------- |
+| Target                 | macOS/iOS            | Linux/Windows     | Portable desktop + consoles | Anywhere C runs | Zephyr RTOS (Cortex-M)                    |
+| Object allocation      | Heap (`malloc_zone`) | Heap (`malloc`)   | Heap (`malloc`)             | Heap (`malloc`) | Static `K_MEM_SLAB` pools; heap fallback  |
+| Dispatch tables        | Heap, dynamic        | Heap sparse array | Heap 2/3-level array        | Heap hash       | Global flat BSS table, O(1) lookup        |
+| Runtime tables         | Heap / VM            | Heap              | Heap                        | Heap            | Static BSS, auto-computed via tree-sitter |
+| Build-time sizing      | No                   | No                | No                          | No              | Yes (tree-sitter + Clang AST)             |
+| Dynamic class creation | Yes                  | Yes               | Yes                         | Limited         | No                                        |
+| Method swizzling       | Yes                  | Yes               | Yes                         | Discouraged     | No                                        |
+| KVO                    | Yes (isa-swizzling)  | Yes               | Minimal                     | No              | No                                        |
+| Weak references        | Yes                  | Yes               | Yes                         | No              | No                                        |
+| Associated objects     | Yes                  | Yes               | Yes                         | No              | No                                        |
+| Message forwarding     | Yes                  | Yes               | Yes (platform-dep.)         | No              | No                                        |
+| ARC                    | Yes                  | Yes               | Yes                         | AAM / optional  | Yes (always on)                           |
+| Blocks                 | Yes                  | Yes               | Yes                         | Partial         | Yes (optional)                            |
+| RTOS integration       | No                   | No                | No                          | No              | Yes (Zephyr-native)                       |
 
 ### Foundation / Class Library
 
-| Class | Apple (NS\*) | GNUstep (NS\*) | ObjFW (OF\*) | mulle-objc | Objective-Z (OZ\*) |
-|---|---|---|---|---|---|
-| Root class | NSObject | NSObject | OFObject | MulleObject | Object |
-| String | NSString | NSString | OFString | MulleObjCString | OZString |
-| Mutable string | NSMutableString | NSMutableString | OFMutableString | Yes | OZMutableString |
-| Number | NSNumber | NSNumber | OFNumber | MulleObjCNumber | OZNumber |
-| Array | NSArray | NSArray | OFArray | MulleObjCArray | OZArray |
-| Dictionary | NSDictionary | NSDictionary | OFDictionary | MulleObjCDictionary | OZDictionary |
-| Autorelease pool | `@autoreleasepool` | `@autoreleasepool` | OFAutoreleasePool | MulleObjCAutoreleasePool | OZAutoreleasePool |
-| Logging | NSLog | NSLog | OFLog | — | OZLog |
-| Networking | NSURLSession | NSURLConnection | OFHTTPClient | — | — |
-| File I/O | NSFileManager | NSFileManager | OFFile | — | — |
-| Threading | NSThread | NSThread | OFThread | MulleThread | Zephyr `k_thread` |
-| KVC/KVO | Yes | Yes | Partial KVC | No | No |
-| Scope | Full framework | Full framework | Full framework | Medium framework | Minimal embedded core |
+| Class            | Apple (NS\*)       | GNUstep (NS\*)     | ObjFW (OF\*)      | mulle-objc               | Objective-Z (OZ\*)    |
+| ---------------- | ------------------ | ------------------ | ----------------- | ------------------------ | --------------------- |
+| Root class       | NSObject           | NSObject           | OFObject          | MulleObject              | Object                |
+| String           | NSString           | NSString           | OFString          | MulleObjCString          | OZString              |
+| Mutable string   | NSMutableString    | NSMutableString    | OFMutableString   | Yes                      | OZMutableString       |
+| Number           | NSNumber           | NSNumber           | OFNumber          | MulleObjCNumber          | OZNumber              |
+| Array            | NSArray            | NSArray            | OFArray           | MulleObjCArray           | OZArray               |
+| Dictionary       | NSDictionary       | NSDictionary       | OFDictionary      | MulleObjCDictionary      | OZDictionary          |
+| Autorelease pool | `@autoreleasepool` | `@autoreleasepool` | OFAutoreleasePool | MulleObjCAutoreleasePool | OZAutoreleasePool     |
+| Logging          | NSLog              | NSLog              | OFLog             | —                        | OZLog                 |
+| Networking       | NSURLSession       | NSURLConnection    | OFHTTPClient      | —                        | —                     |
+| File I/O         | NSFileManager      | NSFileManager      | OFFile            | —                        | —                     |
+| Threading        | NSThread           | NSThread           | OFThread          | MulleThread              | Zephyr `k_thread`     |
+| KVC/KVO          | Yes                | Yes                | Partial KVC       | No                       | No                    |
+| Scope            | Full framework     | Full framework     | Full framework    | Medium framework         | Minimal embedded core |
 
 ## Features
 
@@ -127,18 +137,18 @@ Exit QEMU with `Ctrl+A`, then `x`.
 
 ## Samples
 
-| Sample | Description | Kconfig |
-|---|---|---|
-| `hello_world` | Basic class/instance method dispatch | `CONFIG_OBJZ=y` |
-| `hello_category` | Categories (method extensions on existing classes) | `CONFIG_OBJZ=y` |
-| `mem_demo` | ARC lifecycle: scope-based cleanup, autorelease pools | `CONFIG_OBJZ=y` |
-| `arc_demo` | Automatic Reference Counting, scoped cleanup | `+OBJZ_ARC` |
-| `pool_demo` | Static allocation pools with `K_MEM_SLAB` | `+OBJZ_STATIC_POOLS` |
-| `literals_demo` | Boxed literals and collection literals (`@42`, `@[...]`, `@{...}`) | `+OBJZ_COLLECTIONS +OBJZ_NUMBERS +OBJZ_LITERALS` |
-| `blocks_demo` | Blocks, `__block` variables, fast enumeration, `enumerateObjectsUsingBlock:` | `+OBJZ_BLOCKS +OBJZ_COLLECTIONS +OBJZ_NUMBERS +OBJZ_LITERALS` |
-| `generics_demo` | Lightweight generics with typed collections | `+OBJZ_BLOCKS +OBJZ_COLLECTIONS +OBJZ_NUMBERS +OBJZ_LITERALS` |
-| `zbus_objc` | ObjC objects with Zephyr zbus pub/sub messaging | `+ZBUS` |
-| `zbus_service` | Request-response service pattern over zbus | `+ZBUS` |
+| Sample           | Description                                                                  | Kconfig                                                       |
+| ---------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| `hello_world`    | Basic class/instance method dispatch                                         | `CONFIG_OBJZ=y`                                               |
+| `hello_category` | Categories (method extensions on existing classes)                           | `CONFIG_OBJZ=y`                                               |
+| `mem_demo`       | ARC lifecycle: scope-based cleanup, autorelease pools                        | `CONFIG_OBJZ=y`                                               |
+| `arc_demo`       | Automatic Reference Counting, scoped cleanup                                 | `+OBJZ_ARC`                                                   |
+| `pool_demo`      | Static allocation pools with `K_MEM_SLAB`                                    | `+OBJZ_STATIC_POOLS`                                          |
+| `literals_demo`  | Boxed literals and collection literals (`@42`, `@[...]`, `@{...}`)           | `+OBJZ_COLLECTIONS +OBJZ_NUMBERS +OBJZ_LITERALS`              |
+| `blocks_demo`    | Blocks, `__block` variables, fast enumeration, `enumerateObjectsUsingBlock:` | `+OBJZ_BLOCKS +OBJZ_COLLECTIONS +OBJZ_NUMBERS +OBJZ_LITERALS` |
+| `generics_demo`  | Lightweight generics with typed collections                                  | `+OBJZ_BLOCKS +OBJZ_COLLECTIONS +OBJZ_NUMBERS +OBJZ_LITERALS` |
+| `zbus_objc`      | ObjC objects with Zephyr zbus pub/sub messaging                              | `+ZBUS`                                                       |
+| `zbus_service`   | Request-response service pattern over zbus                                   | `+ZBUS`                                                       |
 
 Build a specific sample:
 
@@ -166,7 +176,6 @@ int main(void) {
     [MyFirstObject greet];
     MyFirstObject *hello = [[MyFirstObject alloc] init];
     [hello greet];
-    [hello dealloc];
     return 0;
 }
 ```
@@ -176,123 +185,124 @@ int main(void) {
 Cycle-accurate benchmarks using the DWT cycle counter. Results from QEMU (mps2/an385, ARM Cortex-M3, 25 MHz):
 
 ```sh
-just bench      # ObjC benchmark
-just bench-cpp  # C++ comparison benchmark
+just bench       # ObjC benchmark
+just bench-cpp   # C++ comparison benchmark
+just bench-rust  # Rust comparison benchmark
 ```
 
 ### Message Dispatch
 
 With flat dispatch table (`CONFIG_OBJZ_FLAT_DISPATCH=y`, default):
 
-| Operation | Cycles | ns |
-|---|---:|---:|
-| C function call (baseline, cached IMP) | 13 | 520 |
-| `objc_msgSend` (instance method) | 205 | 8,200 |
-| `objc_msgSend` (class method) | 212 | 8,480 |
-| `objc_msgSend` (inherited depth=1) | 205 | 8,200 |
-| `objc_msgSend` (inherited depth=2) | 205 | 8,200 |
+| Operation                              | Cycles |    ns |
+| -------------------------------------- | -----: | ----: |
+| C function call (baseline, cached IMP) |     13 |   520 |
+| `objc_msgSend` (instance method)       |    205 | 8,200 |
+| `objc_msgSend` (class method)          |    212 | 8,480 |
+| `objc_msgSend` (inherited depth=1)     |    205 | 8,200 |
+| `objc_msgSend` (inherited depth=2)     |    205 | 8,200 |
 
 > **Key result:** Inherited methods at any depth resolve in the same number of cycles (205) as direct methods — inheritance depth is free with flat dispatch.
 
 Without flat dispatch (`CONFIG_OBJZ_FLAT_DISPATCH=n`):
 
-| Operation | Cycles | ns |
-|---|---:|---:|
-| C function call (baseline, cached IMP) | 13 | 520 |
-| `objc_msgSend` (instance method) | 560 | 22,400 |
-| `objc_msgSend` (class method) | 743 | 29,720 |
-| `objc_msgSend` (inherited depth=1) | 887 | 35,480 |
-| `objc_msgSend` (inherited depth=2) | 1,328 | 53,120 |
+| Operation                              | Cycles |     ns |
+| -------------------------------------- | -----: | -----: |
+| C function call (baseline, cached IMP) |     13 |    520 |
+| `objc_msgSend` (instance method)       |    560 | 22,400 |
+| `objc_msgSend` (class method)          |    743 | 29,720 |
+| `objc_msgSend` (inherited depth=1)     |    887 | 35,480 |
+| `objc_msgSend` (inherited depth=2)     |  1,328 | 53,120 |
 
 ### Object Lifecycle
 
-| Operation | Cycles | ns |
-|---|---:|---:|
-| alloc/init/release (heap) | 4,474 | 178,960 |
-| alloc/init/release (static pool) | 2,151 | 86,040 |
+| Operation                        | Cycles |      ns |
+| -------------------------------- | -----: | ------: |
+| alloc/init/release (heap)        |  4,474 | 178,960 |
+| alloc/init/release (static pool) |  2,151 |  86,040 |
 
 ### Reference Counting
 
-| Operation | Cycles | ns |
-|---|---:|---:|
-| retain (via dispatch) | 240 | 9,600 |
-| retain + release pair | 320 | 12,800 |
-| `objc_retain` (ARC, direct C call) | 58 | 2,320 |
-| `objc_release` (ARC) | 135 | 5,400 |
-| `objc_storeStrong` (ARC) | 221 | 8,840 |
+| Operation                          | Cycles |     ns |
+| ---------------------------------- | -----: | -----: |
+| retain (via dispatch)              |    240 |  9,600 |
+| retain + release pair              |    320 | 12,800 |
+| `objc_retain` (ARC, direct C call) |     58 |  2,320 |
+| `objc_release` (ARC)               |    135 |  5,400 |
+| `objc_storeStrong` (ARC)           |    221 |  8,840 |
 
 ### Introspection
 
-| Operation | Cycles | ns |
-|---|---:|---:|
-| `class_respondsToSelector` (YES) | 148 | 5,920 |
-| `class_respondsToSelector` (NO) | 461 | 18,440 |
-| `object_getClass` | 20 | 800 |
+| Operation                        | Cycles |     ns |
+| -------------------------------- | -----: | -----: |
+| `class_respondsToSelector` (YES) |    148 |  5,920 |
+| `class_respondsToSelector` (NO)  |    461 | 18,440 |
+| `object_getClass`                |     20 |    800 |
 
 ### Blocks
 
-| Operation | Cycles | ns |
-|---|---:|---:|
-| C function pointer call (baseline) | 10 | 400 |
-| Global block invocation | 20 | 800 |
-| Heap block invocation (int capture) | 20 | 800 |
-| `_Block_copy` + `_Block_release` (int capture) | 3,060 | 122,400 |
-| `_Block_copy` (retain heap block) | 154 | 6,160 |
+| Operation                                      | Cycles |      ns |
+| ---------------------------------------------- | -----: | ------: |
+| C function pointer call (baseline)             |     10 |     400 |
+| Global block invocation                        |     20 |     800 |
+| Heap block invocation (int capture)            |     20 |     800 |
+| `_Block_copy` + `_Block_release` (int capture) |  3,060 | 122,400 |
+| `_Block_copy` (retain heap block)              |    154 |   6,160 |
 
 ### Block Memory
 
-| Metric | Size |
-|---|---:|
-| C function pointer | 4 B |
-| Block pointer (reference) | 4 B |
-| `struct Block_layout` | 20 B |
-| Block + int capture (descriptor size) | 24 B |
+| Metric                                        | Size |
+| --------------------------------------------- | ---: |
+| C function pointer                            |  4 B |
+| Block pointer (reference)                     |  4 B |
+| `struct Block_layout`                         | 20 B |
+| Block + int capture (descriptor size)         | 24 B |
 | Block + ObjC object capture (descriptor size) | 24 B |
-| Block + `__block` int (descriptor size) | 24 B |
-| Heap cost: `_Block_copy` (int capture) | 32 B |
-| Heap cost: `_Block_copy` (obj capture) | 32 B |
-| Heap cost: `_Block_copy` (`__block` int) | 56 B |
+| Block + `__block` int (descriptor size)       | 24 B |
+| Heap cost: `_Block_copy` (int capture)        | 32 B |
+| Heap cost: `_Block_copy` (obj capture)        | 32 B |
+| Heap cost: `_Block_copy` (`__block` int)      | 56 B |
 
 ### Logging
 
 Comparison of `printk`, Zephyr `LOG_INF` (minimal mode), and `OZLog` (50 iterations).
 `OZLog` uses `-cDescription:maxLength:` for zero-alloc `%@` formatting (no autorelease pool or heap strings):
 
-| Operation | Cycles | ns |
-|---|---:|---:|
-| `printk` (simple string) | 2,301 | 92,040 |
-| `LOG_INF` (simple string) | 2,903 | 116,120 |
-| `OZLog` (simple string) | 3,280 | 131,200 |
-| `printk` (integer format) | 2,196 | 87,840 |
-| `LOG_INF` (integer format) | 2,797 | 111,880 |
-| `OZLog` (integer format) | 3,883 | 155,320 |
-| `printk` (string format) | 2,039 | 81,560 |
-| `LOG_INF` (string format) | 2,640 | 105,600 |
-| `OZLog` (string format) | 3,892 | 155,680 |
-| `OZLog` (`%@` object format) | 8,480 | 339,200 |
+| Operation                    | Cycles |      ns |
+| ---------------------------- | -----: | ------: |
+| `printk` (simple string)     |  2,301 |  92,040 |
+| `LOG_INF` (simple string)    |  2,903 | 116,120 |
+| `OZLog` (simple string)      |  3,280 | 131,200 |
+| `printk` (integer format)    |  2,196 |  87,840 |
+| `LOG_INF` (integer format)   |  2,797 | 111,880 |
+| `OZLog` (integer format)     |  3,883 | 155,320 |
+| `printk` (string format)     |  2,039 |  81,560 |
+| `LOG_INF` (string format)    |  2,640 | 105,600 |
+| `OZLog` (string format)      |  3,892 | 155,680 |
+| `OZLog` (`%@` object format) |  8,480 | 339,200 |
 
 ### Memory Footprint
 
 Runtime cost vs bare Zephyr (mps2/an385, benchmark sample with all features):
 
-| Configuration | FLASH | RAM | FLASH delta | RAM delta |
-|---|---:|---:|---:|---:|
-| Bare Zephyr (no ObjC) | 12,104 B | 6,120 B | — | — |
-| All features enabled | 39,568 B | 26,020 B | +27,464 B | +19,900 B |
+| Configuration         |    FLASH |      RAM | FLASH delta | RAM delta |
+| --------------------- | -------: | -------: | ----------: | --------: |
+| Bare Zephyr (no ObjC) | 12,104 B |  6,120 B |           — |         — |
+| All features enabled  | 39,568 B | 26,020 B |   +27,464 B | +19,900 B |
 
 Flat dispatch table cost (`CONFIG_OBJZ_FLAT_DISPATCH`, default `y`):
 
-| Metric | Flat dispatch | No flat dispatch | Delta |
-|---|---:|---:|---:|
-| FLASH | 39,568 B | 38,384 B | +1,184 B |
-| RAM (BSS + data) | 26,020 B | 22,180 B | +3,840 B |
+| Metric           | Flat dispatch | No flat dispatch |    Delta |
+| ---------------- | ------------: | ---------------: | -------: |
+| FLASH            |      39,568 B |         38,384 B | +1,184 B |
+| RAM (BSS + data) |      26,020 B |         22,180 B | +3,840 B |
 
 Blocks runtime cost (`CONFIG_OBJZ_BLOCKS`, default `n`):
 
-| Metric | Blocks on | Blocks off | Delta |
-|---|---:|---:|---:|
-| FLASH | 39,568 B | 36,576 B | +2,992 B |
-| RAM (BSS + data) | 26,020 B | 25,996 B | +24 B |
+| Metric           | Blocks on | Blocks off |    Delta |
+| ---------------- | --------: | ---------: | -------: |
+| FLASH            |  39,568 B |   36,576 B | +2,992 B |
+| RAM (BSS + data) |  26,020 B |   25,996 B |    +24 B |
 
 **Key takeaways:**
 
@@ -310,69 +320,148 @@ Side-by-side C++ vs Objective-Z (same board, same iteration count, `just bench-c
 
 #### Dispatch
 
-| Operation | C++ | ObjC | Ratio |
-|---|---:|---:|---|
-| C function call (baseline) | 13 | 13 | 1.0x |
-| Static / class method | ~0 | 212 | C++ fully inlined |
-| Virtual / `objc_msgSend` (depth=0) | 16 | 205 | 12.8x |
-| Virtual / `objc_msgSend` (depth=1) | 16 | 205 | 12.8x |
-| Virtual / `objc_msgSend` (depth=2) | 16 | 205 | 12.8x |
+| Operation                          | C++ | ObjC | Ratio             |
+| ---------------------------------- | --: | ---: | ----------------- |
+| C function call (baseline)         |  13 |   13 | 1.0x              |
+| Static / class method              |  ~0 |  212 | C++ fully inlined |
+| Virtual / `objc_msgSend` (depth=0) |  16 |  205 | 12.8x             |
+| Virtual / `objc_msgSend` (depth=1) |  16 |  205 | 12.8x             |
+| Virtual / `objc_msgSend` (depth=2) |  16 |  205 | 12.8x             |
 
 > C++ vtable dispatch is a single indirect call (16 cycles). ObjC flat dispatch does pointer-hash cache lookup + table index (205 cycles) — 12.8x slower but depth-independent (same cost at any inheritance depth). C++ static methods inline to zero; ObjC class methods go through full `objc_msgSend`.
 
 #### Object Lifecycle
 
-| Operation | C++ | ObjC | Ratio |
-|---|---:|---:|---|
-| Heap alloc/dealloc | 2,548 | 4,474 | 1.8x |
-| Static pool (slab) | 170 | 2,151 | 12.7x |
-| `unique_ptr` create/destroy | 2,612 | — | ~`new`/`delete` |
+| Operation                   |   C++ |  ObjC | Ratio           |
+| --------------------------- | ----: | ----: | --------------- |
+| Heap alloc/dealloc          | 2,548 | 4,474 | 1.8x            |
+| Static pool (slab)          |   170 | 2,151 | 12.7x           |
+| `unique_ptr` create/destroy | 2,612 |     — | ~`new`/`delete` |
 
 > C++ `new`/`delete` is 1.8x faster than ObjC heap alloc/init/release (no message dispatch, no refcount init). Static pool gap is wider (12.7x) because ObjC still sends `init`/`release` messages through dispatch; C++ placement new + explicit dtor is pure memory ops. `unique_ptr` confirms zero-cost abstraction — within 2.5% of raw `new`/`delete`.
 
 #### Reference Counting
 
-| Operation | C++ | ObjC | Ratio |
-|---|---:|---:|---|
-| Atomic increment | 29 | 58 | 2.0x |
-| Atomic inc + dec pair | 52 | 135 | 2.6x |
-| `shared_ptr` copy / — | 2,740 | — | Heap-dominated |
-| — / retain (via dispatch) | — | 240 | Message dispatch |
-| — / `objc_storeStrong` | — | 221 | ARC strong store |
+| Operation                 |   C++ | ObjC | Ratio            |
+| ------------------------- | ----: | ---: | ---------------- |
+| Atomic increment          |    29 |   58 | 2.0x             |
+| Atomic inc + dec pair     |    52 |  135 | 2.6x             |
+| `shared_ptr` copy / —     | 2,740 |    — | Heap-dominated   |
+| — / retain (via dispatch) |     — |  240 | Message dispatch |
+| — / `objc_storeStrong`    |     — |  221 | ARC strong store |
 
 > Raw `atomic_fetch_add` is 2x faster than `objc_retain` (which adds immortal-object guard + function call overhead). ObjC retain-via-dispatch (240 cycles) pays the full `objc_msgSend` cost. `shared_ptr` is expensive (2,740 cycles) because each copy touches the control block's heap allocation — not a fair comparison to ObjC intrusive refcounting.
 
 #### Introspection
 
-| Operation | C++ | ObjC | Ratio |
-|---|---:|---:|---|
-| `dynamic_cast` (hit) | 4 | 148 | 37.0x |
-| `dynamic_cast` (miss) | 4 | 461 | 115.3x |
-| `typeid` / `object_getClass` | 10 | 20 | 2.0x |
+| Operation                    | C++ | ObjC | Ratio  |
+| ---------------------------- | --: | ---: | ------ |
+| `dynamic_cast` (hit)         |   4 |  148 | 37.0x  |
+| `dynamic_cast` (miss)        |   4 |  461 | 115.3x |
+| `typeid` / `object_getClass` |  10 |   20 | 2.0x   |
 
 > C++ RTTI is resolved via vtable pointer comparison (4 cycles). ObjC `respondsToSelector:` walks the method list / hash table — much slower, especially on miss (461 cycles). `object_getClass` (20 cycles) is a simple isa dereference, comparable to `typeid` (10 cycles).
 
 #### Closures
 
-| Operation | C++ | ObjC | Ratio |
-|---|---:|---:|---|
-| C function pointer | 13 | 10 | ~1.0x |
-| Lambda (no capture) / global block | 13 | 20 | 1.5x |
-| `std::function` / heap block invoke | 32 | 20 | 0.6x |
-| Copy + destroy | 167 | 3,060 | 18.3x |
+| Operation                           | C++ |  ObjC | Ratio |
+| ----------------------------------- | --: | ----: | ----- |
+| C function pointer                  |  13 |    10 | ~1.0x |
+| Lambda (no capture) / global block  |  13 |    20 | 1.5x  |
+| `std::function` / heap block invoke |  32 |    20 | 0.6x  |
+| Copy + destroy                      | 167 | 3,060 | 18.3x |
 
 > Block invocation (20 cycles) beats `std::function` (32 cycles) because blocks use a direct function pointer in the block struct, while `std::function` has type-erasure indirection. However, `_Block_copy` + `_Block_release` (3,060 cycles) is 18x slower than `std::function` copy + destroy (167 cycles) due to heap allocation per copy.
 
 #### Closure Memory
 
-| Metric | C++ | ObjC |
-|---|---:|---:|
-| Function pointer | 4 B | 4 B |
-| Lambda / block pointer | 4 B | 4 B |
-| Lambda + int capture / block + int capture | 4 B | 24 B |
-| `std::function<int()>` / `Block_layout` | 16 B | 20 B |
+| Metric                                     |  C++ | ObjC |
+| ------------------------------------------ | ---: | ---: |
+| Function pointer                           |  4 B |  4 B |
+| Lambda / block pointer                     |  4 B |  4 B |
+| Lambda + int capture / block + int capture |  4 B | 24 B |
+| `std::function<int()>` / `Block_layout`    | 16 B | 20 B |
 
 > C++ lambdas with captures are remarkably compact (4 B for an int capture on ARM32) because the compiler generates a unique type with no metadata. ObjC blocks carry a fixed `Block_layout` header (isa, flags, reserved, invoke, descriptor) at 20 B minimum, plus captures.
+
+### Rust Comparison
+
+Side-by-side Rust vs Objective-Z (same board, same iteration count, `just bench-rust` vs `just bench`). All values in cycles.
+
+Rust uses trait objects (`&dyn Trait`) for dynamic dispatch — comparable to C++ vtables. There is no inheritance; "depth" refers to struct composition depth, which does not affect dispatch cost.
+
+**Prerequisites** (one-time setup):
+
+```sh
+west config manifest.project-filter "+zephyr-lang-rust,+nanopb"
+west update
+rustup target add thumbv7m-none-eabi
+```
+
+#### Dispatch (Rust)
+
+| Operation                               | Rust | ObjC | Ratio        |
+| --------------------------------------- | ---: | ---: | ------------ |
+| Direct / C function call (baseline)     |   ~1 |   13 | Rust inlined |
+| Static function call                    |   ~1 |  212 | Rust inlined |
+| Trait object / `objc_msgSend` (depth=0) |   22 |  205 | 9.3x         |
+| Trait object / `objc_msgSend` (depth=1) |   22 |  205 | 9.3x         |
+| Trait object / `objc_msgSend` (depth=2) |   22 |  205 | 9.3x         |
+
+> Rust trait object dispatch (22 cycles) is a single vtable indirect call — identical cost at any composition depth. ObjC flat dispatch (205 cycles) does pointer-hash cache + table index. Direct/static calls are fully inlined by LLVM at `-O2`.
+
+#### Object Lifecycle (Rust)
+
+| Operation                                |  Rust |  ObjC | Ratio       |
+| ---------------------------------------- | ----: | ----: | ----------- |
+| `Box::new` + drop / alloc+release (heap) | 2,496 | 4,474 | 1.8x        |
+| `Box<dyn Trait>` create + drop           | 2,538 |     — | ~`Box::new` |
+
+> `Box::new` + drop (2,496 cycles) is 1.8x faster than ObjC heap alloc/init/release (4,474 cycles). Type-erased `Box<dyn Trait>` adds minimal overhead (42 cycles for vtable drop). Both use the same Zephyr libc `malloc`/`free`.
+
+#### Reference Counting (Rust)
+
+| Operation                            | Rust | ObjC | Ratio |
+| ------------------------------------ | ---: | ---: | ----- |
+| Atomic increment                     |   16 |   58 | 3.6x  |
+| Atomic inc + dec pair                |   38 |  135 | 3.6x  |
+| `Arc::clone` / `objc_retain`         |   22 |   58 | 2.6x  |
+| `Arc::clone` + drop / `objc_release` |   58 |  135 | 2.3x  |
+
+> Raw `AtomicI32::fetch_add` (16 cycles) is 3.6x faster than `objc_retain` (58 cycles), which adds immortal-object guard + function call overhead. `Arc::clone` (22 cycles) wraps atomic increment with a thin abstraction layer; `Arc::drop` (58 - 22 = 36 cycles) adds acquire fence + deallocation check.
+
+#### Introspection (Rust)
+
+| Operation                                               | Rust | ObjC | Ratio |
+| ------------------------------------------------------- | ---: | ---: | ----- |
+| `Any::downcast_ref` (hit) / `respondsToSelector:` (YES) |  141 |  148 | ~1.0x |
+| `Any::downcast_ref` (miss) / `respondsToSelector:` (NO) |  141 |  461 | 3.3x  |
+| `TypeId::of` / `object_getClass`                        |   26 |   20 | 0.8x  |
+
+> `Any::downcast_ref` (141 cycles) compares `TypeId` hashes — same cost hit or miss. ObjC `respondsToSelector:` is asymmetric: 148 cycles on hit (hash table match) vs 461 on miss (full walk). `TypeId::of` (26 cycles) and `object_getClass` (20 cycles) are both trivial lookups.
+
+#### Closures (Rust)
+
+| Operation                                                         |  Rust |  ObjC | Ratio |
+| ----------------------------------------------------------------- | ----: | ----: | ----- |
+| Function pointer                                                  |    38 |    10 | 0.3x  |
+| Non-capturing closure / global block                              |    38 |    20 | 0.5x  |
+| `&dyn Fn` / heap block invoke                                     |    42 |    20 | 0.5x  |
+| `Box<dyn Fn>` create+invoke+drop / `_Block_copy`+`_Block_release` | 2,573 | 3,060 | 1.2x  |
+
+> Function pointer calls show higher overhead in Rust (38 vs 10 cycles) due to `black_box` FFI barrier in the benchmark harness. `&dyn Fn` invocation (42 cycles) goes through a vtable. `Box<dyn Fn>` create+invoke+drop (2,573 cycles) is 1.2x faster than `_Block_copy`+`_Block_release` (3,060 cycles) — both dominated by heap allocation.
+
+#### Closure Memory (Rust)
+
+| Metric                         | Rust | ObjC |
+| ------------------------------ | ---: | ---: |
+| Function pointer               |  4 B |  4 B |
+| Non-capturing closure          |  0 B |  4 B |
+| Closure with int capture       |  4 B | 24 B |
+| `&dyn Fn` / block pointer      |  8 B |  4 B |
+| `Box<dyn Fn>` / `Block_layout` |  8 B | 20 B |
+
+> Rust non-capturing closures are zero-sized types (0 B). Closures with captures store only the captured data (4 B for an int). `&dyn Fn` and `Box<dyn Fn>` are fat pointers (data + vtable = 8 B). ObjC blocks carry a fixed `Block_layout` header (20 B minimum).
 
 ## Using in Your Project
 
@@ -443,23 +532,23 @@ west build -p -b mps2/an385 .
 
 ## CMake Helpers
 
-| Function | Description |
-|---|---|
+| Function                                | Description                             |
+| --------------------------------------- | --------------------------------------- |
 | `objz_target_sources(target, files...)` | Routes `.m` to Clang (ARC), `.c` to GCC |
 
 ## Configuration
 
 ### Feature Flags
 
-| Kconfig | Description | Depends on |
-|---|---|---|
-| `CONFIG_OBJZ` | Enable Objective-C runtime (ARC always on) | — |
-| `CONFIG_OBJZ_FLAT_DISPATCH` | Global flat dispatch table (O(1) lookup) | `OBJZ` |
-| `CONFIG_OBJZ_BLOCKS` | Blocks (closures) with `-fblocks` | `OBJZ` |
-| `CONFIG_OBJZ_COLLECTIONS` | Collection classes (OZArray, OZDictionary) | `OBJZ` |
-| `CONFIG_OBJZ_NUMBERS` | Number class (OZNumber) | `OBJZ` |
-| `CONFIG_OBJZ_LITERALS` | Boxed literals and collection literals | `OBJZ_COLLECTIONS`, `OBJZ_NUMBERS` |
-| `CONFIG_OBJZ_STATIC_POOLS` | Per-class static allocation pools | `OBJZ` |
+| Kconfig                     | Description                                | Depends on                         |
+| --------------------------- | ------------------------------------------ | ---------------------------------- |
+| `CONFIG_OBJZ`               | Enable Objective-C runtime (ARC always on) | —                                  |
+| `CONFIG_OBJZ_FLAT_DISPATCH` | Global flat dispatch table (O(1) lookup)   | `OBJZ`                             |
+| `CONFIG_OBJZ_BLOCKS`        | Blocks (closures) with `-fblocks`          | `OBJZ`                             |
+| `CONFIG_OBJZ_COLLECTIONS`   | Collection classes (OZArray, OZDictionary) | `OBJZ`                             |
+| `CONFIG_OBJZ_NUMBERS`       | Number class (OZNumber)                    | `OBJZ`                             |
+| `CONFIG_OBJZ_LITERALS`      | Boxed literals and collection literals     | `OBJZ_COLLECTIONS`, `OBJZ_NUMBERS` |
+| `CONFIG_OBJZ_STATIC_POOLS`  | Per-class static allocation pools          | `OBJZ`                             |
 
 ### Tuning
 
@@ -467,26 +556,27 @@ Runtime table sizes (class, category, protocol, hash, dispatch) are
 auto-computed from source analysis at build time via tree-sitter.
 Set a non-zero value in `prj.conf` to override any auto-computed size.
 
-| Kconfig | Default | Description |
-|---|---|---|
-| `CONFIG_OBJZ_MEM_POOL_SIZE` | 4096 | Heap size in bytes |
-| `CONFIG_OBJZ_LOG_BUFFER_SIZE` | 128 | OZLog format buffer size |
+| Kconfig                       | Default | Description              |
+| ----------------------------- | ------- | ------------------------ |
+| `CONFIG_OBJZ_MEM_POOL_SIZE`   | 4096    | Heap size in bytes       |
+| `CONFIG_OBJZ_LOG_BUFFER_SIZE` | 128     | OZLog format buffer size |
 
 ## Build Commands
 
 Requires [just](https://github.com/casey/just). Default board: `mps2/an385`.
 
-| Command | Description |
-|---|---|
-| `just build` | Incremental build |
-| `just rebuild` | Pristine rebuild |
-| `just run` | Run in QEMU |
-| `just flash` | Flash to hardware |
-| `just monitor` | Serial monitor (tio) |
-| `just clean` | Remove build directory |
-| `just test` | Run twister on all samples |
-| `just bench` | Run ObjC benchmark |
-| `just bench-cpp` | Run C++ comparison benchmark |
+| Command           | Description                   |
+| ----------------- | ----------------------------- |
+| `just build`      | Incremental build             |
+| `just rebuild`    | Pristine rebuild              |
+| `just run`        | Run in QEMU                   |
+| `just flash`      | Flash to hardware             |
+| `just monitor`    | Serial monitor (tio)          |
+| `just clean`      | Remove build directory        |
+| `just test`       | Run twister on all samples    |
+| `just bench`      | Run ObjC benchmark            |
+| `just bench-cpp`  | Run C++ comparison benchmark  |
+| `just bench-rust` | Run Rust comparison benchmark |
 
 Override defaults:
 
@@ -590,6 +680,7 @@ void process_good(void)
 ```
 
 Use `@autoreleasepool` when:
+
 - **Loops** create temporary objects (factory methods, `-description`, string operations)
 - **Worker threads** — each thread needs its own pool before any autorelease happens
 - **Batch processing** — any code path that allocates many short-lived objects
@@ -703,13 +794,13 @@ void no_leak(void)
 
 ### ARC rules summary
 
-| Do | Don't |
-|---|---|
-| Use `objz_target_sources()` in CMake | Call `retain`, `release`, or `autorelease` |
-| Let the compiler manage object lifetime | Call `[super dealloc]` — ARC inserts it |
-| Use `@autoreleasepool` in loops/threads | Create strong reference cycles |
-| Use `strong` properties for ownership | Call `retain`/`release`/`autorelease` manually |
-| Break cycles manually before scope exit | Assume temporaries are released immediately |
+| Do                                      | Don't                                          |
+| --------------------------------------- | ---------------------------------------------- |
+| Use `objz_target_sources()` in CMake    | Call `retain`, `release`, or `autorelease`     |
+| Let the compiler manage object lifetime | Call `[super dealloc]` — ARC inserts it        |
+| Use `@autoreleasepool` in loops/threads | Create strong reference cycles                 |
+| Use `strong` properties for ownership   | Call `retain`/`release`/`autorelease` manually |
+| Break cycles manually before scope exit | Assume temporaries are released immediately    |
 
 ### Static pools with ARC
 
