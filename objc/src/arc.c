@@ -58,6 +58,27 @@ static void __objc_arc_dealloc(id obj)
 	}
 }
 
+/* ── Block detection ──────────────────────────────────────────────── */
+
+#ifdef CONFIG_OBJZ_BLOCKS
+#include <objc/blocks.h>
+
+extern void _Block_release(const void *block);
+
+/**
+ * Clang gnustep-2.0 emits objc_retain/objc_release for block
+ * parameters instead of objc_retainBlock/_Block_release.
+ * Detect blocks by isa and redirect to the block runtime.
+ */
+static inline bool __objc_is_block(id obj)
+{
+	void *isa = *(void **)obj;
+	return (isa == _NSConcreteGlobalBlock ||
+		isa == _NSConcreteMallocBlock ||
+		isa == _NSConcreteStackBlock);
+}
+#endif /* CONFIG_OBJZ_BLOCKS */
+
 /* ── Core ARC entry points ────────────────────────────────────────── */
 
 id objc_retain(id obj)
@@ -65,6 +86,11 @@ id objc_retain(id obj)
 	if (obj == nil) {
 		return nil;
 	}
+#ifdef CONFIG_OBJZ_BLOCKS
+	if (__objc_is_block(obj)) {
+		return (id)_Block_copy((const void *)obj);
+	}
+#endif
 	return __objc_refcount_retain(obj);
 }
 
@@ -73,6 +99,12 @@ void objc_release(id obj)
 	if (obj == nil) {
 		return;
 	}
+#ifdef CONFIG_OBJZ_BLOCKS
+	if (__objc_is_block(obj)) {
+		_Block_release((const void *)obj);
+		return;
+	}
+#endif
 	if (__objc_refcount_release(obj)) {
 		__objc_arc_dealloc(obj);
 	}
@@ -199,8 +231,6 @@ id objc_retainAutorelease(id obj)
 /* ── Block support ────────────────────────────────────────────────── */
 
 #ifdef CONFIG_OBJZ_BLOCKS
-extern void *_Block_copy(const void *block);
-
 id objc_retainBlock(id block)
 {
 	return (id)_Block_copy((const void *)block);

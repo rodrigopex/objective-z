@@ -23,10 +23,10 @@
 - [x] Add singleton helper (`+shared` via `+initialize`)
   - [x] `+initialize` pattern (called once on first class message, zero runtime code)
   - [x] Demo in `samples/arc_demo` with `AppConfig` singleton
+- [ ] Add support to RISCV architecture
 
 ## v0.3.0 — Singleton & Advanced Patterns
 
-- [ ] Add support to RISCV architecture
 - [ ] CoreZephyr module wrapping Zephyr drivers as ObjC classes
   - [ ] CZInput
   - [ ] CZLED

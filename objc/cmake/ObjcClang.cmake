@@ -577,8 +577,7 @@ function(_objz_create_cycle_check_target)
                 ${_user_files}
         COMMAND ${CMAKE_COMMAND} -E touch ${_stamp}
         DEPENDS ${_user_files} ${_gen_script}
-        COMMENT "Checking for retain cycles (tree-sitter)"
-        COMMAND_ERROR_IS_FATAL ANY
+        COMMENT "ObjZ: checking for retain cycles"
         VERBATIM
     )
 
