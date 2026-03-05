@@ -188,7 +188,8 @@ Cycle-accurate benchmarks using the DWT cycle counter. Results from QEMU (mps2/a
 just bench       # ObjC benchmark
 just bench-cpp   # C++ comparison benchmark
 just bench-rust  # Rust comparison benchmark
-just bench-mem   # Memory comparison (C, C++, Rust, ObjC)
+just bench-zig   # Zig comparison benchmark
+just bench-mem   # Memory comparison (C, C++, Rust, Zig, ObjC)
 ```
 
 ### Message Dispatch
@@ -464,60 +465,127 @@ rustup target add thumbv7m-none-eabi
 
 > Rust non-capturing closures are zero-sized types (0 B). Closures with captures store only the captured data (4 B for an int). `&dyn Fn` and `Box<dyn Fn>` are fat pointers (data + vtable = 8 B). ObjC blocks carry a fixed `Block_layout` header (20 B minimum).
 
+### Zig Comparison
+
+Side-by-side Zig vs Objective-Z (same board, same iteration count, `just bench-zig` vs `just bench`). All values in cycles.
+
+Zig uses fat-pointer interfaces (ptr + vtable\*) for dynamic dispatch — similar to Rust trait objects. No inheritance; "depth" refers to struct composition depth, which does not affect dispatch cost. Zig calls Zephyr C APIs directly via `@cImport` (no FFI shim needed).
+
+#### Dispatch (Zig)
+
+| Operation                                  |  Zig | ObjC | Ratio        |
+| ------------------------------------------ | ---: | ---: | ------------ |
+| Direct function call (baseline)            |   ~0 |   13 | Zig inlined  |
+| Static function call                       |   ~0 |  212 | Zig inlined  |
+| Interface dispatch (depth=0)               |   16 |  205 | 12.8x        |
+| Interface dispatch (depth=1)               |   12 |  205 | 17.1x        |
+| Interface dispatch (depth=2)               |   13 |  205 | 15.8x        |
+
+> Zig interface dispatch (12–16 cycles) uses a fat-pointer vtable indirection — comparable to C++ virtual calls and Rust trait objects. Direct/static calls are fully inlined by Zig at `-O ReleaseSafe`. ObjC flat dispatch (205 cycles) does pointer-hash cache + table index.
+
+#### Object Lifecycle (Zig)
+
+| Operation                                  |  Zig |  ObjC | Ratio |
+| ------------------------------------------ | ---: | ----: | ----- |
+| `k_malloc` + `k_free` (heap)              | 2,054 | 4,474 | 2.2x  |
+| Stack allocation (baseline)                |   10 |     — | —     |
+
+> Zig heap alloc/free (2,054 cycles) is 2.2x faster than ObjC alloc/init/release (4,474 cycles). No message dispatch, no refcount init — just raw `k_malloc` + `k_free`. Stack allocation (10 cycles) confirms zero-overhead struct initialization.
+
+#### Reference Counting (Zig)
+
+| Operation                     |  Zig | ObjC | Ratio |
+| ----------------------------- | ---: | ---: | ----- |
+| Atomic increment              |   16 |   58 | 3.6x  |
+| Atomic inc + dec pair         |   41 |  135 | 3.3x  |
+
+> Zig `@atomicRmw` (16 cycles) is 3.6x faster than `objc_retain` (58 cycles), which adds immortal-object guard + function call overhead. The inc+dec pair (41 cycles) compares favorably to ObjC retain+release (135 cycles).
+
+#### Introspection (Zig)
+
+| Operation                           |  Zig | ObjC | Ratio |
+| ----------------------------------- | ---: | ---: | ----- |
+| Tagged union check (hit)            |   28 |  148 | 5.3x  |
+| Tagged union check (miss)           |   28 |  461 | 16.5x |
+| Tagged union switch dispatch        |   32 |   — | —     |
+
+> Zig tagged unions use a discriminant byte — same cost hit or miss (28 cycles). ObjC `respondsToSelector:` is asymmetric: 148 cycles on hit vs 461 on miss (full method list walk). Tagged union switch dispatch (32 cycles) demonstrates runtime type routing with no hash table.
+
+#### Function Pointers (Zig)
+
+| Operation                          |  Zig | ObjC | Ratio |
+| ---------------------------------- | ---: | ---: | ----- |
+| Function pointer                   |    6 |   10 | 0.6x  |
+| Struct closure (int capture)       |    9 |   20 | 0.5x  |
+| Type-erased callable (fat pointer) |   35 |   20 | 1.8x  |
+
+> Plain function pointers (6 cycles) and struct closures (9 cycles) are very fast — Zig closures are just structs with a captured field + function pointer. Type-erased fat pointers (35 cycles) add vtable indirection, costing more than ObjC block invoke (20 cycles) but without heap allocation.
+
+#### Function Pointer Memory (Zig)
+
+| Metric                             | Zig  | ObjC |
+| ---------------------------------- | ---: | ---: |
+| Function pointer                   |  4 B |  4 B |
+| Struct closure (int capture)       |  4 B | 24 B |
+| Type-erased callable (fat pointer) |  8 B |  4 B |
+| Benchable interface (fat pointer)  |  8 B | 20 B |
+
+> Zig struct closures with captures are just 4 B (only the captured data — function pointer resolved at comptime). Fat pointers (ptr + vtable\* = 8 B) are identical to Rust's trait objects. ObjC blocks carry a fixed `Block_layout` header (20 B minimum).
+
 ### Memory Comparison
 
-Per-object memory cost across C, C++, Rust, and Objective-C (`just bench-mem`). All values from the same board (mps2/an385, ARM Cortex-M3). Each language uses a dedicated 8 KB `sys_heap` with identical allocator overhead.
+Per-object memory cost across C, C++, Rust, Zig, and Objective-C (`just bench-mem`). All values from the same board (mps2/an385, ARM Cortex-M3). Each language uses a dedicated 8 KB `sys_heap` with identical allocator overhead.
 
 #### Object Sizes
 
-| Metric                     |    C |  C++ | Rust | ObjC |
-| -------------------------- | ---: | ---: | ---: | ---: |
-| Base object (sizeof)       |  8 B |  8 B |  4 B |  8 B |
-| Child (+ 1 int)            | 12 B | 12 B |  8 B | 12 B |
-| GrandChild (+ 2 ints)      | 16 B | 16 B | 12 B | 16 B |
-| Dispatch mechanism         |  4 B |  4 B |  8 B |  4 B |
-| Refcount field             |  4 B |  4 B |  4 B |  4 B |
+| Metric                     |    C |  C++ | Rust |  Zig | ObjC |
+| -------------------------- | ---: | ---: | ---: | ---: | ---: |
+| Base object (sizeof)       |  8 B |  8 B |  4 B |  4 B |  8 B |
+| Child (+ 1 int)            | 12 B | 12 B |  8 B |  8 B | 12 B |
+| GrandChild (+ 2 ints)      | 16 B | 16 B | 12 B | 12 B | 16 B |
+| Dispatch mechanism         |  4 B |  4 B |  8 B |  8 B |  4 B |
+| Refcount field             |  4 B |  4 B |  4 B |  4 B |  4 B |
 
-> C, C++, and ObjC all carry a 4 B pointer per object for dispatch (vtable\*, vptr, isa). Rust structs have no embedded dispatch pointer — dispatch goes through fat pointers (`&dyn Trait` = 8 B) on the stack instead, so objects are 4 B smaller at the cost of larger references.
+> C, C++, and ObjC all carry a 4 B pointer per object for dispatch (vtable\*, vptr, isa). Rust and Zig structs have no embedded dispatch pointer — dispatch goes through fat pointers (`&dyn Trait` / `Dispatchable` = 8 B) on the stack instead, so objects are 4 B smaller at the cost of larger references.
 
 #### Single Allocation (heap delta)
 
-| Object type   |     C |   C++ |  Rust |  ObjC |
-| ------------- | ----: | ----: | ----: | ----: |
-| Base          | 16 B  | 16 B  |  8 B  | 16 B  |
-| Child         | 16 B  | 16 B  | 16 B  | 16 B  |
-| GrandChild    | 24 B  | 24 B  | 16 B  | 24 B  |
+| Object type   |     C |   C++ |  Rust |   Zig |  ObjC |
+| ------------- | ----: | ----: | ----: | ----: | ----: |
+| Base          | 16 B  | 16 B  |  8 B  |  8 B  | 16 B  |
+| Child         | 16 B  | 16 B  | 16 B  | 16 B  | 16 B  |
+| GrandChild    | 24 B  | 24 B  | 16 B  | 16 B  | 24 B  |
 
-> The `sys_heap` allocator adds ~8 B overhead per allocation (chunk header). Rust's smaller structs stay under the allocator's minimum chunk size, resulting in lower totals.
+> The `sys_heap` allocator adds ~8 B overhead per allocation (chunk header). Rust and Zig structs are smaller (no vptr), staying under the allocator's minimum chunk size for smaller types.
 
 #### Bulk Allocation (20 objects)
 
-| Object type        |      C |    C++ |   Rust |   ObjC |
-| ------------------ | -----: | -----: | -----: | -----: |
-| 20x Child          | 320 B  | 320 B  | 320 B  | 320 B  |
-| 20x GrandChild     | 480 B  | 480 B  | 320 B  | 480 B  |
-| Per GrandChild avg |  24 B  |  24 B  |  16 B  |  24 B  |
+| Object type        |      C |    C++ |   Rust |    Zig |   ObjC |
+| ------------------ | -----: | -----: | -----: | -----: | -----: |
+| 20x Child          | 320 B  | 320 B  | 320 B  | 320 B  | 320 B  |
+| 20x GrandChild     | 480 B  | 480 B  | 320 B  | 320 B  | 480 B  |
+| Per GrandChild avg |  24 B  |  24 B  |  16 B  |  16 B  |  24 B  |
 
 #### Smart Pointers / Reference Counting
 
-| Metric                          |        C |               C++ |        Rust |          ObjC |
-| ------------------------------- | -------: | ----------------: | ----------: | ------------: |
-| `sizeof` pointer on stack       |      4 B |     4 B (unique)  |   4 B (Box) |    4 B (id)   |
-|                                 |        — |     8 B (shared)  |   4 B (Arc) |             — |
-| Control block (heap)            |      0 B | ~16 B (make_shared) | ~8 B (Arc) |          0 B |
-| `shared_ptr(new T)` total heap  |        — |              40 B |           — |             — |
-| Refcount storage                | inline   |            inline |  ctrl block |        inline |
+| Metric                          |        C |               C++ |        Rust |       Zig |          ObjC |
+| ------------------------------- | -------: | ----------------: | ----------: | --------: | ------------: |
+| `sizeof` pointer on stack       |      4 B |     4 B (unique)  |   4 B (Box) |       4 B |    4 B (id)   |
+|                                 |        — |     8 B (shared)  |   4 B (Arc) |         — |             — |
+| Control block (heap)            |      0 B | ~16 B (make_shared) | ~8 B (Arc) |       0 B |          0 B |
+| `shared_ptr(new T)` total heap  |        — |              40 B |           — |         — |             — |
+| Refcount storage                | inline   |            inline |  ctrl block |    inline |        inline |
 
-> ObjC and C store the refcount inline (0 extra heap). C++ `make_shared` fuses object + control block into one allocation (24 B for an 8 B object); `shared_ptr(new T)` is 40 B (two allocations). Rust `Arc` adds an 8 B control block (strong + weak counts).
+> ObjC, C, and Zig store the refcount inline (0 extra heap). C++ `make_shared` fuses object + control block into one allocation (24 B for an 8 B object); `shared_ptr(new T)` is 40 B (two allocations). Rust `Arc` adds an 8 B control block (strong + weak counts). Zig uses `@atomicRmw` on an inline `i32` field — same approach as C and ObjC.
 
 #### Binary Size
 
-| Metric |       C |     C++ |    Rust |    ObjC |
-| ------ | ------: | ------: | ------: | ------: |
-| FLASH  | 14.1 KB | 15.6 KB | 22.3 KB | 29.8 KB |
-| RAM    | 17.4 KB | 21.4 KB | 30.8 KB | 25.4 KB |
+| Metric |       C |     C++ |     Zig |    Rust |    ObjC |
+| ------ | ------: | ------: | ------: | ------: | ------: |
+| FLASH  | 14.1 KB | 15.6 KB | 18.7 KB | 22.3 KB | 29.8 KB |
+| RAM    | 17.4 KB | 21.4 KB | 20.9 KB | 30.8 KB | 25.4 KB |
 
-> C is the smallest baseline. C++ adds vtable/RTTI/libcpp overhead. Rust includes its core runtime and allocator. ObjC includes the full Objective-Z runtime (class tables, flat dispatch, Foundation classes, ARC).
+> C is the smallest baseline. C++ adds vtable/RTTI/libcpp overhead. Zig adds minimal overhead (no runtime, no allocator — just compiled structs + `@cImport` bindings). Rust includes its core runtime and allocator. ObjC includes the full Objective-Z runtime (class tables, flat dispatch, Foundation classes, ARC).
 
 ## Using in Your Project
 
