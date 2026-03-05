@@ -94,6 +94,15 @@ if(CONFIG_OBJZ)
         zephyr_library_sources("${ZEPHYR_CURRENT_MODULE_DIR}/src/pool.c")
     endif()
 
+    # GPIO wrapper classes
+    if(CONFIG_OBJZ_GPIO)
+        objz_compile_objc_sources(${ZEPHYR_CURRENT_LIBRARY}
+            "${ZEPHYR_CURRENT_MODULE_DIR}/src/Foundation/OZGPIOPin.m"
+            "${ZEPHYR_CURRENT_MODULE_DIR}/src/Foundation/OZGPIOOutput.m"
+            "${ZEPHYR_CURRENT_MODULE_DIR}/src/Foundation/OZGPIOInput.m"
+        )
+    endif()
+
     # ── Foundation .m file list for AST table-size analysis ─────────
     set(_foundation_m_files
         "${ZEPHYR_CURRENT_MODULE_DIR}/src/init.m"
@@ -113,6 +122,13 @@ if(CONFIG_OBJZ)
     if(CONFIG_OBJZ_NUMBERS)
         list(APPEND _foundation_m_files
             "${ZEPHYR_CURRENT_MODULE_DIR}/src/Foundation/OZNumber.m"
+        )
+    endif()
+    if(CONFIG_OBJZ_GPIO)
+        list(APPEND _foundation_m_files
+            "${ZEPHYR_CURRENT_MODULE_DIR}/src/Foundation/OZGPIOPin.m"
+            "${ZEPHYR_CURRENT_MODULE_DIR}/src/Foundation/OZGPIOOutput.m"
+            "${ZEPHYR_CURRENT_MODULE_DIR}/src/Foundation/OZGPIOInput.m"
         )
     endif()
     set_property(GLOBAL PROPERTY OBJZ_FOUNDATION_M_FILES ${_foundation_m_files})

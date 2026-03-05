@@ -1,0 +1,39 @@
+/*
+ * Override led0/sw0 aliases to use gpio_emul so that
+ * gpio_add_callback works and ISR callbacks can be tested.
+ */
+
+#include <dt-bindings/gpio/gpio.h>
+
+/ {
+	gpio_emul: gpio_emul {
+		status = "okay";
+		compatible = "zephyr,gpio-emul";
+		rising-edge;
+		falling-edge;
+		high-level;
+		low-level;
+		gpio-controller;
+		#gpio-cells = <2>;
+		ngpios = <2>;
+	};
+
+	leds {
+		compatible = "gpio-leds";
+		led_emul: led_emul {
+			gpios = <&gpio_emul 0 GPIO_ACTIVE_HIGH>;
+		};
+	};
+
+	buttons {
+		compatible = "gpio-keys";
+		btn_emul: btn_emul {
+			gpios = <&gpio_emul 1 (GPIO_PULL_UP | GPIO_ACTIVE_LOW)>;
+		};
+	};
+
+	aliases {
+		led0 = &led_emul;
+		sw0 = &btn_emul;
+	};
+};

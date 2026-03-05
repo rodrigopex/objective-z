@@ -83,6 +83,14 @@ config OBJZ_LITERALS
       Enable @42, @YES, @3.14, @[...], and @{k:v} literal syntax.
       Requires both collection and number classes.
 
+config OBJZ_GPIO
+    bool "ObjC GPIO wrapper classes"
+    depends on GPIO
+    select OBJZ_BLOCKS
+    help
+      Enable OZGPIOPin, OZGPIOOutput and OZGPIOInput Foundation classes
+      for GPIO output control and input with interrupt callbacks.
+
 config OBJZ_LOG_BUFFER_SIZE
     int "OZLog format buffer size"
     default 128

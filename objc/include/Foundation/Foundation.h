@@ -29,4 +29,10 @@
 #include "OZNumber.h"
 #endif
 
+#ifdef CONFIG_OBJZ_GPIO
+#include "OZGPIOPin.h"
+#include "OZGPIOOutput.h"
+#include "OZGPIOInput.h"
+#endif
+
 #endif /* __OBJC__ */
