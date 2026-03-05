@@ -47,6 +47,9 @@ bench-cpp:
 bench-rust:
     west build -p -b {{ board }} benchmarks/rust && west build -t run
 
+bench-zig:
+    west build -p -b {{ board }} benchmarks/zig && west build -t run
+
 bench-mem-c:
     west build -p -b {{ board }} benchmarks/memory/c && west build -t run
 
@@ -59,8 +62,12 @@ bench-mem-rust:
 bench-mem-objc:
     west build -p -b {{ board }} benchmarks/memory/objc && west build -t run
 
+bench-mem-zig:
+    west build -p -b {{ board }} benchmarks/memory/zig && west build -t run
+
 bench-mem:
     just bench-mem-c
     just bench-mem-cpp
     just bench-mem-rust
+    just bench-mem-zig
     just bench-mem-objc
