@@ -50,6 +50,9 @@ bench-rust:
 bench-zig:
     west build -p -b {{ board }} benchmarks/zig && west build -t run
 
+bench-c3:
+    west build -p -b {{ board }} benchmarks/c3 && west build -t run
+
 bench-mem-c:
     west build -p -b {{ board }} benchmarks/memory/c && west build -t run
 

@@ -532,6 +532,70 @@ Zig uses fat-pointer interfaces (ptr + vtable\*) for dynamic dispatch — simila
 
 > Zig struct closures with captures are just 4 B (only the captured data — function pointer resolved at comptime). Fat pointers (ptr + vtable\* = 8 B) are identical to Rust's trait objects. ObjC blocks carry a fixed `Block_layout` header (20 B minimum).
 
+### C3 Comparison
+
+Side-by-side C3 vs Objective-Z on RISC-V (`just board=qemu_riscv32 bench-c3` vs `just board=qemu_riscv32 bench`). All values in cycles. C3 currently only supports `elf-riscv32` for freestanding targets (no ARM Cortex-M), so all comparisons use `qemu_riscv32`.
+
+C3 uses `interface` + `@dynamic` methods for dynamic dispatch — runtime registration via `.init_array` constructors, dispatch via vtable lookup through `any` type. Calls Zephyr C APIs directly via `extern fn` declarations (timing shim needed only for `static inline` helpers).
+
+#### Dispatch (C3)
+
+| Operation                       |  C3 | ObjC | Ratio |
+| ------------------------------- | --: | ---: | ----- |
+| Direct function call (baseline) |  12 |    2 | 6.0x  |
+| Static function call            |  12 |    2 | 6.0x  |
+| Interface dispatch (depth=0)    |   4 |   71 | 17.8x |
+| Interface dispatch (depth=1)    |   4 |   71 | 17.8x |
+| Interface dispatch (depth=2)    |   4 |   71 | 17.8x |
+
+> C3 interface dispatch (4 cycles) uses `@dynamic` vtable lookup via `any` — comparable to C++ virtual calls. Depth has no effect since C3 resolves the vtable at the `any`→`interface` cast. ObjC `objc_msg_lookup_sender` on RISC-V (71 cycles) includes slot-based dispatch overhead. Direct/static calls show C3 volatile-store overhead (12 cycles) vs ObjC's bare C call baseline (2 cycles).
+
+#### Object Lifecycle (C3)
+
+| Operation                  |  C3 |  ObjC | Ratio |
+| -------------------------- | --: | ----: | ----- |
+| `k_malloc` + `k_free`     | 624 | 1,245 | 2.0x  |
+| Stack allocation (baseline)|  12 |     — | —     |
+
+> C3 heap alloc/free (624 cycles) is 2.0x faster than ObjC alloc/init/release (1,245 cycles). No message dispatch, no refcount init — just raw `k_malloc` + `k_free` via `extern fn`. Stack allocation (12 cycles) includes volatile-store side-effect cost.
+
+#### Reference Counting (C3)
+
+| Operation             |  C3 | ObjC | Ratio |
+| --------------------- | --: | ---: | ----- |
+| Atomic increment      |  12 |   59 | 4.9x  |
+| Atomic inc + dec pair |   1 |   85 | 85.0x |
+
+> C3 uses `$$atomic_fetch_add` / `$$atomic_fetch_sub` builtins — raw LLVM atomic instructions with no wrapper overhead. ObjC `retain` (59 cycles) adds immortal-object guard + function call overhead. The inc+dec pair result (1 cycle) suggests the optimizer may be combining the adjacent operations.
+
+#### Introspection (C3)
+
+| Operation              |  C3 | ObjC | Ratio |
+| ---------------------- | --: | ---: | ----- |
+| `any.type` check (hit) |  12 |   43 | 3.6x  |
+| `any.type` check (miss)|  12 |  128 | 10.7x |
+
+> C3 `any` type stores a typeid alongside the pointer — type checks are a simple integer comparison (12 cycles, same cost hit or miss). ObjC `respondsToSelector:` is asymmetric: 43 cycles on hit (found in dispatch table) vs 128 cycles on miss (full method list walk).
+
+#### Function Pointers (C3)
+
+| Operation                          |  C3 | ObjC | Ratio |
+| ---------------------------------- | --: | ---: | ----- |
+| Function pointer call              |   1 |    2 | 0.5x  |
+| Struct closure invocation          |   1 |    4 | 0.3x  |
+
+> Plain function pointers (1 cycle) and struct closure invocation (1 cycle) are at or below timing resolution — effectively zero overhead. C3 closures are struct methods with a captured field.
+
+#### Function Pointer Memory (C3)
+
+| Metric                       |  C3 | ObjC |
+| ---------------------------- | --: | ---: |
+| Function pointer             | 4 B |  4 B |
+| Struct closure (int capture) | 4 B | 24 B |
+| `any` type (ptr + typeid)   | 8 B | 20 B |
+
+> C3 struct closures with captures are 4 B (only the captured data). The `any` type (ptr + typeid = 8 B) is C3's runtime type erasure, comparable to Zig's fat pointers. ObjC blocks carry a fixed `Block_layout` header (20 B minimum).
+
 ### Memory Comparison
 
 Per-object memory cost across C, C++, Rust, Zig, and Objective-C (`just bench-mem`). All values from the same board (mps2/an385, ARM Cortex-M3). Each language uses a dedicated 8 KB `sys_heap` with identical allocator overhead.
