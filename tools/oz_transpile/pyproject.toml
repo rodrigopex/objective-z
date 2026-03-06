@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "oz-transpile"
+version = "0.1.0"
+description = "Objective-C to C transpiler for Objective-Z"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+
+[project.scripts]
+oz-transpile = "oz_transpile.__main__:main"
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
