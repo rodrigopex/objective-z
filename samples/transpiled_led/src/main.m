@@ -12,9 +12,13 @@ int main(void)
         printk("Failed to allocate OZLed\n");
         return 1;
     }
+    OZHelper *h1 = [[OZHelper alloc] initWithValue:42 andHelper:nil];
+    OZHelper *h2 = [[OZHelper alloc] initWithValue:43 andHelper:h1];
+    OZHelper *h3 = [[OZHelper alloc] initWithValue:44 andHelper:h2];
+    OZHelper *h4 = [[OZHelper alloc] initWithValue:45 andHelper:h3];
+    OZHelper *h5 = [[OZHelper alloc] initWithValue:46 andHelper:h4];
 
-    OZHelper *h = [[OZHelper alloc] initWithValue:42];
-    [led setHelper:h];
+    [led setHelper:h5];
 
     printk("LED on pin %d, state=%d\n", [led pin], [led state]);
 

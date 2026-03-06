@@ -633,6 +633,9 @@ def _emit_expr(node: dict, out: StringIO, ctx: _EmitCtx) -> None:
         return
 
     if kind == "CStyleCastExpr":
+        if node.get("castKind") == "NullToPointer":
+            out.write("((void *)0)")
+            return
         qt = node.get("type", {}).get("qualType", "")
         out.write(f"({OZType(qt).c_type})")
         inner = node.get("inner", [])
