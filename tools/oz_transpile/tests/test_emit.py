@@ -9,6 +9,7 @@ from oz_transpile.emit import (
 from oz_transpile.model import (
     DispatchKind,
     OZClass,
+    OZFunction,
     OZIvar,
     OZMethod,
     OZModule,
@@ -449,6 +450,64 @@ class TestARCLocalRelease:
             content = open(os.path.join(tmpdir, "Foo.c")).read()
             # inner released inside nested scope, outer released at method end
             assert content.count("OZObject_release") == 2
+
+
+    def test_early_return_inside_if_releases_outer_vars(self):
+        """Return inside an if-block should release vars from outer scopes."""
+        m = OZModule()
+        m.classes["OZObject"] = OZClass("OZObject")
+        m.classes["Foo"] = OZClass("Foo", superclass="OZObject", methods=[
+            OZMethod("check", OZType("void"), body_ast={
+                "kind": "CompoundStmt",
+                "inner": [
+                    {"kind": "DeclStmt", "inner": [{
+                        "kind": "VarDecl", "name": "a",
+                        "type": {"qualType": "OZObject *"},
+                        "inner": [{"kind": "IntegerLiteral", "value": "0"}],
+                    }]},
+                    {"kind": "IfStmt", "hasElse": False, "inner": [
+                        {"kind": "IntegerLiteral", "value": "1"},
+                        {"kind": "CompoundStmt", "inner": [
+                            {"kind": "ReturnStmt", "inner": []},
+                        ]},
+                    ]},
+                ],
+            }),
+        ])
+        resolve(m)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            content = open(os.path.join(tmpdir, "Foo.c")).read()
+            # 'a' should be released both by the early return AND at scope exit
+            # (the scope-exit release is for the non-return path)
+            assert content.count("OZObject_release((struct OZObject *)a)") == 2
+
+    def test_alloc_count_determines_slab_size(self):
+        """Slab pool size should match the number of alloc calls in source."""
+        m = OZModule()
+        m.classes["OZObject"] = OZClass("OZObject")
+        # Create a function with 3 alloc calls for Foo
+        m.classes["Foo"] = OZClass("Foo", superclass="OZObject")
+        alloc_msg = {
+            "kind": "ObjCMessageExpr", "selector": "alloc",
+            "receiverKind": "class",
+            "classType": {"qualType": "Foo"},
+            "type": {"qualType": "Foo *"},
+            "inner": [],
+        }
+        m.functions.append(OZFunction(
+            "test_fn", OZType("void"), body_ast={
+                "kind": "CompoundStmt",
+                "inner": [alloc_msg, alloc_msg, alloc_msg],
+            }
+        ))
+        resolve(m)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            slabs_c = open(os.path.join(tmpdir, "oz_mem_slabs.c")).read()
+            assert "oz_slab_Foo, sizeof(struct Foo), 3, 4)" in slabs_c
+            # OZObject has 0 alloc calls -> minimum 1
+            assert "oz_slab_OZObject, sizeof(struct OZObject), 1, 4)" in slabs_c
 
 
 class TestARCAutoDealloc:
