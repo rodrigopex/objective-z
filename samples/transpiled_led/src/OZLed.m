@@ -1,16 +1,6 @@
 /* OZLed - Standalone ObjC source for transpiler demo */
 
-@protocol OZToggleable
-- (void)toggle;
-@end
-
-@interface OZObject
-{
-    int _refcount;
-}
-- (instancetype)init;
-- (void)dealloc;
-@end
+#import "OZLed.h"
 
 @implementation OZObject
 - (instancetype)init {
@@ -20,17 +10,17 @@
 }
 @end
 
-@interface OZLed : OZObject <OZToggleable>
-{
-    int _pin;
-    int _state;
+@implementation OZHelper
+- (instancetype)initWithValue:(int)value {
+    self = [super init];
+    if (self) {
+        _value = value;
+    }
+    return self;
 }
-- (instancetype)initWithPin:(int)pin;
-- (void)turnOn;
-- (void)turnOff;
-- (void)toggle;
-- (int)pin;
-- (int)state;
+- (int)value {
+    return _value;
+}
 @end
 
 @implementation OZLed
@@ -56,6 +46,9 @@
 }
 - (int)state {
     return _state;
+}
+- (void)setHelper:(OZHelper *)helper {
+    _helper = helper;
 }
 - (void)dealloc {
     [super dealloc];
