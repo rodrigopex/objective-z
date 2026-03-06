@@ -98,7 +98,11 @@ Rust is the better choice when you need compile-time memory safety guarantees, z
 - Static allocation pools using Zephyr `K_MEM_SLAB` — zero heap allocation per class
 - `OZLog()` with `%@` format specifier and `-description` support
 - Zephyr zbus integration examples (pub/sub and request-response)
-- ARM Cortex-M Thumb-2 `objc_msgSend` trampoline for gnustep-2.0 direct dispatch
+- RISC-V (`qemu_riscv32`) support with unified RV32/RV64 `objc_msgSend` trampoline
+- Global flat dispatch table with O(1) lookup and pointer-hash sel_id cache
+- ARM Cortex-M Thumb-2 and RISC-V `objc_msgSend` trampolines for gnustep-2.0 direct dispatch
+- Build-time retain cycle detection (`CONFIG_OBJZ_CYCLE_CHECK`)
+- GPIO wrapper classes (OZGPIOPin, OZGPIOOutput, OZGPIOInput)
 
 ## Prerequisites
 

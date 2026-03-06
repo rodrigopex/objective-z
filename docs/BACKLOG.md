@@ -23,16 +23,29 @@
 - [x] Add singleton helper (`+shared` via `+initialize`)
   - [x] `+initialize` pattern (called once on first class message, zero runtime code)
   - [x] Demo in `samples/arc_demo` with `AppConfig` singleton
-- [ ] Add support to RISCV architecture
+- [x] Add support to RISCV architecture
 
-## v0.3.0 — Singleton & Advanced Patterns
+## v0.3.0 — Dual-Arch, Flat Dispatch & Benchmarks
+
+- [x] RISC-V architecture support (ARM + RISC-V dual-arch)
+  - [x] Unified RV32/RV64 `objc_msgSend` trampoline
+  - [x] `objc_msg_lookup_sender` slot-based dispatch for RISC-V Clang codegen
+  - [x] Auto-detect Homebrew LLVM when Apple Clang lacks RISC-V backend
+  - [x] ARC RVO ARM-only; RISC-V always autorelease/retain
+- [x] Global flat dispatch table (`CONFIG_OBJZ_FLAT_DISPATCH`)
+  - [x] Single 1D BSS table indexed by `(class_id << SEL_BITS) | sel_id`
+  - [x] Pointer-hash sel_id cache (64-entry, 512 B BSS)
+  - [x] Inheritance flattened at init
+- [x] ARC block support (`objc_retain`/`objc_release` handle blocks)
+- [x] Build-time retain cycle detection (`CONFIG_OBJZ_CYCLE_CHECK`)
+- [x] GPIO wrapper classes (OZGPIOPin, OZGPIOOutput, OZGPIOInput)
+- [x] Benchmarks: C++, Rust, Zig, C3 (dispatch + memory comparisons)
+- [x] `compile_commands.json` support for ObjC files
+
+## v0.4.0 — CoreZephyr (CZ prefix)
 
 - [ ] CoreZephyr module wrapping Zephyr drivers as ObjC classes
   - [ ] CZInput
   - [ ] CZLED
   - [ ] CZGPIO
   - [ ] CZZBus
-
-## v0.4.0 — CoreZephyr (CZ prefix)
-
-Unplanned yet.

@@ -4,6 +4,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
+**Current version: v0.3.0**
+
 Objective-Z is an Objective-C runtime for Zephyr RTOS, packaged as a Zephyr module (`objc/zephyr/module.yml`). Uses the gnustep-2.0 ABI with Clang for ObjC compilation.
 
 ## Project instructions
