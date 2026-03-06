@@ -1,6 +1,10 @@
 /* OZLed - Standalone ObjC header for transpiler demo */
 #pragma once
 
+#ifndef nil
+#define nil ((id)0)
+#endif
+
 @protocol OZToggleable
 - (void)toggle;
 @end
@@ -16,8 +20,9 @@
 @interface OZHelper : OZObject
 {
     int _value;
+    OZHelper *_next;
 }
-- (instancetype)initWithValue:(int)value;
+- (instancetype)initWithValue:(int)value andHelper:(OZHelper *)helper;
 - (int)value;
 @end
 
