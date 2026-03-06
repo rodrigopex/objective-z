@@ -28,9 +28,9 @@ extern OZ_fn_init OZ_vtable_init[OZ_CLASS_COUNT];
 extern OZ_fn_toggle OZ_vtable_toggle[OZ_CLASS_COUNT];
 
 /* OZ_SEND macros */
-#define OZ_SEND_dealloc(obj) OZ_vtable_dealloc[((struct OZObject *)(obj))->oz_class_id]((obj))
-#define OZ_SEND_init(obj) OZ_vtable_init[((struct OZObject *)(obj))->oz_class_id]((obj))
-#define OZ_SEND_toggle(obj) OZ_vtable_toggle[((struct OZObject *)(obj))->oz_class_id]((obj))
+#define OZ_SEND_dealloc(obj) OZ_vtable_dealloc[((struct OZObject *)(obj))->oz_class_id]((struct OZObject *)(obj))
+#define OZ_SEND_init(obj) OZ_vtable_init[((struct OZObject *)(obj))->oz_class_id]((struct OZObject *)(obj))
+#define OZ_SEND_toggle(obj) OZ_vtable_toggle[((struct OZObject *)(obj))->oz_class_id]((struct OZObject *)(obj))
 
 /* OZ_PROTOCOL_SEND (cast-free, same as OZ_SEND) */
 #define OZ_PROTOCOL_SEND_dealloc(obj) OZ_SEND_dealloc(obj)

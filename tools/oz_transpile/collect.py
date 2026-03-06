@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from .model import OZClass, OZIvar, OZMethod, OZModule, OZParam, OZProtocol, OZType
+from .model import OZClass, OZFunction, OZIvar, OZMethod, OZModule, OZParam, OZProtocol, OZType
 
 
 SKIP_CLASSES = frozenset({"Protocol"})
@@ -33,6 +33,9 @@ def _walk(node: dict, module: OZModule, impl_name: str | None = None) -> None:
         return
     elif kind == "ObjCCategoryDecl":
         _collect_category(node, module)
+        return
+    elif kind == "FunctionDecl":
+        _collect_function(node, module)
         return
 
     for child in node.get("inner", []):
@@ -160,3 +163,33 @@ def _collect_category(node: dict, module: OZModule) -> None:
             method = _collect_method(child)
             if method:
                 cls.methods.append(method)
+
+
+def _collect_function(node: dict, module: OZModule) -> None:
+    """Collect a top-level C function declaration with body."""
+    name = node.get("name", "")
+    if not name:
+        return
+
+    # Only collect functions that have a body (CompoundStmt)
+    body_ast = None
+    params = []
+    for child in node.get("inner", []):
+        ckind = child.get("kind", "")
+        if ckind == "ParmVarDecl":
+            pname = child.get("name", "")
+            ptype = OZType(child.get("type", {}).get("qualType", ""))
+            params.append(OZParam(pname, ptype))
+        elif ckind == "CompoundStmt":
+            body_ast = child
+
+    if body_ast is None:
+        return  # Forward declaration only, skip
+
+    ret_type = OZType(node.get("type", {}).get("qualType", "int ()").split("(")[0].strip())
+    module.functions.append(OZFunction(
+        name=name,
+        return_type=ret_type,
+        params=params,
+        body_ast=body_ast,
+    ))

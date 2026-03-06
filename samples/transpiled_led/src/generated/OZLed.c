@@ -5,7 +5,7 @@
 struct OZLed * OZLed_initWithPin_(struct OZLed *self, int pin)
 {
 	self = (struct OZLed *)OZObject_init((struct OZObject *)self);
-	if (self) 	{
+	if (self) {
 		self->_pin = pin;
 		self->_state = 0;
 	}

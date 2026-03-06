@@ -87,7 +87,16 @@ class OZClass:
 
 
 @dataclass(slots=True)
+class OZFunction:
+    name: str
+    return_type: OZType
+    params: list[OZParam] = field(default_factory=list)
+    body_ast: dict | None = None
+
+
+@dataclass(slots=True)
 class OZModule:
     classes: dict[str, OZClass] = field(default_factory=dict)
     protocols: dict[str, OZProtocol] = field(default_factory=dict)
+    functions: list[OZFunction] = field(default_factory=list)
     diagnostics: list[str] = field(default_factory=list)
