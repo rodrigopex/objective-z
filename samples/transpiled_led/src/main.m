@@ -17,8 +17,9 @@ int main(void)
     OZHelper *h3 = [[OZHelper alloc] initWithValue:44 andHelper:h2];
     OZHelper *h4 = [[OZHelper alloc] initWithValue:45 andHelper:h3];
     OZHelper *h5 = [[OZHelper alloc] initWithValue:46 andHelper:h4];
+    OZHelper *h6 = [[OZHelper alloc] initWithValue:47 andHelper:h5];
 
-    [led setHelper:h5];
+    [led setHelper:h6];
 
     printk("LED on pin %d, state=%d\n", [led pin], [led state]);
 
