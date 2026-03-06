@@ -18,7 +18,8 @@ class TestCLI:
             rc = main(["--input", ast_file, "--outdir", tmpdir, "--verbose"])
             assert rc == 0
 
-            expected = {"oz_dispatch.h", "oz_mem_slabs.h",
+            expected = {"oz_dispatch.h", "oz_dispatch.c",
+                        "oz_mem_slabs.h", "oz_mem_slabs.c",
                         "OZObject.h", "OZObject.c",
                         "OZLed.h", "OZLed.c"}
             generated = set(os.listdir(tmpdir))
@@ -57,9 +58,10 @@ class TestCLI:
         with tempfile.TemporaryDirectory() as tmpdir:
             main(["--input", ast_file, "--outdir", tmpdir,
                   "--pool-sizes", "OZLed=8"])
-            slabs = open(os.path.join(tmpdir, "oz_mem_slabs.h")).read()
-            assert "oz_slab_OZLed" in slabs
-            assert "8" in slabs
+            slabs_h = open(os.path.join(tmpdir, "oz_mem_slabs.h")).read()
+            slabs_c = open(os.path.join(tmpdir, "oz_mem_slabs.c")).read()
+            assert "oz_slab_OZLed" in slabs_h
+            assert "8" in slabs_c
 
     def test_retain_release_in_root(self):
         ast_file = os.path.join(FIXTURE_DIR, "simple_led.ast.json")

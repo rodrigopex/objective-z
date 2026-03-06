@@ -88,7 +88,9 @@ class TestEmitFiles:
             files = emit(m, tmpdir)
             basenames = {os.path.basename(f) for f in files}
             assert "oz_dispatch.h" in basenames
+            assert "oz_dispatch.c" in basenames
             assert "oz_mem_slabs.h" in basenames
+            assert "oz_mem_slabs.c" in basenames
             assert "OZObject.h" in basenames
             assert "OZObject.c" in basenames
             assert "OZLed.h" in basenames
