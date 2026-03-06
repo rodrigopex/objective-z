@@ -1,0 +1,14 @@
+sample:
+  name: Transpiled LED Demo
+  description: Pure C demo using OZ transpiler output (no ObjC runtime)
+tests:
+  sample.transpiled_led:
+    tags: transpiled
+    harness: console
+    harness_config:
+      type: one_line
+      regex:
+        - "Transpiled LED demo complete"
+    platform_allow:
+      - mps2/an385
+      - qemu_riscv32
