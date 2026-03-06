@@ -8,7 +8,7 @@ find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(transpiled_led)
 
 target_sources(app PRIVATE
-    src/main.c
+    src/generated/oz_functions.c
     src/generated/OZObject.c
     src/generated/OZLed.c
     src/generated/oz_dispatch.c
