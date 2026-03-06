@@ -8,7 +8,7 @@ import argparse
 import json
 import sys
 
-from .collect import collect
+from .collect import collect, merge_modules
 from .emit import emit
 from .resolve import resolve
 
@@ -18,8 +18,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         prog="oz_transpile",
         description="Transpile Objective-C (Clang JSON AST) to plain C",
     )
-    p.add_argument("--input", required=True,
-                   help="Path to Clang JSON AST file")
+    p.add_argument("--input", required=True, nargs="+",
+                   help="Path(s) to Clang JSON AST file(s)")
+    p.add_argument("--manifest", default="",
+                   help="Write list of generated file paths to this file")
     p.add_argument("--outdir", required=True,
                    help="Output directory for generated C files")
     p.add_argument("--root-class", default="OZObject",
@@ -48,10 +50,13 @@ def parse_pool_sizes(raw: str) -> dict[str, int]:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
 
-    with open(args.input) as f:
-        ast_root = json.load(f)
+    modules = []
+    for path in args.input:
+        with open(path) as f:
+            ast_root = json.load(f)
+        modules.append(collect(ast_root))
 
-    module = collect(ast_root)
+    module = merge_modules(modules) if len(modules) > 1 else modules[0]
     resolve(module)
 
     if args.verbose:
@@ -69,6 +74,11 @@ def main(argv: list[str] | None = None) -> int:
 
     for f in files:
         print(f"oz_transpile: generated {f}", file=sys.stderr)
+
+    if args.manifest:
+        with open(args.manifest, "w") as mf:
+            for f in files:
+                mf.write(f + "\n")
 
     return 0
 

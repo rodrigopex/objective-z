@@ -75,8 +75,8 @@ bench-mem:
     just bench-mem-zig
     just bench-mem-objc
 
-ast-dump file:
-    clang -Xclang -ast-dump=json -fsyntax-only {{file}} 2>/dev/null
+ast-dump file *includes:
+    clang -Xclang -ast-dump=json -fsyntax-only {{includes}} {{file}} 2>/dev/null
 
 transpile *args:
     PYTHONPATH=tools python3 -m oz_transpile {{args}}

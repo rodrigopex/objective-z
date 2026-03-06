@@ -10,6 +10,29 @@ from .model import OZClass, OZFunction, OZIvar, OZMethod, OZModule, OZParam, OZP
 SKIP_CLASSES = frozenset({"Protocol"})
 
 
+def merge_modules(modules: list[OZModule]) -> OZModule:
+    """Merge multiple OZModules into one, combining class data."""
+    merged = OZModule()
+    for m in modules:
+        for name, cls in m.classes.items():
+            if name in merged.classes:
+                existing = merged.classes[name]
+                if cls.superclass and not existing.superclass:
+                    existing.superclass = cls.superclass
+                if cls.ivars and not existing.ivars:
+                    existing.ivars = cls.ivars
+                if cls.protocols:
+                    existing.protocols = list(
+                        dict.fromkeys(existing.protocols + cls.protocols))
+                existing.methods.extend(cls.methods)
+            else:
+                merged.classes[name] = cls
+        merged.protocols.update(m.protocols)
+        merged.functions.extend(m.functions)
+        merged.diagnostics.extend(m.diagnostics)
+    return merged
+
+
 def collect(ast_root: dict) -> OZModule:
     """Walk a Clang JSON AST and extract classes, protocols, methods, ivars."""
     module = OZModule()
@@ -18,6 +41,16 @@ def collect(ast_root: dict) -> OZModule:
     for name in SKIP_CLASSES:
         module.classes.pop(name, None)
     return module
+
+
+def _is_from_main_file(node: dict) -> bool:
+    """Check if a node is defined in the main source file, not an included header."""
+    loc = node.get("loc", {})
+    if "includedFrom" in loc:
+        return False
+    if "expansionLoc" in loc:
+        return "includedFrom" not in loc["expansionLoc"]
+    return True
 
 
 def _walk(node: dict, module: OZModule, impl_name: str | None = None) -> None:
@@ -35,7 +68,8 @@ def _walk(node: dict, module: OZModule, impl_name: str | None = None) -> None:
         _collect_category(node, module)
         return
     elif kind == "FunctionDecl":
-        _collect_function(node, module)
+        if _is_from_main_file(node):
+            _collect_function(node, module)
         return
 
     for child in node.get("inner", []):

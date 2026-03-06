@@ -1,6 +1,7 @@
 /* OZLed - Standalone ObjC source for transpiler demo */
 
 #import "OZLed.h"
+#include <zephyr/kernel.h>
 
 @implementation OZObject
 - (instancetype)init
@@ -25,6 +26,11 @@
 - (int)value
 {
 	return _value;
+}
+
+- (void)dealloc
+{
+	printk("Helper dealloc %d\n", _value);
 }
 @end
 
@@ -64,6 +70,7 @@
 }
 - (void)dealloc
 {
+	printk("Led dealloc %d\n", _pin);
 	[super dealloc];
 }
 @end

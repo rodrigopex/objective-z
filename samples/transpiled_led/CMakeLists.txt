@@ -7,12 +7,8 @@ cmake_minimum_required(VERSION 3.20.0)
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(transpiled_led)
 
-target_sources(app PRIVATE
-    src/generated/oz_functions.c
-    src/generated/OZObject.c
-    src/generated/OZLed.c
-    src/generated/oz_dispatch.c
-    src/generated/oz_mem_slabs.c
-)
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../objc/cmake/oz_transpile.cmake)
 
 target_include_directories(app PRIVATE src)
+
+objz_transpile_sources(app src/OZLed.m src/main.m)
