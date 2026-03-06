@@ -262,7 +262,7 @@ def _emit_mem_slabs(module: OZModule, outdir: str,
 
     auto_counts = _count_alloc_calls(module)
     for cls in sorted(module.classes.values(), key=lambda c: c.class_id):
-        count = pool_sizes.get(cls.name, max(auto_counts.get(cls.name, 0), 4))
+        count = pool_sizes.get(cls.name, max(auto_counts.get(cls.name, 0), 1))
         out.write(f"K_MEM_SLAB_DEFINE(oz_slab_{cls.name}, "
                   f"sizeof(struct {cls.name}), {count}, 4);\n")
 
