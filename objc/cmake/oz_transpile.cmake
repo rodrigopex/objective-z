@@ -35,6 +35,7 @@ function(objz_transpile_sources target)
 
     objz_find_clang()
     _objz_build_ast_flags(_ast_flags)
+    list(APPEND _ast_flags -w)  # Suppress warnings — AST dump is transpiler input only
 
     # Add shared transpiler root class (OZObject.h + OZObject.m)
     get_filename_component(_oz_inc_dir
@@ -116,6 +117,7 @@ function(objz_transpile_sources target)
     # ── Build-time: re-run when .m sources change ─────────────────────
     set(_stamp ${_outdir}/.oz_transpile.stamp)
 
+
     # Build a shell script to AST-dump each source then run the transpiler
     set(_script "${_ast_dir}/oz_transpile_build.sh")
     set(_script_lines "#!/bin/sh\nset -e\n")
@@ -157,6 +159,11 @@ function(objz_transpile_sources target)
         endif()
     endforeach()
     target_include_directories(${target} PRIVATE ${_outdir})
+
+    # Add OZLog support (pure C, uses generated oz_dispatch.h for %@)
+    get_filename_component(_oz_log_src
+        "${_OZ_TRANSPILE_CMAKE_DIR}/../src/oz_transpile/OZLog.c" ABSOLUTE)
+    target_sources(${target} PRIVATE ${_oz_log_src})
 
     set_target_properties(${target} PROPERTIES LINKER_LANGUAGE C)
 endfunction()

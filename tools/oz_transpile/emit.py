@@ -72,12 +72,72 @@ def _emit_dispatch_header(module: OZModule, outdir: str) -> str:
     out.write(f"\tOZ_CLASS_COUNT = {len(module.classes)}\n")
     out.write("};\n\n")
 
+    # Class introspection tables
+    _emit_introspection_decls(module, out)
+
     # Protocol dispatch macros
     _emit_protocol_macros(module, out)
+
+    # OZLog forward declaration (implementation in OZLog.c)
+    out.write("\n/* OZLog — formatted logging with %@ object support */\n")
+    out.write("void OZLog(const char *fmt, ...);\n")
 
     path = os.path.join(outdir, "oz_dispatch.h")
     _write_file(path, out.getvalue())
     return path
+
+
+def _emit_introspection_decls(module: OZModule, out: StringIO) -> None:
+    """Emit class name and superclass lookup tables + inline helpers."""
+    out.write("/* Class introspection tables */\n")
+    out.write("extern const char *const oz_class_names[OZ_CLASS_COUNT];\n")
+    out.write("extern const uint8_t oz_superclass_id[OZ_CLASS_COUNT];\n\n")
+
+    # Find root class struct name
+    root_name = None
+    for cls in module.classes.values():
+        if not cls.superclass or cls.superclass not in module.classes:
+            root_name = cls.name
+            break
+
+    out.write("static inline const char *oz_name(uint8_t class_id)\n")
+    out.write("{\n")
+    out.write("\treturn oz_class_names[class_id];\n")
+    out.write("}\n\n")
+
+    out.write("static inline uint8_t oz_superclass(uint8_t class_id)\n")
+    out.write("{\n")
+    out.write("\treturn oz_superclass_id[class_id];\n")
+    out.write("}\n\n")
+
+    out.write("static inline bool oz_isKindOfClass("
+              "uint8_t class_id, uint8_t target_class_id)\n")
+    out.write("{\n")
+    out.write("\tuint8_t cur = class_id;\n")
+    out.write("\twhile (cur != OZ_CLASS_COUNT) {\n")
+    out.write("\t\tif (cur == target_class_id) {\n")
+    out.write("\t\t\treturn true;\n")
+    out.write("\t\t}\n")
+    out.write("\t\tcur = oz_superclass_id[cur];\n")
+    out.write("\t}\n")
+    out.write("\treturn false;\n")
+    out.write("}\n\n")
+
+
+def _emit_introspection_tables(module: OZModule, out: StringIO) -> None:
+    """Emit oz_class_names[] and oz_superclass_id[] arrays."""
+    out.write("const char *const oz_class_names[OZ_CLASS_COUNT] = {\n")
+    for cls in sorted(module.classes.values(), key=lambda c: c.class_id):
+        out.write(f"\t[OZ_CLASS_{cls.name}] = \"{cls.name}\",\n")
+    out.write("};\n\n")
+
+    out.write("const uint8_t oz_superclass_id[OZ_CLASS_COUNT] = {\n")
+    for cls in sorted(module.classes.values(), key=lambda c: c.class_id):
+        if cls.superclass and cls.superclass in module.classes:
+            out.write(f"\t[OZ_CLASS_{cls.name}] = OZ_CLASS_{cls.superclass},\n")
+        else:
+            out.write(f"\t[OZ_CLASS_{cls.name}] = OZ_CLASS_COUNT,\n")
+    out.write("};\n\n")
 
 
 def _emit_protocol_macros(module: OZModule, out: StringIO) -> None:
@@ -132,6 +192,9 @@ def _emit_dispatch_source(module: OZModule, outdir: str) -> str:
     for cls in sorted(module.classes.values(), key=lambda c: c.class_id):
         out.write(f"#include \"{cls.name}.h\"\n")
     out.write("\n")
+
+    # Class introspection tables
+    _emit_introspection_tables(module, out)
 
     # Collect all protocol-dispatched selectors
     emitted: set[str] = set()
@@ -255,6 +318,7 @@ def _emit_mem_slabs(module: OZModule, outdir: str,
     for cls in sorted(module.classes.values(), key=lambda c: c.class_id):
         out.write(f"\tcase OZ_CLASS_{cls.name}: "
                   f"{cls.name}_free((struct {cls.name} *)obj); break;\n")
+    out.write("\tdefault: break;\n")
     out.write("\t}\n")
     out.write("}\n\n")
 
@@ -302,7 +366,7 @@ def _emit_class_header(ctx: _EmitCtx, outdir: str) -> str:
     if not is_root:
         out.write(f"\tstruct {cls.superclass} base;\n")
     else:
-        out.write("\tuint8_t oz_class_id;\n")
+        out.write("\tenum oz_class_id oz_class_id;\n")
         out.write("\tuint32_t _refcount;\n")
     for ivar in cls.ivars:
         if is_root and ivar.name in _root_builtins:
@@ -310,16 +374,25 @@ def _emit_class_header(ctx: _EmitCtx, outdir: str) -> str:
         out.write(f"\t{ivar.oz_type.c_type} {ivar.name};\n")
     out.write("};\n\n")
 
-    # Root class always gets retain/release/retainCount prototypes
+    # Root class always gets retain/release/retainCount + introspection prototypes
     if is_root:
         out.write(f"struct {cls.name} *{cls.name}_retain(struct {cls.name} *self);\n")
         out.write(f"void {cls.name}_release(struct {cls.name} *self);\n")
         out.write(f"uint32_t {cls.name}_retainCount(struct {cls.name} *self);\n")
+        out.write(f"BOOL {cls.name}_isEqual_("
+                  f"struct {cls.name} *self, struct {cls.name} *anObject);\n")
+        out.write(f"int {cls.name}_cDescription_maxLength_("
+                  f"struct {cls.name} *self, char *buf, int maxLen);\n")
+        out.write(f"\n/* Refcount introspection — mirrors runtime __objc_refcount_get() */\n")
+        out.write(f"#define __objc_refcount_get(obj) "
+                  f"((unsigned int)((struct {cls.name} *)(obj))->_refcount)\n")
 
     # Method prototypes
+    _root_skip_sels = {"retain", "release", "retainCount",
+                       "isEqual:", "cDescription:maxLength:"}
     has_dealloc = False
     for m in cls.methods:
-        if is_root and m.selector in ("retain", "release", "retainCount"):
+        if is_root and m.selector in _root_skip_sels:
             continue
         if m.selector == "dealloc":
             has_dealloc = True
@@ -353,15 +426,19 @@ def _emit_class_source(ctx: _EmitCtx, outdir: str) -> str:
     out.write("#include \"oz_mem_slabs.h\"\n")
     if cls.name == root_class:
         out.write("#include <zephyr/sys/atomic.h>\n")
+        out.write("#include <zephyr/sys/printk.h>\n")
     out.write("\n")
 
-    # Emit retain/release for root class
+    # Emit retain/release + introspection for root class
     if cls.name == root_class:
         _emit_root_retain_release(cls, module, out)
+        _emit_root_introspection(cls, out)
 
+    _root_skip_sels = {"retain", "release", "retainCount",
+                       "isEqual:", "cDescription:maxLength:"}
     has_user_dealloc = False
     for m in cls.methods:
-        if m.selector in ("retain", "release", "retainCount") and cls.name == root_class:
+        if m.selector in _root_skip_sels and cls.name == root_class:
             continue
         if m.selector == "dealloc":
             has_user_dealloc = True
@@ -421,6 +498,22 @@ def _emit_root_retain_release(cls: OZClass, module: OZModule,
     out.write("\t\treturn 0;\n")
     out.write("\t}\n")
     out.write(f"\treturn (uint32_t)atomic_get((atomic_t *)&self->_refcount);\n")
+    out.write("}\n\n")
+
+
+def _emit_root_introspection(cls: OZClass, out: StringIO) -> None:
+    """Emit isEqual: and cDescription:maxLength: for root class."""
+    out.write(f"BOOL {cls.name}_isEqual_("
+              f"struct {cls.name} *self, struct {cls.name} *anObject)\n")
+    out.write("{\n")
+    out.write("\treturn self == anObject;\n")
+    out.write("}\n\n")
+
+    out.write(f"int {cls.name}_cDescription_maxLength_("
+              f"struct {cls.name} *self, char *buf, int maxLen)\n")
+    out.write("{\n")
+    out.write("\treturn snprintk(buf, (size_t)maxLen, \"<%s: %p>\",\n")
+    out.write("\t\toz_class_names[self->oz_class_id], (void *)self);\n")
     out.write("}\n\n")
 
 

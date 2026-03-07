@@ -39,6 +39,7 @@ int printk(const char *fmt, ...);
 - (void)dealloc
 {
 	printk("Sensor dealloc (value=%d)\n", _value);
+	[super dealloc];
 }
 
 @end

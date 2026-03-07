@@ -108,7 +108,10 @@ def _create_zephyr_stubs(tmpdir: str) -> None:
 
     with open(os.path.join(zephyr_dir, "sys", "printk.h"), "w") as f:
         f.write("#pragma once\n")
+        f.write("#include <stddef.h>\n")
         f.write("static inline void printk(const char *fmt, ...) { (void)fmt; }\n")
+        f.write("static inline int snprintk(char *buf, size_t len, "
+                "const char *fmt, ...) { (void)buf; (void)len; (void)fmt; return 0; }\n")
 
 
 def _gcc_syntax_check(tmpdir: str) -> None:
