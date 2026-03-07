@@ -88,10 +88,12 @@ def _classify_dispatch(module: OZModule) -> None:
         for m in proto.methods:
             protocol_selectors.add(m.selector)
 
-    # Count how many classes implement each selector
+    # Count how many classes implement each instance selector
     selector_classes: dict[str, set[str]] = {}
     for cls in module.classes.values():
         for m in cls.methods:
+            if m.is_class_method:
+                continue
             if m.selector not in selector_classes:
                 selector_classes[m.selector] = set()
             selector_classes[m.selector].add(cls.name)
@@ -101,6 +103,8 @@ def _classify_dispatch(module: OZModule) -> None:
 
     for cls in module.classes.values():
         for m in cls.methods:
+            if m.is_class_method:
+                continue
             if m.selector in protocol_selectors:
                 m.dispatch = DispatchKind.PROTOCOL
             elif m.selector in always_protocol:

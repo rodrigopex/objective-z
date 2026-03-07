@@ -4,10 +4,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#import <Foundation/Foundation.h>
-#import <objc/objc.h>
+#import "OZObject.h"
+#import "OZLog.h"
 
-@interface MyFirstObject: Object
+@interface MyFirstObject: OZObject
 
 - (void)greet;
 
