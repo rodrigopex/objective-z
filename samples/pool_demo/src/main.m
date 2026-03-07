@@ -1,18 +1,23 @@
 /*
  * SPDX-License-Identifier: Apache-2.0
  *
- * Static allocation pool demo.
+ * Transpiled pool demo.
  *
- * Sensor uses a slab pool (OZ_DEFINE_POOL) — zero heap allocation.
- * Gadget has no pool — falls back to the sys_heap allocator.
+ * Sensor uses a slab pool — zero heap allocation.
+ * Each @autoreleasepool iteration releases the sensor,
+ * returning the slab block for the next iteration.
  */
 
-#import <Foundation/Foundation.h>
-#import <objc/objc.h>
+#import "OZObject.h"
+
+/* printk declared here so Clang AST dump works without Zephyr generated
+ * headers.  The transpiler emits the real #include <zephyr/sys/printk.h>
+ * in the generated C output. */
+int printk(const char *fmt, ...);
 
 /* ── Sensor class ─────────────────────────────────────────────────── */
 
-@interface Sensor : Object {
+@interface Sensor : OZObject {
 	int _value;
 }
 - (void)setValue:(int)v;
@@ -33,68 +38,28 @@
 
 - (void)dealloc
 {
-	OZLog("Sensor dealloc (value=%d)", _value);
-}
-
-@end
-
-/* ── Gadget class (no pool, uses heap fallback) ───────────────────── */
-
-@interface Gadget : Object {
-	int _value;
-}
-- (void)setValue:(int)v;
-- (int)value;
-@end
-
-@implementation Gadget
-
-- (void)setValue:(int)v
-{
-	_value = v;
-}
-
-- (int)value
-{
-	return _value;
-}
-
-- (void)dealloc
-{
-	OZLog("Gadget dealloc (value=%d)", _value);
+	printk("Sensor dealloc (value=%d)\n", _value);
 }
 
 @end
 
 int main(void)
 {
-	OZLog("=== Static Pool Demo ===");
+	printk("=== Static Pool Demo ===\n");
 
-	/* Allocate 3 Sensors from the slab pool */
-	{
-		Sensor *s1 = [[Sensor alloc] init];
-		[s1 setValue:1];
-		OZLog("pool alloc s1 value=%d", [s1 value]);
-
-		Sensor *s2 = [[Sensor alloc] init];
-		[s2 setValue:2];
-		OZLog("pool alloc s2 value=%d", [s2 value]);
-
-		Sensor *s3 = [[Sensor alloc] init];
-		[s3 setValue:3];
-		OZLog("pool alloc s3 value=%d", [s3 value]);
-
-		/* ARC releases s1/s2/s3 at scope exit — blocks return to slab */
+	/* Allocate 3 Sensors in a loop with @autoreleasepool.
+	 * Each iteration's pool scope releases the sensor,
+	 * returning the slab block for the next iteration.
+	 */
+	for (int i = 1; i <= 3; i++) {
+		@autoreleasepool {
+			Sensor *s = [[Sensor alloc] init];
+			[s setValue:i];
+			printk("pool alloc sensor value=%d\n", [s value]);
+			/* ARC releases s at @autoreleasepool scope exit */
+		}
 	}
 
-	/* Gadget has no pool — falls back to sys_heap */
-	{
-		Gadget *g = [[Gadget alloc] init];
-		[g setValue:100];
-		OZLog("heap alloc g value=%d", [g value]);
-		/* ARC releases g at scope exit */
-	}
-
-	OZLog("=== Demo complete ===");
+	printk("=== Demo complete ===\n");
 	return 0;
 }

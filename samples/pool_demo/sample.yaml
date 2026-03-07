@@ -1,5 +1,5 @@
 sample:
-  description: Static allocation pool demo with OZ_DEFINE_POOL
+  description: Transpiled pool demo with loop and autoreleasepool
   name: ObjZ Pool Demo
 common:
   tags: objz
@@ -12,12 +12,12 @@ common:
     ordered: true
     regex:
       - "=== Static Pool Demo ==="
-      - "pool alloc.*value=1"
-      - "pool alloc.*value=2"
-      - "pool alloc.*value=3"
+      - "pool alloc sensor value=1"
       - "Sensor dealloc"
-      - "heap alloc.*value=100"
-      - "Gadget dealloc"
+      - "pool alloc sensor value=2"
+      - "Sensor dealloc"
+      - "pool alloc sensor value=3"
+      - "Sensor dealloc"
       - "=== Demo complete ==="
 tests:
   sample.objz.pool_demo:

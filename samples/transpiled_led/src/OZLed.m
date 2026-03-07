@@ -1,17 +1,8 @@
-/* OZLed - Standalone ObjC source for transpiler demo */
+/* OZLed - ObjC source for transpiler demo */
 
 #import "OZLed.h"
-#include <zephyr/kernel.h>
 
-@implementation OZObject
-- (instancetype)init
-{
-	return self;
-}
-- (void)dealloc
-{
-}
-@end
+int printk(const char *fmt, ...);
 
 @implementation OZHelper
 - (instancetype)initWithValue:(int)value andHelper:(OZHelper *)helper

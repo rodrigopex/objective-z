@@ -1,20 +1,10 @@
-/* OZLed - Standalone ObjC header for transpiler demo */
+/* OZLed - ObjC header for transpiler demo */
 #pragma once
 
-#ifndef nil
-#define nil ((id)0)
-#endif
+#import "OZObject.h"
 
 @protocol OZToggleable
 - (void)toggle;
-@end
-
-@interface OZObject
-{
-    int _refcount;
-}
-- (instancetype)init;
-- (void)dealloc;
 @end
 
 @interface OZHelper : OZObject

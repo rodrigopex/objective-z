@@ -538,7 +538,7 @@ class TestARCAutoDealloc:
             emit(m, tmpdir)
             content = open(os.path.join(tmpdir, "OZObject.c")).read()
             assert "OZObject_dealloc" in content
-            assert "OZObject_free(self)" in content
+            assert "OZObject_dispatch_free((struct OZObject *)self)" in content
 
     def test_no_dealloc_for_root_without_obj_ivars(self):
         m = OZModule()
@@ -599,6 +599,409 @@ class TestARCAutoDealloc:
             assert "OZObject_dealloc((struct OZObject *)self)" in content
             # User code should still be present
             assert "42" in content
+
+
+class TestARCBreakContinueCleanup:
+    def _module_with_method(self, body_ast):
+        m = OZModule()
+        m.classes["OZObject"] = OZClass("OZObject")
+        m.classes["Foo"] = OZClass("Foo", superclass="OZObject", methods=[
+            OZMethod("run", OZType("void"), body_ast=body_ast),
+        ])
+        resolve(m)
+        return m
+
+    def _while_with_break(self, body_inner, pre_loop=None):
+        stmts = []
+        if pre_loop:
+            stmts.extend(pre_loop)
+        stmts.append({
+            "kind": "WhileStmt",
+            "inner": [
+                {"kind": "IntegerLiteral", "value": "1"},
+                {"kind": "CompoundStmt", "inner": body_inner},
+            ],
+        })
+        return {"kind": "CompoundStmt", "inner": stmts}
+
+    def _obj_decl(self, name):
+        return {"kind": "DeclStmt", "inner": [{
+            "kind": "VarDecl", "name": name,
+            "type": {"qualType": "OZObject *"},
+            "inner": [{"kind": "IntegerLiteral", "value": "0"}],
+        }]}
+
+    def test_break_releases_loop_locals(self):
+        body = self._while_with_break([
+            self._obj_decl("a"),
+            {"kind": "BreakStmt"},
+        ])
+        m = self._module_with_method(body)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            content = open(os.path.join(tmpdir, "Foo.c")).read()
+            lines = content.split("\n")
+            release_line = next(i for i, l in enumerate(lines) if "release" in l and "a)" in l)
+            break_line = next(i for i, l in enumerate(lines) if "break;" in l)
+            assert release_line < break_line
+
+    def test_continue_releases_loop_locals(self):
+        body = self._while_with_break([
+            self._obj_decl("a"),
+            {"kind": "ContinueStmt"},
+        ])
+        m = self._module_with_method(body)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            content = open(os.path.join(tmpdir, "Foo.c")).read()
+            lines = content.split("\n")
+            release_line = next(i for i, l in enumerate(lines) if "release" in l and "a)" in l)
+            continue_line = next(i for i, l in enumerate(lines) if "continue;" in l)
+            assert release_line < continue_line
+
+    def test_break_releases_nested_scopes_in_loop(self):
+        body = self._while_with_break([
+            self._obj_decl("a"),
+            {"kind": "IfStmt", "hasElse": False, "inner": [
+                {"kind": "IntegerLiteral", "value": "1"},
+                {"kind": "CompoundStmt", "inner": [
+                    self._obj_decl("b"),
+                    {"kind": "BreakStmt"},
+                ]},
+            ]},
+        ])
+        m = self._module_with_method(body)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            content = open(os.path.join(tmpdir, "Foo.c")).read()
+            break_idx = content.index("break;")
+            before_break = content[:break_idx]
+            assert "release((struct OZObject *)b)" in before_break
+            assert "release((struct OZObject *)a)" in before_break
+
+    def test_break_does_not_release_outside_loop(self):
+        body = self._while_with_break(
+            [self._obj_decl("inner"), {"kind": "BreakStmt"}],
+            pre_loop=[self._obj_decl("outer")],
+        )
+        m = self._module_with_method(body)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            content = open(os.path.join(tmpdir, "Foo.c")).read()
+            break_idx = content.index("break;")
+            before_break = content[:break_idx]
+            assert "release((struct OZObject *)inner)" in before_break
+            assert "release((struct OZObject *)outer)" not in before_break
+
+    def test_nested_loops_break_only_releases_inner(self):
+        body = {"kind": "CompoundStmt", "inner": [{
+            "kind": "WhileStmt", "inner": [
+                {"kind": "IntegerLiteral", "value": "1"},
+                {"kind": "CompoundStmt", "inner": [
+                    self._obj_decl("a"),
+                    {"kind": "WhileStmt", "inner": [
+                        {"kind": "IntegerLiteral", "value": "1"},
+                        {"kind": "CompoundStmt", "inner": [
+                            self._obj_decl("b"),
+                            {"kind": "BreakStmt"},
+                        ]},
+                    ]},
+                ]},
+            ],
+        }]}
+        m = self._module_with_method(body)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            content = open(os.path.join(tmpdir, "Foo.c")).read()
+            break_idx = content.index("break;")
+            before_break = content[:break_idx]
+            assert "release((struct OZObject *)b)" in before_break
+            assert "release((struct OZObject *)a)" not in before_break
+
+    def test_consumed_var_not_released_on_break(self):
+        m = OZModule()
+        m.classes["OZObject"] = OZClass("OZObject")
+        m.classes["Holder"] = OZClass("Holder", superclass="OZObject",
+            ivars=[OZIvar("_child", OZType("OZObject *"))],
+            methods=[OZMethod("run", OZType("void"), body_ast={
+                "kind": "CompoundStmt", "inner": [{
+                    "kind": "WhileStmt", "inner": [
+                        {"kind": "IntegerLiteral", "value": "1"},
+                        {"kind": "CompoundStmt", "inner": [
+                            self._obj_decl("obj"),
+                            {"kind": "BinaryOperator", "opcode": "=", "inner": [
+                                {"kind": "ObjCIvarRefExpr", "decl": {"name": "_child"}},
+                                {"kind": "DeclRefExpr",
+                                 "referencedDecl": {"name": "obj"},
+                                 "type": {"qualType": "OZObject *"}},
+                            ]},
+                            {"kind": "BreakStmt"},
+                        ]},
+                    ],
+                }],
+            })],
+        )
+        resolve(m)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            content = open(os.path.join(tmpdir, "Holder.c")).read()
+            break_idx = content.index("break;")
+            before_break = content[:break_idx]
+            assert "release((struct OZObject *)obj)" not in before_break
+
+    def test_for_stmt_break_releases(self):
+        m = OZModule()
+        m.classes["OZObject"] = OZClass("OZObject")
+        m.classes["Foo"] = OZClass("Foo", superclass="OZObject", methods=[
+            OZMethod("run", OZType("void"), body_ast={
+                "kind": "CompoundStmt", "inner": [{
+                    "kind": "ForStmt", "inner": [
+                        {"kind": "DeclStmt", "inner": [{
+                            "kind": "VarDecl", "name": "i",
+                            "type": {"qualType": "int"},
+                            "inner": [{"kind": "IntegerLiteral", "value": "0"}],
+                        }]},
+                        {"kind": "BinaryOperator", "opcode": "<", "inner": [
+                            {"kind": "DeclRefExpr", "referencedDecl": {"name": "i"},
+                             "type": {"qualType": "int"}},
+                            {"kind": "IntegerLiteral", "value": "10"},
+                        ]},
+                        {"kind": "UnaryOperator", "opcode": "++",
+                         "isPostfix": True, "inner": [
+                            {"kind": "DeclRefExpr", "referencedDecl": {"name": "i"},
+                             "type": {"qualType": "int"}},
+                        ]},
+                        {"kind": "CompoundStmt", "inner": [
+                            self._obj_decl("a"),
+                            {"kind": "BreakStmt"},
+                        ]},
+                    ],
+                }],
+            }),
+        ])
+        resolve(m)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            content = open(os.path.join(tmpdir, "Foo.c")).read()
+            break_idx = content.index("break;")
+            before_break = content[:break_idx]
+            assert "release((struct OZObject *)a)" in before_break
+
+    def test_do_while_break_releases(self):
+        m = OZModule()
+        m.classes["OZObject"] = OZClass("OZObject")
+        m.classes["Foo"] = OZClass("Foo", superclass="OZObject", methods=[
+            OZMethod("run", OZType("void"), body_ast={
+                "kind": "CompoundStmt", "inner": [{
+                    "kind": "DoStmt", "inner": [
+                        {"kind": "CompoundStmt", "inner": [
+                            self._obj_decl("a"),
+                            {"kind": "BreakStmt"},
+                        ]},
+                        {"kind": "IntegerLiteral", "value": "1"},
+                    ],
+                }],
+            }),
+        ])
+        resolve(m)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            content = open(os.path.join(tmpdir, "Foo.c")).read()
+            assert "do {" in content
+            assert "while (1);" in content
+            break_idx = content.index("break;")
+            before_break = content[:break_idx]
+            assert "release((struct OZObject *)a)" in before_break
+
+
+class TestARCAutoreleasePool:
+    def _obj_decl(self, name):
+        return {"kind": "DeclStmt", "inner": [{
+            "kind": "VarDecl", "name": name,
+            "type": {"qualType": "OZObject *"},
+            "inner": [{"kind": "IntegerLiteral", "value": "0"}],
+        }]}
+
+    def test_autoreleasepool_releases_at_exit(self):
+        m = OZModule()
+        m.classes["OZObject"] = OZClass("OZObject")
+        m.classes["Foo"] = OZClass("Foo", superclass="OZObject", methods=[
+            OZMethod("run", OZType("void"), body_ast={
+                "kind": "CompoundStmt", "inner": [{
+                    "kind": "ObjCAutoreleasePoolStmt", "inner": [{
+                        "kind": "CompoundStmt", "inner": [
+                            self._obj_decl("a"),
+                        ],
+                    }],
+                }],
+            }),
+        ])
+        resolve(m)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            content = open(os.path.join(tmpdir, "Foo.c")).read()
+            assert "OZObject_release((struct OZObject *)a);" in content
+
+    def test_autoreleasepool_nested(self):
+        m = OZModule()
+        m.classes["OZObject"] = OZClass("OZObject")
+        m.classes["Foo"] = OZClass("Foo", superclass="OZObject", methods=[
+            OZMethod("run", OZType("void"), body_ast={
+                "kind": "CompoundStmt", "inner": [{
+                    "kind": "ObjCAutoreleasePoolStmt", "inner": [{
+                        "kind": "CompoundStmt", "inner": [
+                            self._obj_decl("outer"),
+                            {"kind": "ObjCAutoreleasePoolStmt", "inner": [{
+                                "kind": "CompoundStmt", "inner": [
+                                    self._obj_decl("inner"),
+                                ],
+                            }]},
+                        ],
+                    }],
+                }],
+            }),
+        ])
+        resolve(m)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            content = open(os.path.join(tmpdir, "Foo.c")).read()
+            assert content.count("OZObject_release") == 2
+
+    def test_autoreleasepool_does_not_release_outer_vars(self):
+        m = OZModule()
+        m.classes["OZObject"] = OZClass("OZObject")
+        m.classes["Foo"] = OZClass("Foo", superclass="OZObject", methods=[
+            OZMethod("run", OZType("void"), body_ast={
+                "kind": "CompoundStmt", "inner": [
+                    self._obj_decl("before"),
+                    {"kind": "ObjCAutoreleasePoolStmt", "inner": [{
+                        "kind": "CompoundStmt", "inner": [
+                            self._obj_decl("inside"),
+                        ],
+                    }]},
+                ],
+            }),
+        ])
+        resolve(m)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            content = open(os.path.join(tmpdir, "Foo.c")).read()
+            # Find the pool block's closing brace area
+            inside_release = content.index("release((struct OZObject *)inside)")
+            before_release = content.index("release((struct OZObject *)before)")
+            # inside released first (inner scope), before released at method end
+            assert inside_release < before_release
+
+
+class TestARCParameterRetain:
+    def test_object_param_retained_at_entry(self):
+        m = OZModule()
+        m.classes["OZObject"] = OZClass("OZObject")
+        m.classes["Foo"] = OZClass("Foo", superclass="OZObject", methods=[
+            OZMethod("setItem:", OZType("void"),
+                     params=[OZParam("item", OZType("OZObject *"))],
+                     body_ast={"kind": "CompoundStmt", "inner": []}),
+        ])
+        resolve(m)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            content = open(os.path.join(tmpdir, "Foo.c")).read()
+            assert "OZObject_retain((struct OZObject *)item)" in content
+
+    def test_object_param_released_at_scope_exit(self):
+        m = OZModule()
+        m.classes["OZObject"] = OZClass("OZObject")
+        m.classes["Foo"] = OZClass("Foo", superclass="OZObject", methods=[
+            OZMethod("setItem:", OZType("void"),
+                     params=[OZParam("item", OZType("OZObject *"))],
+                     body_ast={"kind": "CompoundStmt", "inner": []}),
+        ])
+        resolve(m)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            content = open(os.path.join(tmpdir, "Foo.c")).read()
+            assert "OZObject_release((struct OZObject *)item)" in content
+
+    def test_primitive_param_not_retained(self):
+        m = OZModule()
+        m.classes["OZObject"] = OZClass("OZObject")
+        m.classes["Foo"] = OZClass("Foo", superclass="OZObject", methods=[
+            OZMethod("setCount:", OZType("void"),
+                     params=[OZParam("count", OZType("int"))],
+                     body_ast={"kind": "CompoundStmt", "inner": []}),
+        ])
+        resolve(m)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            content = open(os.path.join(tmpdir, "Foo.c")).read()
+            assert "retain" not in content
+
+    def test_multiple_object_params_all_retained(self):
+        m = OZModule()
+        m.classes["OZObject"] = OZClass("OZObject")
+        m.classes["Foo"] = OZClass("Foo", superclass="OZObject", methods=[
+            OZMethod("set:with:", OZType("void"),
+                     params=[
+                         OZParam("a", OZType("OZObject *")),
+                         OZParam("count", OZType("int")),
+                         OZParam("b", OZType("OZObject *")),
+                     ],
+                     body_ast={"kind": "CompoundStmt", "inner": []}),
+        ])
+        resolve(m)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            content = open(os.path.join(tmpdir, "Foo.c")).read()
+            assert "OZObject_retain((struct OZObject *)a)" in content
+            assert "OZObject_retain((struct OZObject *)b)" in content
+            assert "retain((struct OZObject *)count)" not in content
+
+    def test_object_param_released_on_return(self):
+        m = OZModule()
+        m.classes["OZObject"] = OZClass("OZObject")
+        m.classes["Foo"] = OZClass("Foo", superclass="OZObject", methods=[
+            OZMethod("process:", OZType("void"),
+                     params=[OZParam("item", OZType("OZObject *"))],
+                     body_ast={"kind": "CompoundStmt", "inner": [
+                         {"kind": "ReturnStmt", "inner": []},
+                     ]}),
+        ])
+        resolve(m)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            content = open(os.path.join(tmpdir, "Foo.c")).read()
+            assert "OZObject_retain((struct OZObject *)item)" in content
+            ret_idx = content.index("return;")
+            before_ret = content[:ret_idx]
+            assert "OZObject_release((struct OZObject *)item)" in before_ret
+
+    def test_param_assigned_to_ivar_not_consumed(self):
+        m = OZModule()
+        m.classes["OZObject"] = OZClass("OZObject")
+        m.classes["Holder"] = OZClass("Holder", superclass="OZObject",
+            ivars=[OZIvar("_child", OZType("OZObject *"))],
+            methods=[OZMethod("setChild:", OZType("void"),
+                     params=[OZParam("child", OZType("OZObject *"))],
+                     body_ast={"kind": "CompoundStmt", "inner": [{
+                         "kind": "BinaryOperator", "opcode": "=", "inner": [
+                             {"kind": "ObjCIvarRefExpr", "decl": {"name": "_child"}},
+                             {"kind": "DeclRefExpr",
+                              "referencedDecl": {"name": "child"},
+                              "type": {"qualType": "OZObject *"}},
+                         ],
+                     }]}),
+            ],
+        )
+        resolve(m)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            content = open(os.path.join(tmpdir, "Holder.c")).read()
+            # param retained at entry
+            assert "OZObject_retain((struct OZObject *)child)" in content
+            # ivar assign also retains
+            assert "self->_child = child;" in content
+            # param NOT consumed — should be released at scope exit
+            assert "OZObject_release((struct OZObject *)child);" in content
 
 
 class TestARCStrongIvarAssign:
