@@ -21,6 +21,8 @@ class _EmitCtx:
     scope_vars: list[dict[str, OZType]] = field(default_factory=list)
     consumed_vars: set[str] = field(default_factory=set)
     loop_scope_depth: list[int] = field(default_factory=list)
+    pre_stmts: list[str] = field(default_factory=list)
+    _tmp_counter: int = 0
 
 
 def emit(module: OZModule, outdir: str, pool_sizes: dict[str, int] | None = None,
@@ -104,29 +106,18 @@ def _emit_protocol_macros(module: OZModule, out: StringIO) -> None:
         c_sel = _selector_to_c(sel)
         out.write(f"extern OZ_fn_{c_sel} OZ_vtable_{c_sel}[OZ_CLASS_COUNT];\n")
 
-    out.write("\n/* OZ_SEND macros (statement-expr to avoid double evaluation) */\n")
+    out.write("\n/* OZ_SEND macros — caller must ensure obj has no side effects */\n")
     for sel, m in sorted(proto_sels.items()):
         c_sel = _selector_to_c(sel)
-        extra_params = [p.name for p in m.params]
-        extra_args = ", ".join([f"({p.name})" for p in m.params])
-        macro_params = ", ".join(["obj"] + extra_params)
-        call = f"OZ_vtable_{c_sel}[_oz_obj->oz_class_id]"
-        if extra_args:
-            call += f"(_oz_obj, {extra_args})"
-        else:
-            call += "(_oz_obj)"
+        call_args = ", ".join(
+            ["(struct OZObject *)(obj)"] + [f"({p.name})" for p in m.params]
+        )
+        macro_params = ", ".join(["obj"] + [p.name for p in m.params])
         out.write(
             f"#define OZ_SEND_{c_sel}({macro_params}) "
-            f"__extension__({{ struct OZObject *_oz_obj = "
-            f"(struct OZObject *)(obj); {call}; }})\n"
+            f"OZ_vtable_{c_sel}[((struct OZObject *)(obj))->oz_class_id]"
+            f"({call_args})\n"
         )
-
-    out.write("\n/* OZ_PROTOCOL_SEND (cast-free, same as OZ_SEND) */\n")
-    for sel, m in sorted(proto_sels.items()):
-        c_sel = _selector_to_c(sel)
-        macro_params = ", ".join(["obj"] + [p.name for p in m.params])
-        out.write(f"#define OZ_PROTOCOL_SEND_{c_sel}({macro_params}) "
-                  f"OZ_SEND_{c_sel}({macro_params})\n")
 
     out.write("\n")
 
@@ -380,6 +371,8 @@ def _emit_class_source(ctx: _EmitCtx, outdir: str) -> str:
         ctx.scope_vars = []
         ctx.consumed_vars = set()
         ctx.loop_scope_depth = []
+        ctx.pre_stmts = []
+        ctx._tmp_counter = 0
         out.write(f"{_method_prototype(cls, m)}\n")
         if m.body_ast:
             _emit_compound_stmt(m.body_ast, out, ctx, indent=0,
@@ -469,6 +462,14 @@ def _emit_compound_stmt(node: dict, out: StringIO, ctx: _EmitCtx,
     out.write("\t" * indent + "}\n")
 
 
+def _flush_pre_stmts(out: StringIO, ctx: _EmitCtx, indent: int) -> None:
+    """Flush any pre-statement temp var declarations."""
+    tabs = "\t" * indent
+    for stmt in ctx.pre_stmts:
+        out.write(f"{tabs}{stmt}")
+    ctx.pre_stmts.clear()
+
+
 def _emit_stmt(node: dict, out: StringIO, ctx: _EmitCtx,
                indent: int) -> None:
     tabs = "\t" * indent
@@ -549,15 +550,17 @@ def _emit_stmt(node: dict, out: StringIO, ctx: _EmitCtx,
         if len(inner) == 2 and _is_object_ivar_assign(inner[0], ctx):
             _emit_strong_ivar_assign(node, out, ctx, indent)
         else:
-            out.write(tabs)
-            _emit_expr(node, out, ctx)
-            out.write(";\n")
+            expr_buf = StringIO()
+            _emit_expr(node, expr_buf, ctx)
+            _flush_pre_stmts(out, ctx, indent)
+            out.write(f"{tabs}{expr_buf.getvalue()};\n")
 
     else:
         # Expression statement
-        out.write(tabs)
-        _emit_expr(node, out, ctx)
-        out.write(";\n")
+        expr_buf = StringIO()
+        _emit_expr(node, expr_buf, ctx)
+        _flush_pre_stmts(out, ctx, indent)
+        out.write(f"{tabs}{expr_buf.getvalue()};\n")
 
 
 def _emit_var_decl(node: dict, out: StringIO, ctx: _EmitCtx,
@@ -580,9 +583,10 @@ def _emit_var_decl(node: dict, out: StringIO, ctx: _EmitCtx,
             break
 
     if init_expr:
-        out.write(f"{tabs}{c_type} {name} = ")
-        _emit_expr(init_expr, out, ctx)
-        out.write(";\n")
+        expr_buf = StringIO()
+        _emit_expr(init_expr, expr_buf, ctx)
+        _flush_pre_stmts(out, ctx, indent)
+        out.write(f"{tabs}{c_type} {name} = {expr_buf.getvalue()};\n")
     else:
         out.write(f"{tabs}{c_type} {name};\n")
 
@@ -899,9 +903,21 @@ def _emit_msg_expr(node: dict, out: StringIO, ctx: _EmitCtx) -> None:
         needs_cast = ret_oz.is_object and recv_class != root_class
         if needs_cast:
             out.write(f"(struct {recv_class} *)")
-        out.write(f"OZ_SEND_{c_sel}(")
+        # Emit receiver into a temp var to avoid double evaluation
+        # in the OZ_SEND macro
         if receiver:
-            _emit_expr(receiver, out, ctx)
+            recv_buf = StringIO()
+            _emit_expr(receiver, recv_buf, ctx)
+            recv_str = recv_buf.getvalue()
+            tmp = f"_oz_recv{ctx._tmp_counter}"
+            ctx._tmp_counter += 1
+            ctx.pre_stmts.append(
+                f"struct {root_class} *{tmp} = "
+                f"(struct {root_class} *){recv_str};\n"
+            )
+            out.write(f"OZ_SEND_{c_sel}({tmp}")
+        else:
+            out.write(f"OZ_SEND_{c_sel}(")
         for arg in args_exprs:
             out.write(", ")
             _emit_expr(arg, out, ctx)
@@ -992,6 +1008,8 @@ def _emit_functions(module: OZModule, outdir: str, root_class: str) -> str:
         ctx.scope_vars = []
         ctx.consumed_vars = set()
         ctx.loop_scope_depth = []
+        ctx.pre_stmts = []
+        ctx._tmp_counter = 0
         if func.body_ast:
             _emit_compound_stmt(func.body_ast, out, ctx, indent=0,
                                 param_retains=_object_params(func))
