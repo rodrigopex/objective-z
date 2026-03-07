@@ -97,7 +97,7 @@ def _classify_dispatch(module: OZModule) -> None:
             selector_classes[m.selector].add(cls.name)
 
     # Selectors that must always be protocol-dispatched (called polymorphically)
-    always_protocol = {"dealloc", "init"}
+    always_protocol = {"dealloc", "init", "isEqual:", "cDescription:maxLength:"}
 
     for cls in module.classes.values():
         for m in cls.methods:

@@ -1243,3 +1243,104 @@ class TestARCLocalReassign:
             # No release for primitive types in doWork body
             dowork_body = content.split("void Holder_doWork")[1].split("}")[0]
             assert "release" not in dowork_body
+
+
+class TestIntrospection:
+    """Tests for class name/superclass tables and introspection helpers."""
+
+    def test_dispatch_header_has_class_names_table(self):
+        m = _simple_module()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            content = open(os.path.join(tmpdir, "oz_dispatch.h")).read()
+            assert "extern const char *const oz_class_names[OZ_CLASS_COUNT]" in content
+
+    def test_dispatch_header_has_superclass_table(self):
+        m = _simple_module()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            content = open(os.path.join(tmpdir, "oz_dispatch.h")).read()
+            assert "extern const uint8_t oz_superclass_id[OZ_CLASS_COUNT]" in content
+
+    def test_dispatch_header_has_inline_helpers(self):
+        m = _simple_module()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            content = open(os.path.join(tmpdir, "oz_dispatch.h")).read()
+            assert "oz_name(" in content
+            assert "oz_superclass(" in content
+            assert "oz_isKindOfClass(" in content
+
+    def test_dispatch_source_class_names(self):
+        m = _simple_module()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            content = open(os.path.join(tmpdir, "oz_dispatch.c")).read()
+            assert 'oz_class_names[OZ_CLASS_COUNT]' in content
+            assert '"OZObject"' in content
+            assert '"OZLed"' in content
+
+    def test_dispatch_source_superclass_ids(self):
+        m = _simple_module()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            content = open(os.path.join(tmpdir, "oz_dispatch.c")).read()
+            assert "oz_superclass_id[OZ_CLASS_COUNT]" in content
+            assert "[OZ_CLASS_OZObject] = OZ_CLASS_COUNT" in content
+            assert "[OZ_CLASS_OZLed] = OZ_CLASS_OZObject" in content
+
+    def test_root_class_isEqual(self):
+        m = _simple_module()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            h = open(os.path.join(tmpdir, "OZObject.h")).read()
+            c = open(os.path.join(tmpdir, "OZObject.c")).read()
+            assert "OZObject_isEqual_" in h
+            assert "OZObject_isEqual_" in c
+            assert "self == anObject" in c
+
+    def test_root_class_cDescription(self):
+        m = _simple_module()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            h = open(os.path.join(tmpdir, "OZObject.h")).read()
+            c = open(os.path.join(tmpdir, "OZObject.c")).read()
+            assert "OZObject_cDescription_maxLength_" in h
+            assert "OZObject_cDescription_maxLength_" in c
+            assert "snprintk" in c
+            assert "oz_class_names" in c
+
+    def test_isEqual_protocol_dispatched(self):
+        m = _simple_module()
+        m.classes["OZObject"].methods.append(
+            OZMethod("isEqual:", OZType("BOOL"),
+                     params=[OZParam("anObject", OZType("OZObject *"))],
+                     body_ast={"kind": "CompoundStmt", "inner": []})
+        )
+        resolve(m)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            content = open(os.path.join(tmpdir, "oz_dispatch.h")).read()
+            assert "OZ_SEND_isEqual_" in content
+            assert "OZ_vtable_isEqual_" in content
+
+    def test_cDescription_protocol_dispatched(self):
+        m = _simple_module()
+        m.classes["OZObject"].methods.append(
+            OZMethod("cDescription:maxLength:", OZType("int"),
+                     params=[OZParam("buf", OZType("char *")),
+                             OZParam("maxLen", OZType("int"))],
+                     body_ast={"kind": "CompoundStmt", "inner": []})
+        )
+        resolve(m)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            content = open(os.path.join(tmpdir, "oz_dispatch.h")).read()
+            assert "OZ_SEND_cDescription_maxLength_" in content
+
+    def test_root_source_includes_printk(self):
+        m = _simple_module()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            content = open(os.path.join(tmpdir, "OZObject.c")).read()
+            assert "#include <zephyr/sys/printk.h>" in content

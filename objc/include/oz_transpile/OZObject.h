@@ -33,10 +33,21 @@
   */
  #define NO false
 
+/**
+ * @brief Read the reference count of an object.
+ *
+ * Declared here so Clang can resolve calls during AST dump.
+ * The transpiler emits a macro in the generated OZObject.h.
+ */
+unsigned int __objc_refcount_get(id obj);
+
+__attribute__((objc_root_class))
 @interface OZObject
 {
 	int _refcount;
 }
 - (instancetype)init;
 - (void)dealloc;
+- (BOOL)isEqual:(id)anObject;
+- (int)cDescription:(char *)buf maxLength:(int)maxLen;
 @end

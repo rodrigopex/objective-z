@@ -5,12 +5,10 @@
  * Demonstrates scope-based lifetime and autorelease pools.
  */
 
-#import <Foundation/Foundation.h>
-#import <objc/objc.h>
-#include <objc/arc.h>
-#include <objc/runtime.h>
+#import "OZObject.h"
+#import "OZLog.h"
 
-@interface Sensor : Object {
+@interface Sensor : OZObject {
 	int _value;
 }
 - (void)setValue:(int)v;
