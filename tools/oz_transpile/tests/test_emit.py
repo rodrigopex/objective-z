@@ -1065,3 +1065,181 @@ class TestARCStrongIvarAssign:
             assert "OZObject_release((struct OZObject *)obj);" not in content
             # But the retain/release for the ivar assign should be present
             assert "OZObject_retain((struct OZObject *)obj)" in content
+
+
+class TestARCLocalReassign:
+    """ARC for local object variable reassignment and nil assignment."""
+
+    def _method_with_body(self, body_inner):
+        """Create a Holder method 'doWork' with given body statements."""
+        m = _module_with_obj_ivar()
+        m.classes["Holder"].methods.append(
+            OZMethod("doWork", OZType("void"), body_ast={
+                "kind": "CompoundStmt",
+                "inner": body_inner,
+            })
+        )
+        resolve(m)
+        return m
+
+    def _alloc_msg(self, cls="OZObject"):
+        """AST for [ClassName alloc] — class message send."""
+        return {
+            "kind": "ObjCMessageExpr",
+            "selector": "alloc",
+            "receiverKind": "class",
+            "classType": {"qualType": cls},
+            "type": {"qualType": f"{cls} *"},
+            "inner": [],
+        }
+
+    def _decl_obj(self, name, init_expr=None):
+        """AST for: OZObject *name = init_expr;"""
+        decl = {
+            "kind": "VarDecl",
+            "name": name,
+            "type": {"qualType": "OZObject *"},
+        }
+        if init_expr:
+            decl["inner"] = [init_expr]
+        else:
+            decl["inner"] = [{"kind": "IntegerLiteral", "value": "0"}]
+        return {"kind": "DeclStmt", "inner": [decl]}
+
+    def _assign(self, var_name, rhs):
+        """AST for: var_name = rhs;"""
+        return {
+            "kind": "BinaryOperator",
+            "opcode": "=",
+            "inner": [
+                {"kind": "ImplicitCastExpr", "inner": [
+                    {"kind": "DeclRefExpr",
+                     "referencedDecl": {"name": var_name},
+                     "type": {"qualType": "OZObject *"}},
+                ]},
+                rhs,
+            ],
+        }
+
+    def _nil_expr(self):
+        """AST for nil / (id)0."""
+        return {
+            "kind": "CStyleCastExpr",
+            "castKind": "NullToPointer",
+            "type": {"qualType": "OZObject *"},
+            "inner": [{"kind": "IntegerLiteral", "value": "0"}],
+        }
+
+    def _declref(self, name):
+        """AST for a DeclRefExpr."""
+        return {
+            "kind": "DeclRefExpr",
+            "referencedDecl": {"name": name},
+            "type": {"qualType": "OZObject *"},
+        }
+
+    def test_reassign_releases_old(self):
+        m = self._method_with_body([
+            self._decl_obj("f", self._alloc_msg()),
+            self._assign("f", self._alloc_msg()),
+        ])
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            content = open(os.path.join(tmpdir, "Holder.c")).read()
+            # Release old f before reassignment
+            assert "OZObject_release((struct OZObject *)f);" in content
+            # No retain for alloc result (already +1)
+            # retain only appears in ivar-related code, not for this reassignment
+            body = content.split("void Holder_doWork")[1]
+            assert "OZObject_retain" not in body
+
+    def test_nil_assign_releases_old(self):
+        m = self._method_with_body([
+            self._decl_obj("f", self._alloc_msg()),
+            self._assign("f", self._nil_expr()),
+        ])
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            content = open(os.path.join(tmpdir, "Holder.c")).read()
+            assert "OZObject_release((struct OZObject *)f);" in content
+            assert "f = ((void *)0);" in content
+
+    def test_scope_exit_still_releases_after_reassign(self):
+        m = self._method_with_body([
+            self._decl_obj("f", self._alloc_msg()),
+            self._assign("f", self._alloc_msg()),
+        ])
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            content = open(os.path.join(tmpdir, "Holder.c")).read()
+            # release appears twice: once for reassignment, once at scope exit
+            count = content.count("OZObject_release((struct OZObject *)f);")
+            assert count == 2
+
+    def test_reassign_after_consume_clears_consumed(self):
+        m = self._method_with_body([
+            self._decl_obj("obj", self._alloc_msg()),
+            # self->_child = obj (ivar assign, consumes obj)
+            {"kind": "BinaryOperator",
+             "opcode": "=",
+             "inner": [
+                 {"kind": "ObjCIvarRefExpr",
+                  "decl": {"name": "_child"}},
+                 self._declref("obj"),
+             ]},
+            # obj = [[OZObject alloc]] (reassign after consume)
+            self._assign("obj", self._alloc_msg()),
+        ])
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            content = open(os.path.join(tmpdir, "Holder.c")).read()
+            # obj should be released at scope exit (no longer consumed)
+            # 1 release from reassignment + 1 release from scope exit
+            count = content.count("OZObject_release((struct OZObject *)obj);")
+            assert count == 2
+
+    def test_local_to_local_retains_new(self):
+        m = self._method_with_body([
+            self._decl_obj("a", self._alloc_msg()),
+            self._decl_obj("b", self._alloc_msg()),
+            self._assign("a", self._declref("b")),
+        ])
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            content = open(os.path.join(tmpdir, "Holder.c")).read()
+            # retain(b) before release(a) and assign
+            assert "OZObject_retain((struct OZObject *)b);" in content
+            assert "OZObject_release((struct OZObject *)a);" in content
+            assert "a = b;" in content
+
+    def test_primitive_local_not_intercepted(self):
+        m = _module_with_obj_ivar()
+        m.classes["Holder"].methods.append(
+            OZMethod("doWork", OZType("void"), body_ast={
+                "kind": "CompoundStmt",
+                "inner": [
+                    {"kind": "DeclStmt", "inner": [{
+                        "kind": "VarDecl",
+                        "name": "x",
+                        "type": {"qualType": "int"},
+                        "inner": [{"kind": "IntegerLiteral", "value": "5"}],
+                    }]},
+                    {"kind": "BinaryOperator",
+                     "opcode": "=",
+                     "inner": [
+                         {"kind": "DeclRefExpr",
+                          "referencedDecl": {"name": "x"},
+                          "type": {"qualType": "int"}},
+                         {"kind": "IntegerLiteral", "value": "10"},
+                     ]},
+                ],
+            })
+        )
+        resolve(m)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            content = open(os.path.join(tmpdir, "Holder.c")).read()
+            assert "x = 10;" in content
+            # No release for primitive types in doWork body
+            dowork_body = content.split("void Holder_doWork")[1].split("}")[0]
+            assert "release" not in dowork_body
