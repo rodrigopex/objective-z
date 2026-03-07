@@ -8,7 +8,8 @@ import os
 from dataclasses import dataclass, field
 from io import StringIO
 
-from .model import DispatchKind, OZClass, OZFunction, OZMethod, OZModule, OZType
+from .model import (DispatchKind, OZClass, OZFunction, OZMethod, OZModule,
+                     OZParam, OZType)
 
 
 @dataclass
@@ -19,6 +20,7 @@ class _EmitCtx:
     method: OZMethod | None = None
     scope_vars: list[dict[str, OZType]] = field(default_factory=list)
     consumed_vars: set[str] = field(default_factory=set)
+    loop_scope_depth: list[int] = field(default_factory=list)
 
 
 def emit(module: OZModule, outdir: str, pool_sizes: dict[str, int] | None = None,
@@ -102,17 +104,21 @@ def _emit_protocol_macros(module: OZModule, out: StringIO) -> None:
         c_sel = _selector_to_c(sel)
         out.write(f"extern OZ_fn_{c_sel} OZ_vtable_{c_sel}[OZ_CLASS_COUNT];\n")
 
-    out.write("\n/* OZ_SEND macros */\n")
+    out.write("\n/* OZ_SEND macros (statement-expr to avoid double evaluation) */\n")
     for sel, m in sorted(proto_sels.items()):
         c_sel = _selector_to_c(sel)
-        call_args = ", ".join(
-            ["(struct OZObject *)(obj)"] + [f"({p.name})" for p in m.params]
-        )
-        macro_params = ", ".join(["obj"] + [p.name for p in m.params])
+        extra_params = [p.name for p in m.params]
+        extra_args = ", ".join([f"({p.name})" for p in m.params])
+        macro_params = ", ".join(["obj"] + extra_params)
+        call = f"OZ_vtable_{c_sel}[_oz_obj->oz_class_id]"
+        if extra_args:
+            call += f"(_oz_obj, {extra_args})"
+        else:
+            call += "(_oz_obj)"
         out.write(
             f"#define OZ_SEND_{c_sel}({macro_params}) "
-            f"OZ_vtable_{c_sel}[((struct OZObject *)(obj))->oz_class_id]"
-            f"({call_args})\n"
+            f"__extension__({{ struct OZObject *_oz_obj = "
+            f"(struct OZObject *)(obj); {call}; }})\n"
         )
 
     out.write("\n/* OZ_PROTOCOL_SEND (cast-free, same as OZ_SEND) */\n")
@@ -251,6 +257,16 @@ def _emit_mem_slabs(module: OZModule, outdir: str,
         out.write(f"\tk_mem_slab_free(&oz_slab_{cls.name}, (void *)obj);\n")
         out.write("}\n\n")
 
+    # Dispatch free by oz_class_id (root dealloc calls this)
+    out.write(f"static inline void {root_class}_dispatch_free(struct {root_class} *obj)\n")
+    out.write("{\n")
+    out.write("\tswitch (obj->oz_class_id) {\n")
+    for cls in sorted(module.classes.values(), key=lambda c: c.class_id):
+        out.write(f"\tcase OZ_CLASS_{cls.name}: "
+                  f"{cls.name}_free((struct {cls.name} *)obj); break;\n")
+    out.write("\t}\n")
+    out.write("}\n\n")
+
     h_path = os.path.join(outdir, "oz_mem_slabs.h")
     _write_file(h_path, out.getvalue())
     files.append(h_path)
@@ -363,9 +379,11 @@ def _emit_class_source(ctx: _EmitCtx, outdir: str) -> str:
         ctx.method = m
         ctx.scope_vars = []
         ctx.consumed_vars = set()
+        ctx.loop_scope_depth = []
         out.write(f"{_method_prototype(cls, m)}\n")
         if m.body_ast:
-            _emit_compound_stmt(m.body_ast, out, ctx, indent=0)
+            _emit_compound_stmt(m.body_ast, out, ctx, indent=0,
+                                param_retains=_object_params(m))
         else:
             out.write("{\n}\n")
         out.write("\n")
@@ -418,7 +436,8 @@ def _emit_root_retain_release(cls: OZClass, module: OZModule,
 # ---------------------------------------------------------------------------
 
 def _emit_compound_stmt(node: dict, out: StringIO, ctx: _EmitCtx,
-                        indent: int = 0, inline: bool = False) -> None:
+                        indent: int = 0, inline: bool = False,
+                        param_retains: list[OZParam] | None = None) -> None:
     if inline:
         out.write("{\n")
     else:
@@ -426,6 +445,14 @@ def _emit_compound_stmt(node: dict, out: StringIO, ctx: _EmitCtx,
 
     # Push scope frame
     ctx.scope_vars.append({})
+
+    # Retain and track object params at method/function entry
+    if param_retains:
+        tabs_inner = "\t" * (indent + 1)
+        for p in param_retains:
+            out.write(f"{tabs_inner}{ctx.root_class}_retain("
+                      f"(struct {ctx.root_class} *){p.name});\n")
+            ctx.scope_vars[-1][p.name] = p.oz_type
 
     children = node.get("inner", [])
     for i, child in enumerate(children):
@@ -467,23 +494,48 @@ def _emit_stmt(node: dict, out: StringIO, ctx: _EmitCtx,
             out.write(f"{tabs}while (")
             _emit_expr(inner[0], out, ctx)
             out.write(") ")
+            ctx.loop_scope_depth.append(len(ctx.scope_vars))
             if inner[1].get("kind") == "CompoundStmt":
                 _emit_compound_stmt(inner[1], out, ctx, indent, inline=True)
             else:
                 out.write("{\n")
                 _emit_stmt(inner[1], out, ctx, indent + 1)
                 out.write(f"{tabs}}}\n")
+            ctx.loop_scope_depth.pop()
+
+    elif kind == "DoStmt":
+        inner = node.get("inner", [])
+        if len(inner) >= 2:
+            out.write(f"{tabs}do ")
+            ctx.loop_scope_depth.append(len(ctx.scope_vars))
+            if inner[0].get("kind") == "CompoundStmt":
+                _emit_compound_stmt(inner[0], out, ctx, indent, inline=True)
+            else:
+                out.write("{\n")
+                _emit_stmt(inner[0], out, ctx, indent + 1)
+                out.write(f"{tabs}}}\n")
+            ctx.loop_scope_depth.pop()
+            out.write(f"{tabs}while (")
+            _emit_expr(inner[1], out, ctx)
+            out.write(");\n")
 
     elif kind == "CompoundStmt":
         _emit_compound_stmt(node, out, ctx, indent)
+
+    elif kind == "ObjCAutoreleasePoolStmt":
+        inner = node.get("inner", [])
+        if inner and inner[0].get("kind") == "CompoundStmt":
+            _emit_compound_stmt(inner[0], out, ctx, indent)
 
     elif kind == "NullStmt":
         out.write(f"{tabs};\n")
 
     elif kind == "BreakStmt":
+        _emit_break_continue_releases(out, ctx, indent)
         out.write(f"{tabs}break;\n")
 
     elif kind == "ContinueStmt":
+        _emit_break_continue_releases(out, ctx, indent)
         out.write(f"{tabs}continue;\n")
 
     elif kind == "CompoundAssignOperator":
@@ -614,6 +666,7 @@ def _emit_for_stmt(node: dict, out: StringIO, ctx: _EmitCtx,
     # body
     body_idx = 4 if len(inner) > 4 else len(inner) - 1
     body = inner[body_idx] if body_idx < len(inner) else None
+    ctx.loop_scope_depth.append(len(ctx.scope_vars))
     if body and body.get("kind") == "CompoundStmt":
         _emit_compound_stmt(body, out, ctx, indent, inline=True)
     elif body:
@@ -622,6 +675,7 @@ def _emit_for_stmt(node: dict, out: StringIO, ctx: _EmitCtx,
         out.write(f"{tabs}}}\n")
     else:
         out.write("{}\n")
+    ctx.loop_scope_depth.pop()
 
 
 def _emit_expr(node: dict, out: StringIO, ctx: _EmitCtx) -> None:
@@ -837,6 +891,14 @@ def _emit_msg_expr(node: dict, out: StringIO, ctx: _EmitCtx) -> None:
 
     dispatch = _find_dispatch_kind(selector, module)
     if dispatch == DispatchKind.PROTOCOL:
+        # Protocol vtable returns root class pointer; cast if the method
+        # returns an object type and the receiver is a subclass
+        ret_qt = node.get("type", {}).get("qualType", "void")
+        ret_oz = OZType(ret_qt)
+        recv_class = _infer_receiver_class(receiver, cls, module) if receiver else cls.name
+        needs_cast = ret_oz.is_object and recv_class != root_class
+        if needs_cast:
+            out.write(f"(struct {recv_class} *)")
         out.write(f"OZ_SEND_{c_sel}(")
         if receiver:
             _emit_expr(receiver, out, ctx)
@@ -929,8 +991,10 @@ def _emit_functions(module: OZModule, outdir: str, root_class: str) -> str:
         ctx.method = None
         ctx.scope_vars = []
         ctx.consumed_vars = set()
+        ctx.loop_scope_depth = []
         if func.body_ast:
-            _emit_compound_stmt(func.body_ast, out, ctx, indent=0)
+            _emit_compound_stmt(func.body_ast, out, ctx, indent=0,
+                                param_retains=_object_params(func))
         else:
             out.write("{\n}\n")
         out.write("\n")
@@ -943,6 +1007,28 @@ def _emit_functions(module: OZModule, outdir: str, root_class: str) -> str:
 # ---------------------------------------------------------------------------
 # ARC: scope tracking, return cleanup, dealloc, strong ivar assign
 # ---------------------------------------------------------------------------
+
+def _object_params(m: OZMethod | OZFunction) -> list[OZParam]:
+    """Return object-typed params (excluding self, which is implicit)."""
+    return [p for p in m.params if p.oz_type.is_object]
+
+
+def _emit_break_continue_releases(out: StringIO, ctx: _EmitCtx,
+                                   indent: int) -> None:
+    """Emit release calls for all object vars from current scope down to loop boundary."""
+    if not ctx.loop_scope_depth:
+        return
+    tabs = "\t" * indent
+    loop_depth = ctx.loop_scope_depth[-1]
+    for i in range(len(ctx.scope_vars) - 1, loop_depth - 1, -1):
+        if i < 0 or i >= len(ctx.scope_vars):
+            continue
+        frame = ctx.scope_vars[i]
+        for name in frame:
+            if name not in ctx.consumed_vars:
+                out.write(f"{tabs}{ctx.root_class}_release("
+                          f"(struct {ctx.root_class} *){name});\n")
+
 
 def _emit_scope_releases(out: StringIO, ctx: _EmitCtx, indent: int) -> None:
     """Emit release calls for object vars in the current (top) scope frame."""
@@ -1004,6 +1090,13 @@ def _flatten_scope_vars(ctx: _EmitCtx) -> list[str]:
     return result
 
 
+def _is_param_name(name: str, ctx: _EmitCtx) -> bool:
+    """Check if a variable name is a method/function parameter."""
+    if ctx.method:
+        return any(p.name == name for p in ctx.method.params)
+    return False
+
+
 def _is_object_ivar_assign(lhs_node: dict, ctx: _EmitCtx) -> bool:
     """Check if LHS of an assignment is an object ivar."""
     unwrapped = lhs_node
@@ -1046,13 +1139,16 @@ def _emit_strong_ivar_assign(node: dict, out: StringIO, ctx: _EmitCtx,
     out.write(f"{tabs}{root}_release((struct {root} *)self->{ivar_name});\n")
     out.write(f"{tabs}self->{ivar_name} = {rhs_str};\n")
 
-    # Track consumed local: if RHS is a simple DeclRefExpr local, mark consumed
+    # Track consumed local: if RHS is a simple DeclRefExpr local, mark consumed.
+    # Skip params — they have their own entry-retain balanced by scope-exit release.
     rhs_var = _find_returned_var(rhs)
     if rhs_var and rhs_var != "self":
-        for frame in ctx.scope_vars:
-            if rhs_var in frame:
-                ctx.consumed_vars.add(rhs_var)
-                break
+        is_param = _is_param_name(rhs_var, ctx)
+        if not is_param:
+            for frame in ctx.scope_vars:
+                if rhs_var in frame:
+                    ctx.consumed_vars.add(rhs_var)
+                    break
 
 
 def _emit_user_dealloc(ctx: _EmitCtx, m: OZMethod, out: StringIO) -> None:
@@ -1080,12 +1176,12 @@ def _emit_user_dealloc(ctx: _EmitCtx, m: OZMethod, out: StringIO) -> None:
                 continue
             _emit_stmt(child, out, ctx, indent=1)
 
-    # Append: parent dealloc or free
+    # Append: parent dealloc or dispatch_free (root)
     if not is_root:
         parent = cls.superclass
         out.write(f"\t{parent}_dealloc((struct {parent} *)self);\n")
     else:
-        out.write(f"\t{cls.name}_free(self);\n")
+        out.write(f"\t{root_class}_dispatch_free((struct {root_class} *)self);\n")
 
     out.write("}\n\n")
 
@@ -1123,7 +1219,7 @@ def _emit_auto_dealloc(ctx: _EmitCtx, out: StringIO) -> None:
         parent = cls.superclass
         out.write(f"\t{parent}_dealloc((struct {parent} *)self);\n")
     else:
-        out.write(f"\t{cls.name}_free(self);\n")
+        out.write(f"\t{root_class}_dispatch_free((struct {root_class} *)self);\n")
 
     out.write("}\n\n")
 

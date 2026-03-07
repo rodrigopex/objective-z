@@ -36,6 +36,14 @@ function(objz_transpile_sources target)
     objz_find_clang()
     _objz_build_ast_flags(_ast_flags)
 
+    # Add shared transpiler root class (OZObject.h + OZObject.m)
+    get_filename_component(_oz_inc_dir
+        "${_OZ_TRANSPILE_CMAKE_DIR}/../include/oz_transpile" ABSOLUTE)
+    get_filename_component(_oz_root_src
+        "${_OZ_TRANSPILE_CMAKE_DIR}/../src/oz_transpile/OZObject.m" ABSOLUTE)
+    list(APPEND _ast_flags -I${_oz_inc_dir})
+    list(PREPEND _sources ${_oz_root_src})
+
     # Add user-specified include dirs
     foreach(_dir ${OZT_INCLUDE_DIRS})
         list(APPEND _ast_flags -I${_dir})
