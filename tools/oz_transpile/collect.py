@@ -30,13 +30,22 @@ def merge_modules(modules: list[OZModule]) -> OZModule:
                 if cls.protocols:
                     existing.protocols = list(
                         dict.fromkeys(existing.protocols + cls.protocols))
-                existing.methods.extend(cls.methods)
+                for method in cls.methods:
+                    for i, ex in enumerate(existing.methods):
+                        if ex.selector == method.selector:
+                            if method.body_ast or not ex.body_ast:
+                                existing.methods[i] = method
+                            break
+                    else:
+                        existing.methods.append(method)
             else:
                 merged.classes[name] = cls
         merged.protocols.update(m.protocols)
         merged.functions.extend(m.functions)
         merged.statics.extend(m.statics)
-        merged.verbatim_lines.extend(m.verbatim_lines)
+        for line in m.verbatim_lines:
+            if line not in merged.verbatim_lines:
+                merged.verbatim_lines.append(line)
         merged.diagnostics.extend(m.diagnostics)
     return merged
 
@@ -62,6 +71,45 @@ def _is_from_main_file(node: dict) -> bool:
     return True
 
 
+_SYSTEM_PATH_SEGMENTS = frozenset({"/zephyr/", "/sdk/", "/clang/", "/picolibc/",
+                                   "/cmsis/", "/CMSIS/", "/sys-include/"})
+
+
+def _is_user_struct(node: dict) -> bool:
+    """Check if a RecordDecl is a user-defined struct (not from system headers)."""
+    if not node.get("completeDefinition"):
+        return False
+    name = node.get("name", "")
+    if not name:
+        return False
+    loc = node.get("loc", {})
+    file_path = loc.get("file", "")
+    if not file_path:
+        return False
+    if any(p in file_path for p in _SYSTEM_PATH_SEGMENTS):
+        return False
+    if "oz_transpile" in file_path:
+        return False
+    return True
+
+
+def _collect_struct_def(node: dict, module: OZModule) -> None:
+    """Reconstruct a struct definition from a Clang RecordDecl AST node."""
+    name = node.get("name", "")
+    tag = node.get("tagUsed", "struct")
+    fields = []
+    for child in node.get("inner", []):
+        if child.get("kind") == "FieldDecl":
+            fname = child.get("name", "")
+            ftype = child.get("type", {}).get("qualType", "")
+            fields.append(f"\t{ftype} {fname};")
+    if not fields:
+        return
+    definition = f"{tag} {name} {{\n" + "\n".join(fields) + "\n};"
+    if definition not in module.verbatim_lines:
+        module.verbatim_lines.append(definition)
+
+
 def _walk(node: dict, module: OZModule, impl_name: str | None = None) -> None:
     kind = node.get("kind", "")
 
@@ -76,9 +124,16 @@ def _walk(node: dict, module: OZModule, impl_name: str | None = None) -> None:
     elif kind == "ObjCCategoryDecl":
         _collect_category(node, module)
         return
+    elif kind == "ObjCCategoryImplDecl":
+        _collect_category(node, module)
+        return
     elif kind == "FunctionDecl":
         if _is_from_main_file(node):
             _collect_function(node, module)
+        return
+    elif kind == "RecordDecl":
+        if _is_user_struct(node):
+            _collect_struct_def(node, module)
         return
     elif kind == "VarDecl":
         if _is_from_main_file(node) and node.get("storageClass") == "static":
@@ -146,6 +201,8 @@ def _collect_implementation(node: dict, module: OZModule) -> None:
             qual_type = child.get("type", {}).get("qualType", "")
             cls.ivars.append(OZIvar(ivar_name, OZType(qual_type)))
         elif ckind == "ObjCMethodDecl":
+            if child.get("isImplicit"):
+                continue
             method = _collect_method(child)
             if method:
                 cls.methods.append(method)
@@ -209,7 +266,14 @@ def _collect_category(node: dict, module: OZModule) -> None:
         if child.get("kind") == "ObjCMethodDecl":
             method = _collect_method(child)
             if method:
-                cls.methods.append(method)
+                # Deduplicate: replace existing method if new has body
+                for i, existing in enumerate(cls.methods):
+                    if existing.selector == method.selector:
+                        if method.body_ast or not existing.body_ast:
+                            cls.methods[i] = method
+                        break
+                else:
+                    cls.methods.append(method)
 
 
 def _collect_function(node: dict, module: OZModule) -> None:
@@ -279,7 +343,34 @@ def _collect_verbatim_lines(ast_root: dict, module: OZModule) -> None:
     parser = Parser(_TS_LANG)
     tree = parser.parse(source)
 
-    for child in tree.root_node.children:
+    children = tree.root_node.children
+    for i, child in enumerate(children):
         if child.type == "expression_statement":
             module.verbatim_lines.append(
                 source[child.start_byte:child.end_byte].decode())
+        elif child.type == "declaration" and _has_struct_definition(child):
+            module.verbatim_lines.append(
+                source[child.start_byte:child.end_byte].decode())
+        elif child.type == "struct_specifier" and _has_field_list(child):
+            end = child.end_byte
+            if i + 1 < len(children) and children[i + 1].type == ";":
+                end = children[i + 1].end_byte
+            module.verbatim_lines.append(
+                source[child.start_byte:end].decode())
+
+
+def _has_struct_definition(node) -> bool:
+    """Check if a tree-sitter declaration node contains a struct definition."""
+    for child in node.children:
+        if child.type == "struct_specifier":
+            if _has_field_list(child):
+                return True
+    return False
+
+
+def _has_field_list(node) -> bool:
+    """Check if a tree-sitter struct_specifier has a field_declaration_list."""
+    for child in node.children:
+        if child.type == "field_declaration_list":
+            return True
+    return False

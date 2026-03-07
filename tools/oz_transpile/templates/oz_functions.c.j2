@@ -8,10 +8,13 @@
 {% for decl in static_decls %}
 {{ decl }}
 {% endfor %}
+{% for line in verbatim_lines %}
+{{ line }}
+{% endfor %}
+{% for sc in string_constants %}
+{{ sc }}
+{% endfor %}
 {% for body in function_bodies %}
 {{ body }}
 
-{% endfor %}
-{% for line in verbatim_lines %}
-{{ line }}
 {% endfor %}

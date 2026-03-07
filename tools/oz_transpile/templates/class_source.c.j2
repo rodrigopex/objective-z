@@ -9,6 +9,9 @@
 #include <zephyr/sys/printk.h>
 {% endif %}
 
+{% for sc in string_constants %}
+{{ sc }}
+{% endfor %}
 {% if root_retain_release %}
 {{ root_retain_release }}
 {% endif %}

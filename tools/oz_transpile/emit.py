@@ -24,6 +24,7 @@ class _EmitCtx:
     consumed_vars: set[str] = field(default_factory=set)
     loop_scope_depth: list[int] = field(default_factory=list)
     pre_stmts: list[str] = field(default_factory=list)
+    string_constants: list[str] = field(default_factory=list)
     _tmp_counter: int = 0
 
 
@@ -313,6 +314,7 @@ def _class_source_ctx(ctx: _EmitCtx) -> dict:
         "method_bodies": method_bodies,
         "dealloc_body": dealloc_body,
         "has_functions_header": has_functions_header,
+        "string_constants": ctx.string_constants,
     }
 
 
@@ -740,8 +742,16 @@ def _emit_expr(node: dict, out: StringIO, ctx: _EmitCtx) -> None:
 
     if kind == "ObjCStringLiteral":
         inner = node.get("inner", [])
-        if inner:
-            out.write(inner[0].get("value", '""'))
+        val = inner[0].get("value", '""') if inner else '""'
+        raw = val[1:-1]  # strip surrounding quotes
+        name = f"_oz_str_{ctx._tmp_counter}"
+        ctx._tmp_counter += 1
+        ctx.string_constants.append(
+            f"static struct OZString {name} = {{"
+            f"{{OZ_CLASS_OZString, 2147483647}}, "
+            f"{len(raw)}, 0, {val}}};"
+        )
+        out.write(f"(struct OZString *)&{name}")
         return
 
     if kind == "ObjCBoolLiteralExpr":
@@ -788,6 +798,24 @@ def _emit_expr(node: dict, out: StringIO, ctx: _EmitCtx) -> None:
             out.write("[")
             _emit_expr(inner[1], out, ctx)
             out.write("]")
+        return
+
+    if kind == "CompoundLiteralExpr":
+        qt = node.get("type", {}).get("qualType", "")
+        out.write(f"({qt})")
+        inner = node.get("inner", [])
+        if inner:
+            _emit_expr(inner[0], out, ctx)
+        return
+
+    if kind == "InitListExpr":
+        inner = node.get("inner", [])
+        out.write("{")
+        for i, child in enumerate(inner):
+            if i > 0:
+                out.write(", ")
+            _emit_expr(child, out, ctx)
+        out.write("}")
         return
 
     # Fallback: try inner children or emit placeholder
@@ -985,7 +1013,8 @@ def _functions_ctx(module: OZModule, root_class: str) -> dict:
     return {"classes": classes, "function_bodies": function_bodies,
             "static_decls": static_decls, "extern_decls": extern_decls,
             "function_protos": function_protos,
-            "verbatim_lines": module.verbatim_lines}
+            "verbatim_lines": module.verbatim_lines,
+            "string_constants": ctx.string_constants}
 
 
 # ---------------------------------------------------------------------------

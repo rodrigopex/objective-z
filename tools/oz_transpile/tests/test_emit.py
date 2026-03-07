@@ -1404,3 +1404,87 @@ class TestStaticVarEmission:
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
             assert not os.path.exists(os.path.join(tmpdir, "oz_functions.c"))
+
+    def test_compound_literal_expr(self):
+        """CompoundLiteralExpr + InitListExpr → (type){val, val}"""
+        m = _simple_module()
+        m.classes["OZLed"].methods.append(
+            OZMethod("setup", OZType("void"), body_ast={
+                "kind": "CompoundStmt",
+                "inner": [{
+                    "kind": "DeclStmt",
+                    "inner": [{
+                        "kind": "VarDecl",
+                        "name": "c",
+                        "type": {"qualType": "struct color"},
+                        "inner": [{
+                            "kind": "CompoundLiteralExpr",
+                            "type": {"qualType": "struct color"},
+                            "inner": [{
+                                "kind": "InitListExpr",
+                                "inner": [
+                                    {"kind": "IntegerLiteral", "value": "255"},
+                                    {"kind": "IntegerLiteral", "value": "0"},
+                                    {"kind": "IntegerLiteral", "value": "0"},
+                                ],
+                            }],
+                        }],
+                    }],
+                }],
+            })
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            src = open(os.path.join(tmpdir, "OZLed.c")).read()
+            assert "(struct color){255, 0, 0}" in src
+
+    def test_string_literal_emits_static_struct(self):
+        """ObjCStringLiteral → static struct OZString + reference."""
+        m = _simple_module()
+        m.classes["OZString"] = OZClass(
+            "OZString", superclass="OZObject",
+            ivars=[
+                OZIvar("_length", OZType("unsigned int")),
+                OZIvar("_hash", OZType("unsigned int")),
+                OZIvar("_data", OZType("const char *")),
+            ],
+            methods=[
+                OZMethod("cStr", OZType("const char *"), body_ast={
+                    "kind": "CompoundStmt",
+                    "inner": [{"kind": "ReturnStmt", "inner": [
+                        {"kind": "MemberExpr",
+                         "name": "_data",
+                         "type": {"qualType": "const char *"},
+                         "inner": [{"kind": "DeclRefExpr",
+                                     "referencedDecl": {"name": "self"},
+                                     "type": {"qualType": "OZString *"}}]},
+                    ]}],
+                }),
+            ],
+        )
+        m.functions.append(OZFunction(
+            name="test_func",
+            return_type=OZType("void"),
+            body_ast={
+                "kind": "CompoundStmt",
+                "inner": [{
+                    "kind": "DeclStmt",
+                    "inner": [{
+                        "kind": "VarDecl",
+                        "name": "s",
+                        "type": {"qualType": "OZString *"},
+                        "inner": [{
+                            "kind": "ObjCStringLiteral",
+                            "inner": [{"kind": "StringLiteral",
+                                        "value": '"hello"'}],
+                        }],
+                    }],
+                }],
+            },
+        ))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            src = open(os.path.join(tmpdir, "oz_functions.c")).read()
+            assert "static struct OZString _oz_str_" in src
+            assert '"hello"' in src
+            assert "2147483647" in src

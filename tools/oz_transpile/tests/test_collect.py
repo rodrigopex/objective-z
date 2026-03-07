@@ -189,6 +189,40 @@ class TestCollectCategory:
         assert mod.classes["OZFoo"].methods[0].selector == "bar"
 
 
+class TestCollectCategoryImpl:
+    def test_category_impl_merges_with_body(self):
+        ast = _make_ast(
+            _interface("Car", "OZObject"),
+            {
+                "kind": "ObjCCategoryImplDecl",
+                "interface": {"name": "Car"},
+                "inner": [
+                    _method("milage", ret="int",
+                            body=_compound({"kind": "ReturnStmt",
+                                            "inner": [{"kind": "IntegerLiteral",
+                                                        "value": "100"}]})),
+                ],
+            },
+        )
+        mod = collect(ast)
+        assert len(mod.classes["Car"].methods) == 1
+        m = mod.classes["Car"].methods[0]
+        assert m.selector == "milage"
+        assert m.body_ast is not None
+
+    def test_category_impl_creates_class(self):
+        ast = _make_ast({
+            "kind": "ObjCCategoryImplDecl",
+            "interface": {"name": "Bike"},
+            "inner": [
+                _method("speed", ret="int"),
+            ],
+        })
+        mod = collect(ast)
+        assert "Bike" in mod.classes
+        assert mod.classes["Bike"].methods[0].selector == "speed"
+
+
 class TestCollectStaticVar:
     def test_static_var_collected(self):
         ast = _make_ast({
