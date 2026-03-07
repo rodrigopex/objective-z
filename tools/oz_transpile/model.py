@@ -95,8 +95,16 @@ class OZFunction:
 
 
 @dataclass(slots=True)
+class OZStaticVar:
+    name: str
+    oz_type: OZType
+
+
+@dataclass(slots=True)
 class OZModule:
     classes: dict[str, OZClass] = field(default_factory=dict)
     protocols: dict[str, OZProtocol] = field(default_factory=dict)
     functions: list[OZFunction] = field(default_factory=list)
+    statics: list[OZStaticVar] = field(default_factory=list)
+    verbatim_lines: list[str] = field(default_factory=list)
     diagnostics: list[str] = field(default_factory=list)

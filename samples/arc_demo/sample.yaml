@@ -3,7 +3,6 @@ sample:
   name: ObjZ ARC Demo
 common:
   tags: objz
-  # RVO-dependent output ordering requires ARM Thumb-2 marker
   platform_allow:
     - mps2/an385
   integration_platforms:
@@ -22,8 +21,8 @@ common:
       - "=== Demo main complete ==="
       - "=== Demo Extra thread started ==="
       - "Driver created"
-      - "Sensor dealloc"
       - "Driver dealloc"
+      - "Sensor dealloc"
 tests:
   sample.objz.arc_demo:
     tags: objz arc

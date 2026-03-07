@@ -70,10 +70,12 @@ def emit(module: OZModule, outdir: str, pool_sizes: dict[str, int] | None = None
         files.append(_render(env, "class_source.c.j2",
                              _class_source_ctx(ctx), outdir, f"{cls.name}.c"))
 
-    if module.functions:
+    if module.functions or module.statics or module.verbatim_lines:
+        func_ctx = _functions_ctx(module, root_class)
+        files.append(_render(env, "oz_functions.h.j2",
+                             func_ctx, outdir, "oz_functions.h"))
         files.append(_render(env, "oz_functions.c.j2",
-                             _functions_ctx(module, root_class),
-                             outdir, "oz_functions.c"))
+                             func_ctx, outdir, "oz_functions.c"))
 
     return files
 
@@ -299,6 +301,10 @@ def _class_source_ctx(ctx: _EmitCtx) -> dict:
         if val:
             dealloc_body = val.rstrip("\n")
 
+    module = ctx.module
+    has_functions_header = bool(
+        module.functions or module.statics or module.verbatim_lines)
+
     return {
         "name": cls.name,
         "is_root": is_root,
@@ -306,6 +312,7 @@ def _class_source_ctx(ctx: _EmitCtx) -> dict:
         "root_introspection": root_introspection,
         "method_bodies": method_bodies,
         "dealloc_body": dealloc_body,
+        "has_functions_header": has_functions_header,
     }
 
 
@@ -954,7 +961,31 @@ def _functions_ctx(module: OZModule, root_class: str) -> dict:
             buf.write("{\n}\n")
         function_bodies.append(buf.getvalue().rstrip("\n"))
 
-    return {"classes": classes, "function_bodies": function_bodies}
+    static_decls = []
+    extern_decls = []
+    for sv in module.statics:
+        c_type = sv.oz_type.c_type
+        if c_type.endswith("*"):
+            static_decls.append(f"{c_type}{sv.name};")
+            extern_decls.append(f"extern {c_type}{sv.name};")
+        else:
+            static_decls.append(f"{c_type} {sv.name};")
+            extern_decls.append(f"extern {c_type} {sv.name};")
+
+    function_protos = []
+    for func in module.functions:
+        ret = func.return_type.c_type
+        params_str = ", ".join(
+            f"{p.oz_type.c_type} {p.name}" for p in func.params
+        )
+        if not params_str:
+            params_str = "void"
+        function_protos.append(f"{ret} {func.name}({params_str});")
+
+    return {"classes": classes, "function_bodies": function_bodies,
+            "static_decls": static_decls, "extern_decls": extern_decls,
+            "function_protos": function_protos,
+            "verbatim_lines": module.verbatim_lines}
 
 
 # ---------------------------------------------------------------------------
@@ -1161,20 +1192,39 @@ def _emit_strong_ivar_assign(node: dict, out: StringIO, ctx: _EmitCtx,
     _emit_expr(rhs, rhs_buf, ctx)
     rhs_str = rhs_buf.getvalue()
 
-    out.write(f"{tabs}{root}_retain((struct {root} *){rhs_str});\n")
-    out.write(f"{tabs}{root}_release((struct {root} *)self->{ivar_name});\n")
-    out.write(f"{tabs}self->{ivar_name} = {rhs_str};\n")
-
-    # Track consumed local: if RHS is a simple DeclRefExpr local, mark consumed.
-    # Skip params — they have their own entry-retain balanced by scope-exit release.
+    # Use temp var if RHS may have side effects (function/method calls)
     rhs_var = _find_returned_var(rhs)
+    needs_retain = False
     if rhs_var and rhs_var != "self":
-        is_param = _is_param_name(rhs_var, ctx)
-        if not is_param:
-            for frame in ctx.scope_vars:
-                if rhs_var in frame:
-                    ctx.consumed_vars.add(rhs_var)
-                    break
+        # Simple variable reference — safe to use directly
+        val = rhs_str
+        # Params need retain (borrowed reference); locals transfer ownership
+        if _is_param_name(rhs_var, ctx):
+            needs_retain = True
+    else:
+        # Function/method call returns +1; use temp, no extra retain needed
+        tmp = f"_oz_recv{ctx._tmp_counter}"
+        ctx._tmp_counter += 1
+        lhs_unwrapped = lhs
+        while lhs_unwrapped.get("kind") in ("ImplicitCastExpr",):
+            lhs_unwrapped = lhs_unwrapped.get("inner", [lhs_unwrapped])[0]
+        ivar_type = lhs_unwrapped.get("type", {}).get("qualType", "id")
+        c_type = OZType(ivar_type).c_type
+        out.write(f"{tabs}{c_type}{tmp} = {rhs_str};\n")
+        val = tmp
+
+    if needs_retain:
+        out.write(f"{tabs}{root}_retain((struct {root} *){val});\n")
+    out.write(f"{tabs}{root}_release((struct {root} *)self->{ivar_name});\n")
+    out.write(f"{tabs}self->{ivar_name} = {val};\n")
+
+    # Track consumed local: mark so it won't be released at scope exit.
+    # Skip params — they have their own entry-retain balanced by scope-exit release.
+    if rhs_var and rhs_var != "self" and not _is_param_name(rhs_var, ctx):
+        for frame in ctx.scope_vars:
+            if rhs_var in frame:
+                ctx.consumed_vars.add(rhs_var)
+                break
 
 
 def _emit_user_dealloc(ctx: _EmitCtx, m: OZMethod, out: StringIO) -> None:
@@ -1188,10 +1238,6 @@ def _emit_user_dealloc(ctx: _EmitCtx, m: OZMethod, out: StringIO) -> None:
     out.write(f"{_method_prototype(cls, m)}\n")
     out.write("{\n")
 
-    # Prepend: release object ivars
-    for iv in obj_ivars:
-        out.write(f"\t{root_class}_release((struct {root_class} *)self->{iv.name});\n")
-
     # Emit user body statements, filtering out [super dealloc]
     if m.body_ast:
         ctx.method = m
@@ -1201,6 +1247,10 @@ def _emit_user_dealloc(ctx: _EmitCtx, m: OZMethod, out: StringIO) -> None:
             if _is_super_dealloc(child):
                 continue
             _emit_stmt(child, out, ctx, indent=1)
+
+    # Release object ivars after user body
+    for iv in obj_ivars:
+        out.write(f"\t{root_class}_release((struct {root_class} *)self->{iv.name});\n")
 
     # Append: parent dealloc or dispatch_free (root)
     if not is_root:
@@ -1302,8 +1352,9 @@ def _base_chain(class_name: str, module: OZModule) -> str:
 
 
 def _method_prototype(cls: OZClass, m: OZMethod) -> str:
-    # instancetype returns the class's own pointer type
-    if m.return_type.raw_qual_type.strip() == "instancetype":
+    # instancetype / id returns the class's own pointer type
+    raw_ret = m.return_type.raw_qual_type.strip()
+    if raw_ret in ("instancetype", "id"):
         ret = f"struct {cls.name} *"
     else:
         ret = m.return_type.c_type

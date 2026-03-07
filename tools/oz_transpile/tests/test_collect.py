@@ -187,3 +187,106 @@ class TestCollectCategory:
         mod = collect(ast)
         assert "OZFoo" in mod.classes
         assert mod.classes["OZFoo"].methods[0].selector == "bar"
+
+
+class TestCollectStaticVar:
+    def test_static_var_collected(self):
+        ast = _make_ast({
+            "kind": "VarDecl",
+            "name": "_sharedConfig",
+            "storageClass": "static",
+            "type": {"qualType": "AppConfig *"},
+        })
+        mod = collect(ast)
+        assert len(mod.statics) == 1
+        assert mod.statics[0].name == "_sharedConfig"
+        assert mod.statics[0].oz_type.c_type == "struct AppConfig *"
+
+    def test_non_static_var_skipped(self):
+        ast = _make_ast({
+            "kind": "VarDecl",
+            "name": "globalVar",
+            "type": {"qualType": "int"},
+        })
+        mod = collect(ast)
+        assert len(mod.statics) == 0
+
+    def test_extern_var_skipped(self):
+        ast = _make_ast({
+            "kind": "VarDecl",
+            "name": "externalVar",
+            "storageClass": "extern",
+            "type": {"qualType": "int"},
+        })
+        mod = collect(ast)
+        assert len(mod.statics) == 0
+
+    def test_included_static_skipped(self):
+        ast = _make_ast({
+            "kind": "VarDecl",
+            "name": "_headerStatic",
+            "storageClass": "static",
+            "type": {"qualType": "int"},
+            "loc": {"includedFrom": {"file": "some_header.h"}},
+        })
+        mod = collect(ast)
+        assert len(mod.statics) == 0
+
+
+class TestCollectVerbatimLines:
+    def test_k_thread_define_collected(self, tmp_path):
+        src = tmp_path / "main.m"
+        src.write_text(
+            '#import "OZObject.h"\n'
+            "@interface Foo: OZObject\n@end\n"
+            "K_THREAD_DEFINE(my_thread, 1024, entry, NULL, NULL, NULL, 7, 0, 0);\n"
+        )
+        ast = _make_ast(
+            _interface("Foo", "OZObject"),
+            {"kind": "VarDecl", "name": "dummy",
+             "loc": {"file": str(src)},
+             "type": {"qualType": "int"}},
+        )
+        mod = collect(ast)
+        assert len(mod.verbatim_lines) == 1
+        assert "K_THREAD_DEFINE" in mod.verbatim_lines[0]
+        assert "my_thread" in mod.verbatim_lines[0]
+
+    def test_multiline_macro_collected(self, tmp_path):
+        src = tmp_path / "main.m"
+        src.write_text(
+            "@interface Foo: OZObject\n@end\n"
+            "K_THREAD_DEFINE(my_thread, 1024, entry,\n"
+            "\t\tNULL, NULL, NULL, 7, 0, 0);\n"
+        )
+        ast = _make_ast(
+            _interface("Foo", "OZObject"),
+            {"kind": "VarDecl", "name": "dummy",
+             "loc": {"file": str(src)},
+             "type": {"qualType": "int"}},
+        )
+        mod = collect(ast)
+        assert len(mod.verbatim_lines) == 1
+        assert "K_THREAD_DEFINE" in mod.verbatim_lines[0]
+        assert "NULL, NULL, NULL" in mod.verbatim_lines[0]
+
+    def test_no_macros_no_verbatim(self, tmp_path):
+        src = tmp_path / "main.m"
+        src.write_text(
+            '@import "OZObject.h"\n'
+            "@interface Foo: OZObject\n@end\n"
+            "int main(void) { return 0; }\n"
+        )
+        ast = _make_ast(
+            _interface("Foo", "OZObject"),
+            {"kind": "VarDecl", "name": "dummy",
+             "loc": {"file": str(src)},
+             "type": {"qualType": "int"}},
+        )
+        mod = collect(ast)
+        assert len(mod.verbatim_lines) == 0
+
+    def test_no_source_file_graceful(self):
+        ast = _make_ast(_interface("Foo", "OZObject"))
+        mod = collect(ast)
+        assert len(mod.verbatim_lines) == 0
