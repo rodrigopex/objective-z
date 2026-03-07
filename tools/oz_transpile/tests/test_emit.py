@@ -15,6 +15,7 @@ from oz_transpile.model import (
     OZModule,
     OZParam,
     OZProtocol,
+    OZStaticVar,
     OZType,
 )
 from oz_transpile.resolve import resolve
@@ -1094,8 +1095,10 @@ class TestARCStrongIvarAssign:
             content = open(os.path.join(tmpdir, "Holder.c")).read()
             # obj was consumed by ivar assign — should NOT be released at scope exit
             assert "OZObject_release((struct OZObject *)obj);" not in content
-            # But the retain/release for the ivar assign should be present
-            assert "OZObject_retain((struct OZObject *)obj)" in content
+            # Consumed local transfers ownership — no extra retain needed
+            assert "OZObject_retain((struct OZObject *)obj)" not in content
+            # Old ivar value should still be released
+            assert "OZObject_release((struct OZObject *)self->_child)" in content
 
 
 class TestARCLocalReassign:
@@ -1375,3 +1378,29 @@ class TestIntrospection:
             emit(m, tmpdir)
             content = open(os.path.join(tmpdir, "OZObject.c")).read()
             assert "#include <zephyr/sys/printk.h>" in content
+
+
+class TestStaticVarEmission:
+    """Tests for file-scope static variable emission in oz_functions.c."""
+
+    def test_static_var_emitted_in_functions_file(self):
+        m = _simple_module()
+        m.statics.append(OZStaticVar("_sharedConfig", OZType("AppConfig *")))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            content = open(os.path.join(tmpdir, "oz_functions.c")).read()
+            assert "struct AppConfig *_sharedConfig;" in content
+
+    def test_primitive_static_var(self):
+        m = _simple_module()
+        m.statics.append(OZStaticVar("_count", OZType("int")))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            content = open(os.path.join(tmpdir, "oz_functions.c")).read()
+            assert "int _count;" in content
+
+    def test_no_statics_no_functions_file(self):
+        m = _simple_module()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            assert not os.path.exists(os.path.join(tmpdir, "oz_functions.c"))

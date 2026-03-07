@@ -3,11 +3,15 @@
 #include <zephyr/sys/printk.h>
 #include "oz_dispatch.h"
 #include "oz_mem_slabs.h"
-{% for cls in classes %}
-#include "{{ cls.name }}.h"
-{% endfor %}
+#include "oz_functions.h"
 
+{% for decl in static_decls %}
+{{ decl }}
+{% endfor %}
 {% for body in function_bodies %}
 {{ body }}
 
+{% endfor %}
+{% for line in verbatim_lines %}
+{{ line }}
 {% endfor %}

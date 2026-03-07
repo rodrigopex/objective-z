@@ -2,14 +2,13 @@
  * SPDX-License-Identifier: Apache-2.0
  *
  * ARC (Automatic Reference Counting) demo.
- * Compiled with -fobjc-arc — no manual retain/release needed.
+ * Transpiled to plain C — no ObjC runtime needed.
  */
 
-#import <Foundation/Foundation.h>
-#import <objc/objc.h>
-#include <zephyr/kernel.h>
+#import "OZObject.h"
+#import "OZLog.h"
 
-@interface Sensor: Object {
+@interface Sensor: OZObject {
 	int _value;
 }
 - (void)setValue:(int)v;
@@ -50,7 +49,7 @@ static Sensor *createSensor(int v)
 }
 
 /* Singleton via +initialize — called once on first class message */
-@interface AppConfig: Object {
+@interface AppConfig: OZObject {
 	int _refreshRate;
 }
 + (instancetype)shared;
@@ -62,7 +61,7 @@ static AppConfig *_sharedConfig;
 @implementation AppConfig
 + (void)initialize
 {
-	_sharedConfig = [[self alloc] init];
+	_sharedConfig = [[AppConfig alloc] init];
 }
 + (instancetype)shared
 {
@@ -80,20 +79,24 @@ static AppConfig *_sharedConfig;
 }
 @end
 
-@interface Driver: Object {
+@interface Driver: OZObject {
 	Sensor *_sensor;
 }
-@property(nonatomic, strong) Sensor *sensor;
+- (id)init:(int)newValue;
+- (Sensor *)sensor;
 @end
 
 @implementation Driver
-@synthesize sensor = _sensor;
 - (id)init:(int)newValue
 {
 	self = [super init];
 	_sensor = createSensor(newValue);
 	OZLog("Driver created (sensor value=%d)", [_sensor value]);
 	return self;
+}
+- (Sensor *)sensor
+{
+	return _sensor;
 }
 - (void)dealloc
 {
@@ -106,6 +109,7 @@ int main(void)
 	OZLog("=== ARC Memory Management Demo ===");
 
 	/* Singleton test: +initialize creates instance on first access */
+	[AppConfig initialize];
 	AppConfig *c1 = [AppConfig shared];
 	AppConfig *c2 = [AppConfig shared];
 	OZLog("singleton refreshRate=%d same=%s", [c1 refreshRate],
@@ -130,15 +134,15 @@ int main(void)
 	return 0;
 }
 
-static void arc_demo_extra_thread_entry(void *p1, void *p2, void *p3)
+void arc_demo_extra_thread_entry(void *p1, void *p2, void *p3)
 {
-	ARG_UNUSED(p1);
-	ARG_UNUSED(p2);
-	ARG_UNUSED(p3);
+	(void)p1;
+	(void)p2;
+	(void)p3;
 	OZLog("=== Demo Extra thread started ===");
 	Driver *d = [[Driver alloc] init:250];
-	d.sensor.value = 100;
-	OZLog("=== Demo Extra thread started ===");
+	[[d sensor] setValue:100];
 }
 
-K_THREAD_DEFINE(arc_demo_thread, 1024, arc_demo_extra_thread_entry, NULL, NULL, NULL, 7, 0, 0);
+K_THREAD_DEFINE(arc_demo_thread, 1024, arc_demo_extra_thread_entry,
+		NULL, NULL, NULL, 7, 0, 0);

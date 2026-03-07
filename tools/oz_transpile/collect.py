@@ -4,7 +4,13 @@
 
 from __future__ import annotations
 
-from .model import OZClass, OZFunction, OZIvar, OZMethod, OZModule, OZParam, OZProtocol, OZType
+from pathlib import Path
+
+import tree_sitter_objc as tsobjc
+from tree_sitter import Language, Parser
+
+from .model import (OZClass, OZFunction, OZIvar, OZMethod, OZModule, OZParam,
+                     OZProtocol, OZStaticVar, OZType)
 
 
 SKIP_CLASSES = frozenset({"Protocol"})
@@ -29,6 +35,8 @@ def merge_modules(modules: list[OZModule]) -> OZModule:
                 merged.classes[name] = cls
         merged.protocols.update(m.protocols)
         merged.functions.extend(m.functions)
+        merged.statics.extend(m.statics)
+        merged.verbatim_lines.extend(m.verbatim_lines)
         merged.diagnostics.extend(m.diagnostics)
     return merged
 
@@ -40,6 +48,7 @@ def collect(ast_root: dict) -> OZModule:
     # Remove auto-generated Clang classes
     for name in SKIP_CLASSES:
         module.classes.pop(name, None)
+    _collect_verbatim_lines(ast_root, module)
     return module
 
 
@@ -70,6 +79,10 @@ def _walk(node: dict, module: OZModule, impl_name: str | None = None) -> None:
     elif kind == "FunctionDecl":
         if _is_from_main_file(node):
             _collect_function(node, module)
+        return
+    elif kind == "VarDecl":
+        if _is_from_main_file(node) and node.get("storageClass") == "static":
+            _collect_static_var(node, module)
         return
 
     for child in node.get("inner", []):
@@ -227,3 +240,46 @@ def _collect_function(node: dict, module: OZModule) -> None:
         params=params,
         body_ast=body_ast,
     ))
+
+
+def _collect_static_var(node: dict, module: OZModule) -> None:
+    """Collect a file-scope static variable declaration."""
+    name = node.get("name", "")
+    if not name:
+        return
+    qual_type = node.get("type", {}).get("qualType", "")
+    if not qual_type:
+        return
+    module.statics.append(OZStaticVar(name=name, oz_type=OZType(qual_type)))
+
+
+_TS_LANG = Language(tsobjc.language())
+
+
+def _find_main_file(ast_root: dict) -> str | None:
+    """Extract the main source file path from AST loc fields."""
+    for child in ast_root.get("inner", []):
+        loc = child.get("loc", {})
+        f = loc.get("file", "")
+        if f and "includedFrom" not in loc:
+            return f
+    return None
+
+
+def _collect_verbatim_lines(ast_root: dict, module: OZModule) -> None:
+    """Scan original source for top-level expression statements (macro calls)."""
+    main_file = _find_main_file(ast_root)
+    if not main_file:
+        return
+    path = Path(main_file)
+    if not path.is_file():
+        return
+
+    source = path.read_bytes()
+    parser = Parser(_TS_LANG)
+    tree = parser.parse(source)
+
+    for child in tree.root_node.children:
+        if child.type == "expression_statement":
+            module.verbatim_lines.append(
+                source[child.start_byte:child.end_byte].decode())
