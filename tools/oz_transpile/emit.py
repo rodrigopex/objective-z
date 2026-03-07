@@ -89,7 +89,9 @@ def _dispatch_header_ctx(module: OZModule) -> dict:
     proto_sels_map: dict[str, OZMethod] = {}
     for cls in module.classes.values():
         for m in cls.methods:
-            if m.dispatch == DispatchKind.PROTOCOL and m.selector not in proto_sels_map:
+            if (m.dispatch == DispatchKind.PROTOCOL
+                    and not m.is_class_method
+                    and m.selector not in proto_sels_map):
                 proto_sels_map[m.selector] = m
 
     proto_sels = []
@@ -126,11 +128,13 @@ def _dispatch_source_ctx(module: OZModule) -> dict:
                     else "OZ_CLASS_COUNT")
         classes.append({"name": cls.name, "super_id_expr": super_id})
 
-    # Collect unique protocol selectors
+    # Collect unique protocol selectors (instance methods only)
     proto_sels_map: dict[str, OZMethod] = {}
     for cls in module.classes.values():
         for m in cls.methods:
-            if m.dispatch == DispatchKind.PROTOCOL and m.selector not in proto_sels_map:
+            if (m.dispatch == DispatchKind.PROTOCOL
+                    and not m.is_class_method
+                    and m.selector not in proto_sels_map):
                 proto_sels_map[m.selector] = m
 
     proto_sels = [{"c_sel": _selector_to_c(sel)}
@@ -811,10 +815,17 @@ def _emit_msg_expr(node: dict, out: StringIO, ctx: _EmitCtx) -> None:
         out.write(")")
         return
 
-    # [ClassName alloc] -> ClassName_alloc()
+    # [ClassName sel] -> ClassName_sel() or ClassName_cls_sel() for class methods
     if receiver_kind == "class":
         class_type = node.get("classType", {}).get("qualType", "")
-        out.write(f"{class_type}_{c_sel}(")
+        prefix = ""
+        cls_obj = module.classes.get(class_type)
+        if cls_obj:
+            for m in cls_obj.methods:
+                if m.selector == selector and m.is_class_method:
+                    prefix = "cls_"
+                    break
+        out.write(f"{class_type}_{prefix}{c_sel}(")
         for i, arg in enumerate(inner):
             if i > 0:
                 out.write(", ")
@@ -1297,10 +1308,16 @@ def _method_prototype(cls: OZClass, m: OZMethod) -> str:
     else:
         ret = m.return_type.c_type
     c_sel = _selector_to_c(m.selector)
-    params_str = f"struct {cls.name} *self"
-    for p in m.params:
-        params_str += f", {p.oz_type.c_type} {p.name}"
-    return f"{ret} {cls.name}_{c_sel}({params_str})"
+    if m.is_class_method:
+        prefix = "cls_"
+        parts = [f"{p.oz_type.c_type} {p.name}" for p in m.params]
+        params_str = ", ".join(parts) if parts else "void"
+    else:
+        prefix = ""
+        params_str = f"struct {cls.name} *self"
+        for p in m.params:
+            params_str += f", {p.oz_type.c_type} {p.name}"
+    return f"{ret} {cls.name}_{prefix}{c_sel}({params_str})"
 
 
 def _write_file(path: str, content: str) -> None:

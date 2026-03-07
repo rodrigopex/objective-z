@@ -83,6 +83,22 @@ class TestHelpers:
                      params=[OZParam("pin", OZType("int"))])
         assert _method_prototype(cls, m) == "void OZLed_setPin_(struct OZLed *self, int pin)"
 
+    def test_class_method_prototype_no_params(self):
+        cls = OZClass("MyObj")
+        m = OZMethod("greet", OZType("void"), is_class_method=True)
+        proto = _method_prototype(cls, m)
+        assert proto == "void MyObj_cls_greet(void)"
+        assert "self" not in proto
+
+    def test_class_method_prototype_with_params(self):
+        cls = OZClass("MyObj")
+        m = OZMethod("doWith:", OZType("void"),
+                     params=[OZParam("val", OZType("int"))],
+                     is_class_method=True)
+        proto = _method_prototype(cls, m)
+        assert proto == "void MyObj_cls_doWith_(int val)"
+        assert "self" not in proto
+
 
 class TestEmitFiles:
     def test_generates_expected_files(self):
@@ -118,6 +134,21 @@ class TestDispatchHeader:
             # init is overridden -> PROTOCOL dispatch
             assert "OZ_vtable_init" in content
             assert "OZ_SEND_init" in content
+
+    def test_class_method_excluded_from_vtable(self):
+        m = _simple_module()
+        m.classes["OZLed"].methods.append(
+            OZMethod("greet", OZType("void"), is_class_method=True,
+                     body_ast={"kind": "CompoundStmt", "inner": []}))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            dispatch_h = open(os.path.join(tmpdir, "oz_dispatch.h")).read()
+            dispatch_c = open(os.path.join(tmpdir, "oz_dispatch.c")).read()
+            assert "vtable_greet" not in dispatch_h
+            assert "vtable_greet" not in dispatch_c
+            # But the class method should appear in the class header
+            led_h = open(os.path.join(tmpdir, "OZLed.h")).read()
+            assert "OZLed_cls_greet(void)" in led_h
 
 
 class TestClassHeader:
