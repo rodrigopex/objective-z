@@ -545,10 +545,12 @@ def _emit_stmt(node: dict, out: StringIO, ctx: _EmitCtx,
         out.write(";\n")
 
     elif kind == "BinaryOperator" and node.get("opcode") == "=":
-        # Check for strong ivar assignment
+        # Check for strong ivar or local assignment
         inner = node.get("inner", [])
         if len(inner) == 2 and _is_object_ivar_assign(inner[0], ctx):
             _emit_strong_ivar_assign(node, out, ctx, indent)
+        elif len(inner) == 2 and _is_object_local_assign(inner[0], ctx):
+            _emit_strong_local_assign(node, out, ctx, indent)
         else:
             expr_buf = StringIO()
             _emit_expr(node, expr_buf, ctx)
@@ -1131,6 +1133,79 @@ def _is_object_ivar_assign(lhs_node: dict, ctx: _EmitCtx) -> bool:
         if ivar.name == ivar_name and ivar.oz_type.is_object:
             return True
     return False
+
+
+def _is_object_local_assign(lhs_node: dict, ctx: _EmitCtx) -> bool:
+    """Check if LHS of an assignment is an object-typed local variable in scope."""
+    unwrapped = lhs_node
+    while unwrapped.get("kind") in ("ImplicitCastExpr",):
+        inner = unwrapped.get("inner", [])
+        if inner:
+            unwrapped = inner[0]
+        else:
+            break
+    if unwrapped.get("kind") != "DeclRefExpr":
+        return False
+    name = unwrapped.get("referencedDecl", {}).get("name", "")
+    if not name or name == "self":
+        return False
+    for frame in ctx.scope_vars:
+        if name in frame:
+            return True
+    return False
+
+
+def _is_local_var_rhs(rhs_node: dict, ctx: _EmitCtx) -> bool:
+    """Check if RHS is a local/param variable reference (needs retain on assign)."""
+    unwrapped = rhs_node
+    while unwrapped.get("kind") in ("ImplicitCastExpr",):
+        inner = unwrapped.get("inner", [])
+        if inner:
+            unwrapped = inner[0]
+        else:
+            break
+    if unwrapped.get("kind") != "DeclRefExpr":
+        return False
+    name = unwrapped.get("referencedDecl", {}).get("name", "")
+    if not name or name == "self":
+        return False
+    for frame in ctx.scope_vars:
+        if name in frame:
+            return True
+    return False
+
+
+def _emit_strong_local_assign(node: dict, out: StringIO, ctx: _EmitCtx,
+                               indent: int) -> None:
+    """Emit release(old); var = new; for object local variable reassignment."""
+    tabs = "\t" * indent
+    inner = node.get("inner", [])
+    rhs = inner[1]
+    root = ctx.root_class
+
+    # Get var name from LHS
+    unwrapped = inner[0]
+    while unwrapped.get("kind") in ("ImplicitCastExpr",):
+        unwrapped = unwrapped.get("inner", [unwrapped])[0]
+    var_name = unwrapped.get("referencedDecl", {}).get("name", "")
+
+    rhs_buf = StringIO()
+    _emit_expr(rhs, rhs_buf, ctx)
+    rhs_str = rhs_buf.getvalue()
+
+    _flush_pre_stmts(out, ctx, indent)
+
+    # Retain new value if RHS is a local variable (not +1 from alloc)
+    if _is_local_var_rhs(rhs, ctx):
+        out.write(f"{tabs}{root}_retain((struct {root} *){rhs_str});\n")
+
+    out.write(f"{tabs}{root}_release((struct {root} *){var_name});\n")
+    out.write(f"{tabs}{var_name} = {rhs_str};\n")
+
+    # If var was previously consumed (transferred to ivar), un-consume it.
+    # It now holds a new value that must be released at scope exit.
+    if var_name in ctx.consumed_vars:
+        ctx.consumed_vars.discard(var_name)
 
 
 def _emit_strong_ivar_assign(node: dict, out: StringIO, ctx: _EmitCtx,
