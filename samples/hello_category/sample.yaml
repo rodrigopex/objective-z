@@ -1,16 +1,14 @@
 sample:
-  description: ObjC categories with assert-based validation
-  name: ObjZ Hello Category
-common:
-  tags: objz
-  integration_platforms:
-    - mps2/an385
-    - qemu_riscv32
-  harness: console
-  harness_config:
-    type: one_line
-    regex:
-      - "All assertions passed"
+  name: Hello Category
+  description: Category demo — transpiled to pure C
 tests:
-  sample.objz.hello_category:
-    tags: objz category
+  sample.hello_category:
+    tags: transpiled category
+    harness: console
+    harness_config:
+      type: one_line
+      regex:
+        - "All assertions passed"
+    platform_allow:
+      - mps2/an385
+      - qemu_riscv32

@@ -9,7 +9,7 @@ struct color {
 	uint8_t b;
 };
 
-@interface Car: Object {
+@interface Car: OZObject {
 	struct color *_color;
 	OZString *_model;
 	int _throttleLevel;
