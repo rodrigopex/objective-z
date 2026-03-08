@@ -3,6 +3,9 @@
 
 #include <zephyr/kernel.h>
 #include <string.h>
+{% if item_pool_count > 0 %}
+#include <zephyr/sys/mem_blocks.h>
+{% endif %}
 
 {% for cls in classes %}
 #include "{{ cls.name }}.h"
@@ -41,3 +44,74 @@ static inline void {{ root_class }}_dispatch_free(struct {{ root_class }} *obj)
 	}
 }
 
+{% for cls in classes %}
+{% if cls.name == "OZNumber" %}
+{% for init in number_inits %}
+static inline struct {{ cls.name }} *{{ cls.name }}_init{{ init.suffix }}({{ init.c_type }} val)
+{
+	struct {{ cls.name }} *obj = {{ cls.name }}_alloc();
+	if (!obj) {
+		return (struct {{ cls.name }} *)0;
+	}
+	obj->_tag = {{ init.tag }};
+	obj->_value.{{ init.field }} = val;
+	return obj;
+}
+
+{% endfor %}
+{% endif %}
+{% endfor %}
+{% if item_pool_count > 0 %}
+extern struct sys_mem_blocks oz_item_pool;
+
+{% for cls in classes %}
+{% if cls.name == "OZArray" %}
+static inline struct {{ cls.name }} *{{ cls.name }}_initWithItems(
+	struct {{ root_class }} **src, unsigned int count)
+{
+	struct {{ cls.name }} *arr = {{ cls.name }}_alloc();
+	if (!arr) {
+		return (struct {{ cls.name }} *)0;
+	}
+	struct {{ root_class }} **items;
+	if (sys_mem_blocks_alloc_contiguous(&oz_item_pool, count,
+					    (void **)&items) != 0) {
+		{{ cls.name }}_free(arr);
+		return (struct {{ cls.name }} *)0;
+	}
+	for (unsigned int i = 0; i < count; i++) {
+		items[i] = src[i];
+	}
+	arr->_items = items;
+	arr->_count = count;
+	return arr;
+}
+
+{% endif %}
+{% if cls.name == "OZDictionary" %}
+static inline struct {{ cls.name }} *{{ cls.name }}_initWithKeysValues(
+	struct {{ root_class }} **kv_src, unsigned int count)
+{
+	struct {{ cls.name }} *dict = {{ cls.name }}_alloc();
+	if (!dict) {
+		return (struct {{ cls.name }} *)0;
+	}
+	struct {{ root_class }} **buf;
+	if (sys_mem_blocks_alloc_contiguous(&oz_item_pool, count * 2,
+					    (void **)&buf) != 0) {
+		{{ cls.name }}_free(dict);
+		return (struct {{ cls.name }} *)0;
+	}
+	for (unsigned int i = 0; i < count; i++) {
+		buf[i] = kv_src[i];
+		buf[count + i] = kv_src[count + i];
+	}
+	dict->_keys = buf;
+	dict->_values = buf + count;
+	dict->_count = count;
+	return dict;
+}
+
+{% endif %}
+{% endfor %}
+{% endif %}

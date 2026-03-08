@@ -1531,7 +1531,7 @@ class TestStaticVarEmission:
             assert src.count('"hello"') == 1
 
     def test_array_literal(self):
-        """ObjCArrayLiteral → static struct OZArray with items."""
+        """ObjCArrayLiteral → dynamic OZArray via OZArray_initWithItems."""
         m = _simple_module()
         m.classes["OZString"] = OZClass(
             "OZString", superclass="OZObject",
@@ -1578,13 +1578,12 @@ class TestStaticVarEmission:
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
             src = open(os.path.join(tmpdir, "oz_functions.c")).read()
-            assert "static struct OZArray _oz_arr_" in src
+            assert "OZArray_initWithItems" in src
             assert "_oz_arr_" in src
-            assert "_items[]" in src
-            assert "2147483647" in src
+            assert "_buf[]" in src
 
     def test_dictionary_literal(self):
-        """ObjCDictionaryLiteral → static struct OZDictionary."""
+        """ObjCDictionaryLiteral → dynamic OZDictionary via initWithKeysValues."""
         m = _simple_module()
         m.classes["OZString"] = OZClass(
             "OZString", superclass="OZObject",
@@ -1632,13 +1631,12 @@ class TestStaticVarEmission:
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
             src = open(os.path.join(tmpdir, "oz_functions.c")).read()
-            assert "static struct OZDictionary _oz_dict_" in src
-            assert "_keys[]" in src
-            assert "_vals[]" in src
-            assert "2147483647" in src
+            assert "OZDictionary_initWithKeysValues" in src
+            assert "_oz_dict_" in src
+            assert "_kv[]" in src
 
     def test_number_literal(self):
-        """ObjCBoxedExpr with IntegerLiteral → static struct OZNumber."""
+        """ObjCBoxedExpr with IntegerLiteral → dynamic OZNumber_initInt32."""
         m = _simple_module()
         m.classes["OZNumber"] = OZClass(
             "OZNumber", superclass="OZObject",
@@ -1673,13 +1671,10 @@ class TestStaticVarEmission:
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
             src = open(os.path.join(tmpdir, "oz_functions.c")).read()
-            assert "static struct OZNumber _oz_num_" in src
-            assert "OZ_NUM_INT32" in src
-            assert ".i32 = 42" in src
-            assert "2147483647" in src
+            assert "OZNumber_initInt32(42)" in src
 
-    def test_number_literal_dedup(self):
-        """Identical number literals reuse the same static struct."""
+    def test_number_literal_each_alloc(self):
+        """Each boxed number literal produces its own dynamic allocation."""
         m = _simple_module()
         m.classes["OZNumber"] = OZClass(
             "OZNumber", superclass="OZObject",
@@ -1689,7 +1684,7 @@ class TestStaticVarEmission:
             ],
         )
         m.functions.append(OZFunction(
-            name="test_dedup",
+            name="test_allocs",
             return_type=OZType("void"),
             body_ast={
                 "kind": "CompoundStmt",
@@ -1716,7 +1711,7 @@ class TestStaticVarEmission:
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
             src = open(os.path.join(tmpdir, "oz_functions.c")).read()
-            assert src.count("static struct OZNumber") == 1
+            assert src.count("OZNumber_initInt32(42)") == 2
 
     def test_expr_with_cleanups_passthrough(self):
         """ExprWithCleanups wrapping an expression → unwraps inner."""

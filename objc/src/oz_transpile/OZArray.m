@@ -68,9 +68,4 @@
 	return ret;
 }
 
-- (void)dealloc
-{
-	/* OZArray is a compile-time constant and must never be freed. */
-}
-
 @end
