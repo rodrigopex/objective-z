@@ -694,9 +694,9 @@ def _emit_boxed_number(node: dict, out: StringIO, ctx: _EmitCtx) -> None:
             val = "0" if "no" in raw.lower() else "1"
         else:
             val = "1" if raw else "0"
-        dedup_key = f"i32:{val}"
-        tag = "OZ_NUM_INT32"
-        field_init = f".i32 = {val}"
+        dedup_key = f"i8:{val}"
+        tag = "OZ_NUM_INT8"
+        field_init = f".i8 = {val}"
     else:
         out.write(f"/* TODO: ObjCBoxedExpr({child_kind}) */")
         return
