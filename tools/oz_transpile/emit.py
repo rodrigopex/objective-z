@@ -27,8 +27,11 @@ class _EmitCtx:
     string_constants: list[str] = field(default_factory=list)
     array_constants: list[str] = field(default_factory=list)
     dict_constants: list[str] = field(default_factory=list)
+    number_constants: list[str] = field(default_factory=list)
+    block_functions: list[str] = field(default_factory=list)
     _tmp_counter: int = 0
     _string_dedup: dict[str, str] = field(default_factory=dict)
+    _number_dedup: dict[str, str] = field(default_factory=dict)
 
 
 def _create_env() -> Environment:
@@ -237,12 +240,20 @@ def _class_header_ctx(ctx: _EmitCtx) -> dict:
         if obj_ivars or not is_root:
             auto_dealloc_proto = True
 
+    # Collect type definitions needed by ivars (enum/union from stubs)
+    ivar_type_defs = []
+    for ivar in cls.ivars:
+        qt = ivar.oz_type.raw_qual_type
+        if qt in module.type_defs and module.type_defs[qt] not in ivar_type_defs:
+            ivar_type_defs.append(module.type_defs[qt])
+
     return {
         "name": cls.name,
         "is_root": is_root,
         "superclass": cls.superclass,
         "superclass_header": cls.superclass if cls.superclass and cls.superclass in module.classes else None,
         "user_ivars": user_ivars,
+        "ivar_type_defs": ivar_type_defs,
         "method_prototypes": method_prototypes,
         "auto_dealloc_proto": auto_dealloc_proto,
         "has_any_methods": bool(cls.methods) or is_root,
@@ -320,6 +331,8 @@ def _class_source_ctx(ctx: _EmitCtx) -> dict:
         "string_constants": ctx.string_constants,
         "array_constants": ctx.array_constants,
         "dict_constants": ctx.dict_constants,
+        "number_constants": ctx.number_constants,
+        "block_functions": ctx.block_functions,
     }
 
 
@@ -590,6 +603,15 @@ def _emit_for_stmt(node: dict, out: StringIO, ctx: _EmitCtx,
     if len(inner) < 2:
         return
 
+    # Pre-emit condition into buffer to capture any pre_stmts (receiver temps)
+    cond_idx = 2 if len(inner) > 4 else 1
+    cond_buf = StringIO()
+    if cond_idx < len(inner) and inner[cond_idx].get("kind") not in ("NullStmt", "<<<NULL>>>"):
+        _emit_expr(inner[cond_idx], cond_buf, ctx)
+    cond_str = cond_buf.getvalue()
+    # Flush receiver temps before the for statement
+    _flush_pre_stmts(out, ctx, indent)
+
     out.write(f"{tabs}for (")
     # init
     if len(inner) > 0 and inner[0].get("kind") not in ("NullStmt", "<<<NULL>>>"):
@@ -609,10 +631,8 @@ def _emit_for_stmt(node: dict, out: StringIO, ctx: _EmitCtx,
             _emit_expr(inner[0], out, ctx)
     out.write("; ")
 
-    # cond (index 2 in Clang AST; index 1 might be condVar)
-    cond_idx = 2 if len(inner) > 4 else 1
-    if cond_idx < len(inner) and inner[cond_idx].get("kind") not in ("NullStmt", "<<<NULL>>>"):
-        _emit_expr(inner[cond_idx], out, ctx)
+    # cond (already pre-emitted above)
+    out.write(cond_str)
     out.write("; ")
 
     # inc
@@ -636,8 +656,168 @@ def _emit_for_stmt(node: dict, out: StringIO, ctx: _EmitCtx,
     ctx.loop_scope_depth.pop()
 
 
+def _emit_boxed_number(node: dict, out: StringIO, ctx: _EmitCtx) -> None:
+    """Emit a static OZNumber constant for @10, @3.14f, etc."""
+    inner = node.get("inner", [])
+    if not inner:
+        out.write("/* TODO: empty ObjCBoxedExpr */")
+        return
+
+    child = inner[0]
+    child_kind = child.get("kind", "")
+
+    # Unwrap ImplicitCastExpr wrappers
+    while child_kind == "ImplicitCastExpr":
+        child = child.get("inner", [{}])[0]
+        child_kind = child.get("kind", "")
+
+    if child_kind == "IntegerLiteral":
+        val = child.get("value", "0")
+        dedup_key = f"i32:{val}"
+        tag = "OZ_NUM_INT32"
+        field_init = f".i32 = {val}"
+    elif child_kind == "FloatingLiteral":
+        val = child.get("value", "0.0")
+        dedup_key = f"f32:{val}"
+        tag = "OZ_NUM_FLOAT"
+        # Ensure float suffix
+        fval = val if val.endswith("f") or val.endswith("F") else f"{val}f"
+        field_init = f".f32 = {fval}"
+    elif child_kind == "CharacterLiteral":
+        val = str(child.get("value", 0))
+        dedup_key = f"i32:{val}"
+        tag = "OZ_NUM_INT32"
+        field_init = f".i32 = {val}"
+    elif child_kind == "ObjCBoolLiteralExpr":
+        raw = child.get("value", False)
+        if isinstance(raw, str):
+            val = "0" if "no" in raw.lower() else "1"
+        else:
+            val = "1" if raw else "0"
+        dedup_key = f"i32:{val}"
+        tag = "OZ_NUM_INT32"
+        field_init = f".i32 = {val}"
+    else:
+        out.write(f"/* TODO: ObjCBoxedExpr({child_kind}) */")
+        return
+
+    if dedup_key in ctx._number_dedup:
+        name = ctx._number_dedup[dedup_key]
+    else:
+        name = f"_oz_num_{ctx._tmp_counter}"
+        ctx._tmp_counter += 1
+        ctx._number_dedup[dedup_key] = name
+        ctx.number_constants.append(
+            f"static struct OZNumber {name} = {{"
+            f"{{OZ_CLASS_OZNumber, 2147483647}}, "
+            f"{tag}, {{{field_init}}}}};"
+        )
+
+    out.write(f"(struct OZNumber *)&{name}")
+
+
+def _emit_block_expr(node: dict, out: StringIO, ctx: _EmitCtx) -> None:
+    """Emit a non-capturing block as a static C function."""
+    inner = node.get("inner", [])
+    if not inner:
+        out.write("/* TODO: empty BlockExpr */")
+        return
+
+    block_decl = inner[0]
+    if block_decl.get("kind") != "BlockDecl":
+        out.write("/* TODO: BlockExpr without BlockDecl */")
+        return
+
+    block_inner = block_decl.get("inner", [])
+
+    # Check for captures — error if any
+    for child in block_inner:
+        if child.get("kind") == "Capture":
+            var_name = child.get("var", {}).get("name", "?")
+            ctx.module.diagnostics.append(
+                f"error: capturing blocks not supported "
+                f"(block captures '{var_name}'). Use a regular loop instead."
+            )
+            out.write(f"/* ERROR: capturing block (captures '{var_name}') */")
+            return
+
+    # Extract params and body
+    params = []
+    body_ast = None
+    for child in block_inner:
+        ckind = child.get("kind", "")
+        if ckind == "ParmVarDecl":
+            pname = child.get("name", "")
+            ptype = OZType(child.get("type", {}).get("qualType", ""))
+            params.append(OZParam(pname, ptype))
+        elif ckind == "CompoundStmt":
+            body_ast = child
+
+    # Determine return type (default void)
+    block_qt = node.get("type", {}).get("qualType", "")
+    ret_type = "void"
+    if block_qt:
+        # Parse "void (^)(params)" or "int (^)(params)" — return type is before (^)
+        paren_idx = block_qt.find("(^)")
+        if paren_idx > 0:
+            ret_type = OZType(block_qt[:paren_idx].strip()).c_type
+        elif paren_idx < 0:
+            # Might be just a function type
+            paren_idx = block_qt.find("(")
+            if paren_idx > 0:
+                ret_type = OZType(block_qt[:paren_idx].strip()).c_type
+
+    # Generate function name
+    func_name = f"_oz_block_{ctx._tmp_counter}"
+    ctx._tmp_counter += 1
+
+    # Build param string
+    param_parts = []
+    for p in params:
+        param_parts.append(f"{p.oz_type.c_type} {p.name}")
+    params_str = ", ".join(param_parts) if param_parts else "void"
+
+    # Render the function body
+    buf = StringIO()
+    buf.write(f"static {ret_type} {func_name}({params_str})\n")
+    if body_ast:
+        # Create a minimal context for the block body
+        block_ctx = _EmitCtx(
+            cls=ctx.cls,
+            module=ctx.module,
+            root_class=ctx.root_class,
+            string_constants=ctx.string_constants,
+            array_constants=ctx.array_constants,
+            dict_constants=ctx.dict_constants,
+            number_constants=ctx.number_constants,
+            block_functions=ctx.block_functions,
+            _tmp_counter=ctx._tmp_counter,
+            _string_dedup=ctx._string_dedup,
+            _number_dedup=ctx._number_dedup,
+        )
+        _emit_compound_stmt(body_ast, buf, block_ctx, indent=0)
+        ctx._tmp_counter = block_ctx._tmp_counter
+    else:
+        buf.write("{\n}\n")
+
+    ctx.block_functions.append(buf.getvalue().rstrip("\n"))
+
+    # Emit function name as the expression value
+    out.write(func_name)
+
+
 def _emit_expr(node: dict, out: StringIO, ctx: _EmitCtx) -> None:
     kind = node.get("kind", "")
+
+    if kind == "ExprWithCleanups":
+        inner = node.get("inner", [])
+        if inner:
+            _emit_expr(inner[0], out, ctx)
+        return
+
+    if kind == "BlockExpr":
+        _emit_block_expr(node, out, ctx)
+        return
 
     if kind == "ImplicitCastExpr":
         inner = node.get("inner", [])
@@ -790,6 +970,10 @@ def _emit_expr(node: dict, out: StringIO, ctx: _EmitCtx) -> None:
             out.write("0" if "no" in val.lower() else "1")
         else:
             out.write("1" if val else "0")
+        return
+
+    if kind == "ObjCBoxedExpr":
+        _emit_boxed_number(node, out, ctx)
         return
 
     if kind == "ObjCArrayLiteral":
@@ -1087,11 +1271,8 @@ def _functions_ctx(module: OZModule, root_class: str) -> dict:
     function_bodies = []
     for func in module.functions:
         ret = func.return_type.c_type
-        params_str = ", ".join(
-            f"{p.oz_type.c_type} {p.name}" for p in func.params
-        )
-        if not params_str:
-            params_str = "void"
+        parts = [p.oz_type.c_param_decl(p.name) for p in func.params]
+        params_str = ", ".join(parts) if parts else "void"
         ctx.method = None
         ctx.scope_vars = []
         ctx.consumed_vars = set()
@@ -1121,11 +1302,8 @@ def _functions_ctx(module: OZModule, root_class: str) -> dict:
     function_protos = []
     for func in module.functions:
         ret = func.return_type.c_type
-        params_str = ", ".join(
-            f"{p.oz_type.c_type} {p.name}" for p in func.params
-        )
-        if not params_str:
-            params_str = "void"
+        parts = [p.oz_type.c_param_decl(p.name) for p in func.params]
+        params_str = ", ".join(parts) if parts else "void"
         function_protos.append(f"{ret} {func.name}({params_str});")
 
     return {"classes": classes, "function_bodies": function_bodies,
@@ -1134,7 +1312,9 @@ def _functions_ctx(module: OZModule, root_class: str) -> dict:
             "verbatim_lines": module.verbatim_lines,
             "string_constants": ctx.string_constants,
             "array_constants": ctx.array_constants,
-            "dict_constants": ctx.dict_constants}
+            "dict_constants": ctx.dict_constants,
+            "number_constants": ctx.number_constants,
+            "block_functions": ctx.block_functions}
 
 
 # ---------------------------------------------------------------------------
@@ -1524,13 +1704,13 @@ def _method_prototype(cls: OZClass, m: OZMethod) -> str:
     c_sel = _selector_to_c(m.selector)
     if m.is_class_method:
         prefix = "cls_"
-        parts = [f"{p.oz_type.c_type} {p.name}" for p in m.params]
+        parts = [p.oz_type.c_param_decl(p.name) for p in m.params]
         params_str = ", ".join(parts) if parts else "void"
     else:
         prefix = ""
         params_str = f"struct {cls.name} *self"
         for p in m.params:
-            params_str += f", {p.oz_type.c_type} {p.name}"
+            params_str += f", {p.oz_type.c_param_decl(p.name)}"
     return f"{ret} {cls.name}_{prefix}{c_sel}({params_str})"
 
 

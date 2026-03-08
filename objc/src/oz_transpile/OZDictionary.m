@@ -20,6 +20,11 @@
 	return nil;
 }
 
+- (id)objectForKeyedSubscript:(id)key
+{
+	return [self objectForKey:key];
+}
+
 - (int)cDescription:(char *)buf maxLength:(int)maxLen
 {
 	int pos = 0;

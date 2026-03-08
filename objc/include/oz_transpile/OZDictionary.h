@@ -18,6 +18,7 @@
 		      count:(unsigned int)count;
 - (unsigned int)count;
 - (id)objectForKey:(id)key;
+- (id)objectForKeyedSubscript:(id)key;
 - (int)cDescription:(char *)buf maxLength:(int)maxLen;
 @end
 

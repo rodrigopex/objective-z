@@ -46,6 +46,7 @@ def merge_modules(modules: list[OZModule]) -> OZModule:
         for line in m.verbatim_lines:
             if line not in merged.verbatim_lines:
                 merged.verbatim_lines.append(line)
+        merged.type_defs.update(m.type_defs)
         merged.diagnostics.extend(m.diagnostics)
     return merged
 
@@ -93,6 +94,57 @@ def _is_user_struct(node: dict) -> bool:
     return True
 
 
+def _is_oz_transpile_type(node: dict) -> bool:
+    """Check if a node is a named type definition from oz_transpile stubs."""
+    name = node.get("name", "")
+    if not name:
+        return False
+    loc = node.get("loc", {})
+    file_path = loc.get("file", "")
+    included_from = loc.get("includedFrom", {}).get("file", "")
+    return "oz_transpile" in file_path or "oz_transpile" in included_from
+
+
+def _collect_enum_def(node: dict, module: OZModule) -> None:
+    """Reconstruct an enum definition from a Clang EnumDecl AST node."""
+    name = node.get("name", "")
+    consts = []
+    for i, child in enumerate(node.get("inner", [])):
+        if child.get("kind") == "EnumConstantDecl":
+            cname = child.get("name", "")
+            inner = child.get("inner", [])
+            val = None
+            if inner and inner[0].get("kind") in ("IntegerLiteral",
+                                                    "ConstantExpr"):
+                val = inner[0].get("value")
+            if val is not None:
+                consts.append(f"\t{cname} = {val},")
+            elif i == 0:
+                consts.append(f"\t{cname} = 0,")
+            else:
+                consts.append(f"\t{cname},")
+    if not consts:
+        return
+    definition = f"enum {name} {{\n" + "\n".join(consts) + "\n};"
+    module.type_defs[f"enum {name}"] = definition
+
+
+def _collect_union_def(node: dict, module: OZModule) -> None:
+    """Reconstruct a union definition from a Clang RecordDecl AST node."""
+    name = node.get("name", "")
+    tag = node.get("tagUsed", "union")
+    fields = []
+    for child in node.get("inner", []):
+        if child.get("kind") == "FieldDecl":
+            fname = child.get("name", "")
+            ftype = child.get("type", {}).get("qualType", "")
+            fields.append(f"\t{ftype} {fname};")
+    if not fields:
+        return
+    definition = f"{tag} {name} {{\n" + "\n".join(fields) + "\n};"
+    module.type_defs[f"{tag} {name}"] = definition
+
+
 def _collect_struct_def(node: dict, module: OZModule) -> None:
     """Reconstruct a struct definition from a Clang RecordDecl AST node."""
     name = node.get("name", "")
@@ -131,8 +183,16 @@ def _walk(node: dict, module: OZModule, impl_name: str | None = None) -> None:
         if _is_from_main_file(node):
             _collect_function(node, module)
         return
+    elif kind == "EnumDecl":
+        if _is_oz_transpile_type(node):
+            _collect_enum_def(node, module)
+        return
     elif kind == "RecordDecl":
-        if _is_user_struct(node):
+        if _is_oz_transpile_type(node):
+            tag = node.get("tagUsed", "struct")
+            if tag == "union":
+                _collect_union_def(node, module)
+        elif _is_user_struct(node):
             _collect_struct_def(node, module)
         return
     elif kind == "VarDecl":

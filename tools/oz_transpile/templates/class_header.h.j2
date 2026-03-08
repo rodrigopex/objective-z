@@ -5,6 +5,10 @@
 {% if superclass_header %}
 #include "{{ superclass_header }}.h"
 {% endif %}
+{% for td in ivar_type_defs %}
+
+{{ td }}
+{% endfor %}
 
 struct {{ name }} {
 {% if is_root %}

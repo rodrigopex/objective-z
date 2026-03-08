@@ -267,6 +267,83 @@ class TestCollectStaticVar:
         assert len(mod.statics) == 0
 
 
+class TestCollectTypeDefs:
+    def test_enum_from_oz_transpile(self):
+        ast = _make_ast(
+            {
+                "kind": "EnumDecl",
+                "name": "oz_number_tag",
+                "loc": {
+                    "file": "/path/oz_transpile/OZNumber.h",
+                    "includedFrom": {"file": "/path/OZNumber.m"},
+                },
+                "inner": [
+                    {"kind": "EnumConstantDecl", "name": "OZ_NUM_INT32"},
+                    {"kind": "EnumConstantDecl", "name": "OZ_NUM_UINT32"},
+                    {"kind": "EnumConstantDecl", "name": "OZ_NUM_FLOAT"},
+                ],
+            },
+        )
+        mod = collect(ast)
+        assert "enum oz_number_tag" in mod.type_defs
+        defn = mod.type_defs["enum oz_number_tag"]
+        assert "OZ_NUM_INT32 = 0," in defn
+        assert "OZ_NUM_UINT32," in defn
+        assert "OZ_NUM_FLOAT," in defn
+
+    def test_union_from_oz_transpile(self):
+        ast = _make_ast(
+            {
+                "kind": "RecordDecl",
+                "name": "oz_number_value",
+                "tagUsed": "union",
+                "completeDefinition": True,
+                "loc": {
+                    "includedFrom": {"file": "/path/oz_transpile/OZNumber.m"},
+                },
+                "inner": [
+                    {"kind": "FieldDecl", "name": "i32",
+                     "type": {"qualType": "int"}},
+                    {"kind": "FieldDecl", "name": "f32",
+                     "type": {"qualType": "float"}},
+                ],
+            },
+        )
+        mod = collect(ast)
+        assert "union oz_number_value" in mod.type_defs
+        defn = mod.type_defs["union oz_number_value"]
+        assert "int i32;" in defn
+        assert "float f32;" in defn
+
+    def test_non_oz_transpile_enum_ignored(self):
+        ast = _make_ast(
+            {
+                "kind": "EnumDecl",
+                "name": "SomeEnum",
+                "loc": {"file": "/usr/include/something.h"},
+                "inner": [
+                    {"kind": "EnumConstantDecl", "name": "VAL1"},
+                ],
+            },
+        )
+        mod = collect(ast)
+        assert len(mod.type_defs) == 0
+
+    def test_unnamed_enum_ignored(self):
+        ast = _make_ast(
+            {
+                "kind": "EnumDecl",
+                "name": "",
+                "loc": {"file": "/path/oz_transpile/OZNumber.h"},
+                "inner": [
+                    {"kind": "EnumConstantDecl", "name": "VAL1"},
+                ],
+            },
+        )
+        mod = collect(ast)
+        assert len(mod.type_defs) == 0
+
+
 class TestCollectVerbatimLines:
     def test_k_thread_define_collected(self, tmp_path):
         src = tmp_path / "main.m"

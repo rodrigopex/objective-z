@@ -15,6 +15,8 @@
 + (id)arrayWithObjects:(const id *)objects count:(unsigned int)count;
 - (unsigned int)count;
 - (id)objectAtIndex:(unsigned int)index;
+- (id)objectAtIndexedSubscript:(unsigned int)index;
+- (void)enumerateObjectsUsingBlock:(void (^)(id obj, unsigned int idx, BOOL *stop))block;
 - (int)cDescription:(char *)buf maxLength:(int)maxLen;
 @end
 
