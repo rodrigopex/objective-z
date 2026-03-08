@@ -491,6 +491,9 @@ def _emit_stmt(node: dict, out: StringIO, ctx: _EmitCtx,
         if inner and inner[0].get("kind") == "CompoundStmt":
             _emit_compound_stmt(inner[0], out, ctx, indent)
 
+    elif kind == "ObjCForCollectionStmt":
+        _emit_forin_stmt(node, out, ctx, indent)
+
     elif kind == "NullStmt":
         out.write(f"{tabs};\n")
 
@@ -609,17 +612,9 @@ def _emit_for_stmt(node: dict, out: StringIO, ctx: _EmitCtx,
     if len(inner) < 2:
         return
 
-    # Pre-emit condition into buffer to capture any pre_stmts (receiver temps)
-    cond_idx = 2 if len(inner) > 4 else 1
-    cond_buf = StringIO()
-    if cond_idx < len(inner) and inner[cond_idx].get("kind") not in ("NullStmt", "<<<NULL>>>"):
-        _emit_expr(inner[cond_idx], cond_buf, ctx)
-    cond_str = cond_buf.getvalue()
-    # Flush receiver temps before the for statement
-    _flush_pre_stmts(out, ctx, indent)
-
-    out.write(f"{tabs}for (")
-    # init
+    # Pre-emit init, cond, and inc into buffers to capture pre_stmts
+    # (receiver temps for protocol dispatch) before the for statement.
+    init_buf = StringIO()
     if len(inner) > 0 and inner[0].get("kind") not in ("NullStmt", "<<<NULL>>>"):
         if inner[0].get("kind") == "DeclStmt":
             decls = inner[0].get("inner", [])
@@ -629,22 +624,32 @@ def _emit_for_stmt(node: dict, out: StringIO, ctx: _EmitCtx,
                 vname = vd.get("name", "i")
                 c_type = OZType(qt).c_type
                 vinit = [c for c in vd.get("inner", []) if c.get("kind") != "FullComment"]
-                out.write(f"{c_type} {vname}")
+                init_buf.write(f"{c_type} {vname}")
                 if vinit:
-                    out.write(" = ")
-                    _emit_expr(vinit[0], out, ctx)
+                    init_buf.write(" = ")
+                    _emit_expr(vinit[0], init_buf, ctx)
         else:
-            _emit_expr(inner[0], out, ctx)
-    out.write("; ")
+            _emit_expr(inner[0], init_buf, ctx)
 
-    # cond (already pre-emitted above)
-    out.write(cond_str)
-    out.write("; ")
+    cond_idx = 2 if len(inner) > 4 else 1
+    cond_buf = StringIO()
+    if cond_idx < len(inner) and inner[cond_idx].get("kind") not in ("NullStmt", "<<<NULL>>>"):
+        _emit_expr(inner[cond_idx], cond_buf, ctx)
 
-    # inc
     inc_idx = 3 if len(inner) > 4 else 2
+    inc_buf = StringIO()
     if inc_idx < len(inner) and inner[inc_idx].get("kind") not in ("NullStmt", "<<<NULL>>>"):
-        _emit_expr(inner[inc_idx], out, ctx)
+        _emit_expr(inner[inc_idx], inc_buf, ctx)
+
+    # Flush all receiver temps before the for statement
+    _flush_pre_stmts(out, ctx, indent)
+
+    out.write(f"{tabs}for (")
+    out.write(init_buf.getvalue())
+    out.write("; ")
+    out.write(cond_buf.getvalue())
+    out.write("; ")
+    out.write(inc_buf.getvalue())
     out.write(") ")
 
     # body
@@ -660,6 +665,68 @@ def _emit_for_stmt(node: dict, out: StringIO, ctx: _EmitCtx,
     else:
         out.write("{}\n")
     ctx.loop_scope_depth.pop()
+
+
+def _emit_forin_stmt(node: dict, out: StringIO, ctx: _EmitCtx,
+                     indent: int) -> None:
+    """Lower ObjCForCollectionStmt to scoped iterator-based for loop.
+
+    for (id obj in [sensor samples]) { body }
+    =>
+    {
+        struct OZObject *_oz_iterN = (struct OZObject *)OZ_SEND_iter(collection);
+        struct OZObject *_oz_recvN = _oz_iterN;
+        for (struct OZObject *obj = OZ_SEND_next(_oz_recvN); obj != NULL;
+             obj = OZ_SEND_next(_oz_recvN)) { body }
+    }
+    """
+    tabs = "\t" * indent
+    inner = node.get("inner", [])
+    if len(inner) < 3:
+        return
+
+    decl_stmt = inner[0]
+    collection = inner[1]
+    body = inner[2]
+
+    vd = decl_stmt.get("inner", [{}])[0]
+    var_name = vd.get("name", "obj")
+    qt = vd.get("type", {}).get("qualType", "id")
+    c_type = OZType(qt).c_type
+
+    coll_buf = StringIO()
+    _emit_expr(collection, coll_buf, ctx)
+    _flush_pre_stmts(out, ctx, indent)
+
+    iter_tmp = f"_oz_iter{ctx._tmp_counter}"
+    ctx._tmp_counter += 1
+    next_recv = f"_oz_recv{ctx._tmp_counter}"
+    ctx._tmp_counter += 1
+
+    itabs = "\t" * (indent + 1)
+    out.write(f"{tabs}{{\n")
+    out.write(f"{itabs}struct OZObject *{iter_tmp} = "
+              f"(struct OZObject *)OZ_SEND_iter("
+              f"(struct OZObject *){coll_buf.getvalue()});\n")
+    out.write(f"{itabs}struct OZObject *{next_recv} = {iter_tmp};\n")
+    next_call = f"OZ_SEND_next({next_recv})"
+    if c_type != "struct OZObject *":
+        next_call = f"({c_type}){next_call}"
+    out.write(f"{itabs}for ({c_type} {var_name} = {next_call}; "
+              f"{var_name} != ((void *)0); "
+              f"{var_name} = {next_call}) ")
+
+    ctx.scope_vars.append({var_name: OZType(qt)})
+    ctx.loop_scope_depth.append(len(ctx.scope_vars))
+    if body.get("kind") == "CompoundStmt":
+        _emit_compound_stmt(body, out, ctx, indent + 1, inline=True)
+    else:
+        out.write("{\n")
+        _emit_stmt(body, out, ctx, indent + 2)
+        out.write(f"{itabs}}}\n")
+    ctx.loop_scope_depth.pop()
+    ctx.scope_vars.pop()
+    out.write(f"{tabs}}}\n")
 
 
 def _emit_boxed_number(node: dict, out: StringIO, ctx: _EmitCtx) -> None:

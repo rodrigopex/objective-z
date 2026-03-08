@@ -77,6 +77,16 @@ class TestOZType:
         t = OZType("id *")
         assert t.c_type == "struct OZObject **"
 
+    def test_protocol_qualified_id(self):
+        t = OZType("id<IteratorProtocol>")
+        assert t.is_object
+        assert t.c_type == "struct OZObject *"
+
+    def test_protocol_qualified_id_strong(self):
+        t = OZType("__strong id<IteratorProtocol>")
+        assert t.is_object
+        assert t.c_type == "struct OZObject *"
+
 
 class TestOZParam:
     def test_construction(self):

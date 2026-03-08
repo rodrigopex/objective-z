@@ -86,11 +86,13 @@ class OZType:
         return f"{ct} {name}"
 
     def _strip_qualifiers(self) -> str:
+        import re
         qt = self.raw_qual_type
         for qual in ("__strong", "__weak", "__unsafe_unretained",
                       "__autoreleasing", "_Nonnull", "_Nullable",
                       "__kindof"):
             qt = qt.replace(qual, "")
+        qt = re.sub(r"<[^>]+>", "", qt)
         return qt.strip()
 
 
