@@ -1058,7 +1058,7 @@ def _emit_expr(node: dict, out: StringIO, ctx: _EmitCtx) -> None:
 
     if kind == "ObjCArrayLiteral":
         inner = node.get("inner", [])
-        name = f"_oz_arr_{ctx._tmp_counter}"
+        buf_name = f"_oz_arr_{ctx._tmp_counter}_buf"
         ctx._tmp_counter += 1
         root = ctx.root_class
         elem_refs = []
@@ -1073,21 +1073,16 @@ def _emit_expr(node: dict, out: StringIO, ctx: _EmitCtx) -> None:
                     f"(struct {root} *){root}_retain("
                     f"(struct {root} *){ref})")
         count = len(elem_refs)
-        buf_name = f"{name}_buf"
         ctx.pre_stmts.append(
             f"struct {root} *{buf_name}[] = {{"
             + ", ".join(elem_refs) + "};\n"
         )
-        ctx.pre_stmts.append(
-            f"struct OZArray *{name} = "
-            f"OZArray_initWithItems({buf_name}, {count});\n"
-        )
-        out.write(f"(struct OZArray *){name}")
+        out.write(f"OZArray_initWithItems({buf_name}, {count})")
         return
 
     if kind == "ObjCDictionaryLiteral":
         inner = node.get("inner", [])
-        name = f"_oz_dict_{ctx._tmp_counter}"
+        buf_name = f"_oz_dict_{ctx._tmp_counter}_kv"
         ctx._tmp_counter += 1
         root = ctx.root_class
         key_refs = []
@@ -1112,17 +1107,12 @@ def _emit_expr(node: dict, out: StringIO, ctx: _EmitCtx) -> None:
                     f"(struct {root} *){root}_retain("
                     f"(struct {root} *){vref})")
         count = len(key_refs)
-        buf_name = f"{name}_kv"
         all_refs = key_refs + val_refs
         ctx.pre_stmts.append(
             f"struct {root} *{buf_name}[] = {{"
             + ", ".join(all_refs) + "};\n"
         )
-        ctx.pre_stmts.append(
-            f"struct OZDictionary *{name} = "
-            f"OZDictionary_initWithKeysValues({buf_name}, {count});\n"
-        )
-        out.write(f"(struct OZDictionary *){name}")
+        out.write(f"OZDictionary_initWithKeysValues({buf_name}, {count})")
         return
 
     if kind == "GNUNullExpr" or kind == "CXXNullPtrLiteralExpr":
