@@ -4,6 +4,24 @@
 
 @implementation OZDictionary
 
+@synthesize iterIdx = _iterIdx;
+
+- (instancetype)iter
+{
+	_iterIdx = 0;
+	return self;
+}
+
+- (id)next
+{
+	if (_iterIdx >= _count) {
+		return nil;
+	}
+	id ret = _keys[_iterIdx];
+	_iterIdx++;
+	return ret;
+}
+
 - (unsigned int)count
 {
 	return _count;
