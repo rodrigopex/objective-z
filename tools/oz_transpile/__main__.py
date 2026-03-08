@@ -28,6 +28,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                    help="Name of the root class (default: OZObject)")
     p.add_argument("--pool-sizes", default="",
                    help="Comma-separated ClassName=N pairs (e.g. OZLed=4,OZRgbLed=2)")
+    p.add_argument("--item-pool-size", type=int, default=None,
+                   help="Override auto-computed sys_mem_blocks pool size for "
+                        "array/dict item slots")
     p.add_argument("--verbose", action="store_true",
                    help="Print diagnostic messages")
     p.add_argument("--strict", action="store_true",
@@ -70,7 +73,8 @@ def main(argv: list[str] | None = None) -> int:
 
     pool_sizes = parse_pool_sizes(args.pool_sizes)
     files = emit(module, args.outdir, pool_sizes=pool_sizes,
-                 root_class=args.root_class)
+                 root_class=args.root_class,
+                 item_pool_size=args.item_pool_size)
 
     for f in files:
         print(f"oz_transpile: generated {f}", file=sys.stderr)

@@ -25,13 +25,10 @@ class _EmitCtx:
     loop_scope_depth: list[int] = field(default_factory=list)
     pre_stmts: list[str] = field(default_factory=list)
     string_constants: list[str] = field(default_factory=list)
-    array_constants: list[str] = field(default_factory=list)
-    dict_constants: list[str] = field(default_factory=list)
-    number_constants: list[str] = field(default_factory=list)
     block_functions: list[str] = field(default_factory=list)
+    has_item_pool: bool = False
     _tmp_counter: int = 0
     _string_dedup: dict[str, str] = field(default_factory=dict)
-    _number_dedup: dict[str, str] = field(default_factory=dict)
 
 
 def _create_env() -> Environment:
@@ -56,7 +53,8 @@ def _render(env: Environment, template_name: str, context: dict,
 
 
 def emit(module: OZModule, outdir: str, pool_sizes: dict[str, int] | None = None,
-         root_class: str = "OZObject") -> list[str]:
+         root_class: str = "OZObject",
+         item_pool_size: int | None = None) -> list[str]:
     """Generate C files from OZModule. Returns list of generated file paths."""
     os.makedirs(outdir, exist_ok=True)
     env = _create_env()
@@ -66,12 +64,15 @@ def emit(module: OZModule, outdir: str, pool_sizes: dict[str, int] | None = None
                          _dispatch_header_ctx(module), outdir, "oz_dispatch.h"))
     files.append(_render(env, "oz_dispatch.c.j2",
                          _dispatch_source_ctx(module), outdir, "oz_dispatch.c"))
-    slabs_ctx = _mem_slabs_ctx(module, pool_sizes or {}, root_class)
+    slabs_ctx = _mem_slabs_ctx(module, pool_sizes or {}, root_class,
+                               item_pool_size)
     files.append(_render(env, "oz_mem_slabs.h.j2", slabs_ctx, outdir, "oz_mem_slabs.h"))
     files.append(_render(env, "oz_mem_slabs.c.j2", slabs_ctx, outdir, "oz_mem_slabs.c"))
+    _has_item_pool = slabs_ctx["item_pool_count"] > 0
 
     for cls in module.classes.values():
-        ctx = _EmitCtx(cls=cls, module=module, root_class=root_class)
+        ctx = _EmitCtx(cls=cls, module=module, root_class=root_class,
+                       has_item_pool=_has_item_pool)
         files.append(_render(env, "class_header.h.j2",
                              _class_header_ctx(ctx), outdir, f"{cls.name}.h"))
         files.append(_render(env, "class_source.c.j2",
@@ -169,9 +170,19 @@ def _dispatch_source_ctx(module: OZModule) -> dict:
     }
 
 
+def _has_auto_dealloc(cls: OZClass, module: OZModule) -> bool:
+    """Check if a class will get an auto-generated dealloc method."""
+    is_root = not cls.superclass or cls.superclass not in module.classes
+    obj_ivars = [iv for iv in cls.ivars if iv.oz_type.is_object]
+    return bool(obj_ivars) or not is_root
+
+
 def _find_implementing_class(cls: OZClass, selector: str,
                              module: OZModule) -> OZClass | None:
     """Walk up the class hierarchy to find which class implements the selector."""
+    # Auto-generated dealloc: class gets its own dealloc even without explicit one
+    if selector == "dealloc" and _has_auto_dealloc(cls, module):
+        return cls
     cur: OZClass | None = cls
     while cur:
         for m in cur.methods:
@@ -189,7 +200,8 @@ def _find_implementing_class(cls: OZClass, selector: str,
 # ---------------------------------------------------------------------------
 
 def _mem_slabs_ctx(module: OZModule, pool_sizes: dict[str, int],
-                   root_class: str) -> dict:
+                   root_class: str,
+                   item_pool_size: int | None = None) -> dict:
     """Build template context for oz_mem_slabs.h and oz_mem_slabs.c."""
     sorted_classes = sorted(module.classes.values(), key=lambda c: c.class_id)
     auto_counts = _count_alloc_calls(module)
@@ -203,7 +215,22 @@ def _mem_slabs_ctx(module: OZModule, pool_sizes: dict[str, int],
                                          max(auto_counts.get(cls.name, 0), 1)),
         })
 
-    return {"classes": classes, "root_class": root_class}
+    if item_pool_size is not None:
+        ipc = item_pool_size
+    else:
+        ipc = _count_item_slots(module)
+
+    number_inits = [
+        {"suffix": "Int32", "c_type": "int32_t", "tag": "OZ_NUM_INT32",
+         "field": "i32"},
+        {"suffix": "Float", "c_type": "float", "tag": "OZ_NUM_FLOAT",
+         "field": "f32"},
+        {"suffix": "Int8", "c_type": "int8_t", "tag": "OZ_NUM_INT8",
+         "field": "i8"},
+    ]
+
+    return {"classes": classes, "root_class": root_class,
+            "item_pool_count": ipc, "number_inits": number_inits}
 
 
 # ---------------------------------------------------------------------------
@@ -329,9 +356,6 @@ def _class_source_ctx(ctx: _EmitCtx) -> dict:
         "dealloc_body": dealloc_body,
         "has_functions_header": has_functions_header,
         "string_constants": ctx.string_constants,
-        "array_constants": ctx.array_constants,
-        "dict_constants": ctx.dict_constants,
-        "number_constants": ctx.number_constants,
         "block_functions": ctx.block_functions,
     }
 
@@ -562,6 +586,12 @@ def _emit_var_decl(node: dict, out: StringIO, ctx: _EmitCtx,
         _emit_expr(init_expr, expr_buf, ctx)
         _flush_pre_stmts(out, ctx, indent)
         out.write(f"{tabs}{decl_str} = {expr_buf.getvalue()};\n")
+        # Retain borrowed (+0) references tracked as scope vars
+        if (oz_type.is_object and name != "self" and ctx.scope_vars
+                and name in ctx.scope_vars[-1]
+                and _is_borrowed_object_expr(init_expr)):
+            root = ctx.root_class
+            out.write(f"{tabs}{root}_retain((struct {root} *){name});\n")
     else:
         out.write(f"{tabs}{decl_str};\n")
 
@@ -730,7 +760,7 @@ def _emit_forin_stmt(node: dict, out: StringIO, ctx: _EmitCtx,
 
 
 def _emit_boxed_number(node: dict, out: StringIO, ctx: _EmitCtx) -> None:
-    """Emit a static OZNumber constant for @10, @3.14f, etc."""
+    """Emit a dynamically allocated OZNumber via OZNumber_initXxx() helper."""
     inner = node.get("inner", [])
     if not inner:
         out.write("/* TODO: empty ObjCBoxedExpr */")
@@ -746,47 +776,24 @@ def _emit_boxed_number(node: dict, out: StringIO, ctx: _EmitCtx) -> None:
 
     if child_kind == "IntegerLiteral":
         val = child.get("value", "0")
-        dedup_key = f"i32:{val}"
-        tag = "OZ_NUM_INT32"
-        field_init = f".i32 = {val}"
+        out.write(f"OZNumber_initInt32({val})")
     elif child_kind == "FloatingLiteral":
         val = child.get("value", "0.0")
-        dedup_key = f"f32:{val}"
-        tag = "OZ_NUM_FLOAT"
-        # Ensure float suffix
         fval = val if val.endswith("f") or val.endswith("F") else f"{val}f"
-        field_init = f".f32 = {fval}"
+        out.write(f"OZNumber_initFloat({fval})")
     elif child_kind == "CharacterLiteral":
         val = str(child.get("value", 0))
-        dedup_key = f"i32:{val}"
-        tag = "OZ_NUM_INT32"
-        field_init = f".i32 = {val}"
+        out.write(f"OZNumber_initInt32({val})")
     elif child_kind == "ObjCBoolLiteralExpr":
         raw = child.get("value", False)
         if isinstance(raw, str):
             val = "0" if "no" in raw.lower() else "1"
         else:
             val = "1" if raw else "0"
-        dedup_key = f"i8:{val}"
-        tag = "OZ_NUM_INT8"
-        field_init = f".i8 = {val}"
+        out.write(f"OZNumber_initInt8({val})")
     else:
         out.write(f"/* TODO: ObjCBoxedExpr({child_kind}) */")
         return
-
-    if dedup_key in ctx._number_dedup:
-        name = ctx._number_dedup[dedup_key]
-    else:
-        name = f"_oz_num_{ctx._tmp_counter}"
-        ctx._tmp_counter += 1
-        ctx._number_dedup[dedup_key] = name
-        ctx.number_constants.append(
-            f"static struct OZNumber {name} = {{"
-            f"{{OZ_CLASS_OZNumber, 2147483647}}, "
-            f"{tag}, {{{field_init}}}}};"
-        )
-
-    out.write(f"(struct OZNumber *)&{name}")
 
 
 def _emit_block_expr(node: dict, out: StringIO, ctx: _EmitCtx) -> None:
@@ -863,13 +870,10 @@ def _emit_block_expr(node: dict, out: StringIO, ctx: _EmitCtx) -> None:
             module=ctx.module,
             root_class=ctx.root_class,
             string_constants=ctx.string_constants,
-            array_constants=ctx.array_constants,
-            dict_constants=ctx.dict_constants,
-            number_constants=ctx.number_constants,
             block_functions=ctx.block_functions,
+            has_item_pool=ctx.has_item_pool,
             _tmp_counter=ctx._tmp_counter,
             _string_dedup=ctx._string_dedup,
-            _number_dedup=ctx._number_dedup,
         )
         _emit_compound_stmt(body_ast, buf, block_ctx, indent=0)
         ctx._tmp_counter = block_ctx._tmp_counter
@@ -1056,58 +1060,69 @@ def _emit_expr(node: dict, out: StringIO, ctx: _EmitCtx) -> None:
         inner = node.get("inner", [])
         name = f"_oz_arr_{ctx._tmp_counter}"
         ctx._tmp_counter += 1
+        root = ctx.root_class
         elem_refs = []
         for child in inner:
             buf = StringIO()
             _emit_expr(child, buf, ctx)
-            elem_refs.append(buf.getvalue())
+            ref = buf.getvalue()
+            if _is_fresh_alloc(child):
+                elem_refs.append(f"(struct {root} *){ref}")
+            else:
+                elem_refs.append(
+                    f"(struct {root} *){root}_retain("
+                    f"(struct {root} *){ref})")
         count = len(elem_refs)
-        items_name = f"{name}_items"
-        ctx.array_constants.append(
-            f"static struct OZObject *{items_name}[] = {{"
-            + ", ".join(f"(struct OZObject *){ref}" for ref in elem_refs)
-            + "};"
+        buf_name = f"{name}_buf"
+        ctx.pre_stmts.append(
+            f"struct {root} *{buf_name}[] = {{"
+            + ", ".join(elem_refs) + "};\n"
         )
-        ctx.array_constants.append(
-            f"static struct OZArray {name} = {{"
-            f"{{OZ_CLASS_OZArray, 2147483647}}, "
-            f"{items_name}, {count}}};"
+        ctx.pre_stmts.append(
+            f"struct OZArray *{name} = "
+            f"OZArray_initWithItems({buf_name}, {count});\n"
         )
-        out.write(f"(struct OZArray *)&{name}")
+        out.write(f"(struct OZArray *){name}")
         return
 
     if kind == "ObjCDictionaryLiteral":
         inner = node.get("inner", [])
         name = f"_oz_dict_{ctx._tmp_counter}"
         ctx._tmp_counter += 1
+        root = ctx.root_class
         key_refs = []
         val_refs = []
         for i in range(0, len(inner), 2):
             kbuf = StringIO()
             _emit_expr(inner[i], kbuf, ctx)
-            key_refs.append(kbuf.getvalue())
+            kref = kbuf.getvalue()
+            if _is_fresh_alloc(inner[i]):
+                key_refs.append(f"(struct {root} *){kref}")
+            else:
+                key_refs.append(
+                    f"(struct {root} *){root}_retain("
+                    f"(struct {root} *){kref})")
             vbuf = StringIO()
             _emit_expr(inner[i + 1], vbuf, ctx)
-            val_refs.append(vbuf.getvalue())
+            vref = vbuf.getvalue()
+            if _is_fresh_alloc(inner[i + 1]):
+                val_refs.append(f"(struct {root} *){vref}")
+            else:
+                val_refs.append(
+                    f"(struct {root} *){root}_retain("
+                    f"(struct {root} *){vref})")
         count = len(key_refs)
-        keys_name = f"{name}_keys"
-        vals_name = f"{name}_vals"
-        ctx.dict_constants.append(
-            f"static struct OZObject *{keys_name}[] = {{"
-            + ", ".join(f"(struct OZObject *){ref}" for ref in key_refs)
-            + "};"
+        buf_name = f"{name}_kv"
+        all_refs = key_refs + val_refs
+        ctx.pre_stmts.append(
+            f"struct {root} *{buf_name}[] = {{"
+            + ", ".join(all_refs) + "};\n"
         )
-        ctx.dict_constants.append(
-            f"static struct OZObject *{vals_name}[] = {{"
-            + ", ".join(f"(struct OZObject *){ref}" for ref in val_refs)
-            + "};"
+        ctx.pre_stmts.append(
+            f"struct OZDictionary *{name} = "
+            f"OZDictionary_initWithKeysValues({buf_name}, {count});\n"
         )
-        ctx.dict_constants.append(
-            f"static struct OZDictionary {name} = {{"
-            f"{{OZ_CLASS_OZDictionary, 2147483647}}, "
-            f"{keys_name}, {vals_name}, {count}}};"
-        )
-        out.write(f"(struct OZDictionary *)&{name}")
+        out.write(f"(struct OZDictionary *){name}")
         return
 
     if kind == "GNUNullExpr" or kind == "CXXNullPtrLiteralExpr":
@@ -1391,9 +1406,6 @@ def _functions_ctx(module: OZModule, root_class: str) -> dict:
             "function_protos": function_protos,
             "verbatim_lines": module.verbatim_lines,
             "string_constants": ctx.string_constants,
-            "array_constants": ctx.array_constants,
-            "dict_constants": ctx.dict_constants,
-            "number_constants": ctx.number_constants,
             "block_functions": ctx.block_functions}
 
 
@@ -1611,6 +1623,7 @@ def _emit_strong_ivar_assign(node: dict, out: StringIO, ctx: _EmitCtx,
     # Emit: retain new, release old, assign
     rhs_buf = StringIO()
     _emit_expr(rhs, rhs_buf, ctx)
+    _flush_pre_stmts(out, ctx, indent)
     rhs_str = rhs_buf.getvalue()
 
     # Use temp var if RHS may have side effects (function/method calls)
@@ -1699,6 +1712,15 @@ def _emit_auto_dealloc(ctx: _EmitCtx, out: StringIO) -> None:
     root_class = ctx.root_class
     is_root = not cls.superclass or cls.superclass not in module.classes
 
+    # Special dealloc for collection classes (only when item pool exists)
+    if ctx.has_item_pool:
+        if cls.name == "OZArray":
+            _emit_collection_dealloc_array(cls, root_class, is_root, out)
+            return
+        if cls.name == "OZDictionary":
+            _emit_collection_dealloc_dict(cls, root_class, is_root, out)
+            return
+
     # Collect object ivars
     obj_ivars = [iv for iv in cls.ivars if iv.oz_type.is_object]
 
@@ -1721,21 +1743,172 @@ def _emit_auto_dealloc(ctx: _EmitCtx, out: StringIO) -> None:
     out.write("}\n\n")
 
 
+def _emit_collection_dealloc_array(cls: OZClass, root_class: str,
+                                   is_root: bool, out: StringIO) -> None:
+    """Emit dealloc for OZArray: release elements, free contiguous items buffer."""
+    out.write(f"void {cls.name}_dealloc(struct {cls.name} *self)\n")
+    out.write("{\n")
+    out.write(f"\tfor (unsigned int i = 0; i < self->_count; i++) {{\n")
+    out.write(f"\t\t{root_class}_release(self->_items[i]);\n")
+    out.write(f"\t}}\n")
+    out.write(f"\tif (self->_items) {{\n")
+    out.write(f"\t\tsys_mem_blocks_free_contiguous(&oz_item_pool,\n")
+    out.write(f"\t\t\tself->_items, self->_count);\n")
+    out.write(f"\t}}\n")
+    if not is_root:
+        out.write(f"\t{cls.superclass}_dealloc((struct {cls.superclass} *)self);\n")
+    else:
+        out.write(f"\t{root_class}_dispatch_free((struct {root_class} *)self);\n")
+    out.write("}\n\n")
+
+
+def _emit_collection_dealloc_dict(cls: OZClass, root_class: str,
+                                  is_root: bool, out: StringIO) -> None:
+    """Emit dealloc for OZDictionary: release keys+values, free contiguous buffer."""
+    out.write(f"void {cls.name}_dealloc(struct {cls.name} *self)\n")
+    out.write("{\n")
+    out.write(f"\tfor (unsigned int i = 0; i < self->_count; i++) {{\n")
+    out.write(f"\t\t{root_class}_release(self->_keys[i]);\n")
+    out.write(f"\t\t{root_class}_release(self->_values[i]);\n")
+    out.write(f"\t}}\n")
+    out.write(f"\tif (self->_keys) {{\n")
+    out.write(f"\t\tsys_mem_blocks_free_contiguous(&oz_item_pool,\n")
+    out.write(f"\t\t\tself->_keys, self->_count * 2);\n")
+    out.write(f"\t}}\n")
+    if not is_root:
+        out.write(f"\t{cls.superclass}_dealloc((struct {cls.superclass} *)self);\n")
+    else:
+        out.write(f"\t{root_class}_dispatch_free((struct {root_class} *)self);\n")
+    out.write("}\n\n")
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
+def _is_fresh_alloc(node: dict) -> bool:
+    """Check if an AST node produces a fresh +1 allocation (ownership transferred).
+
+    Fresh allocs: boxed numbers (@42), array/dict literals, string literals.
+    These expressions produce a +1 object that can be consumed without retain.
+    Everything else (DeclRefExpr, ObjCMessageExpr, etc.) is an existing
+    reference that needs retain before being consumed.
+    """
+    kind = node.get("kind", "")
+    if kind in ("ObjCBoxedExpr", "ObjCArrayLiteral",
+                "ObjCDictionaryLiteral", "ObjCStringLiteral"):
+        return True
+    if kind == "ImplicitCastExpr":
+        inner = node.get("inner", [])
+        if inner:
+            return _is_fresh_alloc(inner[0])
+    return False
+
+
+def _is_owning_expr(node: dict) -> bool:
+    """Check if an expression returns a +1 (owning) reference.
+
+    Returns True for expressions that produce +1 ownership:
+    - Literal expressions (@42, @[...], @{...}, @"...")
+    - alloc, new, copy, mutableCopy messages
+    - init message on alloc receiver (the [[Foo alloc] init] pattern)
+    Returns False for everything else (+0 borrowed reference).
+    """
+    kind = node.get("kind", "")
+    if kind in ("ObjCBoxedExpr", "ObjCArrayLiteral",
+                "ObjCDictionaryLiteral", "ObjCStringLiteral"):
+        return True
+    if kind in ("ImplicitCastExpr", "ExprWithCleanups", "ParenExpr",
+                "CStyleCastExpr", "ExplicitCastExpr"):
+        inner = node.get("inner", [])
+        if inner:
+            return _is_owning_expr(inner[0])
+    if kind == "ObjCMessageExpr":
+        sel = node.get("selector", "")
+        if sel in ("alloc", "new", "copy", "mutableCopy"):
+            return True
+        # init on alloc receiver: [[Foo alloc] init] → +1
+        if sel.startswith("init"):
+            inner = node.get("inner", [])
+            if inner and _is_owning_expr(inner[0]):
+                return True
+    return False
+
+
+def _is_borrowed_object_expr(node: dict) -> bool:
+    """Check if an expression returns a +0 (borrowed) object reference.
+
+    Returns True for non-owning method calls (objectAtIndex:, etc.) and
+    variable references (DeclRefExpr). Returns False for owning returns
+    (alloc, init, new, copy, literals) and non-object expressions (nil, 0).
+    """
+    kind = node.get("kind", "")
+    if kind in ("ImplicitCastExpr", "ExprWithCleanups", "ParenExpr",
+                "CStyleCastExpr", "ExplicitCastExpr"):
+        inner = node.get("inner", [])
+        return bool(inner) and _is_borrowed_object_expr(inner[0])
+    if kind == "ObjCMessageExpr":
+        sel = node.get("selector", "")
+        if sel in ("alloc", "new", "copy", "mutableCopy"):
+            return False
+        if sel.startswith("init"):
+            return False
+        return True
+    if kind == "DeclRefExpr":
+        qt = node.get("type", {}).get("qualType", "")
+        oz = OZType(qt)
+        return oz.is_object
+    return False
+
+
+def _count_item_slots(module: OZModule) -> int:
+    """Count total id-slots needed for dynamic array/dict literals."""
+    total = 0
+
+    def walk(node: dict) -> None:
+        nonlocal total
+        kind = node.get("kind", "")
+        if kind == "ObjCArrayLiteral":
+            total += len(node.get("inner", []))
+        elif kind == "ObjCDictionaryLiteral":
+            total += len(node.get("inner", []))  # keys + values
+        for child in node.get("inner", []):
+            walk(child)
+
+    for cls in module.classes.values():
+        for m in cls.methods:
+            if m.body_ast:
+                walk(m.body_ast)
+    for func in module.functions:
+        if func.body_ast:
+            walk(func.body_ast)
+
+    return total
+
+
 def _count_alloc_calls(module: OZModule) -> dict[str, int]:
-    """Count [ClassName alloc] calls across all method/function body ASTs."""
+    """Count allocations across all method/function body ASTs.
+
+    Counts explicit [ClassName alloc] calls plus implicit allocations
+    from literal expressions (@42 → OZNumber, @[...] → OZArray,
+    @{...} → OZDictionary).
+    """
     counts: dict[str, int] = {}
 
     def walk(node: dict) -> None:
-        if (node.get("kind") == "ObjCMessageExpr" and
+        kind = node.get("kind", "")
+        if (kind == "ObjCMessageExpr" and
                 node.get("selector") == "alloc" and
                 node.get("receiverKind") == "class"):
             class_name = node.get("classType", {}).get("qualType", "")
             if class_name:
                 counts[class_name] = counts.get(class_name, 0) + 1
+        elif kind == "ObjCArrayLiteral":
+            counts["OZArray"] = counts.get("OZArray", 0) + 1
+        elif kind == "ObjCDictionaryLiteral":
+            counts["OZDictionary"] = counts.get("OZDictionary", 0) + 1
+        elif kind == "ObjCBoxedExpr":
+            counts["OZNumber"] = counts.get("OZNumber", 0) + 1
         for child in node.get("inner", []):
             walk(child)
 

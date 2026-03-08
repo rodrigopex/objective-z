@@ -68,6 +68,7 @@ config OBJZ_STATIC_POOL_TABLE_SIZE
 
 config OBJZ_COLLECTIONS
     bool "Foundation collection classes (OZArray, OZDictionary)"
+    select SYS_MEM_BLOCKS
     help
       Enable OZArray and OZDictionary with NSFastEnumeration.
 
