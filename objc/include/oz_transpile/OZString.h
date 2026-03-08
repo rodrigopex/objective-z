@@ -16,4 +16,5 @@
 - (const char *)cStr;
 - (unsigned int)length;
 - (int)cDescription:(char *)buf maxLength:(int)maxLen;
+- (BOOL)isEqual:(id)anObject;
 @end

@@ -22,6 +22,18 @@
 	return len;
 }
 
+- (BOOL)isEqual:(id)anObject
+{
+	if (self == anObject) {
+		return YES;
+	}
+	OZString *other = (OZString *)anObject;
+	if (_length != other->_length) {
+		return NO;
+	}
+	return memcmp(_data, other->_data, _length) == 0;
+}
+
 - (void)dealloc
 {
 	/* OZString is a compile-time constant and must never be freed. */
