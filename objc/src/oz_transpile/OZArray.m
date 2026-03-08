@@ -37,6 +37,19 @@
 	return pos;
 }
 
+- (id)objectAtIndexedSubscript:(unsigned int)index
+{
+	return [self objectAtIndex:index];
+}
+
+- (void)enumerateObjectsUsingBlock:(void (^)(id obj, unsigned int idx, BOOL *stop))block
+{
+	BOOL stop = NO;
+	for (unsigned int i = 0; i < _count && !stop; i++) {
+		block(_items[i], i, &stop);
+	}
+}
+
 - (void)dealloc
 {
 	/* OZArray is a compile-time constant and must never be freed. */

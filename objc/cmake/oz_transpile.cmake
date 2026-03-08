@@ -48,9 +48,11 @@ function(objz_transpile_sources target)
         "${_OZ_TRANSPILE_CMAKE_DIR}/../src/oz_transpile/OZArray.m" ABSOLUTE)
     get_filename_component(_oz_dict_src
         "${_OZ_TRANSPILE_CMAKE_DIR}/../src/oz_transpile/OZDictionary.m" ABSOLUTE)
+    get_filename_component(_oz_number_src
+        "${_OZ_TRANSPILE_CMAKE_DIR}/../src/oz_transpile/OZNumber.m" ABSOLUTE)
     # Prepend so transpiler stubs (assert.h, Foundation/, etc.) take priority
     list(PREPEND _ast_flags -I${_oz_inc_dir})
-    list(PREPEND _sources ${_oz_dict_src} ${_oz_array_src}
+    list(PREPEND _sources ${_oz_number_src} ${_oz_dict_src} ${_oz_array_src}
                           ${_oz_string_src} ${_oz_root_src})
 
     # Add user-specified include dirs

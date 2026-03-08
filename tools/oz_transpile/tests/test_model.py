@@ -54,6 +54,29 @@ class TestOZType:
         assert not t.is_object
         assert t.c_type == "BOOL"
 
+    def test_bool_pointer_not_object(self):
+        t = OZType("BOOL *")
+        assert not t.is_object
+
+    def test_block_type(self):
+        t = OZType("void (^)(id, unsigned int, BOOL *)")
+        assert t.is_block
+        assert not t.is_object
+        assert t.c_type == "void (*)(struct OZObject *, unsigned int, BOOL *)"
+
+    def test_block_c_param_decl(self):
+        t = OZType("void (^)(id, unsigned int, BOOL *)")
+        decl = t.c_param_decl("callback")
+        assert decl == "void (*callback)(struct OZObject *, unsigned int, BOOL *)"
+
+    def test_non_block_c_param_decl(self):
+        t = OZType("int")
+        assert t.c_param_decl("x") == "int x"
+
+    def test_id_star_to_object_ptr_ptr(self):
+        t = OZType("id *")
+        assert t.c_type == "struct OZObject **"
+
 
 class TestOZParam:
     def test_construction(self):

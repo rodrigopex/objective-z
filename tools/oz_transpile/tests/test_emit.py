@@ -1636,3 +1636,238 @@ class TestStaticVarEmission:
             assert "_keys[]" in src
             assert "_vals[]" in src
             assert "2147483647" in src
+
+    def test_number_literal(self):
+        """ObjCBoxedExpr with IntegerLiteral → static struct OZNumber."""
+        m = _simple_module()
+        m.classes["OZNumber"] = OZClass(
+            "OZNumber", superclass="OZObject",
+            ivars=[
+                OZIvar("_tag", OZType("enum oz_number_tag")),
+                OZIvar("_value", OZType("union oz_number_value")),
+            ],
+        )
+        m.functions.append(OZFunction(
+            name="test_num",
+            return_type=OZType("void"),
+            body_ast={
+                "kind": "CompoundStmt",
+                "inner": [{
+                    "kind": "DeclStmt",
+                    "inner": [{
+                        "kind": "VarDecl",
+                        "name": "n",
+                        "type": {"qualType": "OZNumber *"},
+                        "inner": [{
+                            "kind": "ObjCBoxedExpr",
+                            "type": {"qualType": "NSNumber *"},
+                            "inner": [{
+                                "kind": "IntegerLiteral",
+                                "value": "42",
+                            }],
+                        }],
+                    }],
+                }],
+            },
+        ))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            src = open(os.path.join(tmpdir, "oz_functions.c")).read()
+            assert "static struct OZNumber _oz_num_" in src
+            assert "OZ_NUM_INT32" in src
+            assert ".i32 = 42" in src
+            assert "2147483647" in src
+
+    def test_number_literal_dedup(self):
+        """Identical number literals reuse the same static struct."""
+        m = _simple_module()
+        m.classes["OZNumber"] = OZClass(
+            "OZNumber", superclass="OZObject",
+            ivars=[
+                OZIvar("_tag", OZType("enum oz_number_tag")),
+                OZIvar("_value", OZType("union oz_number_value")),
+            ],
+        )
+        m.functions.append(OZFunction(
+            name="test_dedup",
+            return_type=OZType("void"),
+            body_ast={
+                "kind": "CompoundStmt",
+                "inner": [
+                    {"kind": "DeclStmt", "inner": [{
+                        "kind": "VarDecl", "name": "a",
+                        "type": {"qualType": "OZNumber *"},
+                        "inner": [{"kind": "ObjCBoxedExpr",
+                                   "type": {"qualType": "NSNumber *"},
+                                   "inner": [{"kind": "IntegerLiteral",
+                                              "value": "42"}]}],
+                    }]},
+                    {"kind": "DeclStmt", "inner": [{
+                        "kind": "VarDecl", "name": "b",
+                        "type": {"qualType": "OZNumber *"},
+                        "inner": [{"kind": "ObjCBoxedExpr",
+                                   "type": {"qualType": "NSNumber *"},
+                                   "inner": [{"kind": "IntegerLiteral",
+                                              "value": "42"}]}],
+                    }]},
+                ],
+            },
+        ))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            src = open(os.path.join(tmpdir, "oz_functions.c")).read()
+            assert src.count("static struct OZNumber") == 1
+
+    def test_expr_with_cleanups_passthrough(self):
+        """ExprWithCleanups wrapping an expression → unwraps inner."""
+        m = _simple_module()
+        m.functions.append(OZFunction(
+            name="test_cleanup",
+            return_type=OZType("void"),
+            body_ast={
+                "kind": "CompoundStmt",
+                "inner": [{
+                    "kind": "DeclStmt",
+                    "inner": [{
+                        "kind": "VarDecl",
+                        "name": "x",
+                        "type": {"qualType": "int"},
+                        "inner": [{
+                            "kind": "ExprWithCleanups",
+                            "type": {"qualType": "int"},
+                            "inner": [{
+                                "kind": "IntegerLiteral",
+                                "value": "99",
+                            }],
+                        }],
+                    }],
+                }],
+            },
+        ))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            src = open(os.path.join(tmpdir, "oz_functions.c")).read()
+            assert "int x = 99;" in src
+
+    def test_block_expr_non_capturing(self):
+        """BlockExpr without captures → static C function + name."""
+        m = _simple_module()
+        m.functions.append(OZFunction(
+            name="test_block",
+            return_type=OZType("void"),
+            body_ast={
+                "kind": "CompoundStmt",
+                "inner": [{
+                    "kind": "DeclStmt",
+                    "inner": [{
+                        "kind": "VarDecl",
+                        "name": "blk",
+                        "type": {"qualType": "void (^)(int)"},
+                        "inner": [{
+                            "kind": "ExprWithCleanups",
+                            "inner": [{
+                                "kind": "BlockExpr",
+                                "type": {"qualType": "void (^)(int)"},
+                                "inner": [{
+                                    "kind": "BlockDecl",
+                                    "inner": [
+                                        {
+                                            "kind": "ParmVarDecl",
+                                            "name": "val",
+                                            "type": {"qualType": "int"},
+                                        },
+                                        {
+                                            "kind": "CompoundStmt",
+                                            "inner": [],
+                                        },
+                                    ],
+                                }],
+                            }],
+                        }],
+                    }],
+                }],
+            },
+        ))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            src = open(os.path.join(tmpdir, "oz_functions.c")).read()
+            assert "static void _oz_block_" in src
+            assert "int val" in src
+
+    def test_block_expr_with_capture_raises(self):
+        """BlockExpr with captures → diagnostic error."""
+        m = _simple_module()
+        m.functions.append(OZFunction(
+            name="test_capture",
+            return_type=OZType("void"),
+            body_ast={
+                "kind": "CompoundStmt",
+                "inner": [{
+                    "kind": "DeclStmt",
+                    "inner": [{
+                        "kind": "VarDecl",
+                        "name": "blk",
+                        "type": {"qualType": "void (^)(void)"},
+                        "inner": [{
+                            "kind": "BlockExpr",
+                            "type": {"qualType": "void (^)(void)"},
+                            "inner": [{
+                                "kind": "BlockDecl",
+                                "inner": [
+                                    {"kind": "Capture",
+                                     "var": {"name": "sum"}},
+                                    {"kind": "CompoundStmt",
+                                     "inner": []},
+                                ],
+                            }],
+                        }],
+                    }],
+                }],
+            },
+        ))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            assert any("sum" in d for d in m.diagnostics)
+
+    def test_ivar_type_defs_in_class_header(self):
+        """Class with enum/union ivars gets type_defs in header."""
+        m = _simple_module()
+        m.classes["OZNumber"] = OZClass(
+            "OZNumber", superclass="OZObject",
+            ivars=[
+                OZIvar("_tag", OZType("enum oz_number_tag")),
+                OZIvar("_value", OZType("union oz_number_value")),
+            ],
+        )
+        m.type_defs["enum oz_number_tag"] = (
+            "enum oz_number_tag {\n\tOZ_NUM_INT32 = 0,\n\tOZ_NUM_UINT32,\n};"
+        )
+        m.type_defs["union oz_number_value"] = (
+            "union oz_number_value {\n\tint i32;\n\tfloat f32;\n};"
+        )
+        from oz_transpile.resolve import resolve
+        resolve(m)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            hdr = open(os.path.join(tmpdir, "OZNumber.h")).read()
+            assert "enum oz_number_tag {" in hdr
+            assert "OZ_NUM_INT32 = 0," in hdr
+            assert "union oz_number_value {" in hdr
+            assert "struct OZNumber {" in hdr
+            # Type defs must appear before struct
+            enum_pos = hdr.index("enum oz_number_tag {")
+            struct_pos = hdr.index("struct OZNumber {")
+            assert enum_pos < struct_pos
+
+    def test_method_prototype_with_block_param(self):
+        """Method with block parameter uses function pointer syntax."""
+        cls = OZClass("OZArray")
+        m = OZMethod(
+            "enumerateObjectsUsingBlock:",
+            OZType("void"),
+            params=[OZParam("block",
+                            OZType("void (^)(id, unsigned int, BOOL *)"))],
+        )
+        proto = _method_prototype(cls, m)
+        assert "void (*block)" in proto
+        assert "struct OZObject *" in proto
