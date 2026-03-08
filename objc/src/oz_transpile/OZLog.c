@@ -8,12 +8,13 @@
  * @brief Formatted logging with %@ object specifier for transpiled code.
  *
  * Pure C implementation of OZLog() for transpiled builds.
- * Uses the generated OZObject_cDescription_maxLength_() for %@.
+ * Uses OZ_SEND_cDescription_maxLength_() for %@ (vtable dispatch).
  * Zero heap allocation — everything on the stack.
  */
 #include <stdarg.h>
 #include <zephyr/sys/printk.h>
 
+#include "oz_dispatch.h"
 #include "OZObject.h"
 
 #ifndef CONFIG_OBJZ_LOG_BUFFER_SIZE
@@ -57,7 +58,7 @@ void OZLog(const char *fmt, ...)
 					buf[pos++] = *s++;
 				}
 			} else {
-				pos += OZObject_cDescription_maxLength_(
+				pos += OZ_SEND_cDescription_maxLength_(
 					obj, buf + pos, max - pos);
 			}
 			p++;

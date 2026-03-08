@@ -1,0 +1,24 @@
+sample:
+  description: Transpiled string, array, and dictionary literals demo
+  name: Transpiled Literals Demo
+common:
+  tags: transpiled literals
+  integration_platforms:
+    - mps2/an385
+    - qemu_riscv32
+  harness: console
+  harness_config:
+    type: multi_line
+    ordered: true
+    regex:
+      - "=== ObjC Literals Demo ==="
+      - "greeting = hello"
+      - "array = \\(hello, world\\)"
+      - "arr\\[0\\] = hello"
+      - "arr\\[1\\] = world"
+      - "dict = \\{key = value\\}"
+      - "dict\\[@\"key\"\\] = value"
+      - "=== Demo complete ==="
+tests:
+  sample.transpiled_literals:
+    tags: transpiled literals

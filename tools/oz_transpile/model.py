@@ -33,6 +33,8 @@ class OZType:
         qt = self._strip_qualifiers()
         if qt == "id" or qt == "instancetype":
             return "struct OZObject *"
+        if qt == "id *":
+            return "id *"
         if self.is_object:
             name = qt.rstrip(" *")
             return f"struct {name} *"

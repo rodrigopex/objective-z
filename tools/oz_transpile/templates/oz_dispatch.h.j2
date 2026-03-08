@@ -12,6 +12,8 @@
 struct {{ cls.name }};
 {% endfor %}
 
+typedef struct OZObject *id;
+
 enum oz_class_id {
 {% for cls in classes %}
 	OZ_CLASS_{{ cls.name }} = {{ cls.class_id }},

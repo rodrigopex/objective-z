@@ -25,6 +25,8 @@ class _EmitCtx:
     loop_scope_depth: list[int] = field(default_factory=list)
     pre_stmts: list[str] = field(default_factory=list)
     string_constants: list[str] = field(default_factory=list)
+    array_constants: list[str] = field(default_factory=list)
+    dict_constants: list[str] = field(default_factory=list)
     _tmp_counter: int = 0
 
 
@@ -315,6 +317,8 @@ def _class_source_ctx(ctx: _EmitCtx) -> dict:
         "dealloc_body": dealloc_body,
         "has_functions_header": has_functions_header,
         "string_constants": ctx.string_constants,
+        "array_constants": ctx.array_constants,
+        "dict_constants": ctx.dict_constants,
     }
 
 
@@ -436,9 +440,10 @@ def _emit_stmt(node: dict, out: StringIO, ctx: _EmitCtx,
     elif kind == "WhileStmt":
         inner = node.get("inner", [])
         if len(inner) >= 2:
-            out.write(f"{tabs}while (")
-            _emit_expr(inner[0], out, ctx)
-            out.write(") ")
+            cond_buf = StringIO()
+            _emit_expr(inner[0], cond_buf, ctx)
+            _flush_pre_stmts(out, ctx, indent)
+            out.write(f"{tabs}while ({cond_buf.getvalue()}) ")
             ctx.loop_scope_depth.append(len(ctx.scope_vars))
             if inner[1].get("kind") == "CompoundStmt":
                 _emit_compound_stmt(inner[1], out, ctx, indent, inline=True)
@@ -484,9 +489,10 @@ def _emit_stmt(node: dict, out: StringIO, ctx: _EmitCtx,
         out.write(f"{tabs}continue;\n")
 
     elif kind == "CompoundAssignOperator":
-        out.write(tabs)
-        _emit_expr(node, out, ctx)
-        out.write(";\n")
+        expr_buf = StringIO()
+        _emit_expr(node, expr_buf, ctx)
+        _flush_pre_stmts(out, ctx, indent)
+        out.write(f"{tabs}{expr_buf.getvalue()};\n")
 
     elif kind == "BinaryOperator" and node.get("opcode") == "=":
         # Check for strong ivar or local assignment
@@ -551,9 +557,10 @@ def _emit_if_stmt(node: dict, out: StringIO, ctx: _EmitCtx,
     then_body = inner[1] if len(inner) > 1 else None
     else_body = inner[2] if has_else and len(inner) > 2 else None
 
-    out.write(f"{tabs}if (")
-    _emit_expr(cond, out, ctx)
-    out.write(") ")
+    cond_buf = StringIO()
+    _emit_expr(cond, cond_buf, ctx)
+    _flush_pre_stmts(out, ctx, indent)
+    out.write(f"{tabs}if ({cond_buf.getvalue()}) ")
     if then_body:
         if then_body.get("kind") == "CompoundStmt":
             _emit_compound_stmt(then_body, out, ctx, indent, inline=True)
@@ -634,6 +641,11 @@ def _emit_expr(node: dict, out: StringIO, ctx: _EmitCtx) -> None:
     if kind == "ImplicitCastExpr":
         inner = node.get("inner", [])
         if inner:
+            cast_kind = node.get("castKind", "")
+            target_qt = node.get("type", {}).get("qualType", "")
+            target_oz = OZType(target_qt)
+            if cast_kind == "BitCast" and target_oz.is_object:
+                out.write(f"({target_oz.c_type})")
             _emit_expr(inner[0], out, ctx)
         return
 
@@ -662,6 +674,19 @@ def _emit_expr(node: dict, out: StringIO, ctx: _EmitCtx) -> None:
 
     if kind == "ObjCIvarRefExpr":
         ivar_name = node.get("decl", {}).get("name", "")
+        inner = node.get("inner", [])
+        # Non-free ivar with an explicit base (e.g. other->_length)
+        if not node.get("isFreeIvar", False) and inner:
+            base = inner[0]
+            # Skip LValueToRValue casts to get to the actual DeclRefExpr
+            while (base.get("kind") == "ImplicitCastExpr"
+                   and base.get("castKind") == "LValueToRValue"):
+                base = base.get("inner", [{}])[0]
+            ref_name = base.get("referencedDecl", {}).get("name", "")
+            if ref_name and ref_name != "self":
+                _emit_expr(inner[0], out, ctx)
+                out.write(f"->{ivar_name}")
+                return
         out.write(f"self->{ivar_name}")
         return
 
@@ -760,6 +785,64 @@ def _emit_expr(node: dict, out: StringIO, ctx: _EmitCtx) -> None:
             out.write("0" if "no" in val.lower() else "1")
         else:
             out.write("1" if val else "0")
+        return
+
+    if kind == "ObjCArrayLiteral":
+        inner = node.get("inner", [])
+        name = f"_oz_arr_{ctx._tmp_counter}"
+        ctx._tmp_counter += 1
+        elem_refs = []
+        for child in inner:
+            buf = StringIO()
+            _emit_expr(child, buf, ctx)
+            elem_refs.append(buf.getvalue())
+        count = len(elem_refs)
+        items_name = f"{name}_items"
+        ctx.array_constants.append(
+            f"static struct OZObject *{items_name}[] = {{"
+            + ", ".join(f"(struct OZObject *){ref}" for ref in elem_refs)
+            + "};"
+        )
+        ctx.array_constants.append(
+            f"static struct OZArray {name} = {{"
+            f"{{OZ_CLASS_OZArray, 2147483647}}, "
+            f"{items_name}, {count}}};"
+        )
+        out.write(f"(struct OZArray *)&{name}")
+        return
+
+    if kind == "ObjCDictionaryLiteral":
+        inner = node.get("inner", [])
+        name = f"_oz_dict_{ctx._tmp_counter}"
+        ctx._tmp_counter += 1
+        key_refs = []
+        val_refs = []
+        for i in range(0, len(inner), 2):
+            kbuf = StringIO()
+            _emit_expr(inner[i], kbuf, ctx)
+            key_refs.append(kbuf.getvalue())
+            vbuf = StringIO()
+            _emit_expr(inner[i + 1], vbuf, ctx)
+            val_refs.append(vbuf.getvalue())
+        count = len(key_refs)
+        keys_name = f"{name}_keys"
+        vals_name = f"{name}_vals"
+        ctx.dict_constants.append(
+            f"static struct OZObject *{keys_name}[] = {{"
+            + ", ".join(f"(struct OZObject *){ref}" for ref in key_refs)
+            + "};"
+        )
+        ctx.dict_constants.append(
+            f"static struct OZObject *{vals_name}[] = {{"
+            + ", ".join(f"(struct OZObject *){ref}" for ref in val_refs)
+            + "};"
+        )
+        ctx.dict_constants.append(
+            f"static struct OZDictionary {name} = {{"
+            f"{{OZ_CLASS_OZDictionary, 2147483647}}, "
+            f"{keys_name}, {vals_name}, {count}}};"
+        )
+        out.write(f"(struct OZDictionary *)&{name}")
         return
 
     if kind == "GNUNullExpr" or kind == "CXXNullPtrLiteralExpr":
@@ -903,6 +986,8 @@ def _emit_msg_expr(node: dict, out: StringIO, ctx: _EmitCtx) -> None:
         out.write(")")
     else:
         recv_class = _infer_receiver_class(receiver, cls, module) if receiver else cls.name
+        # Walk up hierarchy to find class that actually defines the selector
+        recv_class = _find_defining_class(recv_class, selector, module)
         out.write(f"{recv_class}_{c_sel}(")
         if receiver:
             _emit_expr(receiver, out, ctx)
@@ -910,6 +995,34 @@ def _emit_msg_expr(node: dict, out: StringIO, ctx: _EmitCtx) -> None:
             out.write(", ")
             _emit_expr(arg, out, ctx)
         out.write(")")
+
+
+_ROOT_INTROSPECTION_SELS = {"isEqual:", "cDescription:maxLength:",
+                            "retain", "release", "retainCount"}
+
+
+def _find_defining_class(class_name: str, selector: str,
+                         module: OZModule) -> str:
+    """Find the class that defines a selector, walking up the hierarchy.
+
+    Also checks root introspection methods (isEqual:, cDescription:maxLength:,
+    retain, release, retainCount) which are emitted separately from the normal
+    method list.
+    """
+    name = class_name
+    while name:
+        cls_obj = module.classes.get(name)
+        if not cls_obj:
+            break
+        for m in cls_obj.methods:
+            if m.selector == selector:
+                return name
+        # Root introspection methods are skipped from cls.methods during emit
+        # but are defined on the root class
+        if not cls_obj.superclass and selector in _ROOT_INTROSPECTION_SELS:
+            return name
+        name = cls_obj.superclass
+    return class_name
 
 
 def _collect_msg_args(inner: list[dict]) -> list[dict]:
@@ -1014,7 +1127,9 @@ def _functions_ctx(module: OZModule, root_class: str) -> dict:
             "static_decls": static_decls, "extern_decls": extern_decls,
             "function_protos": function_protos,
             "verbatim_lines": module.verbatim_lines,
-            "string_constants": ctx.string_constants}
+            "string_constants": ctx.string_constants,
+            "array_constants": ctx.array_constants,
+            "dict_constants": ctx.dict_constants}
 
 
 # ---------------------------------------------------------------------------
@@ -1073,8 +1188,20 @@ def _emit_return_stmt(node: dict, out: StringIO, ctx: _EmitCtx,
                   f"(struct {ctx.root_class} *){name});\n")
 
     if inner:
+        ret_expr = inner[0]
+        # Strip ImplicitCastExpr BitCast to id/instancetype on returns — the
+        # C function already uses the class pointer type for these returns.
+        ret_qt = ret_expr.get("type", {}).get("qualType", "")
+        ret_desugared = ret_expr.get("type", {}).get("desugaredQualType", "")
+        if (ret_expr.get("kind") == "ImplicitCastExpr"
+                and ret_expr.get("castKind") == "BitCast"
+                and (ret_qt in ("id", "instancetype")
+                     or ret_desugared == "id")):
+            ret_inner = ret_expr.get("inner", [])
+            if ret_inner:
+                ret_expr = ret_inner[0]
         out.write(f"{tabs}return ")
-        _emit_expr(inner[0], out, ctx)
+        _emit_expr(ret_expr, out, ctx)
         out.write(";\n")
     else:
         out.write(f"{tabs}return;\n")
@@ -1383,7 +1510,9 @@ def _base_chain(class_name: str, module: OZModule) -> str:
 def _method_prototype(cls: OZClass, m: OZMethod) -> str:
     # instancetype / id returns the class's own pointer type
     raw_ret = m.return_type.raw_qual_type.strip()
-    if raw_ret in ("instancetype", "id"):
+    is_init_family = (m.selector == "init" or m.selector.startswith("init:")
+                      or m.selector.startswith("initWith"))
+    if raw_ret == "instancetype" or (raw_ret == "id" and is_init_family):
         ret = f"struct {cls.name} *"
     else:
         ret = m.return_type.c_type

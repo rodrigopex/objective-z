@@ -12,6 +12,12 @@
 {% for sc in string_constants %}
 {{ sc }}
 {% endfor %}
+{% for ac in array_constants %}
+{{ ac }}
+{% endfor %}
+{% for dc in dict_constants %}
+{{ dc }}
+{% endfor %}
 {% if root_retain_release %}
 {{ root_retain_release }}
 {% endif %}

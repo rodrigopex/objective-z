@@ -1488,3 +1488,110 @@ class TestStaticVarEmission:
             assert "static struct OZString _oz_str_" in src
             assert '"hello"' in src
             assert "2147483647" in src
+
+    def test_array_literal(self):
+        """ObjCArrayLiteral → static struct OZArray with items."""
+        m = _simple_module()
+        m.classes["OZString"] = OZClass(
+            "OZString", superclass="OZObject",
+            ivars=[
+                OZIvar("_length", OZType("unsigned int")),
+                OZIvar("_hash", OZType("unsigned int")),
+                OZIvar("_data", OZType("const char *")),
+            ],
+        )
+        m.classes["OZArray"] = OZClass(
+            "OZArray", superclass="OZObject",
+            ivars=[
+                OZIvar("_items", OZType("id *")),
+                OZIvar("_count", OZType("unsigned int")),
+            ],
+        )
+        m.functions.append(OZFunction(
+            name="test_arr",
+            return_type=OZType("void"),
+            body_ast={
+                "kind": "CompoundStmt",
+                "inner": [{
+                    "kind": "DeclStmt",
+                    "inner": [{
+                        "kind": "VarDecl",
+                        "name": "a",
+                        "type": {"qualType": "OZArray *"},
+                        "inner": [{
+                            "kind": "ObjCArrayLiteral",
+                            "type": {"qualType": "NSArray *"},
+                            "inner": [
+                                {"kind": "ObjCStringLiteral",
+                                 "inner": [{"kind": "StringLiteral",
+                                            "value": '"hello"'}]},
+                                {"kind": "ObjCStringLiteral",
+                                 "inner": [{"kind": "StringLiteral",
+                                            "value": '"world"'}]},
+                            ],
+                        }],
+                    }],
+                }],
+            },
+        ))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            src = open(os.path.join(tmpdir, "oz_functions.c")).read()
+            assert "static struct OZArray _oz_arr_" in src
+            assert "_oz_arr_" in src
+            assert "_items[]" in src
+            assert "2147483647" in src
+
+    def test_dictionary_literal(self):
+        """ObjCDictionaryLiteral → static struct OZDictionary."""
+        m = _simple_module()
+        m.classes["OZString"] = OZClass(
+            "OZString", superclass="OZObject",
+            ivars=[
+                OZIvar("_length", OZType("unsigned int")),
+                OZIvar("_hash", OZType("unsigned int")),
+                OZIvar("_data", OZType("const char *")),
+            ],
+        )
+        m.classes["OZDictionary"] = OZClass(
+            "OZDictionary", superclass="OZObject",
+            ivars=[
+                OZIvar("_keys", OZType("id *")),
+                OZIvar("_values", OZType("id *")),
+                OZIvar("_count", OZType("unsigned int")),
+            ],
+        )
+        m.functions.append(OZFunction(
+            name="test_dict",
+            return_type=OZType("void"),
+            body_ast={
+                "kind": "CompoundStmt",
+                "inner": [{
+                    "kind": "DeclStmt",
+                    "inner": [{
+                        "kind": "VarDecl",
+                        "name": "d",
+                        "type": {"qualType": "OZDictionary *"},
+                        "inner": [{
+                            "kind": "ObjCDictionaryLiteral",
+                            "type": {"qualType": "NSDictionary *"},
+                            "inner": [
+                                {"kind": "ObjCStringLiteral",
+                                 "inner": [{"kind": "StringLiteral",
+                                            "value": '"key"'}]},
+                                {"kind": "ObjCStringLiteral",
+                                 "inner": [{"kind": "StringLiteral",
+                                            "value": '"value"'}]},
+                            ],
+                        }],
+                    }],
+                }],
+            },
+        ))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            src = open(os.path.join(tmpdir, "oz_functions.c")).read()
+            assert "static struct OZDictionary _oz_dict_" in src
+            assert "_keys[]" in src
+            assert "_vals[]" in src
+            assert "2147483647" in src
