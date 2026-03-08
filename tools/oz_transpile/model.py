@@ -92,7 +92,11 @@ class OZType:
                       "__autoreleasing", "_Nonnull", "_Nullable",
                       "__kindof"):
             qt = qt.replace(qual, "")
-        qt = re.sub(r"<[^>]+>", "", qt)
+        # Strip nested generics (e.g. OZArray<OZArray<OZNumber *> *>)
+        prev = None
+        while prev != qt:
+            prev = qt
+            qt = re.sub(r"<[^<>]+>", "", qt)
         return qt.strip()
 
 
