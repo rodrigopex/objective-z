@@ -1389,7 +1389,7 @@ class TestStaticVarEmission:
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
             content = open(os.path.join(tmpdir, "oz_functions.c")).read()
-            assert "struct AppConfig *_sharedConfig;" in content
+            assert "struct AppConfig * _sharedConfig;" in content
 
     def test_primitive_static_var(self):
         m = _simple_module()

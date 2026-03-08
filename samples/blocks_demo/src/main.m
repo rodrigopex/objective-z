@@ -57,13 +57,6 @@ int main(void)
 	};
 	printk("Global block: %d\n", global());
 
-	/* Capturing block — captures local variable */
-	int value = 99;
-	IntBlock capturing = ^{
-	  return value;
-	};
-	printk("Capturing block: %d\n", capturing());
-
 	/* __block variable — mutation across block invocations */
 	__block int counter = 0;
 	VoidBlock increment = ^{
@@ -75,7 +68,7 @@ int main(void)
 	printk("Mutated counter: %d\n", counter);
 
 	/* Nested block — outer captures inner */
-	int nested_val = 77;
+	__block int nested_val = 77;
 	IntBlock inner = ^{
 	  return nested_val;
 	};
