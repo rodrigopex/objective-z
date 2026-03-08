@@ -13,6 +13,8 @@
 #import <Foundation/Foundation.h>
 #include <zephyr/kernel.h>
 
+static int sum = 0;
+
 int main(void)
 {
 	printk("=== Transpiled Generics Demo ===\n");
@@ -43,15 +45,10 @@ int main(void)
 		/* Non-capturing block with enumerateObjectsUsingBlock: */
 		[numbers enumerateObjectsUsingBlock:^(id obj, unsigned int idx, BOOL *stop) {
 			OZLog("  [%d] = %@", idx, obj);
+			sum += [(OZNumber *)obj intValue];
 			*stop = NO;
 		}];
 
-		/* Sum using regular for loop (capturing blocks not supported) */
-		int sum = 0;
-		for (unsigned int i = 0; i < [numbers count]; i++) {
-			OZNumber *n = [numbers objectAtIndex:i];
-			sum += [n intValue];
-		}
 		printk("sum = %d\n", sum);
 
 		/* Covariance: assign to generic id array */

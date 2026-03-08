@@ -10,6 +10,7 @@
  #pragma once
  #include <stdbool.h>
  #include <stddef.h>
+ #include <stdint.h>
 
  /** @brief A null object pointer.
   * @ingroup objc
