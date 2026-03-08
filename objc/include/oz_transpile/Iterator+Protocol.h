@@ -1,9 +1,9 @@
 #import "OZObject.h"
 
-@protocol IteratorProtocol <OZObject>
+@protocol IteratorProtocol
 
 @required
-@property (nonatomic, readonly) NSUInteger iterIdx;
+@property (nonatomic, readonly) uint16_t iterIdx;
 
 - (instancetype)iter;
 - (id)next;

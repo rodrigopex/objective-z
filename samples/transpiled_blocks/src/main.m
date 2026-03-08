@@ -64,17 +64,16 @@ int main(void)
 
 	__block int sum = 0;
 
-	/* Iterate using block callback */
-	unsigned int count = [[sensor samples] count];
-	unsigned int idx = 0;
-	for (idx = 0; idx < count; idx++) {
-		id obj = [[sensor samples] objectAtIndex:idx];
-		sum += [(OZNumber *)obj intValue];
+	/* for-in lowered to iterator protocol */
+	for (OZNumber *n in [sensor samples]) {
+		sum += [n intValue];
 	}
 
-	/* Second pass — equivalent of for-in */
-	for (idx = 0; idx < count; idx++) {
-		id sample = [[sensor samples] objectAtIndex:idx];
+	/* Second pass — index-based access */
+	OZArray *samples = [sensor samples];
+	unsigned int count = [samples count];
+	for (unsigned int idx = 0; idx < count; idx++) {
+		id sample = [samples objectAtIndex:idx];
 		sum += [(OZNumber *)sample intValue];
 	}
 
