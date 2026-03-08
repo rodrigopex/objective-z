@@ -16,6 +16,11 @@ transpiler pipeline.
   `static`. A plain global (`int sum = 0;`) is not collected by the transpiler
   and will be absent from the generated code. Use `static int sum = 0;` instead.
 
+- **Function-local `static` variables not supported.** A `static` variable
+  declared inside a function body is not collected by the transpiler. It will
+  be emitted as a plain local, invisible to block functions. Declare shared
+  `static` variables at file scope instead.
+
 ## Control Flow
 
 - **No `switch` / `case` statements.** The transpiler does not handle
