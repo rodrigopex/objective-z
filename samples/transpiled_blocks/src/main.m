@@ -79,6 +79,15 @@ int main(void)
 
 	printk("Sensor sum: %d\n", sum);
 
+	/* Dictionary for-in — iterates over keys */
+	OZDictionary *dict = @{ @"a" : @10, @"b" : @20, @"c" : @30 };
+	__block int dict_sum = 0;
+	for (OZString *key in dict) {
+		OZNumber *val = [dict objectForKey:key];
+		dict_sum += [val intValue];
+	}
+	printk("Dict sum: %d\n", dict_sum);
+
 	printk("=== Blocks Demo Complete ===\n");
 	return 0;
 }
