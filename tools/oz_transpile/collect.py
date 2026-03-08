@@ -265,6 +265,8 @@ def _collect_implementation(node: dict, module: OZModule) -> None:
                 continue
             method = _collect_method(child)
             if method:
+                if method.body_ast:
+                    _collect_block_vars(method.body_ast, module)
                 cls.methods.append(method)
 
 
@@ -357,6 +359,8 @@ def _collect_function(node: dict, module: OZModule) -> None:
     if body_ast is None:
         return  # Forward declaration only, skip
 
+    _collect_block_vars(body_ast, module)
+
     ret_type = OZType(node.get("type", {}).get("qualType", "int ()").split("(")[0].strip())
     module.functions.append(OZFunction(
         name=name,
@@ -374,7 +378,44 @@ def _collect_static_var(node: dict, module: OZModule) -> None:
     qual_type = node.get("type", {}).get("qualType", "")
     if not qual_type:
         return
-    module.statics.append(OZStaticVar(name=name, oz_type=OZType(qual_type)))
+    init_value = _extract_init_value(node)
+    module.statics.append(OZStaticVar(name=name, oz_type=OZType(qual_type),
+                                      init_value=init_value))
+
+
+def _has_blocks_attr(node: dict) -> bool:
+    """Check if a VarDecl has a BlocksAttr child (__block qualifier)."""
+    return any(c.get("kind") == "BlocksAttr" for c in node.get("inner", []))
+
+
+def _extract_init_value(node: dict) -> str | None:
+    """Extract a simple literal init value from a VarDecl."""
+    for child in node.get("inner", []):
+        kind = child.get("kind", "")
+        if kind in ("IntegerLiteral", "FloatingLiteral"):
+            return child.get("value")
+        if kind == "ImplicitCastExpr":
+            return _extract_init_value(child)
+        if kind == "UnaryOperator" and child.get("opcode") == "-":
+            inner_val = _extract_init_value(child)
+            if inner_val is not None:
+                return f"-{inner_val}"
+    return None
+
+
+def _collect_block_vars(node: dict, module: OZModule) -> None:
+    """Walk an AST subtree and collect __block VarDecls and captured block-typed
+    vars as file-scope statics."""
+    kind = node.get("kind", "")
+    if kind == "VarDecl" and _has_blocks_attr(node):
+        name = node.get("name", "")
+        qual_type = node.get("type", {}).get("qualType", "")
+        if name and qual_type:
+            init_value = _extract_init_value(node)
+            module.statics.append(OZStaticVar(name=name, oz_type=OZType(qual_type),
+                                              init_value=init_value))
+    for child in node.get("inner", []):
+        _collect_block_vars(child, module)
 
 
 _TS_LANG = Language(tsobjc.language())

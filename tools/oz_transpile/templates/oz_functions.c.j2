@@ -5,11 +5,11 @@
 #include "oz_mem_slabs.h"
 #include "oz_functions.h"
 
-{% for decl in static_decls %}
-{{ decl }}
-{% endfor %}
 {% for line in verbatim_lines %}
 {{ line }}
+{% endfor %}
+{% for decl in static_decls %}
+{{ decl }}
 {% endfor %}
 {% for sc in string_constants %}
 {{ sc }}

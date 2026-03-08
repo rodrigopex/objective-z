@@ -535,6 +535,10 @@ def _emit_var_decl(node: dict, out: StringIO, ctx: _EmitCtx,
     qt = node.get("type", {}).get("qualType", "int")
     oz_type = OZType(qt)
     name = node.get("name", "_anon")
+
+    # __block vars are promoted to file-scope statics — skip local emission
+    if any(c.get("kind") == "BlocksAttr" for c in node.get("inner", [])):
+        return
     c_type = oz_type.c_type
 
     # Track object locals for scope-exit release (never track self)
@@ -548,13 +552,15 @@ def _emit_var_decl(node: dict, out: StringIO, ctx: _EmitCtx,
             init_expr = child
             break
 
+    decl_str = oz_type.c_param_decl(name)
+
     if init_expr:
         expr_buf = StringIO()
         _emit_expr(init_expr, expr_buf, ctx)
         _flush_pre_stmts(out, ctx, indent)
-        out.write(f"{tabs}{c_type} {name} = {expr_buf.getvalue()};\n")
+        out.write(f"{tabs}{decl_str} = {expr_buf.getvalue()};\n")
     else:
-        out.write(f"{tabs}{c_type} {name};\n")
+        out.write(f"{tabs}{decl_str};\n")
 
 
 def _emit_if_stmt(node: dict, out: StringIO, ctx: _EmitCtx,
@@ -730,10 +736,13 @@ def _emit_block_expr(node: dict, out: StringIO, ctx: _EmitCtx) -> None:
 
     block_inner = block_decl.get("inner", [])
 
-    # Check for captures — error if any
+    # Check for captures — allow __block (byref), reject others
     for child in block_inner:
         if child.get("kind") == "Capture":
             var_name = child.get("var", {}).get("name", "?")
+            if child.get("byref"):
+                # __block var → already promoted to file-scope static
+                continue
             ctx.module.diagnostics.append(
                 f"error: capturing blocks not supported "
                 f"(block captures '{var_name}'). Use a regular loop instead."
@@ -1291,13 +1300,10 @@ def _functions_ctx(module: OZModule, root_class: str) -> dict:
     static_decls = []
     extern_decls = []
     for sv in module.statics:
-        c_type = sv.oz_type.c_type
-        if c_type.endswith("*"):
-            static_decls.append(f"{c_type}{sv.name};")
-            extern_decls.append(f"extern {c_type}{sv.name};")
-        else:
-            static_decls.append(f"{c_type} {sv.name};")
-            extern_decls.append(f"extern {c_type} {sv.name};")
+        decl_str = sv.oz_type.c_param_decl(sv.name)
+        init = f" = {sv.init_value}" if sv.init_value is not None else ""
+        static_decls.append(f"{decl_str}{init};")
+        extern_decls.append(f"extern {decl_str};")
 
     function_protos = []
     for func in module.functions:

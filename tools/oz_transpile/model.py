@@ -145,6 +145,7 @@ class OZFunction:
 class OZStaticVar:
     name: str
     oz_type: OZType
+    init_value: str | None = None
 
 
 @dataclass(slots=True)

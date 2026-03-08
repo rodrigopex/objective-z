@@ -1,8 +1,8 @@
 sample:
-  description: Blocks (closures) demo
-  name: ObjZ Blocks Demo
+  description: Transpiled blocks (closures) demo
+  name: Transpiled Blocks Demo
 common:
-  tags: objz
+  tags: transpiled blocks
   integration_platforms:
     - mps2/an385
     - qemu_riscv32
@@ -18,5 +18,5 @@ common:
       - "Sensor sum: 90"
       - "=== Blocks Demo Complete ==="
 tests:
-  sample.objz.blocks_demo:
-    tags: objz blocks
+  sample.transpiled_blocks:
+    tags: transpiled blocks

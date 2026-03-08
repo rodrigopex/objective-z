@@ -9,7 +9,14 @@ transpiler pipeline.
 - **Non-capturing blocks only.** Block expressions (`^(params){ body }`) are
   transpiled to static C functions with a function-pointer reference.
   Blocks that capture local variables produce a diagnostic error. To share
-  state between a block and its caller, use a `static` file-scope variable.
+  state between a block and its caller, use a `static` file-scope variable
+  or a `__block` variable (see below).
+
+- **`__block` becomes file-scope `static`.** Variables declared with the
+  `__block` qualifier are promoted to file-scope static variables by the
+  transpiler. This differs from ObjC `__block` semantics: the variable is
+  initialized once (at program start), not each time the enclosing function
+  runs. This is a design decision for the transpiler, not a limitation.
 
 - **File-scope variables must be `static`.** Because non-capturing blocks become
   standalone C functions, any file-scope variable they reference must be declared
@@ -26,8 +33,9 @@ transpiler pipeline.
 - **No `switch` / `case` statements.** The transpiler does not handle
   `SwitchStmt` or `CaseStmt` AST nodes. Use `if` / `else if` chains instead.
 
-- **No `for-in` (fast enumeration).** `for (id obj in array)` is not supported.
-  Use an index-based `for` loop with `count` and `objectAtIndex:`.
+- **No `for-in` (fast enumeration).** `for (id obj in array)` is not
+  supported by the transpiler. Use an index-based `for` loop with `count`
+  and `objectAtIndex:` instead.
 
 ## Literals and Expressions
 
@@ -46,6 +54,10 @@ transpiler pipeline.
   `OZNumber64` class may address this.
 
 ## Types
+
+- **No `typedef`.** `typedef` declarations are not collected by the transpiler.
+  Use explicit types instead. For block types, use inline block syntax
+  (`int (^)(void)`) rather than a typedef alias.
 
 - **`id` receiver requires explicit cast.** When a variable is typed `id`
   (e.g., a block parameter), calling a class-specific method requires a cast:

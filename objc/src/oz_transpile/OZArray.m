@@ -4,6 +4,8 @@
 
 @implementation OZArray
 
+@synthesize iterIdx = _iterIdx;
+
 - (unsigned int)count
 {
 	return _count;
@@ -48,6 +50,22 @@
 	for (unsigned int i = 0; i < _count && !stop; i++) {
 		block(_items[i], i, &stop);
 	}
+}
+
+- (instancetype)iter {
+	_iterIdx = 0;
+	return self;
+}
+- (id)next {
+	if (_iterIdx >= _count) {
+		return nil;
+	}
+
+	id ret = _items[_iterIdx];
+
+	_iterIdx++;
+
+	return ret;
 }
 
 - (void)dealloc
