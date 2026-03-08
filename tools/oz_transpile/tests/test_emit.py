@@ -1489,6 +1489,47 @@ class TestStaticVarEmission:
             assert '"hello"' in src
             assert "2147483647" in src
 
+    def test_string_literal_dedup(self):
+        """Identical string literals reuse the same static struct."""
+        m = _simple_module()
+        m.classes["OZString"] = OZClass(
+            "OZString", superclass="OZObject",
+            ivars=[
+                OZIvar("_length", OZType("unsigned int")),
+                OZIvar("_hash", OZType("unsigned int")),
+                OZIvar("_data", OZType("const char *")),
+            ],
+        )
+        # Two uses of @"hello" in the same function
+        m.functions.append(OZFunction(
+            name="test_func",
+            return_type=OZType("void"),
+            body_ast={
+                "kind": "CompoundStmt",
+                "inner": [
+                    {"kind": "DeclStmt", "inner": [{
+                        "kind": "VarDecl", "name": "a",
+                        "type": {"qualType": "OZString *"},
+                        "inner": [{"kind": "ObjCStringLiteral",
+                                   "inner": [{"kind": "StringLiteral",
+                                              "value": '"hello"'}]}],
+                    }]},
+                    {"kind": "DeclStmt", "inner": [{
+                        "kind": "VarDecl", "name": "b",
+                        "type": {"qualType": "OZString *"},
+                        "inner": [{"kind": "ObjCStringLiteral",
+                                   "inner": [{"kind": "StringLiteral",
+                                              "value": '"hello"'}]}],
+                    }]},
+                ],
+            },
+        ))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            src = open(os.path.join(tmpdir, "oz_functions.c")).read()
+            assert src.count('static struct OZString') == 1
+            assert src.count('"hello"') == 1
+
     def test_array_literal(self):
         """ObjCArrayLiteral → static struct OZArray with items."""
         m = _simple_module()

@@ -28,6 +28,7 @@ class _EmitCtx:
     array_constants: list[str] = field(default_factory=list)
     dict_constants: list[str] = field(default_factory=list)
     _tmp_counter: int = 0
+    _string_dedup: dict[str, str] = field(default_factory=dict)
 
 
 def _create_env() -> Environment:
@@ -768,14 +769,18 @@ def _emit_expr(node: dict, out: StringIO, ctx: _EmitCtx) -> None:
     if kind == "ObjCStringLiteral":
         inner = node.get("inner", [])
         val = inner[0].get("value", '""') if inner else '""'
-        raw = val[1:-1]  # strip surrounding quotes
-        name = f"_oz_str_{ctx._tmp_counter}"
-        ctx._tmp_counter += 1
-        ctx.string_constants.append(
-            f"static struct OZString {name} = {{"
-            f"{{OZ_CLASS_OZString, 2147483647}}, "
-            f"{len(raw)}, 0, {val}}};"
-        )
+        if val in ctx._string_dedup:
+            name = ctx._string_dedup[val]
+        else:
+            raw = val[1:-1]  # strip surrounding quotes
+            name = f"_oz_str_{ctx._tmp_counter}"
+            ctx._tmp_counter += 1
+            ctx._string_dedup[val] = name
+            ctx.string_constants.append(
+                f"static struct OZString {name} = {{"
+                f"{{OZ_CLASS_OZString, 2147483647}}, "
+                f"{len(raw)}, 0, {val}}};"
+            )
         out.write(f"(struct OZString *)&{name}")
         return
 
