@@ -33,9 +33,10 @@ transpiler pipeline.
 - **No `switch` / `case` statements.** The transpiler does not handle
   `SwitchStmt` or `CaseStmt` AST nodes. Use `if` / `else if` chains instead.
 
-- **No `for-in` (fast enumeration).** `for (id obj in array)` is not
-  supported by the transpiler. Use an index-based `for` loop with `count`
-  and `objectAtIndex:` instead.
+- **`for-in` uses IteratorProtocol, not NSFastEnumeration.** The transpiler
+  lowers `for (id obj in collection)` to a scoped iterator loop via
+  `IteratorProtocol` (`iter`/`next`), not Apple's `countByEnumeratingWithState:`.
+  The collection must conform to `IteratorProtocol` (OZArray does by default).
 
 ## Literals and Expressions
 
