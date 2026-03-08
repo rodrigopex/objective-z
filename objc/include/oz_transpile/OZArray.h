@@ -9,7 +9,7 @@
 #import "OZObject.h"
 #import "Iterator+Protocol.h"
 
-@interface OZArray : OZObject <IteratorProtocol> {
+@interface OZArray<__covariant ObjectType> : OZObject <IteratorProtocol> {
 	id *_items;
 	unsigned int _count;
 	uint16_t _iterIdx;

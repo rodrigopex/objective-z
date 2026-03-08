@@ -7,60 +7,56 @@
  * @file main.m
  * @brief Transpiled generics demo for Objective-Z.
  *
- * Demonstrates typed collections, number literals, and non-capturing
- * blocks transpiled to pure C via oz_transpile.
+ * Demonstrates typed collections, subscript access, for-in loops,
+ * blocks, and covariance — all transpiled to pure C via oz_transpile.
  */
 #import <Foundation/Foundation.h>
 #include <zephyr/kernel.h>
 
-static int sum = 0;
-
 int main(void)
 {
-	printk("=== Transpiled Generics Demo ===\n");
+	printk("=== Generics Demo ===\n");
 
 	@autoreleasepool {
-		/* Array of numbers */
-		OZArray *numbers = @[ @10, @20, @30 ];
-		OZNumber *first = [numbers objectAtIndex:0];
+		/* Typed array of numbers — subscript returns OZNumber * */
+		OZArray<OZNumber *> *numbers = @[ @10, @20, @30 ];
+		OZNumber *first = numbers[0];
 		OZLog("numbers[0] = %@", first);
 		OZLog("numbers count = %d", [numbers count]);
 
-		/* Array of strings — manual iteration */
-		OZArray *names = @[ @"Zephyr", @"Objective-Z", @"RTOS" ];
-		for (unsigned int i = 0; i < [names count]; i++) {
-			OZString *name = [names objectAtIndex:i];
+		/* Typed array of strings — for-in with typed variable */
+		OZArray<OZString *> *names = @[ @"Zephyr", @"Objective-Z", @"RTOS" ];
+		for (OZString *name in names) {
 			OZLog("name: %@", name);
 		}
 
-		/* Dictionary */
-		OZDictionary *scores = @{
+		/* Typed dictionary — keyed subscript returns typed value */
+		OZDictionary<OZString *, OZNumber *> *scores = @{
 			@"alpha" : @100,
 			@"beta" : @200,
 			@"gamma" : @300,
 		};
-		OZNumber *alpha = [scores objectForKey:@"alpha"];
+		OZNumber *alpha = scores[@"alpha"];
 		OZLog("alpha score = %@", alpha);
 
-		/* Non-capturing block with enumerateObjectsUsingBlock: */
+		/* Typed block param in enumerateObjectsUsingBlock: */
+		__block int sum = 0;
 		[numbers enumerateObjectsUsingBlock:^(id obj, unsigned int idx, BOOL *stop) {
-			OZLog("  [%d] = %@", idx, obj);
-			sum += [(OZNumber *)obj intValue];
-			*stop = NO;
+		  sum += [(OZNumber *)obj intValue];
+		  *stop = NO;
 		}];
-
 		printk("sum = %d\n", sum);
 
-		/* Covariance: assign to generic id array */
-		OZArray *generic = names;
-		OZLog("generic[0] = %@", [generic objectAtIndex:0]);
+		/* Covariance: OZArray<OZString *> assignable to OZArray<id> */
+		OZArray<id> *generic = names;
+		OZLog("generic[0] = %@", generic[0]);
 
-		/* Nested arrays */
-		OZArray *matrix = @[ @[@1, @2], @[@3, @4] ];
-		OZArray *firstRow = [matrix objectAtIndex:0];
-		OZLog("matrix[0][1] = %@", [firstRow objectAtIndex:1]);
+		/* Nested generics: array of arrays */
+		OZArray<OZArray<OZNumber *> *> *matrix = @[ @[@1, @2], @[@3, @4] ];
+		OZArray<OZNumber *> *firstRow = matrix[0];
+		OZLog("matrix[0][1] = %@", firstRow[1]);
 	}
 
-	printk("=== Transpiled Generics Demo Complete ===\n");
+	printk("=== Generics Demo Complete ===\n");
 	return 0;
 }

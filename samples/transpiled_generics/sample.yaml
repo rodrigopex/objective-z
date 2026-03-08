@@ -1,5 +1,5 @@
 sample:
-  description: Transpiled generics demo with number literals and blocks
+  description: Transpiled generics demo with subscript, for-in, and blocks
   name: Transpiled Generics Demo
 common:
   tags: transpiled generics
@@ -11,20 +11,17 @@ common:
     type: multi_line
     ordered: true
     regex:
-      - "=== Transpiled Generics Demo ==="
+      - "=== Generics Demo ==="
       - "numbers\\[0\\] = 10"
       - "numbers count = 3"
       - "name: Zephyr"
       - "name: Objective-Z"
       - "name: RTOS"
       - "alpha score = 100"
-      - "\\[0\\] = 10"
-      - "\\[1\\] = 20"
-      - "\\[2\\] = 30"
       - "sum = 60"
       - "generic\\[0\\] = Zephyr"
       - "matrix\\[0\\]\\[1\\] = 2"
-      - "=== Transpiled Generics Demo Complete ==="
+      - "=== Generics Demo Complete ==="
 tests:
   sample.transpiled_generics:
     tags: transpiled generics

@@ -1115,9 +1115,16 @@ def _emit_expr(node: dict, out: StringIO, ctx: _EmitCtx) -> None:
         return
 
     if kind == "PseudoObjectExpr":
+        # ObjC subscript: inner[0] is ObjCSubscriptRefExpr (syntactic),
+        # last ObjCMessageExpr child is the lowered call.
         inner = node.get("inner", [])
         if inner:
-            _emit_expr(inner[0], out, ctx)
+            msg = None
+            for child in reversed(inner):
+                if child.get("kind") == "ObjCMessageExpr":
+                    msg = child
+                    break
+            _emit_expr(msg if msg else inner[0], out, ctx)
         return
 
     if kind == "OpaqueValueExpr":

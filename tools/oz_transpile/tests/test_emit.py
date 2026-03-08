@@ -1871,3 +1871,105 @@ class TestStaticVarEmission:
         proto = _method_prototype(cls, m)
         assert "void (*block)" in proto
         assert "struct OZObject *" in proto
+
+    def test_pseudo_object_expr_indexed_subscript(self):
+        """PseudoObjectExpr for array subscript emits objectAtIndexedSubscript: call."""
+        m = _simple_module()
+        m.classes["OZArray"] = OZClass(
+            "OZArray", superclass="OZObject",
+            methods=[
+                OZMethod("objectAtIndexedSubscript:", OZType("id"),
+                         params=[OZParam("index", OZType("unsigned int"))],
+                         body_ast={"kind": "CompoundStmt", "inner": []}),
+            ],
+        )
+        m.classes["OZLed"].methods.append(
+            OZMethod("test", OZType("void"), body_ast={
+                "kind": "CompoundStmt",
+                "inner": [{
+                    "kind": "DeclStmt",
+                    "inner": [{
+                        "kind": "VarDecl",
+                        "name": "first",
+                        "type": {"qualType": "id"},
+                        "inner": [{
+                            "kind": "PseudoObjectExpr",
+                            "type": {"qualType": "id"},
+                            "inner": [
+                                {"kind": "ObjCSubscriptRefExpr",
+                                 "type": {"qualType": "id"},
+                                 "inner": [
+                                     {"kind": "OpaqueValueExpr",
+                                      "type": {"qualType": "OZArray *"},
+                                      "inner": [
+                                          {"kind": "ImplicitCastExpr",
+                                           "type": {"qualType": "OZArray *"},
+                                           "inner": [
+                                               {"kind": "DeclRefExpr",
+                                                "referencedDecl": {"name": "arr"},
+                                                "type": {"qualType": "OZArray *"}},
+                                           ]},
+                                      ]},
+                                     {"kind": "OpaqueValueExpr",
+                                      "type": {"qualType": "unsigned int"},
+                                      "inner": [
+                                          {"kind": "IntegerLiteral",
+                                           "value": "0",
+                                           "type": {"qualType": "unsigned int"}},
+                                      ]},
+                                 ]},
+                                {"kind": "OpaqueValueExpr",
+                                 "type": {"qualType": "OZArray *"},
+                                 "inner": [
+                                     {"kind": "ImplicitCastExpr",
+                                      "type": {"qualType": "OZArray *"},
+                                      "inner": [
+                                          {"kind": "DeclRefExpr",
+                                           "referencedDecl": {"name": "arr"},
+                                           "type": {"qualType": "OZArray *"}},
+                                      ]},
+                                 ]},
+                                {"kind": "OpaqueValueExpr",
+                                 "type": {"qualType": "unsigned int"},
+                                 "inner": [
+                                     {"kind": "IntegerLiteral",
+                                      "value": "0",
+                                      "type": {"qualType": "unsigned int"}},
+                                 ]},
+                                {"kind": "ObjCMessageExpr",
+                                 "selector": "objectAtIndexedSubscript:",
+                                 "type": {"qualType": "id"},
+                                 "inner": [
+                                     {"kind": "OpaqueValueExpr",
+                                      "type": {"qualType": "OZArray *"},
+                                      "inner": [
+                                          {"kind": "ImplicitCastExpr",
+                                           "type": {"qualType": "OZArray *"},
+                                           "inner": [
+                                               {"kind": "DeclRefExpr",
+                                                "referencedDecl": {"name": "arr"},
+                                                "type": {"qualType": "OZArray *"}},
+                                           ]},
+                                      ]},
+                                     {"kind": "ImplicitCastExpr",
+                                      "type": {"qualType": "unsigned int"},
+                                      "inner": [
+                                          {"kind": "OpaqueValueExpr",
+                                           "type": {"qualType": "unsigned int"},
+                                           "inner": [
+                                               {"kind": "IntegerLiteral",
+                                                "value": "0",
+                                                "type": {"qualType": "unsigned int"}},
+                                           ]},
+                                      ]},
+                                 ]},
+                            ],
+                        }],
+                    }],
+                }],
+            })
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            src = open(os.path.join(tmpdir, "OZLed.c")).read()
+            assert "OZArray_objectAtIndexedSubscript_" in src

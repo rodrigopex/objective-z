@@ -9,7 +9,7 @@
 #import "OZObject.h"
 #import "Iterator+Protocol.h"
 
-@interface OZDictionary : OZObject <IteratorProtocol> {
+@interface OZDictionary<__covariant KeyType, __covariant ObjectType> : OZObject <IteratorProtocol> {
 	id *_keys;
 	id *_values;
 	unsigned int _count;
