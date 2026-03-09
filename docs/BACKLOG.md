@@ -42,7 +42,89 @@
 - [x] Benchmarks: C++, Rust, Zig, C3 (dispatch + memory comparisons)
 - [x] `compile_commands.json` support for ObjC files
 
-## v0.4.0 — CoreZephyr (CZ prefix)
+## v0.4.0 — Transpiler Testing & Platform Abstraction
+
+### Phase 0 — Platform Abstraction Layer (PAL)
+
+Decouple transpiler-generated C from Zephyr so output compiles on any POSIX host. Zero-cost: all PAL functions are `static inline`, vanish at `-O1+`.
+
+- [ ] Assess existing runtime test suites (Bucket A/B/C classification)
+  - [ ] `test/ASSESSMENT.md` with every test file classified
+  - [ ] Rename `tests/` → `tests/objc-reference/` with README
+- [ ] Create PAL headers (`include/oz/platform/`)
+  - [ ] `oz_platform_types.h` — return codes, shared types (no Zephyr/POSIX includes)
+  - [ ] `oz_platform_host.h` — malloc slab, C11 atomics, printf
+  - [ ] `oz_platform_zephyr.h` — k_mem_slab, Zephyr atomics, printk pass-through
+  - [ ] `oz_platform.h` — ifdef router (`OZ_PLATFORM_ZEPHYR` / `OZ_PLATFORM_HOST`)
+- [ ] Update `emit.py` to use PAL
+  - [ ] Replace all `#include <zephyr/...>` with `#include "oz/platform/oz_platform.h"`
+  - [ ] Replace `K_MEM_SLAB_DEFINE` → `OZ_SLAB_DEFINE`, `k_mem_slab_*` → `oz_slab_*`
+  - [ ] Replace `atomic_*` → `oz_atomic_*`, `printk` → `oz_platform_print`
+  - [ ] Generated code compiles with `-DOZ_PLATFORM_HOST` on host
+  - [ ] Generated code still compiles with `-DOZ_PLATFORM_ZEPHYR` in Zephyr build
+- [ ] Smoke test: transpile → compile → run on host, print output, exit 0
+- [ ] Zero-cost verification: `objdump` confirms no `oz_` symbols in Zephyr binary
+
+### Phase 1 — Test Infrastructure (Golden-File Tests)
+
+Golden-file tests for transpiler output stability. Each test = `.m` input + expected `.c`/`.h` output.
+
+- [ ] Vendor Unity test framework (`test/lib/unity/`)
+- [ ] Create golden-file test runner (`test/runner.py`)
+  - [ ] pytest-compatible, discovers `test/golden/` subdirectories
+  - [ ] `--update-golden` flag to regenerate expected files
+  - [ ] Error tests via `config.json` (`expect_error`, `expected_stderr`)
+- [ ] Create 12–15 golden tests
+  - [ ] `empty_class`, `class_with_method`, `class_with_property`
+  - [ ] `simple_inheritance`, `protocol_conformance`
+  - [ ] `message_send_static`, `message_send_protocol`
+  - [ ] `retain_release`, `nil_receiver`, `singleton_pattern`
+  - [ ] `category_merge`, `multiple_args`
+  - [ ] Error tests: `error_unsupported_feature`, `error_missing_method`
+- [ ] justfile targets: `test-golden`, `update-golden`, `smoke`
+- [ ] `test/golden/README.md` documenting workflow
+
+### Phase 2 — Compiled Behavior Tests
+
+Verify transpiled C executes correctly on host via Unity assertions. Transpile → compile → run pipeline.
+
+- [ ] Create behavior test orchestrator (`test/tools/compile_and_run.py`, `gen_test_main.py`)
+- [ ] Lifecycle tests (5): alloc, init, dealloc/slab-free, ENOMEM, double-release guard
+- [ ] Static dispatch tests (5): correct routing, super, override, inherited, class method
+- [ ] Protocol dispatch tests (4): switch routing, multiple conformance, protocol inheritance, typed var
+- [ ] Memory management tests (5): retain inc, release dec, free-at-zero, nested, retainCount
+- [ ] Property tests (5): getter/setter, dot syntax, readonly, strong vs assign, override
+- [ ] Edge case tests (4): nil-returns-zero, multiple args, empty class, deep inheritance
+- [ ] Compiler matrix: GCC + Clang × O0 + O2
+- [ ] Sanitizer support: ASan + UBSan
+
+### Phase 3 — CI Pipeline, Coverage & Upstream Tests
+
+Automate all tests in GitHub Actions, add coverage, adapt upstream LLVM/GNUstep tests.
+
+- [ ] GitHub Actions CI pipeline (`.github/workflows/ci.yml`)
+  - [ ] Python tests (transpiler + golden files) with coverage
+  - [ ] Behavior tests (compiler matrix: GCC/Clang × O0/O2)
+  - [ ] Sanitizer job (ASan + UBSan)
+  - [ ] C coverage (gcov + Codecov)
+- [ ] Error/negative tests (8–10): blocks, try/catch, dynamic typing, KVO, forward invocation, circular inheritance, etc.
+- [ ] Regression test infrastructure (`test/golden/regression/`, `test/behavior/cases/regression/`)
+- [ ] Adapt 5 LLVM/Clang Rewriter tests (`test/adapted/llvm_rewriter/`)
+- [ ] Adapt 5 GNUstep libobjc2 tests (`test/adapted/gnustep/`)
+- [ ] Apple objc4 spec-derived behavioral tests (2–3, `test/adapted/apple_spec/`)
+
+### Phase 4 — Zephyr Integration Tests
+
+Validate transpiled C on real Zephyr kernel via `native_sim` + `ztest` + `twister`.
+
+- [ ] Zephyr test project structure (`tests/zephyr/`, CMake, prj.conf, testcase.yaml)
+- [ ] Transpile test classes into `tests/zephyr/generated/`
+- [ ] Write 12+ ztest cases across 4 suites (lifecycle, dispatch, memory, protocol)
+- [ ] Zephyr CI job (`native_sim` + twister)
+- [ ] Hardware build-verification job (compile-only for Cortex-M, PAL inlining check)
+- [ ] Generated file freshness check in CI
+
+## v0.5.0 — CoreZephyr (CZ prefix)
 
 - [ ] CoreZephyr module wrapping Zephyr drivers as ObjC classes
   - [ ] CZInput
