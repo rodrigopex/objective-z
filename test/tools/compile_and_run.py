@@ -9,6 +9,7 @@ import glob
 import hashlib
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -25,6 +26,7 @@ POOL_RE = re.compile(r"/\*\s*oz-pool:\s*(.+?)\s*\*/")
 LLVM_SEARCH_PATHS = [
     Path("/opt/homebrew/opt/llvm/bin"),
     Path("/usr/local/opt/llvm/bin"),
+    Path("/usr/bin"),
 ]
 
 
@@ -65,7 +67,9 @@ def _find_test_file(m_path: Path) -> Path | None:
     return test_c if test_c.exists() else None
 
 
-def run_pipeline(m_path: Path, opt: str = "O0", sanitize: bool = False,
+def run_pipeline(m_path: Path, opt: str = "O0", sanitize: str | None = None,
+                 compiler: str = "gcc", cflags: str = "",
+                 ldflags: str = "",
                  keep_tmp: bool = False) -> subprocess.CompletedProcess:
     """Run the full transpile → compile → execute pipeline."""
     m_path = m_path.resolve()
@@ -79,14 +83,17 @@ def run_pipeline(m_path: Path, opt: str = "O0", sanitize: bool = False,
     tmpdir = Path(tempfile.mkdtemp(prefix=f"oz_btest_{h}_"))
 
     try:
-        return _run_pipeline_inner(m_path, test_file, tmpdir, opt, sanitize)
+        return _run_pipeline_inner(m_path, test_file, tmpdir, opt, sanitize,
+                                   compiler, cflags, ldflags)
     finally:
         if not keep_tmp:
             shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 def _run_pipeline_inner(m_path: Path, test_file: Path, tmpdir: Path,
-                        opt: str, sanitize: bool) -> subprocess.CompletedProcess:
+                        opt: str, sanitize: str | None,
+                        compiler: str = "gcc", cflags: str = "",
+                        ldflags: str = "") -> subprocess.CompletedProcess:
     llvm_clang = _find_llvm_clang()
     ast_json = tmpdir / "input.ast.json"
 
@@ -146,16 +153,20 @@ def _run_pipeline_inner(m_path: Path, test_file: Path, tmpdir: Path,
     all_sources = c_files + [str(test_file), str(UNITY_DIR / "unity.c")]
     test_bin = tmpdir / "test_bin"
 
-    cc_flags = ["clang", "-std=c11", f"-{opt}",
+    cc_flags = [compiler, "-std=c11", f"-{opt}",
                 "-Wall", "-Werror", "-Wno-unused-function",
                 "-DOZ_PLATFORM_HOST",
                 "-I", str(tmpdir),
                 "-I", str(PAL_INC),
                 "-I", str(UNITY_DIR)]
     if sanitize:
-        cc_flags.extend(["-fsanitize=address,undefined",
+        cc_flags.extend([f"-fsanitize={sanitize}",
                          "-fno-omit-frame-pointer"])
+    if cflags:
+        cc_flags.extend(shlex.split(cflags))
     cc_flags.extend(all_sources)
+    if ldflags:
+        cc_flags.extend(shlex.split(ldflags))
     cc_flags.extend(["-o", str(test_bin)])
 
     result = subprocess.run(cc_flags, capture_output=True, text=True)
@@ -180,14 +191,22 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("m_file", help="Path to the .m test file")
     p.add_argument("--opt", default="O0", choices=["O0", "O2"],
                    help="Optimization level (default: O0)")
-    p.add_argument("--sanitize", action="store_true",
-                   help="Enable ASan + UBSan")
+    p.add_argument("--compiler", default="gcc", choices=["gcc", "clang"],
+                   help="C compiler for generated code (default: gcc)")
+    p.add_argument("--sanitize", default=None,
+                   help="Sanitizers to enable (e.g. address,undefined)")
+    p.add_argument("--cflags", default="",
+                   help="Extra compiler flags (space-separated)")
+    p.add_argument("--ldflags", default="",
+                   help="Extra linker flags (space-separated)")
     p.add_argument("--keep-tmp", action="store_true",
                    help="Keep temporary build directory")
     args = p.parse_args(argv)
 
     result = run_pipeline(Path(args.m_file), opt=args.opt,
-                          sanitize=args.sanitize, keep_tmp=args.keep_tmp)
+                          sanitize=args.sanitize, compiler=args.compiler,
+                          cflags=args.cflags, ldflags=args.ldflags,
+                          keep_tmp=args.keep_tmp)
     if result.stdout:
         print(result.stdout, end="")
     if result.stderr:

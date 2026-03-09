@@ -1,0 +1,4 @@
+{
+  "expect_error": true,
+  "expected_stderr": "duplicate instance method 'doWork' in 'Widget'"
+}

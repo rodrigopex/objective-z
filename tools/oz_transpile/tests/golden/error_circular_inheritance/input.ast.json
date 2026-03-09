@@ -1,0 +1,29 @@
+{
+  "kind": "TranslationUnitDecl",
+  "inner": [
+    {
+      "kind": "ObjCInterfaceDecl",
+      "name": "ClassA",
+      "super": {"name": "ClassB"},
+      "inner": []
+    },
+    {
+      "kind": "ObjCImplementationDecl",
+      "name": "ClassA",
+      "super": {"name": "ClassB"},
+      "inner": []
+    },
+    {
+      "kind": "ObjCInterfaceDecl",
+      "name": "ClassB",
+      "super": {"name": "ClassA"},
+      "inner": []
+    },
+    {
+      "kind": "ObjCImplementationDecl",
+      "name": "ClassB",
+      "super": {"name": "ClassA"},
+      "inner": []
+    }
+  ]
+}

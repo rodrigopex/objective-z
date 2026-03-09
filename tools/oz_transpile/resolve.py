@@ -10,6 +10,7 @@ from .model import DispatchKind, OZModule
 def resolve(module: OZModule) -> None:
     """Resolve hierarchy, assign class IDs, classify dispatch."""
     _validate_hierarchy(module)
+    _check_duplicate_methods(module)
     _assign_class_ids(module)
     _compute_base_depths(module)
     _classify_dispatch(module)
@@ -35,6 +36,19 @@ def _validate_hierarchy(module: OZModule) -> None:
             visited.add(cur)
             parent = module.classes.get(cur)
             cur = parent.superclass if parent else None
+
+
+def _check_duplicate_methods(module: OZModule) -> None:
+    """Check for duplicate method selectors within the same class."""
+    for cls in module.classes.values():
+        seen: dict[str, str] = {}  # selector -> "instance" or "class"
+        for m in cls.methods:
+            kind = "class" if m.is_class_method else "instance"
+            key = f"{kind}:{m.selector}"
+            if key in seen:
+                module.errors.append(
+                    f"duplicate {kind} method '{m.selector}' in '{cls.name}'")
+            seen[key] = kind
 
 
 def _assign_class_ids(module: OZModule) -> None:

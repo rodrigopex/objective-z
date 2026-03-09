@@ -1,0 +1,4 @@
+{
+  "expect_error": true,
+  "expected_stderr": "'forwardInvocation:' is not supported"
+}
