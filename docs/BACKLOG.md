@@ -89,17 +89,19 @@ Golden-file snapshot tests for transpiler output stability. Each test = hand-cra
 
 ### Phase 2 — Compiled Behavior Tests
 
-Verify transpiled C executes correctly on host via Unity assertions. Transpile → compile → run pipeline.
+Verify transpiled C executes correctly on host via Unity assertions. Transpile → compile → run pipeline. AST dump via Homebrew LLVM with `-fobjc-runtime=gnustep-2.0 --target=arm-none-eabi`.
 
-- [ ] Create behavior test orchestrator (`test/tools/compile_and_run.py`, `gen_test_main.py`)
-- [ ] Lifecycle tests (5): alloc, init, dealloc/slab-free, ENOMEM, double-release guard
-- [ ] Static dispatch tests (5): correct routing, super, override, inherited, class method
-- [ ] Protocol dispatch tests (4): switch routing, multiple conformance, protocol inheritance, typed var
-- [ ] Memory management tests (5): retain inc, release dec, free-at-zero, nested, retainCount
-- [ ] Property tests (5): getter/setter, dot syntax, readonly, strong vs assign, override
-- [ ] Edge case tests (4): nil-returns-zero, multiple args, empty class, deep inheritance
-- [ ] Compiler matrix: GCC + Clang × O0 + O2
-- [ ] Sanitizer support: ASan + UBSan
+- [x] Vendor Unity 2.6.0 (`test/lib/unity/`)
+- [x] Create behavior test orchestrator (`test/tools/compile_and_run.py`, `gen_test_main.py`)
+- [x] Create `OZTestBase.h` — minimal OZObject for Clang AST parsing
+- [x] Lifecycle tests (5): alloc, init, dealloc/slab-free, ENOMEM, double-release guard
+- [x] Static dispatch tests (5): correct routing, super, override, inherited, class method
+- [x] Protocol dispatch tests (4): switch routing, multiple conformance, protocol inheritance, typed var
+- [x] Memory management tests (5): retain inc, release dec, free-at-zero, nested, retainCount
+- [x] Property tests (5): getter/setter, dot syntax, readonly, strong vs assign, override
+- [x] Edge case tests (4): nil-returns-zero, multiple args, empty class, deep inheritance
+- [x] justfile target: `test-behavior` (28 tests, clang/O0)
+- Sanitizer support: `--sanitize` flag ready, full matrix deferred to Phase 3 CI
 
 ### Phase 3 — CI Pipeline, Coverage & Upstream Tests
 
