@@ -30,13 +30,13 @@ monitor:
     tio {{ tty }}
 
 test:
-    west twister -T samples/ -T tests/ -p {{ board }} -O /tmp/twister-out
+    west twister -T samples/ -T tests/objc-reference/ -p {{ board }} -O /tmp/twister-out
 
 test-riscv:
-    west twister -T samples/ -T tests/ -p {{ riscv_board }} -O /tmp/twister-out
+    west twister -T samples/ -T tests/objc-reference/ -p {{ riscv_board }} -O /tmp/twister-out
 
 test-all:
-    west twister -T samples/ -T tests/ -p {{ board }} -p {{ riscv_board }} -O /tmp/twister-out
+    west twister -T samples/ -T tests/objc-reference/ -p {{ board }} -p {{ riscv_board }} -O /tmp/twister-out
 
 bench:
     west build -p -b {{ board }} benchmarks/objc && west build -t run
@@ -83,3 +83,6 @@ transpile *args:
 
 test-transpiler:
     python3 -m pytest tools/oz_transpile/tests/ -v
+
+smoke:
+    python3 test/smoke/run.py

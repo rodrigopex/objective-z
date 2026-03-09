@@ -4,10 +4,6 @@
 {% if has_functions_header %}
 #include "oz_functions.h"
 {% endif %}
-{% if is_root %}
-#include <zephyr/sys/atomic.h>
-#include <zephyr/sys/printk.h>
-{% endif %}
 
 {% for sc in string_constants %}
 {{ sc }}
