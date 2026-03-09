@@ -1,0 +1,82 @@
+{
+  "kind": "TranslationUnitDecl",
+  "inner": [
+    {
+      "kind": "ObjCInterfaceDecl",
+      "name": "OZObject",
+      "inner": []
+    },
+    {
+      "kind": "ObjCImplementationDecl",
+      "name": "OZObject",
+      "inner": [
+        {
+          "kind": "ObjCMethodDecl",
+          "name": "init",
+          "returnType": {"qualType": "instancetype"},
+          "inner": [
+            {
+              "kind": "CompoundStmt",
+              "inner": [
+                {
+                  "kind": "ReturnStmt",
+                  "inner": [
+                    {
+                      "kind": "DeclRefExpr",
+                      "referencedDecl": {"name": "self"},
+                      "type": {"qualType": "OZObject *"}
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "kind": "ObjCInterfaceDecl",
+      "name": "Observer",
+      "super": {"name": "OZObject"},
+      "inner": []
+    },
+    {
+      "kind": "ObjCImplementationDecl",
+      "name": "Observer",
+      "super": {"name": "OZObject"},
+      "inner": [
+        {
+          "kind": "ObjCMethodDecl",
+          "name": "observeValueForKeyPath:ofObject:change:context:",
+          "returnType": {"qualType": "void"},
+          "inner": [
+            {
+              "kind": "ParmVarDecl",
+              "name": "keyPath",
+              "type": {"qualType": "id"}
+            },
+            {
+              "kind": "ParmVarDecl",
+              "name": "object",
+              "type": {"qualType": "id"}
+            },
+            {
+              "kind": "ParmVarDecl",
+              "name": "change",
+              "type": {"qualType": "id"}
+            },
+            {
+              "kind": "ParmVarDecl",
+              "name": "context",
+              "type": {"qualType": "void *"}
+            },
+            {
+              "kind": "CompoundStmt",
+              "inner": []
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

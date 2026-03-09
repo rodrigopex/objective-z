@@ -1,0 +1,4 @@
+{
+  "expect_error": true,
+  "expected_stderr": "@try/@catch/@finally is not supported"
+}

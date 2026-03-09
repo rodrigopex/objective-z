@@ -87,6 +87,14 @@ test-transpiler:
 test-behavior:
     python3 -m pytest test/behavior/ -v
 
+test-adapted:
+    python3 -m pytest test/adapted/ -v
+
+test-all-transpiler:
+    just test-transpiler
+    just test-behavior
+    just test-adapted
+
 smoke:
     python3 test/smoke/run.py
 

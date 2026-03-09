@@ -163,3 +163,4 @@ class OZModule:
     verbatim_lines: list[str] = field(default_factory=list)
     type_defs: dict[str, str] = field(default_factory=dict)
     diagnostics: list[str] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)

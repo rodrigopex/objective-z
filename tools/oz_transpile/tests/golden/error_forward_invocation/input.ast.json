@@ -1,0 +1,67 @@
+{
+  "kind": "TranslationUnitDecl",
+  "inner": [
+    {
+      "kind": "ObjCInterfaceDecl",
+      "name": "OZObject",
+      "inner": []
+    },
+    {
+      "kind": "ObjCImplementationDecl",
+      "name": "OZObject",
+      "inner": [
+        {
+          "kind": "ObjCMethodDecl",
+          "name": "init",
+          "returnType": {"qualType": "instancetype"},
+          "inner": [
+            {
+              "kind": "CompoundStmt",
+              "inner": [
+                {
+                  "kind": "ReturnStmt",
+                  "inner": [
+                    {
+                      "kind": "DeclRefExpr",
+                      "referencedDecl": {"name": "self"},
+                      "type": {"qualType": "OZObject *"}
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "kind": "ObjCInterfaceDecl",
+      "name": "Proxy",
+      "super": {"name": "OZObject"},
+      "inner": []
+    },
+    {
+      "kind": "ObjCImplementationDecl",
+      "name": "Proxy",
+      "super": {"name": "OZObject"},
+      "inner": [
+        {
+          "kind": "ObjCMethodDecl",
+          "name": "forwardInvocation:",
+          "returnType": {"qualType": "void"},
+          "inner": [
+            {
+              "kind": "ParmVarDecl",
+              "name": "invocation",
+              "type": {"qualType": "id"}
+            },
+            {
+              "kind": "CompoundStmt",
+              "inner": []
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -15,6 +15,20 @@ from .model import (OZClass, OZFunction, OZIvar, OZMethod, OZModule, OZParam,
 
 SKIP_CLASSES = frozenset({"Protocol"})
 
+_UNSUPPORTED_METHOD_SELECTORS = frozenset({
+    "forwardInvocation:",
+    "addObserver:forKeyPath:options:context:",
+    "removeObserver:forKeyPath:",
+    "removeObserver:forKeyPath:context:",
+    "observeValueForKeyPath:ofObject:change:context:",
+    "willChangeValueForKey:",
+    "didChangeValueForKey:",
+})
+
+_UNSUPPORTED_AST_KINDS = frozenset({
+    "ObjCAtTryStmt",
+})
+
 
 def merge_modules(modules: list[OZModule]) -> OZModule:
     """Merge multiple OZModules into one, combining class data."""
@@ -48,6 +62,7 @@ def merge_modules(modules: list[OZModule]) -> OZModule:
                 merged.verbatim_lines.append(line)
         merged.type_defs.update(m.type_defs)
         merged.diagnostics.extend(m.diagnostics)
+        merged.errors.extend(m.errors)
     return merged
 
 
@@ -59,6 +74,7 @@ def collect(ast_root: dict) -> OZModule:
     for name in SKIP_CLASSES:
         module.classes.pop(name, None)
     _collect_verbatim_lines(ast_root, module)
+    _check_unsupported_features(ast_root, module)
     return module
 
 
@@ -265,6 +281,11 @@ def _collect_implementation(node: dict, module: OZModule) -> None:
                 continue
             method = _collect_method(child)
             if method:
+                if method.selector in _UNSUPPORTED_METHOD_SELECTORS:
+                    module.errors.append(
+                        f"'{method.selector}' is not supported "
+                        f"(class '{name}')")
+                    continue
                 if method.body_ast:
                     _collect_block_vars(method.body_ast, module)
                 cls.methods.append(method)
@@ -416,6 +437,22 @@ def _collect_block_vars(node: dict, module: OZModule) -> None:
                                               init_value=init_value))
     for child in node.get("inner", []):
         _collect_block_vars(child, module)
+
+
+def _check_unsupported_features(ast_root: dict, module: OZModule) -> None:
+    """Scan AST for unsupported language features and report errors."""
+    _scan_unsupported(ast_root, module)
+
+
+def _scan_unsupported(node: dict, module: OZModule) -> None:
+    """Recursively scan for unsupported AST node kinds."""
+    kind = node.get("kind", "")
+    if kind in _UNSUPPORTED_AST_KINDS:
+        module.errors.append(
+            "@try/@catch/@finally is not supported")
+        return
+    for child in node.get("inner", []):
+        _scan_unsupported(child, module)
 
 
 _TS_LANG = Language(tsobjc.language())

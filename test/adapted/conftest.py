@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 #
-# conftest.py - Pytest fixtures for behavior tests.
+# conftest.py - Pytest fixtures for adapted upstream tests.
+# Reuses the same compile_and_run pipeline as behavior tests.
 
 from __future__ import annotations
 
@@ -12,13 +13,13 @@ import sys
 import pytest
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
-CASES_DIR = pathlib.Path(__file__).parent / "cases"
+ADAPTED_DIR = pathlib.Path(__file__).parent
 COMPILE_AND_RUN = REPO_ROOT / "test" / "tools" / "compile_and_run.py"
 
 
-def discover_behavior_tests(category: str | None = None):
-    """Find all .m files under cases/, optionally filtered by category."""
-    for m_file in sorted(CASES_DIR.rglob("*.m")):
+def discover_adapted_tests(category: str | None = None):
+    """Find all .m files under adapted test dirs."""
+    for m_file in sorted(ADAPTED_DIR.rglob("*.m")):
         cat = m_file.parent.name
         if category and cat != category:
             continue

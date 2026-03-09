@@ -1,0 +1,4 @@
+{
+  "expect_error": true,
+  "expected_stderr": "'observeValueForKeyPath:ofObject:change:context:' is not supported"
+}

@@ -1,0 +1,123 @@
+# SPDX-License-Identifier: Apache-2.0
+name: Transpiler CI
+
+on:
+  push:
+    branches: [main, feature/transpiler]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # Python tests (transpiler unit + golden tests)
+  python-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install pytest pytest-cov jinja2
+
+      - name: Run transpiler tests with coverage
+        run: >
+          PYTHONPATH=tools
+          python3 -m pytest tools/oz_transpile/tests/ -v
+          --cov=oz_transpile --cov-report=xml
+
+      - name: Upload Python coverage
+        uses: codecov/codecov-action@v4
+        with:
+          files: coverage.xml
+          flags: python
+          fail_ci_if_error: false
+
+  # Behavior tests — compiler × optimization matrix
+  behavior-tests:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        compiler: [gcc, clang]
+        opt: [O0, O2]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y clang llvm
+
+      - name: Install Python dependencies
+        run: pip install pytest jinja2
+
+      - name: Run behavior tests
+        run: >
+          PYTHONPATH=tools
+          python3 -m pytest test/behavior/ -v
+          --compiler=${{ matrix.compiler }}
+          --opt=${{ matrix.opt }}
+
+  # Sanitizer run (ASan + UBSan)
+  sanitizers:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y clang llvm
+
+      - name: Install Python dependencies
+        run: pip install pytest jinja2
+
+      - name: Run with AddressSanitizer + UBSan
+        run: >
+          PYTHONPATH=tools
+          python3 -m pytest test/behavior/ -v
+          --compiler=gcc
+          --opt=O0
+          --sanitize=address,undefined
+
+  # C coverage (gcov)
+  c-coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang llvm gcovr
+
+      - name: Install Python dependencies
+        run: pip install pytest jinja2
+
+      - name: Run behavior tests with coverage
+        run: >
+          PYTHONPATH=tools
+          python3 -m pytest test/behavior/ -v
+          --compiler=gcc
+          --opt=O0
+          --cflags='--coverage'
+          --ldflags='--coverage'
+
+      - name: Generate C coverage report
+        run: gcovr --xml -o c_coverage.xml --filter='.*\.c'
+
+      - name: Upload C coverage
+        uses: codecov/codecov-action@v4
+        with:
+          files: c_coverage.xml
+          flags: c-transpiled
+          fail_ci_if_error: false

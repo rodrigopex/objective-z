@@ -7,6 +7,7 @@
 # against actual output. Mismatch produces a unified diff.
 
 import difflib
+import io
 import os
 import tempfile
 
@@ -28,13 +29,27 @@ def test_golden(golden_case):
 
     extra_flags = cfg.get("flags", [])
     expect_error = cfg.get("expect_error", False)
+    expected_stderr = cfg.get("expected_stderr", None)
 
     with tempfile.TemporaryDirectory() as tmpdir:
         argv = ["--input", ast_file, "--outdir", tmpdir] + extra_flags
-        rc = main(argv)
+
+        captured_stderr = io.StringIO()
+        import sys
+        old_stderr = sys.stderr
+        sys.stderr = captured_stderr
+        try:
+            rc = main(argv)
+        finally:
+            sys.stderr = old_stderr
+        stderr_text = captured_stderr.getvalue()
 
         if expect_error:
             assert rc != 0, f"{name}: expected transpiler to fail but got rc=0"
+            if expected_stderr:
+                assert expected_stderr in stderr_text, (
+                    f"{name}: expected stderr to contain '{expected_stderr}', "
+                    f"got: {stderr_text!r}")
             return
 
         assert rc == 0, f"{name}: transpiler failed with rc={rc}"

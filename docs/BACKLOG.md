@@ -107,16 +107,19 @@ Verify transpiled C executes correctly on host via Unity assertions. Transpile �
 
 Automate all tests in GitHub Actions, add coverage, adapt upstream LLVM/GNUstep tests.
 
-- [ ] GitHub Actions CI pipeline (`.github/workflows/ci.yml`)
-  - [ ] Python tests (transpiler + golden files) with coverage
-  - [ ] Behavior tests (compiler matrix: GCC/Clang × O0/O2)
-  - [ ] Sanitizer job (ASan + UBSan)
-  - [ ] C coverage (gcov + Codecov)
-- [ ] Error/negative tests (8–10): blocks, try/catch, dynamic typing, KVO, forward invocation, circular inheritance, etc.
-- [ ] Regression test infrastructure (`test/golden/regression/`, `test/behavior/cases/regression/`)
-- [ ] Adapt 5 LLVM/Clang Rewriter tests (`test/adapted/llvm_rewriter/`)
-- [ ] Adapt 5 GNUstep libobjc2 tests (`test/adapted/gnustep/`)
-- [ ] Apple objc4 spec-derived behavioral tests (2–3, `test/adapted/apple_spec/`)
+- [x] GitHub Actions CI pipeline (`.github/workflows/ci.yml`)
+  - [x] Python tests (transpiler + golden files) with coverage
+  - [x] Behavior tests (compiler matrix: GCC/Clang × O0/O2)
+  - [x] Sanitizer job (ASan + UBSan)
+  - [x] C coverage (gcov + Codecov)
+- [x] Error/negative tests (5 golden + 2 runtime): try/catch, KVO, forward invocation, circular inheritance, duplicate method
+- [x] Transpiler feature rejection: `module.errors` for hard errors, `--strict` for warnings
+- [x] Regression test infrastructure (`tools/oz_transpile/tests/golden/regression/`, `test/behavior/cases/regression/`)
+- [x] Adapt 5 LLVM/Clang Rewriter tests (`test/adapted/llvm_rewriter/`)
+- [x] Adapt 5 GNUstep libobjc2 tests (`test/adapted/gnustep/`)
+- [x] Apple objc4 spec-derived behavioral tests (2, `test/adapted/apple_spec/`)
+- [x] Extended `compile_and_run.py`: `--compiler`, `--cflags`, `--ldflags`, string `--sanitize`
+- [x] justfile targets: `test-adapted`, `test-all-transpiler`
 
 ### Phase 4 — Zephyr Integration Tests
 

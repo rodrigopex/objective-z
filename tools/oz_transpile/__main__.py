@@ -60,7 +60,17 @@ def main(argv: list[str] | None = None) -> int:
         modules.append(collect(ast_root))
 
     module = merge_modules(modules) if len(modules) > 1 else modules[0]
-    resolve(module)
+
+    try:
+        resolve(module)
+    except ValueError as e:
+        print(f"oz_transpile: error: {e}", file=sys.stderr)
+        return 1
+
+    if module.errors:
+        for e in module.errors:
+            print(f"oz_transpile: error: {e}", file=sys.stderr)
+        return 1
 
     if args.verbose:
         for d in module.diagnostics:
