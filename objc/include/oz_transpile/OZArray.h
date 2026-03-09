@@ -9,6 +9,8 @@
 #import "OZObject.h"
 #import "Iterator+Protocol.h"
 
+struct NSFastEnumerationState;
+
 @interface OZArray<__covariant ObjectType> : OZObject <IteratorProtocol> {
 	id *_items;
 	unsigned int _count;
@@ -22,6 +24,9 @@
 - (id)objectAtIndex:(unsigned int)index;
 - (id)objectAtIndexedSubscript:(unsigned int)index;
 - (void)enumerateObjectsUsingBlock:(void (^)(id obj, unsigned int idx, BOOL *stop))block;
+- (unsigned long)countByEnumeratingWithState:(struct NSFastEnumerationState *)state
+				     objects:(__unsafe_unretained id *)stackbuf
+				       count:(unsigned long)len;
 - (int)cDescription:(char *)buf maxLength:(int)maxLen;
 - (instancetype)iter;
 - (id)next;

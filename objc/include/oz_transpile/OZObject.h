@@ -47,6 +47,7 @@ __attribute__((objc_root_class))
 {
 	int _refcount;
 }
++ (instancetype)alloc;
 - (instancetype)init;
 - (void)dealloc;
 - (BOOL)isEqual:(id)anObject;

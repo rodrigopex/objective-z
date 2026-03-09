@@ -9,6 +9,8 @@
 #import "OZObject.h"
 #import "Iterator+Protocol.h"
 
+struct NSFastEnumerationState;
+
 @interface OZDictionary<__covariant KeyType, __covariant ObjectType> : OZObject <IteratorProtocol> {
 	id *_keys;
 	id *_values;
@@ -24,6 +26,9 @@
 - (unsigned int)count;
 - (id)objectForKey:(id)key;
 - (id)objectForKeyedSubscript:(id)key;
+- (unsigned long)countByEnumeratingWithState:(struct NSFastEnumerationState *)state
+				     objects:(__unsafe_unretained id *)stackbuf
+				       count:(unsigned long)len;
 - (int)cDescription:(char *)buf maxLength:(int)maxLen;
 - (instancetype)iter;
 - (id)next;
