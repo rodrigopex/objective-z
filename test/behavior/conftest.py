@@ -40,9 +40,9 @@ def compile_and_run(request):
         if sanitize:
             cmd.extend(["--sanitize", sanitize])
         if cflags:
-            cmd.extend(["--cflags", cflags])
+            cmd.append(f"--cflags={cflags}")
         if ldflags:
-            cmd.extend(["--ldflags", ldflags])
+            cmd.append(f"--ldflags={ldflags}")
         result = subprocess.run(
             cmd,
             capture_output=True, text=True,

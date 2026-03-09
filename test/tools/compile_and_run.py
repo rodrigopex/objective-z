@@ -31,14 +31,20 @@ LLVM_SEARCH_PATHS = [
 
 
 def _find_llvm_clang() -> str:
-    """Find Homebrew LLVM clang for AST dump (gnustep-2.0 needs ELF target)."""
+    """Find LLVM clang for AST dump. Prefers newer versioned binaries to
+    avoid Clang 18 segfault bug with gnustep-2.0 + @protocol AST dump."""
+    env_clang = os.environ.get("OZ_CLANG")
+    if env_clang and shutil.which(env_clang):
+        return env_clang
+    versioned = [f"clang-{v}" for v in range(23, 18, -1)]
     for p in LLVM_SEARCH_PATHS:
-        candidate = p / "clang"
-        if candidate.exists():
-            return str(candidate)
-    # Fallback: try PATH
-    if shutil.which("clang"):
-        return "clang"
+        for name in versioned + ["clang"]:
+            candidate = p / name
+            if candidate.exists():
+                return str(candidate)
+    for name in versioned + ["clang"]:
+        if shutil.which(name):
+            return name
     print("error: cannot find LLVM clang for AST dump", file=sys.stderr)
     sys.exit(1)
 
@@ -102,10 +108,15 @@ def _run_pipeline_inner(m_path: Path, test_file: Path, tmpdir: Path,
     if not inc_dir.is_dir():
         inc_dir = REPO_ROOT / "test" / "behavior" / "include"
 
+    oz_hdr = REPO_ROOT / "objc" / "include" / "oz_transpile"
+    oz_src = REPO_ROOT / "objc" / "src" / "oz_transpile"
+
     result = subprocess.run(
         [llvm_clang, "-Xclang", "-ast-dump=json", "-fsyntax-only",
-         "-fobjc-runtime=gnustep-2.0", "--target=arm-none-eabi",
+         "-fobjc-runtime=gnustep-2.0", "--target=x86_64-unknown-linux-gnu",
          "-I", str(inc_dir),
+         "-I", str(oz_hdr),
+         "-I", str(oz_src),
          str(m_path)],
         capture_output=True, text=True)
     if result.returncode != 0:
