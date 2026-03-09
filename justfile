@@ -86,3 +86,6 @@ test-transpiler:
 
 smoke:
     python3 test/smoke/run.py
+
+update-golden:
+    PYTHONPATH=tools python3 tools/oz_transpile/tests/golden/update.py
