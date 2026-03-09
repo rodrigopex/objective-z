@@ -35,6 +35,9 @@ test:
 test-riscv:
     west twister -T samples/ -T tests/objc-reference/ -p {{ riscv_board }} -O /tmp/twister-out
 
+test-zephyr:
+    west twister -T tests/zephyr/ -p {{ if os() == "linux" { "native_sim" } else { board } }} -O /tmp/twister-out
+
 test-all:
     west twister -T samples/ -T tests/objc-reference/ -p {{ board }} -p {{ riscv_board }} -O /tmp/twister-out
 

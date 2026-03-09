@@ -1,0 +1,7 @@
+tests:
+  oz.transpiler.zephyr:
+    platform_allow:
+      - native_sim
+      - mps2/an385
+    tags: oz transpiler
+    timeout: 60

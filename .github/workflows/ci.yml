@@ -131,3 +131,61 @@ jobs:
           files: c_coverage.xml
           flags: c-transpiled
           fail_ci_if_error: false
+
+  # Zephyr integration tests (native_sim)
+  zephyr-integration:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/zephyrproject-rtos/ci:v0.26.13
+    env:
+      ZEPHYR_SDK_INSTALL_DIR: /opt/toolchains/zephyr-sdk-0.17.4
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Initialize Zephyr workspace
+        run: |
+          west init -l .
+          west update --narrow --fetch-opt=--depth=1
+
+      - name: Build and run tests on native_sim
+        run: west twister -T tests/zephyr/ -p native_sim --inline-logs
+
+      - name: Upload twister results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: twister-results
+          path: twister-out/
+
+  # Generated file freshness check
+  generated-freshness:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install system dependencies
+        run: |
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/llvm.asc
+          echo "deb http://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-20 main" | sudo tee /etc/apt/sources.list.d/llvm-20.list
+          sudo apt-get update
+          sudo apt-get install -y clang-20
+
+      - name: Install Python dependencies
+        run: pip install jinja2 tree-sitter tree-sitter-objc
+
+      - name: Regenerate Zephyr test sources
+        run: PYTHONPATH=tools python scripts/regen_zephyr_tests.py
+
+      - name: Check for uncommitted changes
+        run: |
+          if ! git diff --quiet tests/zephyr/generated/; then
+            echo "FAIL: Transpiled test sources are stale. Run:"
+            echo "  PYTHONPATH=tools python scripts/regen_zephyr_tests.py"
+            echo "and commit the updated files."
+            git diff tests/zephyr/generated/
+            exit 1
+          fi
