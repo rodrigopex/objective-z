@@ -19,7 +19,7 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install pytest pytest-cov jinja2
+        run: pip install pytest pytest-cov jinja2 tree-sitter tree-sitter-objc
 
       - name: Run transpiler tests with coverage
         run: >
@@ -49,10 +49,14 @@ jobs:
           python-version: '3.11'
 
       - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y clang llvm
+        run: |
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/llvm.asc
+          echo "deb http://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-20 main" | sudo tee /etc/apt/sources.list.d/llvm-20.list
+          sudo apt-get update
+          sudo apt-get install -y clang-20
 
       - name: Install Python dependencies
-        run: pip install pytest jinja2
+        run: pip install pytest jinja2 tree-sitter tree-sitter-objc
 
       - name: Run behavior tests
         run: >
@@ -72,10 +76,14 @@ jobs:
           python-version: '3.11'
 
       - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y clang llvm
+        run: |
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/llvm.asc
+          echo "deb http://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-20 main" | sudo tee /etc/apt/sources.list.d/llvm-20.list
+          sudo apt-get update
+          sudo apt-get install -y clang-20
 
       - name: Install Python dependencies
-        run: pip install pytest jinja2
+        run: pip install pytest jinja2 tree-sitter tree-sitter-objc
 
       - name: Run with AddressSanitizer + UBSan
         run: >
@@ -97,11 +105,13 @@ jobs:
 
       - name: Install system dependencies
         run: |
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/llvm.asc
+          echo "deb http://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-20 main" | sudo tee /etc/apt/sources.list.d/llvm-20.list
           sudo apt-get update
-          sudo apt-get install -y clang llvm gcovr
+          sudo apt-get install -y clang-20 gcovr
 
       - name: Install Python dependencies
-        run: pip install pytest jinja2
+        run: pip install pytest jinja2 tree-sitter tree-sitter-objc
 
       - name: Run behavior tests with coverage
         run: >
@@ -109,8 +119,8 @@ jobs:
           python3 -m pytest test/behavior/ -v
           --compiler=gcc
           --opt=O0
-          --cflags='--coverage'
-          --ldflags='--coverage'
+          --cflags=--coverage
+          --ldflags=--coverage
 
       - name: Generate C coverage report
         run: gcovr --xml -o c_coverage.xml --filter='.*\.c'
