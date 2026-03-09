@@ -84,6 +84,9 @@ transpile *args:
 test-transpiler:
     python3 -m pytest tools/oz_transpile/tests/ -v
 
+test-behavior:
+    python3 -m pytest test/behavior/ -v
+
 smoke:
     python3 test/smoke/run.py
 
