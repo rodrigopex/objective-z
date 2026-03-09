@@ -31,8 +31,7 @@ LLVM_SEARCH_PATHS = [
 
 
 def _find_llvm_clang() -> str:
-    """Find LLVM clang for AST dump. Prefers newer versioned binaries to
-    avoid Clang 18 segfault bug with gnustep-2.0 + @protocol AST dump."""
+    """Find LLVM clang for AST dump."""
     env_clang = os.environ.get("OZ_CLANG")
     if env_clang and shutil.which(env_clang):
         return env_clang
@@ -104,6 +103,10 @@ def _run_pipeline_inner(m_path: Path, test_file: Path, tmpdir: Path,
     ast_json = tmpdir / "input.ast.json"
 
     # Step 1: Clang AST dump
+    # Use -fobjc-runtime=macosx because Clang 18-20 on Linux segfault in
+    # MangleContext::mangleObjCMethodName with gnustep-2.0 when JSON-dumping
+    # @protocol method declarations.  The AST structure is identical between
+    # runtimes for syntax-only parsing; only pointer IDs differ.
     inc_dir = m_path.parent.parent / "include"
     if not inc_dir.is_dir():
         inc_dir = REPO_ROOT / "test" / "behavior" / "include"
@@ -113,7 +116,7 @@ def _run_pipeline_inner(m_path: Path, test_file: Path, tmpdir: Path,
 
     result = subprocess.run(
         [llvm_clang, "-Xclang", "-ast-dump=json", "-fsyntax-only",
-         "-fobjc-runtime=gnustep-2.0", "--target=x86_64-unknown-linux-gnu",
+         "-fobjc-runtime=macosx", "--target=x86_64-unknown-linux-gnu",
          "-I", str(inc_dir),
          "-I", str(oz_hdr),
          "-I", str(oz_src),
