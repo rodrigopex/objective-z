@@ -369,7 +369,7 @@ def _emit_root_retain_release(cls: OZClass, module: OZModule,
     out.write(f"struct {cls.name} *{cls.name}_retain(struct {cls.name} *self)\n")
     out.write("{\n")
     out.write("\tif (self) {\n")
-    out.write(f"\t\tatomic_inc((atomic_t *)&self->_refcount);\n")
+    out.write(f"\t\toz_atomic_inc(&self->_refcount);\n")
     out.write("\t}\n")
     out.write("\treturn self;\n")
     out.write("}\n\n")
@@ -379,8 +379,7 @@ def _emit_root_retain_release(cls: OZClass, module: OZModule,
     out.write("\tif (!self) {\n")
     out.write("\t\treturn;\n")
     out.write("\t}\n")
-    out.write(f"\tatomic_val_t old = atomic_dec((atomic_t *)&self->_refcount);\n")
-    out.write("\tif (old == 1) {\n")
+    out.write(f"\tif (oz_atomic_dec_and_test(&self->_refcount)) {{\n")
     out.write(f"\t\tOZ_SEND_dealloc((struct {cls.name} *)self);\n")
     out.write("\t}\n")
     out.write("}\n\n")
@@ -390,7 +389,7 @@ def _emit_root_retain_release(cls: OZClass, module: OZModule,
     out.write("\tif (!self) {\n")
     out.write("\t\treturn 0;\n")
     out.write("\t}\n")
-    out.write(f"\treturn (uint32_t)atomic_get((atomic_t *)&self->_refcount);\n")
+    out.write(f"\treturn (uint32_t)oz_atomic_get(&self->_refcount);\n")
     out.write("}\n\n")
 
 
@@ -405,7 +404,7 @@ def _emit_root_introspection(cls: OZClass, out: StringIO) -> None:
     out.write(f"int {cls.name}_cDescription_maxLength_("
               f"struct {cls.name} *self, char *buf, int maxLen)\n")
     out.write("{\n")
-    out.write("\treturn snprintk(buf, (size_t)maxLen, \"<%s: %p>\",\n")
+    out.write("\treturn oz_platform_snprint(buf, (size_t)maxLen, \"<%s: %p>\",\n")
     out.write("\t\toz_class_names[self->oz_class_id], (void *)self);\n")
     out.write("}\n\n")
 
@@ -1742,7 +1741,7 @@ def _emit_collection_dealloc_array(cls: OZClass, root_class: str,
     out.write(f"\t\t{root_class}_release(self->_items[i]);\n")
     out.write(f"\t}}\n")
     out.write(f"\tif (self->_items) {{\n")
-    out.write(f"\t\tsys_mem_blocks_free_contiguous(&oz_item_pool,\n")
+    out.write(f"\t\toz_mem_blocks_free_contiguous(&oz_item_pool,\n")
     out.write(f"\t\t\tself->_items, self->_count);\n")
     out.write(f"\t}}\n")
     if not is_root:
@@ -1762,7 +1761,7 @@ def _emit_collection_dealloc_dict(cls: OZClass, root_class: str,
     out.write(f"\t\t{root_class}_release(self->_values[i]);\n")
     out.write(f"\t}}\n")
     out.write(f"\tif (self->_keys) {{\n")
-    out.write(f"\t\tsys_mem_blocks_free_contiguous(&oz_item_pool,\n")
+    out.write(f"\t\toz_mem_blocks_free_contiguous(&oz_item_pool,\n")
     out.write(f"\t\t\tself->_keys, self->_count * 2);\n")
     out.write(f"\t}}\n")
     if not is_root:

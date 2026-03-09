@@ -2,8 +2,8 @@
 #include "oz_mem_slabs.h"
 
 {% for cls in classes %}
-K_MEM_SLAB_DEFINE(oz_slab_{{ cls.name }}, sizeof(struct {{ cls.name }}), {{ cls.pool_count }}, 4);
+OZ_SLAB_DEFINE(oz_slab_{{ cls.name }}, sizeof(struct {{ cls.name }}), {{ cls.pool_count }}, 4);
 {% endfor %}
 {% if item_pool_count > 0 %}
-SYS_MEM_BLOCKS_DEFINE(oz_item_pool, sizeof(struct {{ root_class }} *), {{ item_pool_count }}, 4);
+OZ_MEM_BLOCKS_DEFINE(oz_item_pool, sizeof(struct {{ root_class }} *), {{ item_pool_count }}, 4);
 {% endif %}

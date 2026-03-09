@@ -9,6 +9,7 @@ import pytest
 from oz_transpile.__main__ import main
 
 FIXTURE_DIR = os.path.join(os.path.dirname(__file__), "fixtures")
+PAL_INCLUDE_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "include")
 
 
 class TestCLI:
@@ -70,48 +71,7 @@ class TestCLI:
             root_c = open(os.path.join(tmpdir, "OZObject.c")).read()
             assert "OZObject_retain" in root_c
             assert "OZObject_release" in root_c
-            assert "atomic_dec" in root_c
-
-
-def _create_zephyr_stubs(tmpdir: str) -> None:
-    """Create stub headers for Zephyr types used by generated C."""
-    zephyr_dir = os.path.join(tmpdir, "zephyr")
-    sys_dir = os.path.join(zephyr_dir, "sys")
-    os.makedirs(sys_dir, exist_ok=True)
-
-    with open(os.path.join(zephyr_dir, "kernel.h"), "w") as f:
-        f.write("#pragma once\n")
-        f.write("#include <stdint.h>\n#include <string.h>\n")
-        f.write("typedef int k_timeout_t;\n")
-        f.write("#define K_NO_WAIT ((k_timeout_t)0)\n")
-        f.write("struct k_mem_slab { int dummy; };\n")
-        f.write("#define K_MEM_SLAB_DEFINE(name, bsz, cnt, align) "
-                "struct k_mem_slab name\n")
-        f.write("static inline int k_mem_slab_alloc("
-                "struct k_mem_slab *s, void **p, k_timeout_t t) "
-                "{ (void)s; (void)t; *p = (void*)0; return 0; }\n")
-        f.write("static inline void k_mem_slab_free("
-                "struct k_mem_slab *s, void *p) "
-                "{ (void)s; (void)p; }\n")
-
-    with open(os.path.join(sys_dir, "atomic.h"), "w") as f:
-        f.write("#pragma once\n")
-        f.write("#include <stdint.h>\n")
-        f.write("typedef int32_t atomic_t;\n")
-        f.write("typedef int32_t atomic_val_t;\n")
-        f.write("static inline atomic_val_t atomic_inc(atomic_t *t) "
-                "{ return (*t)++; }\n")
-        f.write("static inline atomic_val_t atomic_dec(atomic_t *t) "
-                "{ atomic_val_t old = *t; (*t)--; return old; }\n")
-        f.write("static inline atomic_val_t atomic_get(atomic_t *t) "
-                "{ return *t; }\n")
-
-    with open(os.path.join(zephyr_dir, "sys", "printk.h"), "w") as f:
-        f.write("#pragma once\n")
-        f.write("#include <stddef.h>\n")
-        f.write("static inline void printk(const char *fmt, ...) { (void)fmt; }\n")
-        f.write("static inline int snprintk(char *buf, size_t len, "
-                "const char *fmt, ...) { (void)buf; (void)len; (void)fmt; return 0; }\n")
+            assert "oz_atomic_dec_and_test" in root_c
 
 
 def _gcc_syntax_check(tmpdir: str) -> None:
@@ -120,7 +80,9 @@ def _gcc_syntax_check(tmpdir: str) -> None:
     for c_file in c_files:
         result = subprocess.run(
             ["gcc", "-fsyntax-only", "-Wall", "-Werror",
-             "-I", tmpdir, f"-I{tmpdir}",
+             "-DOZ_PLATFORM_HOST",
+             "-I", tmpdir,
+             "-I", PAL_INCLUDE_DIR,
              os.path.join(tmpdir, c_file)],
             capture_output=True, text=True,
         )
@@ -134,13 +96,12 @@ def _gcc_syntax_check(tmpdir: str) -> None:
     reason="gcc not available",
 )
 class TestGCCSyntax:
-    """Verify generated C passes gcc -fsyntax-only (with stubs for Zephyr)."""
+    """Verify generated C passes gcc -fsyntax-only with PAL host headers."""
 
     def test_generated_c_compiles(self):
         ast_file = os.path.join(FIXTURE_DIR, "simple_led.ast.json")
         with tempfile.TemporaryDirectory() as tmpdir:
             main(["--input", ast_file, "--outdir", tmpdir])
-            _create_zephyr_stubs(tmpdir)
             _gcc_syntax_check(tmpdir)
 
     def test_arc_with_object_ivars_compiles(self):
@@ -193,5 +154,4 @@ class TestGCCSyntax:
 
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
-            _create_zephyr_stubs(tmpdir)
             _gcc_syntax_check(tmpdir)

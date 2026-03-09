@@ -48,22 +48,22 @@
 
 Decouple transpiler-generated C from Zephyr so output compiles on any POSIX host. Zero-cost: all PAL functions are `static inline`, vanish at `-O1+`.
 
-- [ ] Assess existing runtime test suites (Bucket A/B/C classification)
-  - [ ] `test/ASSESSMENT.md` with every test file classified
-  - [ ] Rename `tests/` → `tests/objc-reference/` with README
-- [ ] Create PAL headers (`include/oz/platform/`)
-  - [ ] `oz_platform_types.h` — return codes, shared types (no Zephyr/POSIX includes)
-  - [ ] `oz_platform_host.h` — malloc slab, C11 atomics, printf
-  - [ ] `oz_platform_zephyr.h` — k_mem_slab, Zephyr atomics, printk pass-through
-  - [ ] `oz_platform.h` — ifdef router (`OZ_PLATFORM_ZEPHYR` / `OZ_PLATFORM_HOST`)
-- [ ] Update `emit.py` to use PAL
-  - [ ] Replace all `#include <zephyr/...>` with `#include "oz/platform/oz_platform.h"`
-  - [ ] Replace `K_MEM_SLAB_DEFINE` → `OZ_SLAB_DEFINE`, `k_mem_slab_*` → `oz_slab_*`
-  - [ ] Replace `atomic_*` → `oz_atomic_*`, `printk` → `oz_platform_print`
-  - [ ] Generated code compiles with `-DOZ_PLATFORM_HOST` on host
-  - [ ] Generated code still compiles with `-DOZ_PLATFORM_ZEPHYR` in Zephyr build
-- [ ] Smoke test: transpile → compile → run on host, print output, exit 0
-- [ ] Zero-cost verification: `objdump` confirms no `oz_` symbols in Zephyr binary
+- [x] Assess existing runtime test suites (Bucket A/B/C classification)
+  - [x] `test/ASSESSMENT.md` with every test file classified
+  - [x] Rename `tests/` → `tests/objc-reference/` with README
+- [x] Create PAL headers (`include/oz/platform/`)
+  - [x] `oz_platform_types.h` — return codes, shared types (no Zephyr/POSIX includes)
+  - [x] `oz_platform_host.h` — malloc slab, C11 atomics, printf
+  - [x] `oz_platform_zephyr.h` — k_mem_slab, Zephyr atomics, printk pass-through
+  - [x] `oz_platform.h` — ifdef router (`OZ_PLATFORM_ZEPHYR` / `OZ_PLATFORM_HOST`)
+- [x] Update `emit.py` to use PAL
+  - [x] Replace all `#include <zephyr/...>` with `#include "oz/platform/oz_platform.h"`
+  - [x] Replace `K_MEM_SLAB_DEFINE` → `OZ_SLAB_DEFINE`, `k_mem_slab_*` → `oz_slab_*`
+  - [x] Replace `atomic_*` → `oz_atomic_*`, `printk` → `oz_platform_print`
+  - [x] Generated code compiles with `-DOZ_PLATFORM_HOST` on host
+  - [x] Generated code still compiles with `-DOZ_PLATFORM_ZEPHYR` in Zephyr build
+- [x] Smoke test: transpile → compile → run on host, print output, exit 0
+- [x] Zero-cost verification: `objdump` confirms no `oz_` symbols in Zephyr binary
 
 ### Phase 1 — Test Infrastructure (Golden-File Tests)
 

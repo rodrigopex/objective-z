@@ -195,6 +195,12 @@ function(objz_transpile_sources target)
     endforeach()
     target_include_directories(${target} PRIVATE ${_outdir})
 
+    # PAL: select Zephyr backend and provide include path
+    get_filename_component(_oz_pal_inc_dir
+        "${_OZ_TRANSPILE_CMAKE_DIR}/../../include" ABSOLUTE)
+    target_include_directories(${target} PRIVATE ${_oz_pal_inc_dir})
+    target_compile_definitions(${target} PRIVATE OZ_PLATFORM_ZEPHYR)
+
     # Add OZLog support (pure C, uses generated oz_dispatch.h for %@)
     get_filename_component(_oz_log_src
         "${_OZ_TRANSPILE_CMAKE_DIR}/../src/oz_transpile/OZLog.c" ABSOLUTE)

@@ -187,7 +187,7 @@ class TestClassSource:
             content = open(os.path.join(tmpdir, "OZObject.c")).read()
             assert "OZObject_retain" in content
             assert "OZObject_release" in content
-            assert "atomic_dec" in content
+            assert "oz_atomic_dec_and_test" in content
             assert "OZ_SEND_dealloc" in content
 
 
@@ -1341,7 +1341,7 @@ class TestIntrospection:
             c = open(os.path.join(tmpdir, "OZObject.c")).read()
             assert "OZObject_cDescription_maxLength_" in h
             assert "OZObject_cDescription_maxLength_" in c
-            assert "snprintk" in c
+            assert "oz_platform_snprint" in c
             assert "oz_class_names" in c
 
     def test_isEqual_protocol_dispatched(self):
@@ -1372,12 +1372,12 @@ class TestIntrospection:
             content = open(os.path.join(tmpdir, "oz_dispatch.h")).read()
             assert "OZ_SEND_cDescription_maxLength_" in content
 
-    def test_root_source_includes_printk(self):
+    def test_root_source_includes_pal(self):
         m = _simple_module()
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
             content = open(os.path.join(tmpdir, "OZObject.c")).read()
-            assert "#include <zephyr/sys/printk.h>" in content
+            assert "oz_mem_slabs.h" in content
 
 
 class TestStaticVarEmission:
