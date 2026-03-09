@@ -1,0 +1,120 @@
+{
+  "kind": "TranslationUnitDecl",
+  "inner": [
+    {
+      "kind": "ObjCInterfaceDecl",
+      "name": "OZObject",
+      "inner": []
+    },
+    {
+      "kind": "ObjCImplementationDecl",
+      "name": "OZObject",
+      "inner": [
+        {
+          "kind": "ObjCMethodDecl",
+          "name": "init",
+          "returnType": {"qualType": "instancetype"},
+          "inner": [
+            {
+              "kind": "CompoundStmt",
+              "inner": [
+                {
+                  "kind": "ReturnStmt",
+                  "inner": [
+                    {
+                      "kind": "DeclRefExpr",
+                      "referencedDecl": {"name": "self"},
+                      "type": {"qualType": "OZObject *"}
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "ObjCMethodDecl",
+          "name": "dealloc",
+          "returnType": {"qualType": "void"},
+          "inner": [
+            {
+              "kind": "CompoundStmt",
+              "inner": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "kind": "ObjCInterfaceDecl",
+      "name": "Timer",
+      "super": {"name": "OZObject"},
+      "inner": [
+        {
+          "kind": "ObjCIvarDecl",
+          "name": "_interval",
+          "type": {"qualType": "int"}
+        }
+      ]
+    },
+    {
+      "kind": "ObjCImplementationDecl",
+      "name": "Timer",
+      "super": {"name": "OZObject"},
+      "inner": [
+        {
+          "kind": "ObjCMethodDecl",
+          "name": "start",
+          "returnType": {"qualType": "void"},
+          "inner": [
+            {
+              "kind": "CompoundStmt",
+              "inner": []
+            }
+          ]
+        },
+        {
+          "kind": "ObjCMethodDecl",
+          "name": "stop",
+          "returnType": {"qualType": "void"},
+          "inner": [
+            {
+              "kind": "CompoundStmt",
+              "inner": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "kind": "ObjCInterfaceDecl",
+      "name": "Logger",
+      "super": {"name": "OZObject"},
+      "inner": [
+        {
+          "kind": "ObjCIvarDecl",
+          "name": "_level",
+          "type": {"qualType": "int"}
+        }
+      ]
+    },
+    {
+      "kind": "ObjCImplementationDecl",
+      "name": "Logger",
+      "super": {"name": "OZObject"},
+      "inner": [
+        {
+          "kind": "ObjCMethodDecl",
+          "name": "log",
+          "returnType": {"qualType": "void"},
+          "inner": [
+            {
+              "kind": "CompoundStmt",
+              "inner": []
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

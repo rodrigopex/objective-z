@@ -67,22 +67,25 @@ Decouple transpiler-generated C from Zephyr so output compiles on any POSIX host
 
 ### Phase 1 — Test Infrastructure (Golden-File Tests)
 
-Golden-file tests for transpiler output stability. Each test = `.m` input + expected `.c`/`.h` output.
+Golden-file snapshot tests for transpiler output stability. Each test = hand-crafted `.ast.json` input + expected C output directory. Colocated with existing pytest suite at `tools/oz_transpile/tests/golden/`.
 
-- [ ] Vendor Unity test framework (`test/lib/unity/`)
-- [ ] Create golden-file test runner (`test/runner.py`)
-  - [ ] pytest-compatible, discovers `test/golden/` subdirectories
-  - [ ] `--update-golden` flag to regenerate expected files
-  - [ ] Error tests via `config.json` (`expect_error`, `expected_stderr`)
-- [ ] Create 12–15 golden tests
-  - [ ] `empty_class`, `class_with_method`, `class_with_property`
-  - [ ] `simple_inheritance`, `protocol_conformance`
-  - [ ] `message_send_static`, `message_send_protocol`
-  - [ ] `retain_release`, `nil_receiver`, `singleton_pattern`
-  - [ ] `category_merge`, `multiple_args`
-  - [ ] Error tests: `error_unsupported_feature`, `error_missing_method`
-- [ ] justfile targets: `test-golden`, `update-golden`, `smoke`
-- [ ] `test/golden/README.md` documenting workflow
+- [x] Create golden-file test runner (`tools/oz_transpile/tests/golden/`)
+  - [x] `conftest.py` — pytest fixture discovery over golden subdirectories
+  - [x] `test_golden.py` — parametrized snapshot comparison with unified diff on mismatch
+  - [x] `update.py` — regenerate all `expected/` dirs from transpiler output
+  - [x] Error tests via `config.json` (`expect_error`, extra `flags`)
+- [x] Create 8 golden tests
+  - [x] `simple_led` — baseline (inheritance, protocol, ivars, super call)
+  - [x] `empty_class` — minimal struct with base fields only
+  - [x] `simple_inheritance` — 3-level hierarchy, field embedding
+  - [x] `protocol_dispatch` — 2 classes conforming to protocol, vtable switch
+  - [x] `multiple_args` — 3-arg method, underscore-separated C signature
+  - [x] `object_ivars_arc` — ARC retain/release for object-typed ivars
+  - [x] `pool_sizes` — `--pool-sizes` flag via config.json
+  - [x] `static_dispatch_only` — no protocol overlap, all direct calls
+- [x] justfile target: `update-golden`
+- [x] `tools/oz_transpile/tests/golden/README.md` documenting workflow
+- Unity vendoring deferred to Phase 2 (not needed for golden-file diffing)
 
 ### Phase 2 — Compiled Behavior Tests
 
