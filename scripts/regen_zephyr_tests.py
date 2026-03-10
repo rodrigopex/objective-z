@@ -19,10 +19,10 @@ import tempfile
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-CASES_DIR = REPO_ROOT / "test" / "behavior" / "cases"
-INCLUDE_DIR = REPO_ROOT / "test" / "behavior" / "include"
-OZ_HDR = REPO_ROOT / "objc" / "include" / "oz_transpile"
-OZ_SRC = REPO_ROOT / "objc" / "src" / "oz_transpile"
+CASES_DIR = REPO_ROOT / "tests" / "behavior" / "cases"
+STUBS_DIR = REPO_ROOT / "include" / "stubs"
+TEST_INC = REPO_ROOT / "tests" / "behavior" / "include"
+OZ_SRC = REPO_ROOT / "src"
 OUT_DIR = REPO_ROOT / "tests" / "zephyr" / "generated"
 
 LLVM_SEARCH_PATHS = [
@@ -74,8 +74,8 @@ def _ast_dump(clang: str, m_path: Path, out_json: Path) -> None:
     result = subprocess.run(
         [clang, "-Xclang", "-ast-dump=json", "-fsyntax-only",
          "-fobjc-runtime=macosx", "--target=x86_64-unknown-linux-gnu",
-         "-I", str(INCLUDE_DIR),
-         "-I", str(OZ_HDR),
+         "-I", str(STUBS_DIR),
+         "-I", str(TEST_INC),
          "-I", str(OZ_SRC),
          str(m_path)],
         capture_output=True, text=True)

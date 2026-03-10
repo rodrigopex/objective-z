@@ -136,7 +136,7 @@ jobs:
   zephyr-integration:
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/zephyrproject-rtos/ci:v0.26.13
+      image: ghcr.io/zephyrproject-rtos/ci:v0.28.9
     env:
       ZEPHYR_SDK_INSTALL_DIR: /opt/toolchains/zephyr-sdk-0.17.4
     steps:
@@ -150,12 +150,6 @@ jobs:
       - name: Build and run tests on native_sim
         run: west twister -T tests/zephyr/ -p native_sim --inline-logs
 
-      - name: Upload twister results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: twister-results
-          path: twister-out/
 
   # Generated file freshness check
   generated-freshness:
