@@ -3,17 +3,14 @@
  * SPDX-License-Identifier: Apache-2.0
  *
  * ObjC memory benchmark helpers.
- * Compiled with ARC via objz_target_sources().
+ * Transpiled to plain C via objz_transpile_sources().
  */
 
-#import <Foundation/Foundation.h>
-#import <objc/objc.h>
-#include <objc/runtime.h>
-#include <objc/arc.h>
+#import "OZObject.h"
 
-/* ── MemBase: isa (4) + _refcount (4) = 8 bytes ──────────────── */
+/* ── MemBase: OZObject (8) = 8 bytes ──────────────────────────────── */
 
-@interface MemBase : Object
+@interface MemBase : OZObject
 - (void)nop;
 - (int)getValue;
 @end
@@ -31,7 +28,7 @@
 
 @end
 
-/* ── MemChild: MemBase (8) + _field_a (4) = 12 bytes ─────────── */
+/* ── MemChild: MemBase (8) + _field_a (4) = 12 bytes ─────────────── */
 
 @interface MemChild : MemBase {
 	int _field_a;
@@ -41,7 +38,7 @@
 @implementation MemChild
 @end
 
-/* ── MemGrandChild: MemChild (12) + _field_b (4) = 16 bytes ──── */
+/* ── MemGrandChild: MemChild (12) + _field_b (4) = 16 bytes ──────── */
 
 @interface MemGrandChild : MemChild {
 	int _field_b;
@@ -50,43 +47,3 @@
 
 @implementation MemGrandChild
 @end
-
-/* ── C-callable wrappers ──────────────────────────────────────── */
-
-__attribute__((ns_returns_retained))
-id mem_create_base(void)
-{
-	return [[MemBase alloc] init];
-}
-
-__attribute__((ns_returns_retained))
-id mem_create_child(void)
-{
-	return [[MemChild alloc] init];
-}
-
-__attribute__((ns_returns_retained))
-id mem_create_grandchild(void)
-{
-	return [[MemGrandChild alloc] init];
-}
-
-void mem_release(id obj)
-{
-	objc_release(obj);
-}
-
-size_t mem_sizeof_base(void)
-{
-	return class_getInstanceSize([MemBase class]);
-}
-
-size_t mem_sizeof_child(void)
-{
-	return class_getInstanceSize([MemChild class]);
-}
-
-size_t mem_sizeof_grandchild(void)
-{
-	return class_getInstanceSize([MemGrandChild class]);
-}

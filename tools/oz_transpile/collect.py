@@ -91,7 +91,8 @@ def _is_from_main_file(node: dict) -> bool:
 
 
 _SYSTEM_PATH_SEGMENTS = frozenset({"/zephyr/", "/sdk/", "/clang/", "/picolibc/",
-                                   "/cmsis/", "/CMSIS/", "/sys-include/"})
+                                   "/cmsis/", "/CMSIS/", "/sys-include/",
+                                   "/SDKs/", "/usr/include/", "zephyr-sdk"})
 
 
 def _is_user_struct(node: dict) -> bool:
