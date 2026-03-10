@@ -18,8 +18,8 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 PAL_INC = REPO_ROOT / "include"
-UNITY_DIR = REPO_ROOT / "test" / "lib" / "unity"
-GEN_MAIN = REPO_ROOT / "test" / "tools" / "gen_test_main.py"
+UNITY_DIR = REPO_ROOT / "tests" / "lib" / "unity"
+GEN_MAIN = REPO_ROOT / "tests" / "tools" / "gen_test_main.py"
 
 POOL_RE = re.compile(r"/\*\s*oz-pool:\s*(.+?)\s*\*/")
 
@@ -109,10 +109,10 @@ def _run_pipeline_inner(m_path: Path, test_file: Path, tmpdir: Path,
     # runtimes for syntax-only parsing; only pointer IDs differ.
     inc_dir = m_path.parent.parent / "include"
     if not inc_dir.is_dir():
-        inc_dir = REPO_ROOT / "test" / "behavior" / "include"
+        inc_dir = REPO_ROOT / "tests" / "behavior" / "include"
 
-    oz_hdr = REPO_ROOT / "objc" / "include" / "oz_transpile"
-    oz_src = REPO_ROOT / "objc" / "src" / "oz_transpile"
+    oz_hdr = REPO_ROOT / "include" / "stubs"
+    oz_src = REPO_ROOT / "src"
 
     result = subprocess.run(
         [llvm_clang, "-Xclang", "-ast-dump=json", "-fsyntax-only",

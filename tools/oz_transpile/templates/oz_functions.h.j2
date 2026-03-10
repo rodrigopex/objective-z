@@ -4,7 +4,7 @@
 
 {% for cls in classes %}
 {% if cls.name == "OZLock" %}
-#include "oz/platform/oz_lock.h"
+#include "platform/oz_lock.h"
 {% else %}
 #include "{{ cls.name }}.h"
 {% endif %}

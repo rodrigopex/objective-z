@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 #
-# test/conftest.py - Shared pytest options for behavior and adapted tests.
+# tests/conftest.py - Shared pytest options for behavior and adapted tests.
 
 
 def pytest_addoption(parser):

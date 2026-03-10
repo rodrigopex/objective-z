@@ -139,7 +139,7 @@ Acceptance criteria:
 
 ### Step 2 — Create pytest integration
 
-Create `test/behavior/conftest.py` with a fixture that wraps `compile_and_run.py`:
+Create `tests/behavior/conftest.py` with a fixture that wraps `compile_and_run.py`:
 
 ```python
 import subprocess
@@ -170,7 +170,7 @@ def compile_and_run(project_root):
 Each `test_*.py` file parametrizes over its category's `.m` files:
 
 ```python
-# test/behavior/test_lifecycle.py
+# tests/behavior/test_lifecycle.py
 import pytest
 from conftest import CASES_DIR, discover_behavior_tests
 
@@ -190,14 +190,14 @@ def test_lifecycle(m_file, compile_and_run):
 ```
 
 Acceptance criteria:
-- [ ] `pytest test/behavior/ -v` discovers and runs all behavior tests
+- [ ] `pytest tests/behavior/ -v` discovers and runs all behavior tests
 - [ ] Each test shows `category/name` in pytest output (e.g., `lifecycle/alloc_returns_valid`)
 - [ ] Failed tests print both stdout (Unity output) and stderr (compiler errors)
 
 ### Step 3 — Write lifecycle behavior tests (5 tests)
 
 **Leverage the Phase 0 assessment first.** Before writing these `.m` files from
-scratch, check `test/ASSESSMENT.md` for Bucket A tests that already cover
+scratch, check `tests/ASSESSMENT.md` for Bucket A tests that already cover
 lifecycle behavior (alloc, init, dealloc, retain, release). Copy those `.m`
 files into the appropriate `cases/` subdirectory, add Unity `#include` and
 `test_*` function wrappers if needed, and verify they work through the
@@ -242,10 +242,10 @@ against double-free (retain count already 0), test that it doesn't crash.
 If no guard exists, mark this test as `XFAIL` and document the gap.
 
 Acceptance criteria:
-- [ ] All 5 `.m` files exist under `test/behavior/cases/lifecycle/`
+- [ ] All 5 `.m` files exist under `tests/behavior/cases/lifecycle/`
 - [ ] Each contains at least one `void test_*(void)` function
 - [ ] Each file compiles and runs on host with PAL host backend
-- [ ] `pytest test/behavior/test_lifecycle.py -v` passes (or XFAILs where noted)
+- [ ] `pytest tests/behavior/test_lifecycle.py -v` passes (or XFAILs where noted)
 
 ### Step 4 — Write static dispatch behavior tests (5 tests)
 
@@ -265,7 +265,7 @@ Sending to child must call parent's version.
 should be emitted as regular C functions with a distinct naming convention.
 
 Acceptance criteria:
-- [ ] All 5 `.m` files exist under `test/behavior/cases/dispatch/`
+- [ ] All 5 `.m` files exist under `tests/behavior/cases/dispatch/`
 - [ ] Tests verify actual behavior (method was called), not just compilation
 
 ### Step 5 — Write protocol dispatch behavior tests (4 tests)
@@ -285,7 +285,7 @@ A class conforming to B must also respond to A's methods via protocol dispatch.
 through the protocol switch, not static dispatch.
 
 Acceptance criteria:
-- [ ] All 4 `.m` files exist under `test/behavior/cases/protocol/`
+- [ ] All 4 `.m` files exist under `tests/behavior/cases/protocol/`
 - [ ] At least one test uses two different classes with the same protocol
 
 ### Step 6 — Write memory management behavior tests (5 tests)
@@ -308,7 +308,7 @@ function, verify it returns the correct value at each step. If not, verify
 the atomic count directly.
 
 Acceptance criteria:
-- [ ] All 5 `.m` files exist under `test/behavior/cases/memory/`
+- [ ] All 5 `.m` files exist under `tests/behavior/cases/memory/`
 - [ ] Tests verify retain counts via either public API or direct atomic reads
 
 ### Step 7 — Write property behavior tests (5 tests)
@@ -329,7 +329,7 @@ failure rather than runtime behavior).
 readwrite. Verify setter exists on subclass but not parent.
 
 Acceptance criteria:
-- [ ] All 5 `.m` files exist under `test/behavior/cases/properties/`
+- [ ] All 5 `.m` files exist under `tests/behavior/cases/properties/`
 
 ### Step 8 — Write edge case behavior tests (4 tests)
 
@@ -346,7 +346,7 @@ Alloc, init, release — verify it doesn't crash.
 resolution at each level.
 
 Acceptance criteria:
-- [ ] All 4 `.m` files exist under `test/behavior/cases/edge/`
+- [ ] All 4 `.m` files exist under `tests/behavior/cases/edge/`
 - [ ] `nil_returns_zero` is especially important — embedded code must not crash on nil
 
 ## Compiler matrix

@@ -20,6 +20,6 @@ Each adapted test:
 ## Running
 
 ```
-python3 -m pytest test/adapted/ -v
+python3 -m pytest tests/adapted/ -v
 just test-adapted
 ```

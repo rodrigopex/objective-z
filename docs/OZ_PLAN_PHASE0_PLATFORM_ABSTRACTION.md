@@ -60,7 +60,7 @@ drives how much new test code Phases 1–2 actually need to write.
    KVO, blocks, `@try/@catch`, runtime introspection, tagged pointers, or
    non-fragile ABI layout checks. These are out of scope for the transpiler.
 
-3. Produce a summary file: `test/ASSESSMENT.md` with a table:
+3. Produce a summary file: `tests/ASSESSMENT.md` with a table:
 
 ```markdown
 | Test file               | Bucket | Notes                                    |
@@ -80,7 +80,7 @@ drives how much new test code Phases 1–2 actually need to write.
 5. Create `tests/objc-reference/README.md` explaining:
    - These tests were written for the objective-z runtime track
    - They serve as behavioral specifications for the transpiler
-   - See `test/ASSESSMENT.md` for which tests apply to the transpiler
+   - See `tests/ASSESSMENT.md` for which tests apply to the transpiler
    - The runtime code is available at tag `<insert tag name>`
 
 **Why this matters:** The existing tests represent months of work encoding
@@ -91,7 +91,7 @@ Bucket C tests become your compatibility matrix (documenting what the
 transpiler intentionally does not support).
 
 Acceptance criteria:
-- [ ] `test/ASSESSMENT.md` exists with every test file classified
+- [ ] `tests/ASSESSMENT.md` exists with every test file classified
 - [ ] Existing test directory renamed to `tests/objc-reference/`
 - [ ] `tests/objc-reference/README.md` explains provenance and links to tag
 - [ ] Bucket counts are known (how many A, B, C)
@@ -378,7 +378,7 @@ Create a minimal `.m` input file, transpile it, and compile the output on host:
 
 ```bash
 # 1. Transpile
-python -m oz_transpiler test/smoke/SimpleClass.m -o /tmp/smoke_out/
+python -m oz_transpiler tests/smoke/SimpleClass.m -o /tmp/smoke_out/
 
 # 2. Compile on host (must succeed with zero warnings)
 gcc -std=c11 -Wall -Werror -DOZ_PLATFORM_HOST \

@@ -30,16 +30,10 @@ monitor:
     tio {{ tty }}
 
 test:
-    west twister -T samples/ -T tests/objc-reference/ -p {{ board }} -O /tmp/twister-out
-
-test-riscv:
-    west twister -T samples/ -T tests/objc-reference/ -p {{ riscv_board }} -O /tmp/twister-out
+    west twister -T samples/ -p {{ board }} -O /tmp/twister-out
 
 test-zephyr:
     west twister -T tests/zephyr/ -p {{ if os() == "linux" { "native_sim" } else { board } }} -O /tmp/twister-out
-
-test-all:
-    west twister -T samples/ -T tests/objc-reference/ -p {{ board }} -p {{ riscv_board }} -O /tmp/twister-out
 
 bench:
     west build -p -b {{ board }} benchmarks/objc && west build -t run
@@ -88,10 +82,10 @@ test-transpiler:
     python3 -m pytest tools/oz_transpile/tests/ -v
 
 test-behavior:
-    python3 -m pytest test/behavior/ -v
+    python3 -m pytest tests/behavior/ -v
 
 test-adapted:
-    python3 -m pytest test/adapted/ -v
+    python3 -m pytest tests/adapted/ -v
 
 test-all-transpiler:
     just test-transpiler
@@ -99,7 +93,7 @@ test-all-transpiler:
     just test-adapted
 
 smoke:
-    python3 test/smoke/run.py
+    python3 tests/smoke/run.py
 
 update-golden:
     PYTHONPATH=tools python3 tools/oz_transpile/tests/golden/update.py

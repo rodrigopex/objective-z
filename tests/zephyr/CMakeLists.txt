@@ -9,7 +9,7 @@ target_compile_definitions(app PRIVATE OZ_PLATFORM_ZEPHYR)
 
 # Include paths
 target_include_directories(app PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../include    # oz/platform/ headers
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../include    # platform/ headers
     ${CMAKE_CURRENT_SOURCE_DIR}/generated        # transpiled output
 )
 

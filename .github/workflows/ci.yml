@@ -61,7 +61,7 @@ jobs:
       - name: Run behavior tests
         run: >
           PYTHONPATH=tools
-          python3 -m pytest test/behavior/ -v
+          python3 -m pytest tests/behavior/ -v
           --compiler=${{ matrix.compiler }}
           --opt=${{ matrix.opt }}
 
@@ -88,7 +88,7 @@ jobs:
       - name: Run with AddressSanitizer + UBSan
         run: >
           PYTHONPATH=tools
-          python3 -m pytest test/behavior/ -v
+          python3 -m pytest tests/behavior/ -v
           --compiler=gcc
           --opt=O0
           --sanitize=address,undefined
@@ -116,7 +116,7 @@ jobs:
       - name: Run behavior tests with coverage
         run: >
           PYTHONPATH=tools
-          python3 -m pytest test/behavior/ -v
+          python3 -m pytest tests/behavior/ -v
           --compiler=gcc
           --opt=O0
           --cflags=--coverage

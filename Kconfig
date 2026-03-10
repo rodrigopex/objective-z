@@ -1,0 +1,11 @@
+menuconfig OBJZ
+	bool "Objective-Z transpiler support"
+	depends on CPU_CORTEX_M || CPU_CORTEX_A || (RISCV && !RISCV_ISA_RV32E)
+	select STATIC_INIT_GNU
+	help
+	  Enable Objective-Z transpiled C support with the Platform
+	  Abstraction Layer (PAL). The transpiler converts Objective-C
+	  (.m) sources to plain C at build time via Clang AST analysis.
+
+if OBJZ
+endif # OBJZ
