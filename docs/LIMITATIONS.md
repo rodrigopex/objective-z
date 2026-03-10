@@ -40,15 +40,6 @@ transpiler pipeline.
 
 ## Literals and Expressions
 
-- **No subscript syntax.** `array[i]` and `dict[key]` are not transpiled.
-  Use `[array objectAtIndex:i]` and `[dict objectForKey:key]` explicitly.
-
-- **Array / dictionary literals cannot reference local variables.** Literal
-  arrays (`@[a, b]`) and dictionaries are emitted as file-scope static
-  constants. Every element must be a compile-time constant (another literal,
-  `@"string"`, or `@42`). Nest literals inline instead of assigning to locals
-  first.
-
 - **OZNumber supports 8/16/32-bit integers and float.** `OZNumber` boxes
   `int8_t`, `uint8_t`, `int16_t`, `uint16_t`, `int32_t`, `uint32_t`, `float`,
   and `BOOL`. 64-bit types (`int64_t`, `double`) are not supported. A future
@@ -71,8 +62,6 @@ transpiler pipeline.
 ## Miscellaneous
 
 - **No `@try` / `@catch` / `@throw`.** Exception handling is not supported.
-
-- **No `@synchronized`.** Use Zephyr synchronization primitives directly.
 
 - **No dynamic dispatch for non-protocol methods.** All non-protocol method
   calls are resolved statically (direct C function calls). Dynamic method

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**Current version: v0.3.0**
+**Current version: v0.4.0**
 
 Objective-Z is an Objective-C transpiler for Zephyr RTOS, packaged as a Zephyr module (`zephyr/module.yml`). Converts `.m` sources to plain C via Clang AST analysis — no ObjC runtime needed. Uses the Platform Abstraction Layer (PAL) for zero-cost Zephyr integration.
 
@@ -28,6 +28,8 @@ Default board: `mps2/an385` (ARM). RISC-V: `qemu_riscv32`. Requires Zephyr SDK, 
 | `just clean` / `just c`   | Remove build dir                   |
 | `just test` / `just t`    | Run twister on all samples (ARM)   |
 | `just test-transpiler`    | Run transpiler pytest suite        |
+| `just test-behavior`      | Run compiled behavior tests        |
+| `just test-adapted`       | Run adapted upstream tests         |
 | `just transpile`          | Run OZ transpiler                  |
 | `just ast-dump file`      | Clang JSON AST dump                |
 | `just smoke`              | Run host-side PAL smoke test       |
@@ -42,6 +44,7 @@ Each sample uses `ZEPHYR_EXTRA_MODULES` to register the module and enables it wi
 ### Zephyr Module (root)
 
 - **`zephyr/module.yml`** — Module definition, points cmake/kconfig to root
+- **`west.yml`** — West manifest for Zephyr CI integration
 - **`CMakeLists.txt`** — Includes `oz_transpile.cmake` when `CONFIG_OBJZ` is enabled
 - **`Kconfig`** — `CONFIG_OBJZ` master enable, auto-selects `STATIC_INIT_GNU`
 
@@ -86,9 +89,12 @@ Minimal ObjC source stubs consumed by Clang AST analysis:
 
 Retained as reference for transpiler development. Not compiled — the runtime compilation path has been retired. Includes message dispatch, ARC, refcounting, Foundation classes, and architecture-specific assembly trampolines.
 
-### Legacy Runtime Tests (`tests/objc-reference/`)
+### Test Infrastructure (`tests/`)
 
-Retained as reference for transpiler test adaptation. Not included in twister scan.
+- **`tests/behavior/`** — Compiled behavior tests (Unity framework, host-side)
+- **`tests/adapted/`** — Adapted upstream tests (LLVM, GNUstep, Apple spec)
+- **`tests/zephyr/`** — Zephyr integration tests (`native_sim` + `ztest` + `twister`)
+- **`tests/objc-reference/`** — Legacy runtime tests (reference only, not compiled)
 
 ## Coding Conventions
 
