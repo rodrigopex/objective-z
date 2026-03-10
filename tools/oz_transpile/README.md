@@ -44,6 +44,20 @@ PYTHONPATH=tools python3 -m oz_transpile --input source.ast.json --outdir genera
 | `ClassName.h` | Struct definition, method prototypes |
 | `ClassName.c` | Method implementations |
 
+## Supported Language Features
+
+- Class/instance methods, inheritance, protocols
+- `@property` / `@synthesize` (atomic, strong, custom getter/setter, ivar names)
+- `@synchronized` (RAII spinlock via OZLock)
+- Subscript syntax (`array[i]`, `dict[key]`)
+- String, boxed, array, and dictionary literals (`@"..."`, `@42`, `@[...]`, `@{...}`)
+- Non-capturing blocks with `__block` file-scope promotion
+- Fast enumeration (`for-in`) via IteratorProtocol
+- Compile-time ARC (scope tracking, auto-dealloc, break/continue cleanup)
+- Build-time retain cycle detection (`--strict`)
+
+See [LIMITATIONS.md](../../docs/LIMITATIONS.md) for unsupported features.
+
 ## Dispatch Strategy
 
 - **STATIC**: selector has single implementation -> direct `ClassName_sel()` call

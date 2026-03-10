@@ -125,12 +125,21 @@ Automate all tests in GitHub Actions, add coverage, adapt upstream LLVM/GNUstep 
 
 Validate transpiled C on real Zephyr kernel via `native_sim` + `ztest` + `twister`.
 
-- [ ] Zephyr test project structure (`tests/zephyr/`, CMake, prj.conf, testcase.yaml)
-- [ ] Transpile test classes into `tests/zephyr/generated/`
-- [ ] Write 12+ ztest cases across 4 suites (lifecycle, dispatch, memory, protocol)
-- [ ] Zephyr CI job (`native_sim` + twister)
+- [x] Zephyr test project structure (`tests/zephyr/`, CMake, prj.conf, testcase.yaml)
+- [x] Transpile test classes into `tests/zephyr/generated/`
+- [x] Write 12+ ztest cases across 4 suites (lifecycle, dispatch, memory, protocol)
+- [x] Zephyr CI job (`native_sim` + twister)
 - [ ] Hardware build-verification job (compile-only for Cortex-M, PAL inlining check)
-- [ ] Generated file freshness check in CI
+- [x] Generated file freshness check in CI
+
+### Transpiler Features
+
+- [x] `@property` / `@synthesize` with atomic and strong semantics
+- [x] `@synchronized` via OZLock RAII class
+- [x] Subscript syntax (`array[i]`, `dict[key]`)
+- [x] Dynamic allocation for OZArray, OZDictionary, OZNumber (literals can reference locals)
+- [x] Compile-time ARC (scope tracking, auto-dealloc, consumed locals, break/continue cleanup)
+- [x] `west.yml` manifest for Zephyr CI integration
 
 ## v0.5.0 — CoreZephyr (CZ prefix)
 

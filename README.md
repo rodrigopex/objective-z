@@ -1,8 +1,8 @@
 # Objective-Z
 
-Objective-C runtime for Zephyr RTOS.
+Objective-C transpiler for Zephyr RTOS.
 
-Ported from [djthorpe/objc](https://github.com/djthorpe/objc) (minimal GCC-compatible ObjC runtime), packaged as a Zephyr module. Uses the gnustep-2.0 ABI with Clang for ObjC compilation.
+Converts `.m` sources to plain C via Clang AST analysis — no ObjC runtime needed. Packaged as a Zephyr module with a Platform Abstraction Layer (PAL) for zero-cost Zephyr integration.
 
 ## Motivation
 
@@ -86,23 +86,22 @@ Rust is the better choice when you need compile-time memory safety guarantees, z
 
 ## Features
 
-- Class and instance method dispatch (`objc_msg_lookup` / `objc_msgSend`)
-- Categories and protocols
-- `@"..."` string literals (OZString / NSString alias under Clang)
+- **Transpiler pipeline**: `.m` → Clang JSON AST → `oz_transpile` → plain C (`.h` + `.c`), compilable by GCC alone
+- Class and instance method dispatch (static direct calls or protocol vtable dispatch)
+- Protocols with vtable-based dispatch for polymorphic selectors
+- `@property` / `@synthesize` with atomic and strong semantics
+- `@synchronized` via OZLock RAII spinlock wrapper
+- Subscript syntax (`array[i]`, `dict[key]`)
+- `@"..."` string literals (OZString)
 - Boxed literals (`@42`, `@YES`, `@3.14`) and collection literals (`@[...]`, `@{...}`)
-- Blocks (closures) with `-fblocks` — global, stack, and heap blocks with `__block` variable support
-- Fast enumeration (`for...in` loops) on OZArray and OZDictionary
-- `enumerateObjectsUsingBlock:` for block-based iteration
-- Automatic Reference Counting (ARC) with `-fobjc-arc`
-- `@autoreleasepool` blocks via per-thread pool stack
+- Blocks (non-capturing) with `__block` file-scope promotion
+- Fast enumeration (`for...in` loops) via IteratorProtocol on OZArray and OZDictionary
+- Compile-time ARC — scope tracking, auto-dealloc, consumed locals, break/continue cleanup
 - Static allocation pools using Zephyr `K_MEM_SLAB` — zero heap allocation per class
 - `OZLog()` with `%@` format specifier and `-description` support
-- Zephyr zbus integration examples (pub/sub and request-response)
-- RISC-V (`qemu_riscv32`) support with unified RV32/RV64 `objc_msgSend` trampoline
-- Global flat dispatch table with O(1) lookup and pointer-hash sel_id cache
-- ARM Cortex-M Thumb-2 and RISC-V `objc_msgSend` trampolines for gnustep-2.0 direct dispatch
+- Platform Abstraction Layer (PAL) — zero-cost `static inline` abstraction for host and Zephyr backends
 - Build-time retain cycle detection (`CONFIG_OBJZ_CYCLE_CHECK`)
-- GPIO wrapper classes (OZGPIOPin, OZGPIOOutput, OZGPIOInput)
+- `west.yml` manifest for Zephyr CI integration
 
 ## Prerequisites
 
