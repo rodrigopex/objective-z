@@ -2074,3 +2074,331 @@ class TestSynthesizedPropertyEmission:
         assert "self->_delegate = delegate;" in code
         assert "retain" not in code
         assert "release" not in code
+
+
+class TestSynchronized:
+    """Tests for @synchronized -> OZLock RAII emission."""
+
+    @staticmethod
+    def _sync_ast(obj_expr, body_stmts):
+        """Build an ObjCAtSynchronizedStmt AST node."""
+        return {
+            "kind": "ObjCAtSynchronizedStmt",
+            "inner": [
+                obj_expr,
+                {"kind": "CompoundStmt", "inner": body_stmts},
+            ],
+        }
+
+    @staticmethod
+    def _self_ref():
+        return {"kind": "DeclRefExpr",
+                "referencedDecl": {"name": "self"},
+                "type": {"qualType": "Foo *"}}
+
+    @staticmethod
+    def _int_assign(val):
+        return {"kind": "BinaryOperator", "opcode": "=", "inner": [
+            {"kind": "MemberExpr", "name": "_count",
+             "type": {"qualType": "int"}, "inner": [
+                {"kind": "DeclRefExpr",
+                 "referencedDecl": {"name": "self"},
+                 "type": {"qualType": "Foo *"}}
+             ]},
+            {"kind": "IntegerLiteral", "value": str(val),
+             "type": {"qualType": "int"}},
+        ], "type": {"qualType": "int"}}
+
+    def test_basic_synchronized(self):
+        """@synchronized(self) { self->_count = 1; }"""
+        m = OZModule()
+        m.classes["OZObject"] = OZClass("OZObject")
+        m.classes["Foo"] = OZClass("Foo", superclass="OZObject",
+                                   ivars=[OZIvar("_count", OZType("int"))],
+                                   methods=[
+            OZMethod("run", OZType("void"), body_ast={
+                "kind": "CompoundStmt", "inner": [
+                    self._sync_ast(self._self_ref(), [self._int_assign(1)]),
+                ],
+            }),
+        ])
+        resolve(m)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            content = open(os.path.join(tmpdir, "Foo.c")).read()
+            assert "struct OZLock *_sync = OZLock_initWithObject(" in content
+            assert "OZLock_alloc()" in content
+            assert "(struct OZObject *)self" in content
+            assert "OZObject_release((struct OZObject *)_sync);" in content
+
+    def test_synchronized_oz_lock_slab(self):
+        """OZLock slab generated when @synchronized is used."""
+        m = OZModule()
+        m.classes["OZObject"] = OZClass("OZObject")
+        m.classes["Foo"] = OZClass("Foo", superclass="OZObject", methods=[
+            OZMethod("run", OZType("void"), body_ast={
+                "kind": "CompoundStmt", "inner": [
+                    self._sync_ast(self._self_ref(), []),
+                ],
+            }),
+        ])
+        resolve(m)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            slabs_c = open(os.path.join(tmpdir, "oz_mem_slabs.c")).read()
+            assert "oz_slab_OZLock" in slabs_c
+            slabs_h = open(os.path.join(tmpdir, "oz_mem_slabs.h")).read()
+            assert "OZLock_alloc" in slabs_h
+            assert "OZLock_initWithObject" in slabs_h
+            assert "OZLock_dealloc" in slabs_h
+            dispatch_h = open(os.path.join(tmpdir, "oz_dispatch.h")).read()
+            assert "OZ_CLASS_OZLock" in dispatch_h
+
+    def test_synchronized_early_return(self):
+        """Early return inside @synchronized releases the lock."""
+        m = OZModule()
+        m.classes["OZObject"] = OZClass("OZObject")
+        m.classes["Foo"] = OZClass("Foo", superclass="OZObject", methods=[
+            OZMethod("run", OZType("void"), body_ast={
+                "kind": "CompoundStmt", "inner": [
+                    self._sync_ast(self._self_ref(), [
+                        {"kind": "ReturnStmt", "inner": []},
+                    ]),
+                ],
+            }),
+        ])
+        resolve(m)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            content = open(os.path.join(tmpdir, "Foo.c")).read()
+            ret_pos = content.index("return;")
+            release_pos = content.index("OZObject_release((struct OZObject *)_sync)")
+            assert release_pos < ret_pos
+
+    def test_synchronized_nested_mangled_names(self):
+        """Nested @synchronized uses _sync, _sync2."""
+        m = OZModule()
+        m.classes["OZObject"] = OZClass("OZObject")
+        m.classes["Foo"] = OZClass("Foo", superclass="OZObject", methods=[
+            OZMethod("run", OZType("void"), body_ast={
+                "kind": "CompoundStmt", "inner": [
+                    self._sync_ast(self._self_ref(), [
+                        self._sync_ast(self._self_ref(), []),
+                    ]),
+                ],
+            }),
+        ])
+        resolve(m)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            content = open(os.path.join(tmpdir, "Foo.c")).read()
+            assert "struct OZLock *_sync = " in content
+            assert "struct OZLock *_sync2 = " in content
+
+    def test_no_oz_lock_without_synchronized(self):
+        """OZLock not injected when no @synchronized used."""
+        m = OZModule()
+        m.classes["OZObject"] = OZClass("OZObject")
+        m.classes["Foo"] = OZClass("Foo", superclass="OZObject", methods=[
+            OZMethod("run", OZType("void"), body_ast={
+                "kind": "CompoundStmt", "inner": [],
+            }),
+        ])
+        resolve(m)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            dispatch_h = open(os.path.join(tmpdir, "oz_dispatch.h")).read()
+            assert "OZLock" not in dispatch_h
+
+    def test_synchronized_with_ivar_obj(self):
+        """@synchronized(_mutex) uses ivar expression."""
+        m = OZModule()
+        m.classes["OZObject"] = OZClass("OZObject")
+        m.classes["Foo"] = OZClass("Foo", superclass="OZObject",
+                                   ivars=[OZIvar("_mutex", OZType("OZObject *"))],
+                                   methods=[
+            OZMethod("run", OZType("void"), body_ast={
+                "kind": "CompoundStmt", "inner": [
+                    self._sync_ast(
+                        {"kind": "MemberExpr", "name": "_mutex",
+                         "type": {"qualType": "OZObject *"}, "inner": [
+                            {"kind": "DeclRefExpr",
+                             "referencedDecl": {"name": "self"},
+                             "type": {"qualType": "Foo *"}}
+                         ]},
+                        [self._int_assign(1)]),
+                ],
+            }),
+        ])
+        resolve(m)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            content = open(os.path.join(tmpdir, "Foo.c")).read()
+            assert "(struct OZObject *)self->_mutex" in content
+
+    def test_synchronized_with_object_local_inside(self):
+        """Object local inside @synchronized released alongside _sync."""
+        m = OZModule()
+        m.classes["OZObject"] = OZClass("OZObject")
+        m.classes["Foo"] = OZClass("Foo", superclass="OZObject", methods=[
+            OZMethod("run", OZType("void"), body_ast={
+                "kind": "CompoundStmt", "inner": [
+                    self._sync_ast(self._self_ref(), [
+                        {"kind": "DeclStmt", "inner": [{
+                            "kind": "VarDecl", "name": "tmp",
+                            "type": {"qualType": "OZObject *"},
+                            "inner": [{"kind": "IntegerLiteral", "value": "0"}],
+                        }]},
+                    ]),
+                ],
+            }),
+        ])
+        resolve(m)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            content = open(os.path.join(tmpdir, "Foo.c")).read()
+            assert "OZObject_release((struct OZObject *)tmp)" in content
+            assert "OZObject_release((struct OZObject *)_sync)" in content
+
+    def test_synchronized_in_loop_break_releases(self):
+        """Break inside @synchronized inside loop releases _sync."""
+        m = OZModule()
+        m.classes["OZObject"] = OZClass("OZObject")
+        m.classes["Foo"] = OZClass("Foo", superclass="OZObject", methods=[
+            OZMethod("run", OZType("void"), body_ast={
+                "kind": "CompoundStmt", "inner": [{
+                    "kind": "WhileStmt", "inner": [
+                        {"kind": "IntegerLiteral", "value": "1"},
+                        {"kind": "CompoundStmt", "inner": [
+                            self._sync_ast(self._self_ref(), [
+                                {"kind": "BreakStmt"},
+                            ]),
+                        ]},
+                    ],
+                }],
+            }),
+        ])
+        resolve(m)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            content = open(os.path.join(tmpdir, "Foo.c")).read()
+            break_idx = content.index("break;")
+            before_break = content[:break_idx]
+            assert "release((struct OZObject *)_sync)" in before_break
+
+    def test_synchronized_return_with_value(self):
+        """Return expr inside @synchronized releases _sync but not returned var."""
+        m = OZModule()
+        m.classes["OZObject"] = OZClass("OZObject")
+        m.classes["Foo"] = OZClass("Foo", superclass="OZObject", methods=[
+            OZMethod("getValue", OZType("int"), body_ast={
+                "kind": "CompoundStmt", "inner": [
+                    self._sync_ast(self._self_ref(), [
+                        {"kind": "ReturnStmt", "inner": [
+                            {"kind": "IntegerLiteral", "value": "42",
+                             "type": {"qualType": "int"}},
+                        ]},
+                    ]),
+                ],
+            }),
+        ])
+        resolve(m)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            content = open(os.path.join(tmpdir, "Foo.c")).read()
+            ret_pos = content.index("return 42;")
+            release_pos = content.index("release((struct OZObject *)_sync)")
+            assert release_pos < ret_pos
+
+    def test_sequential_synchronized_counter(self):
+        """Two sequential @synchronized in same method get _sync, _sync2."""
+        m = OZModule()
+        m.classes["OZObject"] = OZClass("OZObject")
+        m.classes["Foo"] = OZClass("Foo", superclass="OZObject", methods=[
+            OZMethod("run", OZType("void"), body_ast={
+                "kind": "CompoundStmt", "inner": [
+                    self._sync_ast(self._self_ref(), []),
+                    self._sync_ast(self._self_ref(), []),
+                ],
+            }),
+        ])
+        resolve(m)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            content = open(os.path.join(tmpdir, "Foo.c")).read()
+            assert "struct OZLock *_sync = " in content
+            assert "struct OZLock *_sync2 = " in content
+
+    def test_dispatch_free_includes_oz_lock(self):
+        """dispatch_free switch includes OZLock case."""
+        m = OZModule()
+        m.classes["OZObject"] = OZClass("OZObject")
+        m.classes["Foo"] = OZClass("Foo", superclass="OZObject", methods=[
+            OZMethod("run", OZType("void"), body_ast={
+                "kind": "CompoundStmt", "inner": [
+                    self._sync_ast(self._self_ref(), []),
+                ],
+            }),
+        ])
+        resolve(m)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            slabs_h = open(os.path.join(tmpdir, "oz_mem_slabs.h")).read()
+            assert "case OZ_CLASS_OZLock: OZLock_free(" in slabs_h
+
+    def test_synchronized_compiles_on_host(self):
+        """Generated @synchronized code compiles with GCC on host."""
+        import subprocess
+        import shutil
+        if not shutil.which("gcc"):
+            import pytest
+            pytest.skip("gcc not found")
+
+        m = OZModule()
+        m.classes["OZObject"] = OZClass("OZObject", methods=[
+            OZMethod("init", OZType("instancetype"), body_ast={
+                "kind": "CompoundStmt", "inner": [
+                    {"kind": "ReturnStmt", "inner": [
+                        {"kind": "DeclRefExpr",
+                         "referencedDecl": {"name": "self"},
+                         "type": {"qualType": "OZObject *"}},
+                    ]},
+                ],
+            }),
+            OZMethod("dealloc", OZType("void"), body_ast={
+                "kind": "CompoundStmt", "inner": [],
+            }),
+        ])
+        m.classes["Foo"] = OZClass("Foo", superclass="OZObject",
+                                   ivars=[OZIvar("_count", OZType("int"))],
+                                   methods=[
+            OZMethod("run", OZType("void"), body_ast={
+                "kind": "CompoundStmt", "inner": [
+                    self._sync_ast(
+                        {"kind": "DeclRefExpr",
+                         "referencedDecl": {"name": "self"},
+                         "type": {"qualType": "Foo *"}},
+                        [{"kind": "NullStmt"}]),
+                ],
+            }),
+        ])
+        resolve(m)
+        repo_root = os.path.dirname(os.path.dirname(os.path.dirname(
+            os.path.dirname(os.path.abspath(__file__)))))
+        pal_inc = os.path.join(repo_root, "include")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            import glob as gl
+            c_files = sorted(gl.glob(os.path.join(tmpdir, "*.c")))
+            for f in c_files:
+                result = subprocess.run(
+                    ["gcc", "-std=c11", "-Wall", "-Werror",
+                     "-Wno-unused-function",
+                     "-DOZ_PLATFORM_HOST",
+                     "-I", tmpdir, "-I", pal_inc,
+                     "-c", f, "-o", f + ".o"],
+                    capture_output=True, text=True,
+                )
+                assert result.returncode == 0, (
+                    f"Compile failed for {os.path.basename(f)}:\n{result.stderr}"
+                )

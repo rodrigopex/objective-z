@@ -74,6 +74,36 @@ class TestCLI:
             assert "oz_atomic_dec_and_test" in root_c
 
 
+class TestSynchronizedE2E:
+    """End-to-end test: .m -> Clang AST JSON -> transpiler -> C."""
+
+    def test_synchronized_pipeline(self):
+        ast_file = os.path.join(FIXTURE_DIR, "synchronized_sample.ast.json")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rc = main(["--input", ast_file, "--outdir", tmpdir, "--verbose"])
+            assert rc == 0
+
+            counter_c = open(os.path.join(tmpdir, "Counter.c")).read()
+            assert "OZLock_initWithObject(OZLock_alloc()" in counter_c
+            assert "OZObject_release((struct OZObject *)_sync)" in counter_c
+
+            slabs_h = open(os.path.join(tmpdir, "oz_mem_slabs.h")).read()
+            assert "OZLock_initWithObject" in slabs_h
+            assert "OZLock_dealloc" in slabs_h
+
+            dispatch_h = open(os.path.join(tmpdir, "oz_dispatch.h")).read()
+            assert "OZ_CLASS_OZLock" in dispatch_h
+
+    def test_synchronized_counter_resets_per_method(self):
+        """Both increment and getCount should use _sync (not _sync2)."""
+        ast_file = os.path.join(FIXTURE_DIR, "synchronized_sample.ast.json")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            main(["--input", ast_file, "--outdir", tmpdir])
+            counter_c = open(os.path.join(tmpdir, "Counter.c")).read()
+            assert counter_c.count("struct OZLock *_sync =") == 2
+            assert "_sync2" not in counter_c
+
+
 def _gcc_syntax_check(tmpdir: str) -> None:
     """Run gcc -fsyntax-only on all .c files in tmpdir."""
     c_files = [f for f in os.listdir(tmpdir) if f.endswith(".c")]

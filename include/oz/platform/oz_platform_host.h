@@ -126,6 +126,18 @@ typedef int oz_spinlock_t;
 typedef int oz_spinlock_key_t;
 #define OZ_SPINLOCK(lck) if ((void)(lck), 1)
 
+static inline oz_spinlock_key_t oz_spin_lock(oz_spinlock_t *lck)
+{
+        (void)lck;
+        return 0;
+}
+
+static inline void oz_spin_unlock(oz_spinlock_t *lck, oz_spinlock_key_t key)
+{
+        (void)lck;
+        (void)key;
+}
+
 /* ------------------------------------------------------------------ */
 /* Formatted output — printf                                           */
 /* ------------------------------------------------------------------ */

@@ -82,6 +82,16 @@ typedef struct k_spinlock oz_spinlock_t;
 typedef k_spinlock_key_t oz_spinlock_key_t;
 #define OZ_SPINLOCK(lck) K_SPINLOCK(lck)
 
+static inline oz_spinlock_key_t oz_spin_lock(oz_spinlock_t *lck)
+{
+        return k_spin_lock(lck);
+}
+
+static inline void oz_spin_unlock(oz_spinlock_t *lck, oz_spinlock_key_t key)
+{
+        k_spin_unlock(lck, key);
+}
+
 /* ------------------------------------------------------------------ */
 /* Formatted output — printk                                           */
 /* ------------------------------------------------------------------ */
