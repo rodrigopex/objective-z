@@ -122,7 +122,7 @@ jobs:
 
       - name: Run behavior tests
         run: >
-          pytest test/behavior/ -v
+          pytest tests/behavior/ -v
           --compiler=${{ matrix.compiler }}
           --opt=${{ matrix.optimization }}
 
@@ -143,7 +143,7 @@ jobs:
 
       - name: Run with AddressSanitizer + UBSan
         run: >
-          pytest test/behavior/ -v
+          pytest tests/behavior/ -v
           --compiler=gcc
           --opt='-O0'
           --sanitize=address,undefined
@@ -167,7 +167,7 @@ jobs:
 
       - name: Run behavior tests with coverage
         run: >
-          pytest test/behavior/ -v
+          pytest tests/behavior/ -v
           --compiler=gcc
           --opt='-O0'
           --cflags='--coverage'
@@ -217,8 +217,8 @@ Acceptance criteria:
 ### Step 3 — Add error and negative tests (10–15 tests)
 
 Create test cases that verify the transpiler fails gracefully on invalid or
-unsupported input. These go in `test/golden/` (for output checking) or
-`test/behavior/cases/error/` (for runtime behavior).
+unsupported input. These go in `tests/golden/` (for output checking) or
+`tests/behavior/cases/error/` (for runtime behavior).
 
 **Golden error tests** (transpiler should exit nonzero with clear message):
 
@@ -259,7 +259,7 @@ Acceptance criteria:
 
 Establish a naming convention and workflow for regression tests:
 
-- Directory: `test/golden/regression/` and `test/behavior/cases/regression/`
+- Directory: `tests/golden/regression/` and `tests/behavior/cases/regression/`
 - Naming: `issue_NNN_short_description.m` (e.g., `issue_042_nil_struct_return.m`)
 - Each regression test must have a comment at the top:
 
@@ -320,10 +320,10 @@ Each adapted test must include a header comment documenting:
 ```
 
 Acceptance criteria:
-- [ ] 5 adapted tests exist in `test/adapted/llvm_rewriter/`
+- [ ] 5 adapted tests exist in `tests/adapted/llvm_rewriter/`
 - [ ] Each has provenance comment with original file path and license
 - [ ] Tests compile and run on host via the behavior test pipeline
-- [ ] `test/adapted/README.md` documents the adaptation methodology
+- [ ] `tests/adapted/README.md` documents the adaptation methodology
 
 ### Step 6 — Adapt GNUstep libobjc2 tests (5 tests)
 
@@ -361,7 +361,7 @@ Each adapted test header:
 ```
 
 Acceptance criteria:
-- [ ] 5 adapted tests exist in `test/adapted/gnustep/`
+- [ ] 5 adapted tests exist in `tests/adapted/gnustep/`
 - [ ] Each has provenance comment
 - [ ] No runtime introspection calls remain (all removed during adaptation)
 
@@ -380,7 +380,7 @@ structs of different sizes and verifies all fields are correct.
 nil messaging returns zero for integer, float, pointer, and struct return
 types. Write a new test covering all four cases.
 
-The `test/adapted/apple_spec/README.md` must clearly state:
+The `tests/adapted/apple_spec/README.md` must clearly state:
 
 ```
 Tests in this directory are NOT copies or adaptations of Apple code.
@@ -398,7 +398,7 @@ as documented in:
 ```
 
 Acceptance criteria:
-- [ ] 2–3 tests exist in `test/adapted/apple_spec/`
+- [ ] 2–3 tests exist in `tests/adapted/apple_spec/`
 - [ ] README clearly disclaims any APSL code derivation
 - [ ] Tests are entirely original code (no structural similarity to Apple's tests)
 

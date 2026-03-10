@@ -107,20 +107,30 @@ def _is_user_struct(node: dict) -> bool:
         return False
     if any(p in file_path for p in _SYSTEM_PATH_SEGMENTS):
         return False
-    if "oz_transpile" in file_path:
+    if "oz_transpile" in file_path or "/stubs/" in file_path:
         return False
     return True
 
 
-def _is_oz_transpile_type(node: dict) -> bool:
-    """Check if a node is a named type definition from oz_transpile stubs."""
+def _is_stub_source(path: str) -> bool:
+    """Check if a path belongs to oz_transpile stubs."""
+    return "oz_transpile" in path or "/stubs/" in path
+
+
+def _is_oz_transpile_type(node: dict, last_file: str = "") -> bool:
+    """Check if a node is a named type definition from oz_transpile stubs.
+
+    Clang JSON AST omits 'file' in 'loc' when it is the same as the previous
+    node.  ``last_file`` carries the last explicitly seen file path so we can
+    still identify stubs nodes that lack a 'file' key.
+    """
     name = node.get("name", "")
     if not name:
         return False
     loc = node.get("loc", {})
-    file_path = loc.get("file", "")
+    file_path = loc.get("file", "") or last_file
     included_from = loc.get("includedFrom", {}).get("file", "")
-    return "oz_transpile" in file_path or "oz_transpile" in included_from
+    return _is_stub_source(file_path) or _is_stub_source(included_from)
 
 
 def _collect_enum_def(node: dict, module: OZModule) -> None:
@@ -180,8 +190,14 @@ def _collect_struct_def(node: dict, module: OZModule) -> None:
         module.verbatim_lines.append(definition)
 
 
-def _walk(node: dict, module: OZModule, impl_name: str | None = None) -> None:
+def _walk(node: dict, module: OZModule, impl_name: str | None = None,
+          last_file: str = "") -> None:
     kind = node.get("kind", "")
+
+    # Track current file — Clang omits 'file' when unchanged from previous node
+    loc = node.get("loc", {})
+    if "file" in loc:
+        last_file = loc["file"]
 
     if kind == "ObjCInterfaceDecl":
         _collect_interface(node, module)
@@ -202,11 +218,11 @@ def _walk(node: dict, module: OZModule, impl_name: str | None = None) -> None:
             _collect_function(node, module)
         return
     elif kind == "EnumDecl":
-        if _is_oz_transpile_type(node):
+        if _is_oz_transpile_type(node, last_file):
             _collect_enum_def(node, module)
         return
     elif kind == "RecordDecl":
-        if _is_oz_transpile_type(node):
+        if _is_oz_transpile_type(node, last_file):
             tag = node.get("tagUsed", "struct")
             if tag == "union":
                 _collect_union_def(node, module)
@@ -219,7 +235,10 @@ def _walk(node: dict, module: OZModule, impl_name: str | None = None) -> None:
         return
 
     for child in node.get("inner", []):
-        _walk(child, module, impl_name)
+        child_loc = child.get("loc", {})
+        if "file" in child_loc:
+            last_file = child_loc["file"]
+        _walk(child, module, impl_name, last_file)
 
 
 def _collect_property(node: dict, module: OZModule) -> OZProperty | None:

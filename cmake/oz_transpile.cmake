@@ -4,11 +4,12 @@
 #
 # No ObjC runtime dependency — generates pure C compilable by GCC.
 # Reuses objz_find_clang() and _objz_build_ast_flags() from ObjcClang.cmake.
+#
+# Paths use ZEPHYR_OBJZ_MODULE_DIR (set by Zephyr module system).
 
 include_guard(GLOBAL)
 
-get_filename_component(_OZ_TRANSPILE_CMAKE_DIR "${CMAKE_CURRENT_LIST_FILE}" DIRECTORY)
-include(${_OZ_TRANSPILE_CMAKE_DIR}/ObjcClang.cmake)
+include(${ZEPHYR_OBJZ_MODULE_DIR}/cmake/ObjcClang.cmake)
 
 # ─── Public API ───────────────────────────────────────────────────────
 #
@@ -24,6 +25,8 @@ include(${_OZ_TRANSPILE_CMAKE_DIR}/ObjcClang.cmake)
 function(objz_transpile_sources target)
     cmake_parse_arguments(OZT "" "ROOT_CLASS;POOL_SIZES" "INCLUDE_DIRS" ${ARGN})
 
+    set(_mod ${ZEPHYR_OBJZ_MODULE_DIR})
+
     # Remaining unparsed args are source files
     set(_sources ${OZT_UNPARSED_ARGUMENTS})
     if(NOT _sources)
@@ -38,18 +41,12 @@ function(objz_transpile_sources target)
     list(APPEND _ast_flags -w)  # Suppress warnings — AST dump is transpiler input only
 
     # Add shared transpiler root class (OZObject.h + OZObject.m)
-    get_filename_component(_oz_inc_dir
-        "${_OZ_TRANSPILE_CMAKE_DIR}/../include/oz_transpile" ABSOLUTE)
-    get_filename_component(_oz_root_src
-        "${_OZ_TRANSPILE_CMAKE_DIR}/../src/oz_transpile/OZObject.m" ABSOLUTE)
-    get_filename_component(_oz_string_src
-        "${_OZ_TRANSPILE_CMAKE_DIR}/../src/oz_transpile/OZString.m" ABSOLUTE)
-    get_filename_component(_oz_array_src
-        "${_OZ_TRANSPILE_CMAKE_DIR}/../src/oz_transpile/OZArray.m" ABSOLUTE)
-    get_filename_component(_oz_dict_src
-        "${_OZ_TRANSPILE_CMAKE_DIR}/../src/oz_transpile/OZDictionary.m" ABSOLUTE)
-    get_filename_component(_oz_number_src
-        "${_OZ_TRANSPILE_CMAKE_DIR}/../src/oz_transpile/OZNumber.m" ABSOLUTE)
+    set(_oz_inc_dir ${_mod}/include/stubs)
+    set(_oz_root_src ${_mod}/src/OZObject.m)
+    set(_oz_string_src ${_mod}/src/OZString.m)
+    set(_oz_array_src ${_mod}/src/OZArray.m)
+    set(_oz_dict_src ${_mod}/src/OZDictionary.m)
+    set(_oz_number_src ${_mod}/src/OZNumber.m)
     # Prepend so transpiler stubs (assert.h, Foundation/, etc.) take priority
     list(PREPEND _ast_flags -I${_oz_inc_dir})
     list(PREPEND _sources ${_oz_number_src} ${_oz_dict_src} ${_oz_array_src}
@@ -99,10 +96,7 @@ function(objz_transpile_sources target)
     set(_outdir ${CMAKE_CURRENT_BINARY_DIR}/oz_generated)
     set(_ast_dir ${CMAKE_CURRENT_BINARY_DIR}/oz_ast)
     set(_manifest ${_outdir}/oz_manifest.txt)
-
-    # Locate transpiler relative to this cmake file (objc/cmake/ -> ../../tools)
-    get_filename_component(_transpile_dir
-        "${_OZ_TRANSPILE_CMAKE_DIR}/../../tools" ABSOLUTE)
+    set(_transpile_dir ${_mod}/tools)
 
     # ── Configure-time: AST dump + transpile to discover output files ──
     set(_ast_files "")
@@ -196,15 +190,11 @@ function(objz_transpile_sources target)
     target_include_directories(${target} PRIVATE ${_outdir})
 
     # PAL: select Zephyr backend and provide include path
-    get_filename_component(_oz_pal_inc_dir
-        "${_OZ_TRANSPILE_CMAKE_DIR}/../../include" ABSOLUTE)
-    target_include_directories(${target} PRIVATE ${_oz_pal_inc_dir})
+    target_include_directories(${target} PRIVATE ${_mod}/include)
     target_compile_definitions(${target} PRIVATE OZ_PLATFORM_ZEPHYR)
 
     # Add OZLog support (pure C, uses generated oz_dispatch.h for %@)
-    get_filename_component(_oz_log_src
-        "${_OZ_TRANSPILE_CMAKE_DIR}/../src/oz_transpile/OZLog.c" ABSOLUTE)
-    target_sources(${target} PRIVATE ${_oz_log_src})
+    target_sources(${target} PRIVATE ${_mod}/src/OZLog.c)
 
     set_target_properties(${target} PROPERTIES LINKER_LANGUAGE C)
 endfunction()

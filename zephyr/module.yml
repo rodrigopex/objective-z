@@ -1,4 +1,4 @@
-name: objc
+name: objz
 build:
   cmake: .
   kconfig: Kconfig

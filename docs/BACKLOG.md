@@ -17,7 +17,7 @@
   - [x] Kconfig defaults to 0 (auto), non-zero overrides
   - [x] Deferred CMake target for multiple objz_target_sources() calls
 - [x] Per-class dispatch table sizing via OZ_DEFINE_DTABLE
-  - [x] `objc/include/objc/dtable.h`: `OZ_DEFINE_DTABLE(ClassName, cls_size, meta_size)` macro
+  - [x] `include/objc/dtable.h`: `OZ_DEFINE_DTABLE(ClassName, cls_size, meta_size)` macro
   - [x] Registry-based lookup with heap fallback for unregistered classes
   - [x] `objz_gen_table_sizes.py` auto-generates `dtable_pool.c` per-class entries
 - [x] Add singleton helper (`+shared` via `+initialize`)
@@ -49,7 +49,7 @@
 Decouple transpiler-generated C from Zephyr so output compiles on any POSIX host. Zero-cost: all PAL functions are `static inline`, vanish at `-O1+`.
 
 - [x] Assess existing runtime test suites (Bucket A/B/C classification)
-  - [x] `test/ASSESSMENT.md` with every test file classified
+  - [x] `tests/ASSESSMENT.md` with every test file classified
   - [x] Rename `tests/` → `tests/objc-reference/` with README
 - [x] Create PAL headers (`include/oz/platform/`)
   - [x] `oz_platform_types.h` — return codes, shared types (no Zephyr/POSIX includes)
@@ -114,10 +114,10 @@ Automate all tests in GitHub Actions, add coverage, adapt upstream LLVM/GNUstep 
   - [x] C coverage (gcov + Codecov)
 - [x] Error/negative tests (5 golden + 2 runtime): try/catch, KVO, forward invocation, circular inheritance, duplicate method
 - [x] Transpiler feature rejection: `module.errors` for hard errors, `--strict` for warnings
-- [x] Regression test infrastructure (`tools/oz_transpile/tests/golden/regression/`, `test/behavior/cases/regression/`)
-- [x] Adapt 5 LLVM/Clang Rewriter tests (`test/adapted/llvm_rewriter/`)
-- [x] Adapt 5 GNUstep libobjc2 tests (`test/adapted/gnustep/`)
-- [x] Apple objc4 spec-derived behavioral tests (2, `test/adapted/apple_spec/`)
+- [x] Regression test infrastructure (`tools/oz_transpile/tests/golden/regression/`, `tests/behavior/cases/regression/`)
+- [x] Adapt 5 LLVM/Clang Rewriter tests (`tests/adapted/llvm_rewriter/`)
+- [x] Adapt 5 GNUstep libobjc2 tests (`tests/adapted/gnustep/`)
+- [x] Apple objc4 spec-derived behavioral tests (2, `tests/adapted/apple_spec/`)
 - [x] Extended `compile_and_run.py`: `--compiler`, `--cflags`, `--ldflags`, string `--sanitize`
 - [x] justfile targets: `test-adapted`, `test-all-transpiler`
 

@@ -98,11 +98,11 @@ Acceptance criteria:
 ### Step 2 — Create the golden-file test runner
 
 Create `test/runner.py` — a pytest-compatible module that discovers and runs
-golden-file tests. Each subdirectory of `test/golden/` is a test case.
+golden-file tests. Each subdirectory of `tests/golden/` is a test case.
 
 The runner must:
 
-1. Find all directories under `test/golden/` that contain `input.m`
+1. Find all directories under `tests/golden/` that contain `input.m`
 2. For each, invoke the transpiler: `python -m oz_transpiler input.m -o /tmp/out/`
 3. Compare each file in `/tmp/out/` against the corresponding `expected.*` file
 4. Report unified diff on mismatch
@@ -117,7 +117,7 @@ Usage:
     pytest test/runner.py -k empty_class     # run one test
     python test/runner.py --update-golden    # regenerate expected files
 
-Each test directory under test/golden/ must contain:
+Each test directory under tests/golden/ must contain:
     input.m         — Objective-C source (required)
     expected.c      — expected C output (required)
     expected.h      — expected H output (optional)
@@ -189,7 +189,7 @@ Acceptance criteria:
 ### Step 4 — Create initial golden tests (10–15 tests)
 
 **Start with the Phase 0 assessment.** Before writing new `.m` inputs from
-scratch, check `test/ASSESSMENT.md` for Bucket A tests — those are existing
+scratch, check `tests/ASSESSMENT.md` for Bucket A tests — those are existing
 `.m` files that exercise supported features with observable-behavior assertions.
 Each Bucket A file can serve double duty: as a golden test input AND (in
 Phase 2) as a behavior test. Use them first, then fill gaps with new tests
@@ -298,7 +298,7 @@ Config sets `expect_error: true`. Verifies transpiler rejects gracefully.
 required method. Verifies transpiler emits a clear error.
 
 Acceptance criteria:
-- [ ] At least 12 golden test directories exist under `test/golden/`
+- [ ] At least 12 golden test directories exist under `tests/golden/`
 - [ ] Each has `input.m` and `expected.c` (and `expected.h` where applicable)
 - [ ] `pytest test/runner.py` passes with all green
 - [ ] At least 2 error/negative tests included
@@ -322,7 +322,7 @@ test-golden:
 
 # Quick compile-check: transpile + compile on host (no run)
 smoke:
-    python -m oz_transpiler test/golden/empty_class/input.m -o /tmp/oz_smoke/
+    python -m oz_transpiler tests/golden/empty_class/input.m -o /tmp/oz_smoke/
     gcc -std=c11 -Wall -Werror -DOZ_PLATFORM_HOST -I include -fsyntax-only /tmp/oz_smoke/*.c
 ```
 
@@ -333,7 +333,7 @@ Acceptance criteria:
 
 ### Step 6 — Document the golden-test workflow
 
-Create `test/golden/README.md` explaining:
+Create `tests/golden/README.md` explaining:
 
 1. How to add a new golden test (create directory, write `input.m`, run
    `--update-golden`, review and commit expected files)

@@ -108,7 +108,7 @@ Rust is the better choice when you need compile-time memory safety guarantees, z
 
 - [Zephyr SDK](https://docs.zephyrproject.org/latest/develop/getting_started/index.html) and `west`
 - Clang (for compiling `.m` files with gnustep-2.0 ABI)
-- Python 3 with `tree-sitter` and `tree-sitter-objc` (`pip install -r objc/scripts/requirements.txt`)
+- Python 3 with `tree-sitter` and `tree-sitter-objc` (`pip install -r scripts/requirements.txt`)
 - [just](https://github.com/casey/just) (build automation, optional)
 
 ## Quick Start
@@ -659,7 +659,7 @@ Per-object memory cost across C, C++, Rust, Zig, and Objective-C (`just bench-me
 
 ### 1. Directory layout
 
-Place the `objc/` runtime alongside your application (or use west to manage it):
+Place Objective-Z alongside your application (or use west to manage it):
 
 ```
 my_app/
@@ -667,7 +667,7 @@ my_app/
 ├── prj.conf
 ├── src/
 │   └── main.m
-└── ../objc/          # Objective-Z runtime module
+└── ../objective-z/   # Objective-Z module
 ```
 
 ### 2. CMakeLists.txt
@@ -676,7 +676,7 @@ my_app/
 cmake_minimum_required(VERSION 3.20.0)
 
 # Register Objective-Z as an extra module
-set(ZEPHYR_EXTRA_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/../objc/")
+set(ZEPHYR_EXTRA_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/../objective-z/")
 
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(my_app)

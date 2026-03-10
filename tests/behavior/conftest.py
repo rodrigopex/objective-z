@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 #
-# conftest.py - Pytest fixtures for adapted upstream tests.
-# Reuses the same compile_and_run pipeline as behavior tests.
+# conftest.py - Pytest fixtures for behavior tests.
 
 from __future__ import annotations
 
@@ -13,13 +12,13 @@ import sys
 import pytest
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
-ADAPTED_DIR = pathlib.Path(__file__).parent
-COMPILE_AND_RUN = REPO_ROOT / "test" / "tools" / "compile_and_run.py"
+CASES_DIR = pathlib.Path(__file__).parent / "cases"
+COMPILE_AND_RUN = REPO_ROOT / "tests" / "tools" / "compile_and_run.py"
 
 
-def discover_adapted_tests(category: str | None = None):
-    """Find all .m files under adapted test dirs."""
-    for m_file in sorted(ADAPTED_DIR.rglob("*.m")):
+def discover_behavior_tests(category: str | None = None):
+    """Find all .m files under cases/, optionally filtered by category."""
+    for m_file in sorted(CASES_DIR.rglob("*.m")):
         cat = m_file.parent.name
         if category and cat != category:
             continue
@@ -41,9 +40,9 @@ def compile_and_run(request):
         if sanitize:
             cmd.extend(["--sanitize", sanitize])
         if cflags:
-            cmd.extend(["--cflags", cflags])
+            cmd.append(f"--cflags={cflags}")
         if ldflags:
-            cmd.extend(["--ldflags", ldflags])
+            cmd.append(f"--ldflags={ldflags}")
         result = subprocess.run(
             cmd,
             capture_output=True, text=True,

@@ -2,7 +2,7 @@
  * Copyright (c) 2025 Rodrigo Peixoto <rodrigopex@gmail.com>
  * SPDX-License-Identifier: Apache-2.0
  *
- * Auto-generated from objc/VERSION — do not edit.
+ * Auto-generated from VERSION — do not edit.
  */
 #ifndef OBJC_VERSION_H
 #define OBJC_VERSION_H
