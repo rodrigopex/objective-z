@@ -2,6 +2,9 @@
 #include "oz_dispatch.h"
 #include "oz_mem_slabs.h"
 #include "oz_functions.h"
+{% for inc in user_includes %}
+{{ inc }}
+{% endfor %}
 
 {% for line in verbatim_lines %}
 {{ line }}

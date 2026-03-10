@@ -151,6 +151,8 @@ class OZClass:
     properties: list[OZProperty] = field(default_factory=list)
     class_id: int = -1
     base_depth: int = 0
+    verbatim_lines: list[str] = field(default_factory=list)
+    user_includes: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -175,6 +177,7 @@ class OZModule:
     functions: list[OZFunction] = field(default_factory=list)
     statics: list[OZStaticVar] = field(default_factory=list)
     verbatim_lines: list[str] = field(default_factory=list)
+    user_includes: list[str] = field(default_factory=list)
     type_defs: dict[str, str] = field(default_factory=dict)
     diagnostics: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)

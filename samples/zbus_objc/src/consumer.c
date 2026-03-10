@@ -1,5 +1,10 @@
+/*
+ * Copyright (c) 2025 Rodrigo Peixoto <rodrigopex@gmail.com>
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 #include "channels.h"
-#include <Foundation/OZLog.h>
+#include "oz_functions.h"
 
 ZBUS_MSG_SUBSCRIBER_DEFINE(msub_consumer);
 
@@ -19,11 +24,12 @@ void consumer_thread(void *p1, void *p2, void *p3)
 		zbus_sub_wait_msg(&msub_consumer, &chan, &msg, K_FOREVER);
 		++ack_msg.count;
 
-		OZLog(" %d - Accelerometer data x=%02d,y=%02d,z=%02d", ack_msg.count, msg.x,
-		      msg.y, msg.z);
+		OZLog(" %d - Accelerometer data x=%02d,y=%02d,z=%02d",
+		      ack_msg.count, msg.x, msg.y, msg.z);
 
 		zbus_chan_pub(&chan_acc_data_consumed, &ack_msg, K_MSEC(250));
 	}
 }
 
-K_THREAD_DEFINE(consumer_thread_id, 4096, consumer_thread, NULL, NULL, NULL, 3, 0, 0);
+K_THREAD_DEFINE(consumer_thread_id, 4096, consumer_thread, NULL, NULL, NULL, 3,
+		0, 0);

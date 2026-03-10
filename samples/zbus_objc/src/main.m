@@ -1,12 +1,7 @@
 /*
- * Copyright (c) 2012-2014 Wind River Systems, Inc.
- *
+ * Copyright (c) 2025 Rodrigo Peixoto <rodrigopex@gmail.com>
  * SPDX-License-Identifier: Apache-2.0
  */
-
-#import <Foundation/Foundation.h>
-#import <objc/objc.h>
-#include <zephyr/kernel.h>
 
 int main(void)
 {

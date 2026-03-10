@@ -442,6 +442,11 @@ def _class_source_ctx(ctx: _EmitCtx) -> dict:
     has_functions_header = bool(
         module.functions or module.statics or module.verbatim_lines)
 
+    all_user_includes = list(module.user_includes)
+    for inc in cls.user_includes:
+        if inc not in all_user_includes:
+            all_user_includes.append(inc)
+
     return {
         "name": cls.name,
         "is_root": is_root,
@@ -452,6 +457,8 @@ def _class_source_ctx(ctx: _EmitCtx) -> dict:
         "has_functions_header": has_functions_header,
         "string_constants": ctx.string_constants,
         "block_functions": ctx.block_functions,
+        "user_includes": all_user_includes,
+        "verbatim_lines": cls.verbatim_lines,
     }
 
 
@@ -1535,6 +1542,7 @@ def _functions_ctx(module: OZModule, root_class: str) -> dict:
             "static_decls": static_decls, "extern_decls": extern_decls,
             "function_protos": function_protos,
             "verbatim_lines": module.verbatim_lines,
+            "user_includes": module.user_includes,
             "string_constants": ctx.string_constants,
             "block_functions": ctx.block_functions}
 

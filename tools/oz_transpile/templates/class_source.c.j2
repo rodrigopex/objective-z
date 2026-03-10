@@ -4,7 +4,13 @@
 {% if has_functions_header %}
 #include "oz_functions.h"
 {% endif %}
+{% for inc in user_includes %}
+{{ inc }}
+{% endfor %}
 
+{% for line in verbatim_lines %}
+{{ line }}
+{% endfor %}
 {% for sc in string_constants %}
 {{ sc }}
 {% endfor %}

@@ -1,14 +1,9 @@
-#include <Foundation/Foundation.h>
-#include <objc/objc.h>
-#include "channels.h"
-
 #pragma once
 
-@interface AccDataProducer: Object {
-	int _count;
-}
+#import "OZObject.h"
 
-@property(assign, nonatomic) int ackCount;
+@interface AccDataProducer: OZObject
+@property(assign, nonatomic, getter=ackCount) int count;
 
 - (void)sendData;
 
