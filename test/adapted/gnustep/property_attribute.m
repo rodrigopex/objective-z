@@ -6,19 +6,12 @@
  */
 #import "OZTestBase.h"
 
-@interface Config : OZObject {
-	int _level;
-	int _mode;
-}
-- (int)level;
-- (void)setLevel:(int)level;
-- (int)mode;
-- (void)setMode:(int)mode;
+@interface Config : OZObject
+@property(nonatomic, assign) int level;
+@property(nonatomic, assign) int mode;
 @end
 
 @implementation Config
-- (int)level { return _level; }
-- (void)setLevel:(int)level { _level = level; }
-- (int)mode { return _mode; }
-- (void)setMode:(int)mode { _mode = mode; }
+@synthesize level = _level;
+@synthesize mode = _mode;
 @end

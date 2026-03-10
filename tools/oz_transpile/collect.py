@@ -10,7 +10,7 @@ import tree_sitter_objc as tsobjc
 from tree_sitter import Language, Parser
 
 from .model import (OZClass, OZFunction, OZIvar, OZMethod, OZModule, OZParam,
-                     OZProtocol, OZStaticVar, OZType)
+                     OZProperty, OZProtocol, OZStaticVar, OZType)
 
 
 SKIP_CLASSES = frozenset({"Protocol"})
@@ -44,6 +44,8 @@ def merge_modules(modules: list[OZModule]) -> OZModule:
                 if cls.protocols:
                     existing.protocols = list(
                         dict.fromkeys(existing.protocols + cls.protocols))
+                if cls.properties and not existing.properties:
+                    existing.properties = cls.properties
                 for method in cls.methods:
                     for i, ex in enumerate(existing.methods):
                         if ex.selector == method.selector:
@@ -220,6 +222,63 @@ def _walk(node: dict, module: OZModule, impl_name: str | None = None) -> None:
         _walk(child, module, impl_name)
 
 
+def _collect_property(node: dict, module: OZModule) -> OZProperty | None:
+    """Collect an ObjCPropertyDecl into an OZProperty."""
+    name = node.get("name", "")
+    qual_type = node.get("type", {}).get("qualType", "")
+    is_readonly = node.get("readonly", False)
+    is_nonatomic = node.get("nonatomic", False)
+
+    if node.get("weak"):
+        module.errors.append(
+            f"'weak' property '{name}' is not supported; "
+            f"use 'unsafe_unretained' instead")
+        return None
+
+    ownership = "strong"
+    if node.get("unsafe_unretained"):
+        ownership = "unsafe_unretained"
+    elif node.get("assign") and not node.get("strong"):
+        ownership = "assign"
+
+    getter_sel = None
+    getter_node = node.get("getter")
+    if isinstance(getter_node, dict):
+        getter_sel = getter_node.get("name")
+
+    setter_sel = None
+    setter_node = node.get("setter")
+    if isinstance(setter_node, dict):
+        setter_sel = setter_node.get("name")
+
+    return OZProperty(
+        name=name,
+        oz_type=OZType(qual_type),
+        is_readonly=is_readonly,
+        is_nonatomic=is_nonatomic,
+        ownership=ownership,
+        getter_sel=getter_sel,
+        setter_sel=setter_sel,
+    )
+
+
+def _link_property_impl(node: dict, cls: OZClass) -> None:
+    """Link an ObjCPropertyImplDecl to its OZProperty, setting the ivar name."""
+    prop_decl = node.get("propertyDecl", {})
+    prop_name = prop_decl.get("name", "")
+    if not prop_name:
+        return
+
+    ivar_decl = node.get("ivarDecl", {})
+    ivar_name = ivar_decl.get("name", "")
+
+    for prop in cls.properties:
+        if prop.name == prop_name:
+            if ivar_name:
+                prop.ivar_name = ivar_name
+            return
+
+
 def _collect_interface(node: dict, module: OZModule) -> None:
     name = node.get("name", "")
     if not name:
@@ -228,6 +287,7 @@ def _collect_interface(node: dict, module: OZModule) -> None:
     superclass = node.get("super", {}).get("name") if "super" in node else None
     ivars = []
     protocols = []
+    properties = []
 
     for child in node.get("inner", []):
         ckind = child.get("kind", "")
@@ -239,6 +299,10 @@ def _collect_interface(node: dict, module: OZModule) -> None:
             proto_name = child.get("name", "")
             if proto_name:
                 protocols.append(proto_name)
+        elif ckind == "ObjCPropertyDecl":
+            prop = _collect_property(child, module)
+            if prop:
+                properties.append(prop)
 
     if name in module.classes:
         cls = module.classes[name]
@@ -248,12 +312,15 @@ def _collect_interface(node: dict, module: OZModule) -> None:
             cls.ivars = ivars
         if protocols:
             cls.protocols = protocols
+        if properties:
+            cls.properties = properties
     else:
         module.classes[name] = OZClass(
             name=name,
             superclass=superclass,
             ivars=ivars,
             protocols=protocols,
+            properties=properties,
         )
 
 
@@ -289,6 +356,8 @@ def _collect_implementation(node: dict, module: OZModule) -> None:
                 if method.body_ast:
                     _collect_block_vars(method.body_ast, module)
                 cls.methods.append(method)
+        elif ckind == "ObjCPropertyImplDecl":
+            _link_property_impl(child, cls)
 
 
 def _collect_method(node: dict) -> OZMethod | None:

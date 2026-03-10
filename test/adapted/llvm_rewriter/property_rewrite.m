@@ -6,17 +6,12 @@
  */
 #import "OZTestBase.h"
 
-@interface Sensor : OZObject {
-	int _temperature;
-	int _humidity;
-}
-- (int)temperature;
-- (void)setTemperature:(int)temperature;
-- (int)humidity;
+@interface Sensor : OZObject
+@property(nonatomic, assign) int temperature;
+@property(nonatomic, assign, readonly) int humidity;
 @end
 
 @implementation Sensor
-- (int)temperature { return _temperature; }
-- (void)setTemperature:(int)temperature { _temperature = temperature; }
-- (int)humidity { return _humidity; }
+@synthesize temperature = _temperature;
+@synthesize humidity = _humidity;
 @end

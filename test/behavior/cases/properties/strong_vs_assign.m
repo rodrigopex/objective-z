@@ -1,13 +1,19 @@
 #import "OZTestBase.h"
 
-@interface Holder : OZObject {
-	int _value;
-}
-- (void)setValue:(int)v;
-- (int)value;
+@interface Item : OZObject
+@property(nonatomic, assign) int tag;
+@end
+
+@implementation Item
+@synthesize tag = _tag;
+@end
+
+@interface Holder : OZObject
+@property(nonatomic, strong) Item *item;
+@property(nonatomic, assign) int value;
 @end
 
 @implementation Holder
-- (void)setValue:(int)v { _value = v; }
-- (int)value { return _value; }
+@synthesize item = _item;
+@synthesize value = _value;
 @end

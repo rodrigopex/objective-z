@@ -288,6 +288,71 @@ def _class_header_ctx(ctx: _EmitCtx) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Synthesized property accessors
+# ---------------------------------------------------------------------------
+
+def _emit_synthesized_accessor(cls: OZClass, m: OZMethod,
+                                out: StringIO,
+                                root_class: str = "OZObject") -> None:
+    """Emit a synthesized getter or setter for a property."""
+    prop = m.synthesized_property
+    ivar = prop.ivar_name
+    is_getter = len(m.params) == 0
+    is_atomic = not prop.is_nonatomic
+    c_type = prop.oz_type.c_type
+    is_strong_obj = prop.oz_type.is_object and prop.ownership == "strong"
+    root = root_class
+
+    if is_getter:
+        if is_atomic:
+            out.write("{\n")
+            out.write("\toz_spinlock_t lck;\n")
+            out.write(f"\t{c_type} val;\n")
+            out.write("\tOZ_SPINLOCK(&lck) {\n")
+            out.write(f"\t\tval = self->{ivar};\n")
+            out.write("\t}\n")
+            out.write("\treturn val;\n")
+            out.write("}\n")
+        else:
+            out.write("{\n")
+            out.write(f"\treturn self->{ivar};\n")
+            out.write("}\n")
+    else:
+        param_name = m.params[0].name
+        if is_strong_obj:
+            if is_atomic:
+                out.write("{\n")
+                out.write("\toz_spinlock_t lck;\n")
+                out.write(f"\t{c_type} old;\n")
+                out.write(f"\t{root}_retain((struct {root} *){param_name});\n")
+                out.write("\tOZ_SPINLOCK(&lck) {\n")
+                out.write(f"\t\told = self->{ivar};\n")
+                out.write(f"\t\tself->{ivar} = {param_name};\n")
+                out.write("\t}\n")
+                out.write(f"\t{root}_release((struct {root} *)old);\n")
+                out.write("}\n")
+            else:
+                out.write("{\n")
+                out.write(f"\t{c_type} old = self->{ivar};\n")
+                out.write(f"\tself->{ivar} = {param_name};\n")
+                out.write(f"\t{root}_retain((struct {root} *){param_name});\n")
+                out.write(f"\t{root}_release((struct {root} *)old);\n")
+                out.write("}\n")
+        else:
+            if is_atomic:
+                out.write("{\n")
+                out.write("\toz_spinlock_t lck;\n")
+                out.write("\tOZ_SPINLOCK(&lck) {\n")
+                out.write(f"\t\tself->{ivar} = {param_name};\n")
+                out.write("\t}\n")
+                out.write("}\n")
+            else:
+                out.write("{\n")
+                out.write(f"\tself->{ivar} = {param_name};\n")
+                out.write("}\n")
+
+
+# ---------------------------------------------------------------------------
 # Per-class .c
 # ---------------------------------------------------------------------------
 
@@ -329,7 +394,9 @@ def _class_source_ctx(ctx: _EmitCtx) -> dict:
         ctx._tmp_counter = 0
         buf = StringIO()
         buf.write(f"{_method_prototype(cls, m)}\n")
-        if m.body_ast:
+        if m.synthesized_property:
+            _emit_synthesized_accessor(cls, m, buf, root_class)
+        elif m.body_ast:
             _emit_compound_stmt(m.body_ast, buf, ctx, indent=0,
                                 param_retains=_object_params(m))
         else:
