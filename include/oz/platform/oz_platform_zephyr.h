@@ -75,6 +75,14 @@ static inline atomic_val_t oz_atomic_get(oz_atomic_t *target)
 }
 
 /* ------------------------------------------------------------------ */
+/* Spinlock — scoped preemption guard for atomic property accessors     */
+/* ------------------------------------------------------------------ */
+
+typedef struct k_spinlock oz_spinlock_t;
+typedef k_spinlock_key_t oz_spinlock_key_t;
+#define OZ_SPINLOCK(lck) K_SPINLOCK(lck)
+
+/* ------------------------------------------------------------------ */
 /* Formatted output — printk                                           */
 /* ------------------------------------------------------------------ */
 

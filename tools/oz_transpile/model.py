@@ -107,6 +107,18 @@ class OZParam:
 
 
 @dataclass(slots=True)
+class OZProperty:
+    name: str
+    oz_type: OZType
+    ivar_name: str | None = None
+    is_readonly: bool = False
+    is_nonatomic: bool = False
+    ownership: str = "strong"
+    getter_sel: str | None = None
+    setter_sel: str | None = None
+
+
+@dataclass(slots=True)
 class OZIvar:
     name: str
     oz_type: OZType
@@ -120,6 +132,7 @@ class OZMethod:
     is_class_method: bool = False
     body_ast: dict | None = None
     dispatch: DispatchKind = DispatchKind.STATIC
+    synthesized_property: OZProperty | None = None
 
 
 @dataclass(slots=True)
@@ -135,6 +148,7 @@ class OZClass:
     ivars: list[OZIvar] = field(default_factory=list)
     methods: list[OZMethod] = field(default_factory=list)
     protocols: list[str] = field(default_factory=list)
+    properties: list[OZProperty] = field(default_factory=list)
     class_id: int = -1
     base_depth: int = 0
 

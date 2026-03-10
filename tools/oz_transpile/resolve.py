@@ -4,12 +4,13 @@
 
 from __future__ import annotations
 
-from .model import DispatchKind, OZModule
+from .model import DispatchKind, OZMethod, OZModule, OZParam, OZType
 
 
 def resolve(module: OZModule) -> None:
     """Resolve hierarchy, assign class IDs, classify dispatch."""
     _validate_hierarchy(module)
+    _synthesize_properties(module)
     _check_duplicate_methods(module)
     _assign_class_ids(module)
     _compute_base_depths(module)
@@ -36,6 +37,37 @@ def _validate_hierarchy(module: OZModule) -> None:
             visited.add(cur)
             parent = module.classes.get(cur)
             cur = parent.superclass if parent else None
+
+
+def _synthesize_properties(module: OZModule) -> None:
+    """Synthesize getter/setter methods for declared properties."""
+    for cls in module.classes.values():
+        existing_sels = {m.selector for m in cls.methods}
+        for prop in cls.properties:
+            if prop.ivar_name is None:
+                prop.ivar_name = f"_{prop.name}"
+
+            getter_sel = prop.getter_sel or prop.name
+            if getter_sel not in existing_sels:
+                getter = OZMethod(
+                    selector=getter_sel,
+                    return_type=prop.oz_type,
+                    synthesized_property=prop,
+                )
+                cls.methods.append(getter)
+                existing_sels.add(getter_sel)
+
+            if not prop.is_readonly:
+                setter_sel = prop.setter_sel or f"set{prop.name[0].upper()}{prop.name[1:]}:"
+                if setter_sel not in existing_sels:
+                    setter = OZMethod(
+                        selector=setter_sel,
+                        return_type=OZType("void"),
+                        params=[OZParam(prop.name, prop.oz_type)],
+                        synthesized_property=prop,
+                    )
+                    cls.methods.append(setter)
+                    existing_sels.add(setter_sel)
 
 
 def _check_duplicate_methods(module: OZModule) -> None:

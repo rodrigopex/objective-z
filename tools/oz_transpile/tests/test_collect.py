@@ -401,3 +401,157 @@ class TestCollectVerbatimLines:
         ast = _make_ast(_interface("Foo", "OZObject"))
         mod = collect(ast)
         assert len(mod.verbatim_lines) == 0
+
+
+# -- Helpers for property AST nodes --
+
+def _property_decl(name, qual_type, **attrs):
+    node = {
+        "kind": "ObjCPropertyDecl",
+        "name": name,
+        "type": {"qualType": qual_type},
+    }
+    node.update(attrs)
+    return node
+
+
+def _property_impl(name, ivar_name, qual_type):
+    return {
+        "kind": "ObjCPropertyImplDecl",
+        "name": name,
+        "implKind": "synthesize",
+        "propertyDecl": {"kind": "ObjCPropertyDecl", "name": name},
+        "ivarDecl": {
+            "kind": "ObjCIvarDecl",
+            "name": ivar_name,
+            "type": {"qualType": qual_type},
+        },
+    }
+
+
+class TestCollectProperty:
+    def test_readonly_nonatomic(self):
+        ast = _make_ast(
+            _interface("Car", "OZObject", inner=[
+                _property_decl("color", "struct color *",
+                               readonly=True, nonatomic=True),
+            ]),
+        )
+        mod = collect(ast)
+        props = mod.classes["Car"].properties
+        assert len(props) == 1
+        assert props[0].name == "color"
+        assert props[0].is_readonly is True
+        assert props[0].is_nonatomic is True
+
+    def test_strong_property(self):
+        ast = _make_ast(
+            _interface("Car", "OZObject", inner=[
+                _property_decl("model", "OZString *",
+                               readwrite=True, nonatomic=True, strong=True),
+            ]),
+        )
+        mod = collect(ast)
+        prop = mod.classes["Car"].properties[0]
+        assert prop.ownership == "strong"
+        assert prop.is_readonly is False
+
+    def test_unsafe_unretained_property(self):
+        ast = _make_ast(
+            _interface("Car", "OZObject", inner=[
+                _property_decl("delegate", "id",
+                               assign=True, unsafe_unretained=True,
+                               nonatomic=True),
+            ]),
+        )
+        mod = collect(ast)
+        prop = mod.classes["Car"].properties[0]
+        assert prop.ownership == "unsafe_unretained"
+
+    def test_assign_property(self):
+        ast = _make_ast(
+            _interface("Car", "OZObject", inner=[
+                _property_decl("speed", "int",
+                               assign=True, unsafe_unretained=True,
+                               nonatomic=True),
+            ]),
+        )
+        mod = collect(ast)
+        prop = mod.classes["Car"].properties[0]
+        assert prop.ownership == "unsafe_unretained"
+
+    def test_atomic_is_default(self):
+        ast = _make_ast(
+            _interface("Car", "OZObject", inner=[
+                _property_decl("model", "OZString *",
+                               atomic=True, strong=True),
+            ]),
+        )
+        mod = collect(ast)
+        prop = mod.classes["Car"].properties[0]
+        assert prop.is_nonatomic is False
+
+    def test_custom_getter(self):
+        ast = _make_ast(
+            _interface("Car", "OZObject", inner=[
+                _property_decl("enabled", "BOOL",
+                               getter={"kind": "ObjCMethodDecl",
+                                       "name": "isEnabled"},
+                               assign=True, nonatomic=True),
+            ]),
+        )
+        mod = collect(ast)
+        prop = mod.classes["Car"].properties[0]
+        assert prop.getter_sel == "isEnabled"
+
+    def test_custom_setter(self):
+        ast = _make_ast(
+            _interface("Car", "OZObject", inner=[
+                _property_decl("speed", "int",
+                               setter={"kind": "ObjCMethodDecl",
+                                       "name": "setCustomSpeed:"},
+                               assign=True, nonatomic=True),
+            ]),
+        )
+        mod = collect(ast)
+        prop = mod.classes["Car"].properties[0]
+        assert prop.setter_sel == "setCustomSpeed:"
+
+    def test_property_impl_links_ivar(self):
+        ast = _make_ast(
+            _interface("Car", "OZObject", inner=[
+                _property_decl("color", "struct color *",
+                               readonly=True, nonatomic=True),
+            ]),
+            _impl("Car", "OZObject", methods=[
+                _property_impl("color", "_color", "struct color *"),
+            ]),
+        )
+        mod = collect(ast)
+        prop = mod.classes["Car"].properties[0]
+        assert prop.ivar_name == "_color"
+
+    def test_property_impl_custom_ivar_name(self):
+        ast = _make_ast(
+            _interface("Car", "OZObject", inner=[
+                _property_decl("ackCount", "int",
+                               assign=True, nonatomic=True),
+            ]),
+            _impl("Car", "OZObject", methods=[
+                _property_impl("ackCount", "_count", "int"),
+            ]),
+        )
+        mod = collect(ast)
+        prop = mod.classes["Car"].properties[0]
+        assert prop.ivar_name == "_count"
+
+    def test_weak_property_raises_error(self):
+        ast = _make_ast(
+            _interface("Car", "OZObject", inner=[
+                _property_decl("delegate", "id",
+                               weak=True, nonatomic=True),
+            ]),
+        )
+        mod = collect(ast)
+        assert len(mod.classes["Car"].properties) == 0
+        assert any("weak" in e and "delegate" in e for e in mod.errors)

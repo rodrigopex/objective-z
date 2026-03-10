@@ -119,6 +119,14 @@ static inline int oz_atomic_get(oz_atomic_t *target)
 }
 
 /* ------------------------------------------------------------------ */
+/* Spinlock — no-op on host (single-threaded tests)                    */
+/* ------------------------------------------------------------------ */
+
+typedef int oz_spinlock_t;
+typedef int oz_spinlock_key_t;
+#define OZ_SPINLOCK(lck) if ((void)(lck), 1)
+
+/* ------------------------------------------------------------------ */
 /* Formatted output — printf                                           */
 /* ------------------------------------------------------------------ */
 

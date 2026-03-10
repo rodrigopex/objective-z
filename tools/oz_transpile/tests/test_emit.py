@@ -4,7 +4,8 @@ import os
 import tempfile
 
 from oz_transpile.emit import (
-    emit, _selector_to_c, _base_chain, _method_prototype, _EmitCtx,
+    emit, _selector_to_c, _base_chain, _method_prototype,
+    _emit_synthesized_accessor, _EmitCtx,
 )
 from oz_transpile.model import (
     DispatchKind,
@@ -14,6 +15,7 @@ from oz_transpile.model import (
     OZMethod,
     OZModule,
     OZParam,
+    OZProperty,
     OZProtocol,
     OZStaticVar,
     OZType,
@@ -1968,3 +1970,107 @@ class TestStaticVarEmission:
             emit(m, tmpdir)
             src = open(os.path.join(tmpdir, "OZLed.c")).read()
             assert "OZArray_objectAtIndexedSubscript_" in src
+
+
+class TestSynthesizedPropertyEmission:
+    """Test _emit_synthesized_accessor generates correct C code."""
+
+    def _emit(self, cls, method, root_class="OZObject"):
+        from io import StringIO
+        buf = StringIO()
+        _emit_synthesized_accessor(cls, method, buf, root_class)
+        return buf.getvalue()
+
+    def test_nonatomic_getter(self):
+        prop = OZProperty("color", OZType("struct color *"),
+                          ivar_name="_color", is_nonatomic=True,
+                          ownership="assign")
+        cls = OZClass("Car")
+        m = OZMethod("color", OZType("struct color *"),
+                     synthesized_property=prop)
+        code = self._emit(cls, m)
+        assert "return self->_color;" in code
+        assert "oz_spinlock_t" not in code
+
+    def test_atomic_getter(self):
+        prop = OZProperty("model", OZType("OZString *"),
+                          ivar_name="_model", is_nonatomic=False,
+                          ownership="strong")
+        cls = OZClass("Car")
+        m = OZMethod("model", OZType("OZString *"),
+                     synthesized_property=prop)
+        code = self._emit(cls, m)
+        assert "oz_spinlock_t lck;" in code
+        assert "OZ_SPINLOCK(&lck)" in code
+        assert "val = self->_model;" in code
+        assert "return val;" in code
+
+    def test_nonatomic_strong_setter(self):
+        prop = OZProperty("model", OZType("OZString *"),
+                          ivar_name="_model", is_nonatomic=True,
+                          ownership="strong")
+        cls = OZClass("Car")
+        m = OZMethod("setModel:", OZType("void"),
+                     params=[OZParam("model", OZType("OZString *"))],
+                     synthesized_property=prop)
+        code = self._emit(cls, m, root_class="OZObject")
+        assert "OZObject_retain(" in code
+        assert "OZObject_release(" in code
+        assert "self->_model = model;" in code
+        assert "oz_spinlock_t" not in code
+
+    def test_atomic_strong_setter(self):
+        prop = OZProperty("model", OZType("OZString *"),
+                          ivar_name="_model", is_nonatomic=False,
+                          ownership="strong")
+        cls = OZClass("Car")
+        m = OZMethod("setModel:", OZType("void"),
+                     params=[OZParam("model", OZType("OZString *"))],
+                     synthesized_property=prop)
+        code = self._emit(cls, m, root_class="OZObject")
+        assert "oz_spinlock_t lck;" in code
+        assert "OZ_SPINLOCK(&lck)" in code
+        assert "OZObject_retain(" in code
+        assert "OZObject_release(" in code
+
+    def test_nonatomic_assign_setter(self):
+        prop = OZProperty("speed", OZType("int"),
+                          ivar_name="_speed", is_nonatomic=True,
+                          ownership="assign")
+        cls = OZClass("Car")
+        m = OZMethod("setSpeed:", OZType("void"),
+                     params=[OZParam("speed", OZType("int"))],
+                     synthesized_property=prop)
+        code = self._emit(cls, m)
+        assert "self->_speed = speed;" in code
+        assert "retain" not in code
+        assert "release" not in code
+        assert "oz_spinlock_t" not in code
+
+    def test_atomic_assign_setter(self):
+        prop = OZProperty("speed", OZType("int"),
+                          ivar_name="_speed", is_nonatomic=False,
+                          ownership="assign")
+        cls = OZClass("Car")
+        m = OZMethod("setSpeed:", OZType("void"),
+                     params=[OZParam("speed", OZType("int"))],
+                     synthesized_property=prop)
+        code = self._emit(cls, m)
+        assert "oz_spinlock_t lck;" in code
+        assert "OZ_SPINLOCK(&lck)" in code
+        assert "self->_speed = speed;" in code
+        assert "retain" not in code
+        assert "release" not in code
+
+    def test_unsafe_unretained_setter_no_retain(self):
+        prop = OZProperty("delegate", OZType("id"),
+                          ivar_name="_delegate", is_nonatomic=True,
+                          ownership="unsafe_unretained")
+        cls = OZClass("Car")
+        m = OZMethod("setDelegate:", OZType("void"),
+                     params=[OZParam("delegate", OZType("id"))],
+                     synthesized_property=prop)
+        code = self._emit(cls, m)
+        assert "self->_delegate = delegate;" in code
+        assert "retain" not in code
+        assert "release" not in code
