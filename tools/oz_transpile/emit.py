@@ -10,8 +10,8 @@ from io import StringIO
 
 from jinja2 import Environment, FileSystemLoader
 
-from .model import (DispatchKind, OZClass, OZFunction, OZMethod, OZModule,
-                     OZParam, OZType)
+from .model import (DispatchKind, OZClass, OZFunction, OZIvar, OZMethod,
+                     OZModule, OZParam, OZType)
 
 
 @dataclass
@@ -28,6 +28,7 @@ class _EmitCtx:
     block_functions: list[str] = field(default_factory=list)
     has_item_pool: bool = False
     _tmp_counter: int = 0
+    _sync_counter: int = 0
     _string_dedup: dict[str, str] = field(default_factory=dict)
 
 
@@ -52,6 +53,27 @@ def _render(env: Environment, template_name: str, context: dict,
     return path
 
 
+def _inject_oz_lock(module: OZModule, root_class: str) -> None:
+    """Add synthetic OZLock class if any @synchronized is used."""
+    counts = _count_alloc_calls(module)
+    if counts.get("OZLock", 0) == 0:
+        return
+    if "OZLock" in module.classes:
+        return
+    max_id = max((c.class_id for c in module.classes.values()), default=-1)
+    module.classes["OZLock"] = OZClass(
+        name="OZLock",
+        superclass=root_class,
+        ivars=[
+            OZIvar("_lock", OZType("oz_spinlock_t")),
+            OZIvar("_key", OZType("oz_spinlock_key_t")),
+            OZIvar("_obj", OZType("OZObject *")),
+        ],
+        class_id=max_id + 1,
+        base_depth=1,
+    )
+
+
 def emit(module: OZModule, outdir: str, pool_sizes: dict[str, int] | None = None,
          root_class: str = "OZObject",
          item_pool_size: int | None = None) -> list[str]:
@@ -59,6 +81,8 @@ def emit(module: OZModule, outdir: str, pool_sizes: dict[str, int] | None = None
     os.makedirs(outdir, exist_ok=True)
     env = _create_env()
     files = []
+
+    _inject_oz_lock(module, root_class)
 
     files.append(_render(env, "oz_dispatch.h.j2",
                          _dispatch_header_ctx(module), outdir, "oz_dispatch.h"))
@@ -71,6 +95,8 @@ def emit(module: OZModule, outdir: str, pool_sizes: dict[str, int] | None = None
     _has_item_pool = slabs_ctx["item_pool_count"] > 0
 
     for cls in module.classes.values():
+        if cls.name == "OZLock":
+            continue
         ctx = _EmitCtx(cls=cls, module=module, root_class=root_class,
                        has_item_pool=_has_item_pool)
         files.append(_render(env, "class_header.h.j2",
@@ -167,6 +193,7 @@ def _dispatch_source_ctx(module: OZModule) -> dict:
         "classes": classes,
         "proto_sels": proto_sels,
         "vtable_entries": vtable_entries,
+        "has_oz_lock": "OZLock" in module.classes,
     }
 
 
@@ -392,6 +419,7 @@ def _class_source_ctx(ctx: _EmitCtx) -> dict:
         ctx.loop_scope_depth = []
         ctx.pre_stmts = []
         ctx._tmp_counter = 0
+        ctx._sync_counter = 0
         buf = StringIO()
         buf.write(f"{_method_prototype(cls, m)}\n")
         if m.synthesized_property:
@@ -514,6 +542,49 @@ def _emit_compound_stmt(node: dict, out: StringIO, ctx: _EmitCtx,
     out.write("\t" * indent + "}\n")
 
 
+def _emit_synchronized_stmt(node: dict, out: StringIO, ctx: _EmitCtx,
+                            indent: int) -> None:
+    """Emit @synchronized(obj) { ... } as OZLock RAII block."""
+    inner = node.get("inner", [])
+    if len(inner) < 2:
+        return
+
+    obj_expr = inner[0]
+    body = inner[1]
+
+    ctx._sync_counter += 1
+    sync_name = "_sync" if ctx._sync_counter == 1 else f"_sync{ctx._sync_counter}"
+    tabs = "\t" * indent
+    tabs1 = "\t" * (indent + 1)
+
+    obj_buf = StringIO()
+    _emit_expr(obj_expr, obj_buf, ctx)
+    _flush_pre_stmts(out, ctx, indent)
+
+    out.write(f"{tabs}{{\n")
+
+    ctx.scope_vars.append({})
+
+    out.write(f"{tabs1}struct OZLock *{sync_name} = OZLock_initWithObject("
+              f"OZLock_alloc(), (struct {ctx.root_class} *){obj_buf.getvalue()});\n")
+    ctx.scope_vars[-1][sync_name] = OZType("OZLock *")
+
+    if body.get("kind") == "CompoundStmt":
+        for child in body.get("inner", []):
+            _emit_stmt(child, out, ctx, indent + 1)
+
+    last_kind = ""
+    body_inner = body.get("inner", [])
+    if body_inner:
+        last_kind = body_inner[-1].get("kind", "")
+    if last_kind != "ReturnStmt":
+        _emit_scope_releases(out, ctx, indent + 1)
+
+    ctx.scope_vars.pop()
+
+    out.write(f"{tabs}}}\n")
+
+
 def _flush_pre_stmts(out: StringIO, ctx: _EmitCtx, indent: int) -> None:
     """Flush any pre-statement temp var declarations."""
     tabs = "\t" * indent
@@ -580,6 +651,9 @@ def _emit_stmt(node: dict, out: StringIO, ctx: _EmitCtx,
         inner = node.get("inner", [])
         if inner and inner[0].get("kind") == "CompoundStmt":
             _emit_compound_stmt(inner[0], out, ctx, indent)
+
+    elif kind == "ObjCAtSynchronizedStmt":
+        _emit_synchronized_stmt(node, out, ctx, indent)
 
     elif kind == "ObjCForCollectionStmt":
         _emit_forin_stmt(node, out, ctx, indent)
@@ -1733,6 +1807,7 @@ def _emit_user_dealloc(ctx: _EmitCtx, m: OZMethod, out: StringIO) -> None:
         ctx.method = m
         ctx.scope_vars = []
         ctx.consumed_vars = set()
+        ctx._sync_counter = 0
         for child in m.body_ast.get("inner", []):
             if _is_super_dealloc(child):
                 continue
@@ -1965,6 +2040,8 @@ def _count_alloc_calls(module: OZModule) -> dict[str, int]:
             counts["OZDictionary"] = counts.get("OZDictionary", 0) + 1
         elif kind == "ObjCBoxedExpr":
             counts["OZNumber"] = counts.get("OZNumber", 0) + 1
+        elif kind == "ObjCAtSynchronizedStmt":
+            counts["OZLock"] = counts.get("OZLock", 0) + 1
         for child in node.get("inner", []):
             walk(child)
 

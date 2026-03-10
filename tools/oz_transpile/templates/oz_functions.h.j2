@@ -3,7 +3,11 @@
 #define OZ_FUNCTIONS_H
 
 {% for cls in classes %}
+{% if cls.name == "OZLock" %}
+#include "oz/platform/oz_lock.h"
+{% else %}
 #include "{{ cls.name }}.h"
+{% endif %}
 {% endfor %}
 
 {% for decl in extern_decls %}

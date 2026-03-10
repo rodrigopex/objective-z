@@ -5,7 +5,11 @@
 #include <string.h>
 
 {% for cls in classes %}
+{% if cls.name == "OZLock" %}
+#include "oz/platform/oz_lock.h"
+{% else %}
 #include "{{ cls.name }}.h"
+{% endif %}
 {% endfor %}
 
 {% for cls in classes %}
@@ -56,6 +60,24 @@ static inline struct {{ cls.name }} *{{ cls.name }}_init{{ init.suffix }}({{ ini
 }
 
 {% endfor %}
+{% endif %}
+{% if cls.name == "OZLock" %}
+static inline struct OZLock *OZLock_initWithObject(struct OZLock *self,
+	struct {{ root_class }} *obj)
+{
+	{{ root_class }}_retain(obj);
+	self->_obj = (struct {{ root_class }} *)obj;
+	self->_key = oz_spin_lock(&self->_lock);
+	return self;
+}
+
+static inline void OZLock_dealloc(struct OZLock *self)
+{
+	oz_spin_unlock(&self->_lock, self->_key);
+	{{ root_class }}_release((struct {{ root_class }} *)self->_obj);
+	OZLock_free(self);
+}
+
 {% endif %}
 {% endfor %}
 {% if item_pool_count > 0 %}
