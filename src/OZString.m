@@ -1,6 +1,6 @@
 /* Constant string implementation for OZ transpiler samples. */
 
-#import "OZString.h"
+#import <Foundation/OZString.h>
 #include <string.h>
 
 @implementation OZString

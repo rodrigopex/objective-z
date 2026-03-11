@@ -5,8 +5,7 @@
  * Demonstrates scope-based lifetime and autorelease pools.
  */
 
-#import "OZObject.h"
-#import "OZLog.h"
+#import <Foundation/Foundation.h>
 
 @interface Sensor : OZObject {
 	int _value;

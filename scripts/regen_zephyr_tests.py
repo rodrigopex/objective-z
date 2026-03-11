@@ -20,7 +20,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CASES_DIR = REPO_ROOT / "tests" / "behavior" / "cases"
-STUBS_DIR = REPO_ROOT / "include" / "stubs"
+STUBS_DIR = REPO_ROOT / "include" / "oz_sdk"
 TEST_INC = REPO_ROOT / "tests" / "behavior" / "include"
 OZ_SRC = REPO_ROOT / "src"
 OUT_DIR = REPO_ROOT / "tests" / "zephyr" / "generated"

@@ -8,7 +8,7 @@
  * returning the slab block for the next iteration.
  */
 
-#import "OZObject.h"
+#import <Foundation/OZObject.h>
 
 /* printk declared here so Clang AST dump works without Zephyr generated
  * headers.  The transpiler emits the real #include <zephyr/sys/printk.h>

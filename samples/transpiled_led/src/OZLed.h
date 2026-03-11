@@ -1,7 +1,7 @@
 /* OZLed - ObjC header for transpiler demo */
 #pragma once
 
-#import "OZObject.h"
+#import <Foundation/OZObject.h>
 
 @protocol OZToggleable
 - (void)toggle;

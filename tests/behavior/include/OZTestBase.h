@@ -2,5 +2,5 @@
 /* Behavior test base header — imports the real OZObject interface
  * and implementation so Clang produces a complete AST for the transpiler. */
 
-#import "OZObject.h"
+#import <Foundation/OZObject.h>
 #import "OZObject.m"

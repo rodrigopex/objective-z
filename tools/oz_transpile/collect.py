@@ -133,14 +133,14 @@ def _is_user_struct(node: dict) -> bool:
         return False
     if any(p in file_path for p in _SYSTEM_PATH_SEGMENTS):
         return False
-    if "oz_transpile" in file_path or "/stubs/" in file_path:
+    if "oz_transpile" in file_path or "/oz_sdk/" in file_path:
         return False
     return True
 
 
 def is_stub_source(path: str) -> bool:
-    """Check if a path belongs to oz_transpile stubs."""
-    return "oz_transpile" in path or "/stubs/" in path
+    """Check if a path belongs to oz_transpile SDK headers."""
+    return "oz_transpile" in path or "/oz_sdk/" in path
 
 
 def _is_oz_transpile_type(node: dict, last_file: str = "") -> bool:

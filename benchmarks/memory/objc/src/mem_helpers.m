@@ -6,7 +6,7 @@
  * Transpiled to plain C via objz_transpile_sources().
  */
 
-#import "OZObject.h"
+#import <Foundation/OZObject.h>
 
 /* ── MemBase: OZObject (8) = 8 bytes ──────────────────────────────── */
 

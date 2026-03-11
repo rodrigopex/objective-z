@@ -111,7 +111,7 @@ def _run_pipeline_inner(m_path: Path, test_file: Path, tmpdir: Path,
     if not inc_dir.is_dir():
         inc_dir = REPO_ROOT / "tests" / "behavior" / "include"
 
-    oz_hdr = REPO_ROOT / "include" / "stubs"
+    oz_hdr = REPO_ROOT / "include" / "oz_sdk"
     oz_src = REPO_ROOT / "src"
 
     result = subprocess.run(
@@ -163,7 +163,8 @@ def _run_pipeline_inner(m_path: Path, test_file: Path, tmpdir: Path,
             stderr=f"gen_test_main failed:\n{result.stderr}")
 
     # Step 4: Compile
-    c_files = sorted(glob.glob(str(tmpdir / "*.c")))
+    c_files = sorted(glob.glob(str(tmpdir / "*.c")) +
+                      glob.glob(str(tmpdir / "Foundation" / "*.c")))
     all_sources = c_files + [str(test_file), str(UNITY_DIR / "unity.c")]
     test_bin = tmpdir / "test_bin"
 
@@ -171,6 +172,7 @@ def _run_pipeline_inner(m_path: Path, test_file: Path, tmpdir: Path,
                 "-Wall", "-Werror", "-Wno-unused-function",
                 "-DOZ_PLATFORM_HOST",
                 "-I", str(tmpdir),
+                "-I", str(tmpdir / "Foundation"),
                 "-I", str(PAL_INC),
                 "-I", str(UNITY_DIR)]
     if sanitize:

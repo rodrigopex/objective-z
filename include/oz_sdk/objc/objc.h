@@ -7,4 +7,4 @@
  */
 #pragma once
 
-#import "OZObject.h"
+#import <Foundation/OZObject.h>

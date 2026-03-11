@@ -76,13 +76,21 @@ Zero-cost abstraction for transpiler-generated C:
 
 All PAL functions are `static inline` — vanish at -O1+.
 
-### Transpiler Stubs (`src/`, `include/stubs/`)
+### OZ SDK Headers (`include/oz_sdk/`)
 
-Minimal ObjC source stubs consumed by Clang AST analysis:
+OZ Foundation class headers and system shims for Clang AST analysis:
 
-- **OZObject.m** — Root class stub
-- **OZString.m** — String stub
-- **OZArray.m**, **OZDictionary.m**, **OZNumber.m** — Collection/number stubs
+- **`Foundation/`** — OZObject.h, OZString.h, OZNumber.h, OZArray.h, OZDictionary.h, OZLog.h, protocols, Foundation.h umbrella
+- **`objc/`** — objc.h (runtime stub)
+- **`assert.h`** — System shim for Clang AST (must stay at root for `#import <assert.h>` resolution)
+
+### Transpiler Sources (`src/`)
+
+ObjC implementations consumed by Clang AST analysis:
+
+- **OZObject.m** — Root class
+- **OZString.m** — String class
+- **OZArray.m**, **OZDictionary.m**, **OZNumber.m** — Collection/number classes
 - **OZLog.c** — Pure C logging support for `%@` object specifier
 
 ### Legacy Runtime (`src/runtime_legacy/`, `include/runtime_legacy/`)

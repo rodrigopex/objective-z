@@ -1,6 +1,6 @@
 /* Boxed number implementation for OZ transpiler samples. */
 
-#import "OZNumber.h"
+#import <Foundation/OZNumber.h>
 #include <stdio.h>
 
 @implementation OZNumber

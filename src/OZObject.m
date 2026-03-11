@@ -1,6 +1,6 @@
 /* Root class implementation for OZ transpiler samples. */
 
-#import "OZObject.h"
+#import <Foundation/OZObject.h>
 
 @implementation OZObject
 + (instancetype)alloc

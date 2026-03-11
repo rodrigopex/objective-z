@@ -1,6 +1,6 @@
 /* Immutable dictionary implementation for OZ transpiler samples. */
 
-#import "OZDictionary.h"
+#import <Foundation/OZDictionary.h>
 
 @implementation OZDictionary
 

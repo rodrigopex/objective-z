@@ -17,4 +17,4 @@
  * (e.g. as an ObjC class), this stub can be extended and prepended
  * to the source list like OZObject.m.
  */
-#import "OZLog.h"
+#import <Foundation/OZLog.h>

@@ -41,7 +41,7 @@ function(objz_transpile_sources target)
     list(APPEND _ast_flags -w)  # Suppress warnings — AST dump is transpiler input only
 
     # Add shared transpiler root class (OZObject.h + OZObject.m)
-    set(_oz_inc_dir ${_mod}/include/stubs)
+    set(_oz_inc_dir ${_mod}/include/oz_sdk)
     set(_oz_root_src ${_mod}/src/OZObject.m)
     set(_oz_string_src ${_mod}/src/OZString.m)
     set(_oz_array_src ${_mod}/src/OZArray.m)

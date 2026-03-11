@@ -1,6 +1,6 @@
 #pragma once
 
-#import "OZObject.h"
+#import <Foundation/OZObject.h>
 
 @interface AccDataProducer: OZObject
 @property(assign, nonatomic, getter=ackCount) int count;

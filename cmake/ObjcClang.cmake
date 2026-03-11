@@ -327,7 +327,7 @@ function(_objz_write_compile_db)
 CompileFlags:\n\
   CompilationDatabase: build\n\
   Add:\n\
-    - -I${_mod}/include/stubs\n\
+    - -I${_mod}/include/oz_sdk\n\
   Remove:\n\
     - --target=*\n\
     - -fobjc-runtime=*\n\

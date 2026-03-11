@@ -1,6 +1,6 @@
 /* Immutable array implementation for OZ transpiler samples. */
 
-#import "OZArray.h"
+#import <Foundation/OZArray.h>
 
 @implementation OZArray
 
