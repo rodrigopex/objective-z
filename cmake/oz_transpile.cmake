@@ -148,16 +148,20 @@ function(objz_transpile_sources target)
     set(_stamp ${_outdir}/.oz_transpile.stamp)
 
 
-    # Build a shell script to AST-dump each source then run the transpiler
+    # Build a shell script to AST-dump each source then run the transpiler.
+    # Clang stderr is captured per-source; shown only on transpiler failure.
     set(_script "${_ast_dir}/oz_transpile_build.sh")
     set(_script_lines "#!/bin/sh\nset -e\n")
+    set(_err_logs "")
     foreach(_src ${_abs_sources})
         get_filename_component(_name ${_src} NAME)
         string(MAKE_C_IDENTIFIER "${_name}" _safe)
         set(_ast "${_ast_dir}/${_safe}.ast.json")
+        set(_err "${_ast_dir}/${_safe}.err.log")
         string(JOIN " " _ast_cmd ${OBJZ_CLANG_COMPILER} ${_ast_flags}
                -fsyntax-only -Xclang -ast-dump=json ${_src})
-        string(APPEND _script_lines "${_ast_cmd} > ${_ast} || true\n")
+        string(APPEND _script_lines "${_ast_cmd} > ${_ast} 2>${_err} || true\n")
+        list(APPEND _err_logs ${_err})
     endforeach()
     string(JOIN " " _transpile_cmd
            PYTHONPATH=${_transpile_dir}
@@ -168,7 +172,10 @@ function(objz_transpile_sources target)
            --root-class=${OZT_ROOT_CLASS}
            --manifest=${_manifest}
            ${_pool_flag})
-    string(APPEND _script_lines "${_transpile_cmd}\n")
+    # Run transpiler; on failure dump Clang error logs for diagnosis
+    string(JOIN " " _err_logs_str ${_err_logs})
+    string(APPEND _script_lines
+           "${_transpile_cmd} || { echo '--- Clang AST errors ---'; cat ${_err_logs_str}; exit 1; }\n")
     file(WRITE ${_script} "${_script_lines}")
 
     add_custom_command(
