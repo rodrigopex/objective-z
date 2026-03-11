@@ -180,6 +180,7 @@ function(objz_transpile_sources target)
     )
 
     add_custom_target(oz_transpile_gen DEPENDS ${_stamp})
+    add_dependencies(oz_transpile_gen zephyr_generated_headers)
     add_dependencies(${target} oz_transpile_gen)
 
     # Add generated .c files and include dir
