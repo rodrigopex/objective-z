@@ -29,16 +29,21 @@ def main() -> int:
             return 1
 
         print("\n=== Compiling (host, gcc) ===")
+        foundation_dir = os.path.join(outdir, "Foundation")
         c_files = sorted(glob.glob(os.path.join(outdir, "*.c")))
+        if os.path.isdir(foundation_dir):
+            c_files = sorted(glob.glob(os.path.join(foundation_dir, "*.c"))) + c_files
+        inc_dirs = [outdir, str(PAL_INC)]
+        if os.path.isdir(foundation_dir):
+            inc_dirs.insert(0, foundation_dir)
         for f in c_files:
             print(f"  cc {os.path.basename(f)}")
-            result = subprocess.run(
-                ["gcc", "-std=c11", "-Wall", "-Werror", "-Wno-unused-function",
-                 "-DOZ_PLATFORM_HOST",
-                 "-I", outdir, "-I", str(PAL_INC),
-                 "-c", f, "-o", f + ".o"],
-                capture_output=True, text=True,
-            )
+            cmd = ["gcc", "-std=c11", "-Wall", "-Werror", "-Wno-unused-function",
+                   "-DOZ_PLATFORM_HOST"]
+            for d in inc_dirs:
+                cmd += ["-I", d]
+            cmd += ["-c", f, "-o", f + ".o"]
+            result = subprocess.run(cmd, capture_output=True, text=True)
             if result.returncode != 0:
                 print(f"FAILED: {os.path.basename(f)}\n{result.stderr}")
                 return 1

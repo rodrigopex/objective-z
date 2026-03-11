@@ -3,6 +3,7 @@
 #define OZ_PLATFORM_H
 
 #include "oz_platform_types.h"
+#include "oz_assert.h"
 
 #ifdef OZ_PLATFORM_ZEPHYR
 #include "oz_platform_zephyr.h"

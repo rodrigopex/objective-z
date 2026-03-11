@@ -10,7 +10,8 @@ target_compile_definitions(app PRIVATE OZ_PLATFORM_ZEPHYR)
 # Include paths
 target_include_directories(app PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../../include    # platform/ headers
-    ${CMAKE_CURRENT_SOURCE_DIR}/generated        # transpiled output
+    ${CMAKE_CURRENT_SOURCE_DIR}/generated              # transpiled output
+    ${CMAKE_CURRENT_SOURCE_DIR}/generated/Foundation   # Foundation classes
 )
 
 # Test sources
@@ -23,5 +24,5 @@ target_sources(app PRIVATE
 )
 
 # Transpiled class sources
-file(GLOB GENERATED_SOURCES "generated/*.c")
+file(GLOB GENERATED_SOURCES "generated/*.c" "generated/Foundation/*.c")
 target_sources(app PRIVATE ${GENERATED_SOURCES})

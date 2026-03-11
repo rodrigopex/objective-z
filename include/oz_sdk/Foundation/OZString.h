@@ -18,3 +18,7 @@
 - (int)cDescription:(char *)buf maxLength:(int)maxLen;
 - (BOOL)isEqual:(id)anObject;
 @end
+
+#ifdef __clang__
+@compatibility_alias NSString OZString;
+#endif

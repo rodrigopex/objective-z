@@ -126,20 +126,22 @@ def main() -> int:
             return 1
 
         generated: dict[str, str] = {}
-        for f in sorted(tmpdir.iterdir()):
+        for f in sorted(tmpdir.rglob("*")):
             if f.suffix in (".h", ".c"):
-                generated[f.name] = f.read_text()
+                rel = f.relative_to(tmpdir)
+                generated[str(rel)] = f.read_text()
 
     if OUT_DIR.exists():
-        for old in OUT_DIR.iterdir():
+        for old in OUT_DIR.rglob("*"):
             if old.suffix in (".h", ".c"):
                 old.unlink()
     else:
         OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    for name in sorted(generated):
-        dst = OUT_DIR / name
-        dst.write_text(generated[name])
+    for rel in sorted(generated):
+        dst = OUT_DIR / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_text(generated[rel])
         print(f"  -> {dst.relative_to(REPO_ROOT)}")
 
     print(f"\nGenerated {len(generated)} files in {OUT_DIR.relative_to(REPO_ROOT)}/")

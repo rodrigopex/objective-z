@@ -53,3 +53,7 @@ __attribute__((objc_root_class))
 - (BOOL)isEqual:(id)anObject;
 - (int)cDescription:(char *)buf maxLength:(int)maxLen;
 @end
+
+#ifdef __clang__
+@compatibility_alias NSObject OZObject;
+#endif

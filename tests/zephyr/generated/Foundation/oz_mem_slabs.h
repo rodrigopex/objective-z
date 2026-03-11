@@ -2,6 +2,7 @@
 #pragma once
 
 #include "platform/oz_platform.h"
+#include "oz_dispatch.h"
 #include <string.h>
 
 #include "OZObject_ozh.h"
