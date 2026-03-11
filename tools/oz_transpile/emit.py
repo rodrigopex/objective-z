@@ -379,12 +379,16 @@ def _class_header_ctx(ctx: _EmitCtx, stem: str | None = None) -> dict:
         if obj_ivars or not is_root:
             auto_dealloc_proto = True
 
-    # Collect type definitions needed by ivars (enum/union from stubs)
+    # Collect type definitions needed by ivars (enum/union/struct from stubs/user)
     ivar_type_defs = []
     for ivar in cls.ivars:
         qt = ivar.oz_type.raw_qual_type
-        if qt in module.type_defs and module.type_defs[qt] not in ivar_type_defs:
-            ivar_type_defs.append(module.type_defs[qt])
+        # Try exact match first, then strip pointer/const for struct types
+        key = qt
+        if key not in module.type_defs:
+            key = qt.rstrip(" *").removeprefix("const ")
+        if key in module.type_defs and module.type_defs[key] not in ivar_type_defs:
+            ivar_type_defs.append(module.type_defs[key])
 
     function_protos = []
     for func in cls.functions:

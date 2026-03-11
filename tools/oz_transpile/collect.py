@@ -119,16 +119,18 @@ _SYSTEM_PATH_SEGMENTS = frozenset({"/zephyr/", "/sdk/", "/clang/", "/picolibc/",
 
 
 def _is_user_struct(node: dict) -> bool:
-    """Check if a RecordDecl is a user-defined struct from the main source file."""
+    """Check if a RecordDecl is a user-defined struct (main file or user header)."""
     if not node.get("completeDefinition"):
-        return False
-    if not _is_from_main_file(node):
         return False
     name = node.get("name", "")
     if not name:
         return False
     loc = node.get("loc", {})
     file_path = loc.get("file", "")
+    if not file_path:
+        # For nodes from included headers, try the includedFrom path
+        included = loc.get("includedFrom", {})
+        file_path = included.get("file", "")
     if not file_path:
         return False
     if any(p in file_path for p in _SYSTEM_PATH_SEGMENTS):
@@ -212,8 +214,9 @@ def _collect_struct_def(node: dict, module: OZModule) -> None:
     if not fields:
         return
     definition = f"{tag} {name} {{\n" + "\n".join(fields) + "\n};"
-    if definition not in module.verbatim_lines:
-        module.verbatim_lines.append(definition)
+    key = f"{tag} {name}"
+    if key not in module.type_defs:
+        module.type_defs[key] = definition
 
 
 def _walk(node: dict, module: OZModule, impl_name: str | None = None,
