@@ -22,6 +22,17 @@ def _normalize(text):
     return "\n".join(lines) + "\n"
 
 
+def _collect_files(root):
+    """Recursively collect files under root, returning {relative_path: abs_path}."""
+    result = {}
+    for dirpath, _, filenames in os.walk(root):
+        for fname in filenames:
+            abs_path = os.path.join(dirpath, fname)
+            rel_path = os.path.relpath(abs_path, root)
+            result[rel_path] = abs_path
+    return result
+
+
 def test_golden(golden_case):
     name, test_dir, cfg = golden_case
     ast_file = os.path.join(test_dir, "input.ast.json")
@@ -54,15 +65,15 @@ def test_golden(golden_case):
 
         assert rc == 0, f"{name}: transpiler failed with rc={rc}"
 
-        expected_files = set(os.listdir(expected_dir))
-        actual_files = set(os.listdir(tmpdir))
+        expected_files = _collect_files(expected_dir)
+        actual_files = _collect_files(tmpdir)
 
-        missing = expected_files - actual_files
+        missing = set(expected_files) - set(actual_files)
         assert not missing, f"{name}: missing output files: {missing}"
 
-        for fname in sorted(expected_files):
-            exp_path = os.path.join(expected_dir, fname)
-            act_path = os.path.join(tmpdir, fname)
+        for rel_path in sorted(expected_files):
+            exp_path = expected_files[rel_path]
+            act_path = actual_files[rel_path]
 
             with open(exp_path) as f:
                 exp_text = _normalize(f.read())
@@ -73,7 +84,7 @@ def test_golden(golden_case):
                 diff = list(difflib.unified_diff(
                     exp_text.splitlines(keepends=True),
                     act_text.splitlines(keepends=True),
-                    fromfile=f"expected/{fname}",
-                    tofile=f"actual/{fname}",
+                    fromfile=f"expected/{rel_path}",
+                    tofile=f"actual/{rel_path}",
                 ))
-                pytest.fail(f"{name}/{fname} mismatch:\n" + "".join(diff))
+                pytest.fail(f"{name}/{rel_path} mismatch:\n" + "".join(diff))

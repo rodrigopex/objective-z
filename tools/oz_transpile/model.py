@@ -156,6 +156,7 @@ class OZClass:
     functions: list[OZFunction] = field(default_factory=list)
     statics: list[OZStaticVar] = field(default_factory=list)
     source_stem: str = ""
+    is_foundation: bool = False
 
 
 @dataclass(slots=True)

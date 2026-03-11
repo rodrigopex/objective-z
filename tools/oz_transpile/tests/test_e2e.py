@@ -19,18 +19,20 @@ class TestCLI:
             rc = main(["--input", ast_file, "--outdir", tmpdir, "--verbose"])
             assert rc == 0
 
-            expected = {"oz_dispatch.h", "oz_dispatch.c",
-                        "oz_mem_slabs.h", "oz_mem_slabs.c",
-                        "OZObject_ozh.h", "OZObject_ozm.c",
-                        "OZLed_ozh.h", "OZLed_ozm.c"}
-            generated = set(os.listdir(tmpdir))
-            assert expected.issubset(generated)
+            foundation_dir = os.path.join(tmpdir, "Foundation")
+            foundation_files = set(os.listdir(foundation_dir))
+            user_files = set(os.listdir(tmpdir)) - {"Foundation"}
+
+            assert {"oz_dispatch.h", "oz_dispatch.c",
+                    "oz_mem_slabs.h", "oz_mem_slabs.c",
+                    "OZObject_ozh.h", "OZObject_ozm.c"}.issubset(foundation_files)
+            assert {"OZLed_ozh.h", "OZLed_ozm.c"}.issubset(user_files)
 
     def test_dispatch_header_content(self):
         ast_file = os.path.join(FIXTURE_DIR, "simple_led.ast.json")
         with tempfile.TemporaryDirectory() as tmpdir:
             main(["--input", ast_file, "--outdir", tmpdir])
-            content = open(os.path.join(tmpdir, "oz_dispatch.h")).read()
+            content = open(os.path.join(tmpdir, "Foundation", "oz_dispatch.h")).read()
             # toggle is in protocol -> should have vtable
             assert "OZ_SEND_toggle" in content
             # init is overridden -> protocol dispatch
@@ -59,8 +61,8 @@ class TestCLI:
         with tempfile.TemporaryDirectory() as tmpdir:
             main(["--input", ast_file, "--outdir", tmpdir,
                   "--pool-sizes", "OZLed=8"])
-            slabs_h = open(os.path.join(tmpdir, "oz_mem_slabs.h")).read()
-            slabs_c = open(os.path.join(tmpdir, "oz_mem_slabs.c")).read()
+            slabs_h = open(os.path.join(tmpdir, "Foundation", "oz_mem_slabs.h")).read()
+            slabs_c = open(os.path.join(tmpdir, "Foundation", "oz_mem_slabs.c")).read()
             assert "oz_slab_OZLed" in slabs_h
             assert "8" in slabs_c
 
@@ -68,7 +70,7 @@ class TestCLI:
         ast_file = os.path.join(FIXTURE_DIR, "simple_led.ast.json")
         with tempfile.TemporaryDirectory() as tmpdir:
             main(["--input", ast_file, "--outdir", tmpdir])
-            root_c = open(os.path.join(tmpdir, "OZObject_ozm.c")).read()
+            root_c = open(os.path.join(tmpdir, "Foundation", "OZObject_ozm.c")).read()
             assert "OZObject_retain" in root_c
             assert "OZObject_release" in root_c
             assert "oz_atomic_dec_and_test" in root_c
@@ -87,11 +89,11 @@ class TestSynchronizedE2E:
             assert "OZLock_initWithObject(OZLock_alloc()" in counter_c
             assert "OZObject_release((struct OZObject *)_sync)" in counter_c
 
-            slabs_h = open(os.path.join(tmpdir, "oz_mem_slabs.h")).read()
+            slabs_h = open(os.path.join(tmpdir, "Foundation", "oz_mem_slabs.h")).read()
             assert "OZLock_initWithObject" in slabs_h
             assert "OZLock_dealloc" in slabs_h
 
-            dispatch_h = open(os.path.join(tmpdir, "oz_dispatch.h")).read()
+            dispatch_h = open(os.path.join(tmpdir, "Foundation", "oz_dispatch.h")).read()
             assert "OZ_CLASS_OZLock" in dispatch_h
 
     def test_synchronized_counter_resets_per_method(self):
@@ -105,15 +107,21 @@ class TestSynchronizedE2E:
 
 
 def _gcc_syntax_check(tmpdir: str) -> None:
-    """Run gcc -fsyntax-only on all .c files in tmpdir."""
-    c_files = [f for f in os.listdir(tmpdir) if f.endswith(".c")]
+    """Run gcc -fsyntax-only on all .c files in tmpdir (recursive)."""
+    foundation_dir = os.path.join(tmpdir, "Foundation")
+    c_files = []
+    for dirpath, _, filenames in os.walk(tmpdir):
+        for f in filenames:
+            if f.endswith(".c"):
+                c_files.append(os.path.join(dirpath, f))
     for c_file in c_files:
         result = subprocess.run(
             ["gcc", "-fsyntax-only", "-Wall", "-Werror",
              "-DOZ_PLATFORM_HOST",
              "-I", tmpdir,
+             "-I", foundation_dir,
              "-I", PAL_INCLUDE_DIR,
-             os.path.join(tmpdir, c_file)],
+             c_file],
             capture_output=True, text=True,
         )
         assert result.returncode == 0, (

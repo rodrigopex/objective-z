@@ -197,7 +197,7 @@ function(objz_transpile_sources target)
             target_sources(${target} PRIVATE ${_f})
         endif()
     endforeach()
-    target_include_directories(${target} PRIVATE ${_outdir})
+    target_include_directories(${target} PRIVATE ${_outdir} ${_outdir}/Foundation)
 
     # PAL: select Zephyr backend and provide include path
     target_include_directories(${target} PRIVATE ${_mod}/include)

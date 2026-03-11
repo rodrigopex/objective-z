@@ -138,7 +138,7 @@ def _is_user_struct(node: dict) -> bool:
     return True
 
 
-def _is_stub_source(path: str) -> bool:
+def is_stub_source(path: str) -> bool:
     """Check if a path belongs to oz_transpile stubs."""
     return "oz_transpile" in path or "/stubs/" in path
 
@@ -156,7 +156,7 @@ def _is_oz_transpile_type(node: dict, last_file: str = "") -> bool:
     loc = node.get("loc", {})
     file_path = loc.get("file", "") or last_file
     included_from = loc.get("includedFrom", {}).get("file", "")
-    return _is_stub_source(file_path) or _is_stub_source(included_from)
+    return is_stub_source(file_path) or is_stub_source(included_from)
 
 
 def _collect_enum_def(node: dict, module: OZModule) -> None:

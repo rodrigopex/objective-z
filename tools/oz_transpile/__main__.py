@@ -9,7 +9,7 @@ import json
 import os
 import sys
 
-from .collect import collect, merge_modules
+from .collect import collect, is_stub_source, merge_modules
 from .emit import emit
 from .model import OrphanSource
 from .resolve import resolve
@@ -126,8 +126,12 @@ def main(argv: list[str] | None = None) -> int:
             ast_root = json.load(f)
         m = collect(ast_root)
         if i < len(sources):
-            m.source_stem = _source_stem(sources[i])
+            src_path = sources[i]
+            m.source_stem = _source_stem(src_path)
+            stub = is_stub_source(src_path)
             for cls in m.classes.values():
+                if stub:
+                    cls.is_foundation = True
                 has_impl = any(meth.body_ast for meth in cls.methods)
                 if has_impl and m.source_stem != cls.name:
                     cls.source_stem = m.source_stem

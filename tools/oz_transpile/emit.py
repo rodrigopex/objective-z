@@ -71,6 +71,7 @@ def _inject_oz_lock(module: OZModule, root_class: str) -> None:
         ],
         class_id=max_id + 1,
         base_depth=1,
+        is_foundation=True,
     )
 
 
@@ -116,25 +117,47 @@ def _associate_module_items(module: OZModule) -> None:
     module.user_includes = []
 
 
+"""Known foundation class names auto-tagged when --sources is not provided."""
+_FOUNDATION_NAMES = frozenset({
+    "OZObject", "OZString", "OZArray", "OZDictionary", "OZNumber",
+})
+
+
+def _ensure_foundation_tags(module: OZModule, root_class: str) -> None:
+    """Auto-tag well-known foundation classes that were not tagged by __main__."""
+    for cls in module.classes.values():
+        if not cls.is_foundation and cls.name in _FOUNDATION_NAMES:
+            cls.is_foundation = True
+    if root_class in module.classes:
+        module.classes[root_class].is_foundation = True
+
+
 def emit(module: OZModule, outdir: str, pool_sizes: dict[str, int] | None = None,
          root_class: str = "OZObject",
          item_pool_size: int | None = None) -> list[str]:
     """Generate C files from OZModule. Returns list of generated file paths."""
     os.makedirs(outdir, exist_ok=True)
+    foundation_dir = os.path.join(outdir, "Foundation")
+    os.makedirs(foundation_dir, exist_ok=True)
     env = _create_env()
     files = []
 
     _associate_module_items(module)
     _inject_oz_lock(module, root_class)
+    _ensure_foundation_tags(module, root_class)
 
     files.append(_render(env, "oz_dispatch.h.j2",
-                         _dispatch_header_ctx(module), outdir, "oz_dispatch.h"))
+                         _dispatch_header_ctx(module), foundation_dir,
+                         "oz_dispatch.h"))
     files.append(_render(env, "oz_dispatch.c.j2",
-                         _dispatch_source_ctx(module), outdir, "oz_dispatch.c"))
+                         _dispatch_source_ctx(module), foundation_dir,
+                         "oz_dispatch.c"))
     slabs_ctx = _mem_slabs_ctx(module, pool_sizes or {}, root_class,
                                item_pool_size)
-    files.append(_render(env, "oz_mem_slabs.h.j2", slabs_ctx, outdir, "oz_mem_slabs.h"))
-    files.append(_render(env, "oz_mem_slabs.c.j2", slabs_ctx, outdir, "oz_mem_slabs.c"))
+    files.append(_render(env, "oz_mem_slabs.h.j2", slabs_ctx,
+                         foundation_dir, "oz_mem_slabs.h"))
+    files.append(_render(env, "oz_mem_slabs.c.j2", slabs_ctx,
+                         foundation_dir, "oz_mem_slabs.c"))
     _has_item_pool = slabs_ctx["item_pool_count"] > 0
 
     # Group classes by source stem for per-file emission
@@ -155,8 +178,10 @@ def emit(module: OZModule, outdir: str, pool_sizes: dict[str, int] | None = None
                            has_item_pool=_has_item_pool)
             header_parts.append(header_tmpl.render(**_class_header_ctx(ctx, stem)))
             source_parts.append(source_tmpl.render(**_class_source_ctx(ctx, stem)))
-        header_path = os.path.join(outdir, f"{stem}_ozh.h")
-        source_path = os.path.join(outdir, f"{stem}_ozm.c")
+        is_foundation = all(c.is_foundation for c in classes)
+        dest = foundation_dir if is_foundation else outdir
+        header_path = os.path.join(dest, f"{stem}_ozh.h")
+        source_path = os.path.join(dest, f"{stem}_ozm.c")
         _write_file(header_path, "\n".join(header_parts))
         _write_file(source_path, "\n".join(source_parts))
         files.append(header_path)
