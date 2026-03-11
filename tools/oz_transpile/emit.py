@@ -148,7 +148,6 @@ def emit(module: OZModule, outdir: str, pool_sizes: dict[str, int] | None = None
     for stem, classes in stem_groups.items():
         header_tmpl = env.get_template("class_header.h.j2")
         source_tmpl = env.get_template("class_source.c.j2")
-        has_source_stem = any(cls.source_stem for cls in classes)
         header_parts = []
         source_parts = []
         for cls in classes:
@@ -156,19 +155,12 @@ def emit(module: OZModule, outdir: str, pool_sizes: dict[str, int] | None = None
                            has_item_pool=_has_item_pool)
             header_parts.append(header_tmpl.render(**_class_header_ctx(ctx, stem)))
             source_parts.append(source_tmpl.render(**_class_source_ctx(ctx, stem)))
-        if has_source_stem:
-            # Inline: header content goes into the _ozm.c file directly
-            source_path = os.path.join(outdir, f"{stem}_ozm.c")
-            _write_file(source_path, "\n".join(header_parts) + "\n"
-                        + "\n".join(source_parts))
-            files.append(source_path)
-        else:
-            header_path = os.path.join(outdir, f"{stem}_ozh.h")
-            source_path = os.path.join(outdir, f"{stem}_ozm.c")
-            _write_file(header_path, "\n".join(header_parts))
-            _write_file(source_path, "\n".join(source_parts))
-            files.append(header_path)
-            files.append(source_path)
+        header_path = os.path.join(outdir, f"{stem}_ozh.h")
+        source_path = os.path.join(outdir, f"{stem}_ozm.c")
+        _write_file(header_path, "\n".join(header_parts))
+        _write_file(source_path, "\n".join(source_parts))
+        files.append(header_path)
+        files.append(source_path)
 
     # Emit orphan sources (class-less .m files)
     for orphan in module.orphan_sources:
@@ -228,8 +220,7 @@ def _dispatch_source_ctx(module: OZModule) -> dict:
                     if cls.superclass and cls.superclass in module.classes
                     else "OZ_CLASS_COUNT")
         classes.append({"name": cls.name, "super_id_expr": super_id,
-                        "header_stem": _header_stem(cls),
-                        "has_source_stem": bool(cls.source_stem)})
+                        "header_stem": _header_stem(cls)})
 
     # Collect unique protocol selectors (instance methods only)
     proto_sels_map: dict[str, OZMethod] = {}
@@ -243,13 +234,10 @@ def _dispatch_source_ctx(module: OZModule) -> dict:
     proto_sels = [{"c_sel": _selector_to_c(sel)}
                   for sel in sorted(proto_sels_map.keys())]
 
-    # Build vtable entries and collect forward declarations for user classes
+    # Build vtable entries
     vtable_entries = []
-    fwd_decl_set: set[str] = set()
-    fwd_decls: list[str] = []
     for sel_name in sorted(proto_sels_map.keys()):
         c_sel = _selector_to_c(sel_name)
-        m = proto_sels_map[sel_name]
         for cls in sorted_classes:
             impl_cls = _find_implementing_class(cls, sel_name, module)
             if impl_cls:
@@ -258,44 +246,14 @@ def _dispatch_source_ctx(module: OZModule) -> dict:
                     "cls_name": cls.name,
                     "impl_name": impl_cls.name,
                 })
-                if impl_cls.source_stem:
-                    proto = _method_prototype(impl_cls, m)
-                    if proto not in fwd_decl_set:
-                        fwd_decl_set.add(proto)
-                        fwd_decls.append(proto + ";")
 
     return {
         "classes": classes,
         "proto_sels": proto_sels,
         "vtable_entries": vtable_entries,
-        "fwd_decls": fwd_decls,
         "has_oz_lock": "OZLock" in module.classes,
     }
 
-
-def _flattened_sizeof(cls: OZClass, module: OZModule) -> str:
-    """Build a sizeof(struct { ... }) expression with all fields flattened.
-
-    Walks the inheritance chain from root to leaf, collecting every ivar.
-    The anonymous struct mirrors the memory layout without requiring the
-    actual struct definition, so oz_mem_slabs.h needs no class headers.
-    """
-    chain: list[OZClass] = []
-    cur: OZClass | None = cls
-    while cur:
-        chain.append(cur)
-        if cur.superclass and cur.superclass in module.classes:
-            cur = module.classes[cur.superclass]
-        else:
-            break
-    chain.reverse()
-    fields: list[str] = []
-    for c in chain:
-        for iv in c.ivars:
-            fields.append(f"{iv.oz_type.c_type} _{len(fields)}")
-    if not fields:
-        return "sizeof(int)"
-    return "sizeof(struct { " + "; ".join(fields) + "; })"
 
 
 def _has_auto_dealloc(cls: OZClass, module: OZModule) -> bool:
@@ -342,8 +300,6 @@ def _mem_slabs_ctx(module: OZModule, pool_sizes: dict[str, int],
             "pool_count": pool_sizes.get(cls.name,
                                          max(auto_counts.get(cls.name, 0), 1)),
             "header_stem": _header_stem(cls),
-            "sizeof_expr": _flattened_sizeof(cls, module),
-            "has_source_stem": bool(cls.source_stem),
         })
 
     if item_pool_size is not None:
@@ -425,7 +381,6 @@ def _class_header_ctx(ctx: _EmitCtx, stem: str | None = None) -> dict:
         "name": cls.name,
         "stem": stem or _header_stem(cls),
         "is_root": is_root,
-        "inline_header": bool(cls.source_stem),
         "superclass": cls.superclass,
         "superclass_header": superclass_stem,
         "user_ivars": user_ivars,
@@ -592,7 +547,6 @@ def _class_source_ctx(ctx: _EmitCtx, stem: str | None = None) -> dict:
         "name": cls.name,
         "stem": stem or _header_stem(cls),
         "is_root": is_root,
-        "inline_header": bool(cls.source_stem),
         "root_retain_release": root_retain_release,
         "root_introspection": root_introspection,
         "method_bodies": method_bodies,

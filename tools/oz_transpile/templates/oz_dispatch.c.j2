@@ -2,7 +2,7 @@
 #include "oz_dispatch.h"
 {% set seen_stems = [] %}
 {% for cls in classes %}
-{% if cls.name != "OZLock" and not cls.has_source_stem and cls.header_stem not in seen_stems %}
+{% if cls.name != "OZLock" and cls.header_stem not in seen_stems %}
 #include "{{ cls.header_stem }}_ozh.h"
 {% if seen_stems.append(cls.header_stem) %}{% endif %}
 {% endif %}
@@ -10,9 +10,6 @@
 {% if has_oz_lock %}
 #include "oz_mem_slabs.h"
 {% endif %}
-{% for decl in fwd_decls %}
-{{ decl }}
-{% endfor %}
 
 const char *const oz_class_names[OZ_CLASS_COUNT] = {
 {% for cls in classes %}

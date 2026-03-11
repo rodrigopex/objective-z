@@ -9,14 +9,9 @@
 {% for cls in classes %}
 {% if cls.name == "OZLock" %}
 #include "platform/oz_lock.h"
-{% elif not cls.has_source_stem and cls.header_stem not in seen_stems %}
+{% elif cls.header_stem not in seen_stems %}
 #include "{{ cls.header_stem }}_ozh.h"
 {% if seen_stems.append(cls.header_stem) %}{% endif %}
-{% endif %}
-{% endfor %}
-{% for cls in classes %}
-{% if cls.has_source_stem %}
-struct {{ cls.name }};
 {% endif %}
 {% endfor %}
 
@@ -27,16 +22,6 @@ extern oz_slab_t oz_slab_{{ cls.name }};
 {% for cls in classes %}
 static inline struct {{ cls.name }} *{{ cls.name }}_alloc(void)
 {
-{% if cls.has_source_stem %}
-	void *_obj;
-	if (oz_slab_alloc(&oz_slab_{{ cls.name }}, &_obj) != 0) {
-		return (struct {{ cls.name }} *)0;
-	}
-	memset(_obj, 0, {{ cls.sizeof_expr }});
-	((struct {{ root_class }} *)_obj)->oz_class_id = OZ_CLASS_{{ cls.name }};
-	oz_atomic_init(&((struct {{ root_class }} *)_obj)->_refcount, 1);
-	return (struct {{ cls.name }} *)_obj;
-{% else %}
 	struct {{ cls.name }} *obj;
 	if (oz_slab_alloc(&oz_slab_{{ cls.name }}, (void **)&obj) != 0) {
 		return (struct {{ cls.name }} *)0;
@@ -45,7 +30,6 @@ static inline struct {{ cls.name }} *{{ cls.name }}_alloc(void)
 	{{ cls.base_chain }}oz_class_id = OZ_CLASS_{{ cls.name }};
 	oz_atomic_init(&{{ cls.base_chain }}_refcount, 1);
 	return obj;
-{% endif %}
 }
 
 static inline void {{ cls.name }}_free(struct {{ cls.name }} *obj)

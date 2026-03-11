@@ -2,11 +2,7 @@
 #include "oz_mem_slabs.h"
 
 {% for cls in classes %}
-{% if cls.has_source_stem %}
-OZ_SLAB_DEFINE(oz_slab_{{ cls.name }}, {{ cls.sizeof_expr }}, {{ cls.pool_count }}, 4);
-{% else %}
 OZ_SLAB_DEFINE(oz_slab_{{ cls.name }}, sizeof(struct {{ cls.name }}), {{ cls.pool_count }}, 4);
-{% endif %}
 {% endfor %}
 {% if item_pool_count > 0 %}
 OZ_MEM_BLOCKS_DEFINE(oz_item_pool, sizeof(struct {{ root_class }} *), {{ item_pool_count }}, 4);
