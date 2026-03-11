@@ -1,6 +1,6 @@
 /* Behavior test: child overrides parent method */
 #include "unity.h"
-#include "Dog.h"
+#include "Dog_ozh.h"
 #include "oz_mem_slabs.h"
 
 void test_child_calls_override(void)

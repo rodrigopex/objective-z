@@ -60,6 +60,10 @@ def merge_modules(modules: list[OZModule]) -> OZModule:
                 for inc in cls.user_includes:
                     if inc not in existing.user_includes:
                         existing.user_includes.append(inc)
+                existing.functions.extend(cls.functions)
+                existing.statics.extend(cls.statics)
+                if cls.source_stem and not existing.source_stem:
+                    existing.source_stem = cls.source_stem
             else:
                 merged.classes[name] = cls
         merged.protocols.update(m.protocols)
@@ -74,6 +78,7 @@ def merge_modules(modules: list[OZModule]) -> OZModule:
         merged.type_defs.update(m.type_defs)
         merged.diagnostics.extend(m.diagnostics)
         merged.errors.extend(m.errors)
+        merged.orphan_sources.extend(m.orphan_sources)
     return merged
 
 

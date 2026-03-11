@@ -130,6 +130,7 @@ function(objz_transpile_sources target)
         COMMAND ${CMAKE_COMMAND} -E env PYTHONPATH=${_transpile_dir}
                 ${Python3_EXECUTABLE} -m oz_transpile
                 --input ${_ast_files}
+                --sources ${_abs_sources}
                 --outdir ${_outdir}
                 --root-class=${OZT_ROOT_CLASS}
                 --manifest=${_manifest}
@@ -162,6 +163,7 @@ function(objz_transpile_sources target)
            PYTHONPATH=${_transpile_dir}
            ${Python3_EXECUTABLE} -m oz_transpile
            --input ${_ast_files}
+           --sources ${_abs_sources}
            --outdir ${_outdir}
            --root-class=${OZT_ROOT_CLASS}
            --manifest=${_manifest}

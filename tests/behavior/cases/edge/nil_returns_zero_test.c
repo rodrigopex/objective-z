@@ -1,6 +1,6 @@
 /* Behavior test: nil messaging returns 0 / NULL */
 #include "unity.h"
-#include "Dummy.h"
+#include "Dummy_ozh.h"
 #include "oz_mem_slabs.h"
 
 void test_retain_nil_returns_null(void)

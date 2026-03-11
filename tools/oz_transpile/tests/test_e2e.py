@@ -21,8 +21,8 @@ class TestCLI:
 
             expected = {"oz_dispatch.h", "oz_dispatch.c",
                         "oz_mem_slabs.h", "oz_mem_slabs.c",
-                        "OZObject.h", "OZObject.c",
-                        "OZLed.h", "OZLed.c"}
+                        "OZObject_ozh.h", "OZObject_ozm.c",
+                        "OZLed_ozh.h", "OZLed_ozm.c"}
             generated = set(os.listdir(tmpdir))
             assert expected.issubset(generated)
 
@@ -42,7 +42,7 @@ class TestCLI:
         ast_file = os.path.join(FIXTURE_DIR, "simple_led.ast.json")
         with tempfile.TemporaryDirectory() as tmpdir:
             main(["--input", ast_file, "--outdir", tmpdir])
-            led_h = open(os.path.join(tmpdir, "OZLed.h")).read()
+            led_h = open(os.path.join(tmpdir, "OZLed_ozh.h")).read()
             assert "struct OZObject base;" in led_h
             assert "int _pin;" in led_h
             assert "BOOL _state;" in led_h
@@ -51,7 +51,7 @@ class TestCLI:
         ast_file = os.path.join(FIXTURE_DIR, "simple_led.ast.json")
         with tempfile.TemporaryDirectory() as tmpdir:
             main(["--input", ast_file, "--outdir", tmpdir])
-            led_c = open(os.path.join(tmpdir, "OZLed.c")).read()
+            led_c = open(os.path.join(tmpdir, "OZLed_ozm.c")).read()
             assert "OZObject_init((struct OZObject *)self)" in led_c
 
     def test_pool_sizes(self):
@@ -68,7 +68,7 @@ class TestCLI:
         ast_file = os.path.join(FIXTURE_DIR, "simple_led.ast.json")
         with tempfile.TemporaryDirectory() as tmpdir:
             main(["--input", ast_file, "--outdir", tmpdir])
-            root_c = open(os.path.join(tmpdir, "OZObject.c")).read()
+            root_c = open(os.path.join(tmpdir, "OZObject_ozm.c")).read()
             assert "OZObject_retain" in root_c
             assert "OZObject_release" in root_c
             assert "oz_atomic_dec_and_test" in root_c
@@ -83,7 +83,7 @@ class TestSynchronizedE2E:
             rc = main(["--input", ast_file, "--outdir", tmpdir, "--verbose"])
             assert rc == 0
 
-            counter_c = open(os.path.join(tmpdir, "Counter.c")).read()
+            counter_c = open(os.path.join(tmpdir, "Counter_ozm.c")).read()
             assert "OZLock_initWithObject(OZLock_alloc()" in counter_c
             assert "OZObject_release((struct OZObject *)_sync)" in counter_c
 
@@ -99,7 +99,7 @@ class TestSynchronizedE2E:
         ast_file = os.path.join(FIXTURE_DIR, "synchronized_sample.ast.json")
         with tempfile.TemporaryDirectory() as tmpdir:
             main(["--input", ast_file, "--outdir", tmpdir])
-            counter_c = open(os.path.join(tmpdir, "Counter.c")).read()
+            counter_c = open(os.path.join(tmpdir, "Counter_ozm.c")).read()
             assert counter_c.count("struct OZLock *_sync =") == 2
             assert "_sync2" not in counter_c
 

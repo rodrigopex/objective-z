@@ -4,7 +4,7 @@
  * Verifies multi-argument selector mangling into C function names.
  */
 #include "unity.h"
-#include "Calc.h"
+#include "Calc_ozh.h"
 #include "oz_mem_slabs.h"
 
 void test_two_arg_selector(void)

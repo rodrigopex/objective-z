@@ -15,7 +15,7 @@
 #include <zephyr/sys/printk.h>
 
 #include "oz_dispatch.h"
-#include "OZObject.h"
+#include "OZObject_ozh.h"
 
 #ifndef CONFIG_OBJZ_LOG_BUFFER_SIZE
 #define CONFIG_OBJZ_LOG_BUFFER_SIZE 128

@@ -1,6 +1,6 @@
 /* Behavior test: release returns slab block for reuse */
 #include "unity.h"
-#include "Slot.h"
+#include "Slot_ozh.h"
 #include "oz_mem_slabs.h"
 
 void test_dealloc_returns_slab_block(void)

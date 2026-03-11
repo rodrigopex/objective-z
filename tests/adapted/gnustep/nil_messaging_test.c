@@ -4,7 +4,7 @@
  * Verifies nil receiver returns zero for various return types.
  */
 #include "unity.h"
-#include "Target.h"
+#include "Target_ozh.h"
 #include "oz_mem_slabs.h"
 
 void test_nil_retain_returns_null(void)

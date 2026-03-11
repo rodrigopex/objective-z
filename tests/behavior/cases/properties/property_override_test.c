@@ -1,6 +1,6 @@
 /* Behavior test: subclass overrides parent's accessor */
 #include "unity.h"
-#include "Square.h"
+#include "Square_ozh.h"
 #include "oz_mem_slabs.h"
 
 void test_override_returns_child_value(void)

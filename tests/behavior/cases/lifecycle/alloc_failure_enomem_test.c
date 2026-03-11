@@ -1,6 +1,6 @@
 /* Behavior test: alloc returns NULL when slab is exhausted */
 #include "unity.h"
-#include "Box.h"
+#include "Box_ozh.h"
 #include "oz_mem_slabs.h"
 
 void test_alloc_failure_returns_null(void)

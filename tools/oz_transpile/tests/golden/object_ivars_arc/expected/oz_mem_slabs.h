@@ -2,11 +2,12 @@
 #pragma once
 
 #include "platform/oz_platform.h"
+#include "oz_dispatch.h"
 #include <string.h>
 
-#include "OZObject.h"
-#include "Controller.h"
-#include "Sensor.h"
+#include "OZObject_ozh.h"
+#include "Controller_ozh.h"
+#include "Sensor_ozh.h"
 
 extern oz_slab_t oz_slab_OZObject;
 extern oz_slab_t oz_slab_Controller;

@@ -1,6 +1,6 @@
 /* Behavior test: release decrements refcount without dealloc when rc > 1 */
 #include "unity.h"
-#include "Counter.h"
+#include "Counter_ozh.h"
 #include "oz_mem_slabs.h"
 
 void test_release_decrements_refcount(void)

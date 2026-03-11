@@ -1,6 +1,6 @@
 /* Behavior test: release at rc=1 frees object (slab block returned) */
 #include "unity.h"
-#include "Token.h"
+#include "Token_ozh.h"
 #include "oz_mem_slabs.h"
 
 void test_release_frees_at_zero(void)

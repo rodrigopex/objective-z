@@ -4,7 +4,7 @@
  * Verifies category methods are merged into the class and callable.
  */
 #include "unity.h"
-#include "Printer.h"
+#include "Printer_ozh.h"
 #include "oz_mem_slabs.h"
 
 void test_category_method_callable(void)

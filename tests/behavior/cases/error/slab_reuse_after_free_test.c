@@ -1,6 +1,6 @@
 /* Behavior test: slab blocks are reusable after release */
 #include "unity.h"
-#include "Gadget.h"
+#include "Gadget_ozh.h"
 #include "oz_mem_slabs.h"
 
 void test_slab_exhaustion_returns_null(void)

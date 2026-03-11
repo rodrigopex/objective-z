@@ -153,6 +153,9 @@ class OZClass:
     base_depth: int = 0
     verbatim_lines: list[str] = field(default_factory=list)
     user_includes: list[str] = field(default_factory=list)
+    functions: list[OZFunction] = field(default_factory=list)
+    statics: list[OZStaticVar] = field(default_factory=list)
+    source_stem: str = ""
 
 
 @dataclass(slots=True)
@@ -171,6 +174,15 @@ class OZStaticVar:
 
 
 @dataclass(slots=True)
+class OrphanSource:
+    stem: str
+    functions: list[OZFunction] = field(default_factory=list)
+    statics: list[OZStaticVar] = field(default_factory=list)
+    verbatim_lines: list[str] = field(default_factory=list)
+    user_includes: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True)
 class OZModule:
     classes: dict[str, OZClass] = field(default_factory=dict)
     protocols: dict[str, OZProtocol] = field(default_factory=dict)
@@ -181,3 +193,5 @@ class OZModule:
     type_defs: dict[str, str] = field(default_factory=dict)
     diagnostics: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    source_stem: str = ""
+    orphan_sources: list[OrphanSource] = field(default_factory=list)

@@ -1,7 +1,7 @@
 /* Behavior test: strong property retains, assign does not */
 #include "unity.h"
-#include "Item.h"
-#include "Holder.h"
+#include "Item_ozh.h"
+#include "Holder_ozh.h"
 #include "oz_mem_slabs.h"
 
 void test_assign_stores_value(void)

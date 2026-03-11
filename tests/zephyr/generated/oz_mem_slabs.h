@@ -4,17 +4,17 @@
 #include "platform/oz_platform.h"
 #include <string.h>
 
-#include "OZObject.h"
-#include "Base.h"
-#include "Child.h"
-#include "Fan.h"
-#include "Level1.h"
-#include "Level2.h"
-#include "Level3.h"
-#include "Level4.h"
-#include "LightSwitch.h"
-#include "Node.h"
-#include "Widget.h"
+#include "OZObject_ozh.h"
+#include "Base_ozh.h"
+#include "Child_ozh.h"
+#include "Fan_ozh.h"
+#include "Level1_ozh.h"
+#include "Level2_ozh.h"
+#include "Level3_ozh.h"
+#include "Level4_ozh.h"
+#include "LightSwitch_ozh.h"
+#include "Node_ozh.h"
+#include "Widget_ozh.h"
 
 extern oz_slab_t oz_slab_OZObject;
 extern oz_slab_t oz_slab_Base;

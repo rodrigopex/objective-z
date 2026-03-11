@@ -6,10 +6,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 
 from .collect import collect, merge_modules
 from .emit import emit
+from .model import OrphanSource
 from .resolve import resolve
 
 
@@ -20,6 +22,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     p.add_argument("--input", required=True, nargs="+",
                    help="Path(s) to Clang JSON AST file(s)")
+    p.add_argument("--sources", nargs="*", default=None,
+                   help="Original .m source paths (same order as --input)")
     p.add_argument("--manifest", default="",
                    help="Write list of generated file paths to this file")
     p.add_argument("--outdir", required=True,
@@ -50,14 +54,87 @@ def parse_pool_sizes(raw: str) -> dict[str, int]:
     return result
 
 
+def _source_stem(path: str) -> str:
+    """Extract the stem from a source path: '/a/b/Producer.m' -> 'Producer'."""
+    base = os.path.basename(path)
+    stem, _ = os.path.splitext(base)
+    return stem
+
+
+def _associate_module_items_with_class(module):
+    """Move module-level functions/statics/verbatim/includes into the primary class.
+
+    Each .m file typically defines one class alongside free functions.
+    This associates those items with the class for per-file emission.
+    If no class exists, creates an OrphanSource for standalone emission.
+    """
+    has_items = (module.functions or module.statics
+                 or module.verbatim_lines or module.user_includes)
+
+    if not module.classes:
+        if has_items and module.source_stem:
+            module.orphan_sources.append(OrphanSource(
+                stem=module.source_stem,
+                functions=list(module.functions),
+                statics=list(module.statics),
+                verbatim_lines=list(module.verbatim_lines),
+                user_includes=list(module.user_includes),
+            ))
+            module.functions = []
+            module.statics = []
+            module.verbatim_lines = []
+            module.user_includes = []
+        return
+
+    if not has_items:
+        return
+
+    primary = None
+    for cls in module.classes.values():
+        if any(m.body_ast for m in cls.methods):
+            primary = cls
+            break
+    if primary is None:
+        for cls in module.classes.values():
+            if cls.methods or cls.ivars:
+                primary = cls
+                break
+    if primary is None:
+        primary = next(iter(module.classes.values()))
+    primary.functions.extend(module.functions)
+    primary.statics.extend(module.statics)
+    for line in module.verbatim_lines:
+        if line not in primary.verbatim_lines:
+            primary.verbatim_lines.append(line)
+    for inc in module.user_includes:
+        if inc not in primary.user_includes:
+            primary.user_includes.append(inc)
+    module.functions = []
+    module.statics = []
+    module.verbatim_lines = []
+    module.user_includes = []
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
 
+    sources = args.sources or []
+
     modules = []
-    for path in args.input:
+    for i, path in enumerate(args.input):
         with open(path) as f:
             ast_root = json.load(f)
-        modules.append(collect(ast_root))
+        m = collect(ast_root)
+        if i < len(sources):
+            m.source_stem = _source_stem(sources[i])
+            for cls in m.classes.values():
+                has_impl = any(meth.body_ast for meth in cls.methods)
+                if has_impl and m.source_stem != cls.name:
+                    cls.source_stem = m.source_stem
+        modules.append(m)
+
+    for m in modules:
+        _associate_module_items_with_class(m)
 
     module = merge_modules(modules) if len(modules) > 1 else modules[0]
 

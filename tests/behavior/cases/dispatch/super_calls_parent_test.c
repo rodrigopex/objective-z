@@ -1,6 +1,6 @@
 /* Behavior test: [super init] calls parent's init */
 #include "unity.h"
-#include "Child.h"
+#include "Child_ozh.h"
 #include "oz_mem_slabs.h"
 
 void test_super_calls_parent(void)

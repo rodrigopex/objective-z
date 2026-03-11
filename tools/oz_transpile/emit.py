@@ -11,7 +11,7 @@ from io import StringIO
 from jinja2 import Environment, FileSystemLoader
 
 from .model import (DispatchKind, OZClass, OZFunction, OZIvar, OZMethod,
-                     OZModule, OZParam, OZType)
+                     OZModule, OZParam, OZType, OrphanSource)
 
 
 @dataclass
@@ -74,6 +74,48 @@ def _inject_oz_lock(module: OZModule, root_class: str) -> None:
     )
 
 
+def _header_stem(cls: OZClass) -> str:
+    """Return the file stem for a class: source_stem if set, else class name."""
+    return cls.source_stem or cls.name
+
+
+def _associate_module_items(module: OZModule) -> None:
+    """Move module-level functions/statics/verbatim/includes into the primary class.
+
+    Each source file typically defines one class alongside free functions.
+    This associates those items with the class for per-file emission.
+    """
+    if not module.classes:
+        return
+    if not (module.functions or module.statics
+            or module.verbatim_lines or module.user_includes):
+        return
+    primary = None
+    for cls in module.classes.values():
+        if any(m.body_ast for m in cls.methods):
+            primary = cls
+            break
+    if primary is None:
+        for cls in module.classes.values():
+            if cls.methods or cls.ivars:
+                primary = cls
+                break
+    if primary is None:
+        primary = next(iter(module.classes.values()))
+    primary.functions.extend(module.functions)
+    primary.statics.extend(module.statics)
+    for line in module.verbatim_lines:
+        if line not in primary.verbatim_lines:
+            primary.verbatim_lines.append(line)
+    for inc in module.user_includes:
+        if inc not in primary.user_includes:
+            primary.user_includes.append(inc)
+    module.functions = []
+    module.statics = []
+    module.verbatim_lines = []
+    module.user_includes = []
+
+
 def emit(module: OZModule, outdir: str, pool_sizes: dict[str, int] | None = None,
          root_class: str = "OZObject",
          item_pool_size: int | None = None) -> list[str]:
@@ -82,6 +124,7 @@ def emit(module: OZModule, outdir: str, pool_sizes: dict[str, int] | None = None
     env = _create_env()
     files = []
 
+    _associate_module_items(module)
     _inject_oz_lock(module, root_class)
 
     files.append(_render(env, "oz_dispatch.h.j2",
@@ -94,22 +137,44 @@ def emit(module: OZModule, outdir: str, pool_sizes: dict[str, int] | None = None
     files.append(_render(env, "oz_mem_slabs.c.j2", slabs_ctx, outdir, "oz_mem_slabs.c"))
     _has_item_pool = slabs_ctx["item_pool_count"] > 0
 
+    # Group classes by source stem for per-file emission
+    stem_groups: dict[str, list[OZClass]] = {}
     for cls in module.classes.values():
         if cls.name == "OZLock":
             continue
-        ctx = _EmitCtx(cls=cls, module=module, root_class=root_class,
-                       has_item_pool=_has_item_pool)
-        files.append(_render(env, "class_header.h.j2",
-                             _class_header_ctx(ctx), outdir, f"{cls.name}.h"))
-        files.append(_render(env, "class_source.c.j2",
-                             _class_source_ctx(ctx), outdir, f"{cls.name}.c"))
+        stem = _header_stem(cls)
+        stem_groups.setdefault(stem, []).append(cls)
 
-    if module.functions or module.statics or module.verbatim_lines:
-        func_ctx = _functions_ctx(module, root_class)
-        files.append(_render(env, "oz_functions.h.j2",
-                             func_ctx, outdir, "oz_functions.h"))
-        files.append(_render(env, "oz_functions.c.j2",
-                             func_ctx, outdir, "oz_functions.c"))
+    for stem, classes in stem_groups.items():
+        header_tmpl = env.get_template("class_header.h.j2")
+        source_tmpl = env.get_template("class_source.c.j2")
+        has_source_stem = any(cls.source_stem for cls in classes)
+        header_parts = []
+        source_parts = []
+        for cls in classes:
+            ctx = _EmitCtx(cls=cls, module=module, root_class=root_class,
+                           has_item_pool=_has_item_pool)
+            header_parts.append(header_tmpl.render(**_class_header_ctx(ctx, stem)))
+            source_parts.append(source_tmpl.render(**_class_source_ctx(ctx, stem)))
+        if has_source_stem:
+            # Inline: header content goes into the _ozm.c file directly
+            source_path = os.path.join(outdir, f"{stem}_ozm.c")
+            _write_file(source_path, "\n".join(header_parts) + "\n"
+                        + "\n".join(source_parts))
+            files.append(source_path)
+        else:
+            header_path = os.path.join(outdir, f"{stem}_ozh.h")
+            source_path = os.path.join(outdir, f"{stem}_ozm.c")
+            _write_file(header_path, "\n".join(header_parts))
+            _write_file(source_path, "\n".join(source_parts))
+            files.append(header_path)
+            files.append(source_path)
+
+    # Emit orphan sources (class-less .m files)
+    for orphan in module.orphan_sources:
+        ctx_dict = _orphan_source_ctx(orphan, module, root_class)
+        files.append(_render(env, "orphan_source.c.j2",
+                             ctx_dict, outdir, f"{orphan.stem}_ozm.c"))
 
     return files
 
@@ -162,7 +227,9 @@ def _dispatch_source_ctx(module: OZModule) -> dict:
         super_id = (f"OZ_CLASS_{cls.superclass}"
                     if cls.superclass and cls.superclass in module.classes
                     else "OZ_CLASS_COUNT")
-        classes.append({"name": cls.name, "super_id_expr": super_id})
+        classes.append({"name": cls.name, "super_id_expr": super_id,
+                        "header_stem": _header_stem(cls),
+                        "has_source_stem": bool(cls.source_stem)})
 
     # Collect unique protocol selectors (instance methods only)
     proto_sels_map: dict[str, OZMethod] = {}
@@ -176,10 +243,13 @@ def _dispatch_source_ctx(module: OZModule) -> dict:
     proto_sels = [{"c_sel": _selector_to_c(sel)}
                   for sel in sorted(proto_sels_map.keys())]
 
-    # Build vtable entries
+    # Build vtable entries and collect forward declarations for user classes
     vtable_entries = []
+    fwd_decl_set: set[str] = set()
+    fwd_decls: list[str] = []
     for sel_name in sorted(proto_sels_map.keys()):
         c_sel = _selector_to_c(sel_name)
+        m = proto_sels_map[sel_name]
         for cls in sorted_classes:
             impl_cls = _find_implementing_class(cls, sel_name, module)
             if impl_cls:
@@ -188,13 +258,44 @@ def _dispatch_source_ctx(module: OZModule) -> dict:
                     "cls_name": cls.name,
                     "impl_name": impl_cls.name,
                 })
+                if impl_cls.source_stem:
+                    proto = _method_prototype(impl_cls, m)
+                    if proto not in fwd_decl_set:
+                        fwd_decl_set.add(proto)
+                        fwd_decls.append(proto + ";")
 
     return {
         "classes": classes,
         "proto_sels": proto_sels,
         "vtable_entries": vtable_entries,
+        "fwd_decls": fwd_decls,
         "has_oz_lock": "OZLock" in module.classes,
     }
+
+
+def _flattened_sizeof(cls: OZClass, module: OZModule) -> str:
+    """Build a sizeof(struct { ... }) expression with all fields flattened.
+
+    Walks the inheritance chain from root to leaf, collecting every ivar.
+    The anonymous struct mirrors the memory layout without requiring the
+    actual struct definition, so oz_mem_slabs.h needs no class headers.
+    """
+    chain: list[OZClass] = []
+    cur: OZClass | None = cls
+    while cur:
+        chain.append(cur)
+        if cur.superclass and cur.superclass in module.classes:
+            cur = module.classes[cur.superclass]
+        else:
+            break
+    chain.reverse()
+    fields: list[str] = []
+    for c in chain:
+        for iv in c.ivars:
+            fields.append(f"{iv.oz_type.c_type} _{len(fields)}")
+    if not fields:
+        return "sizeof(int)"
+    return "sizeof(struct { " + "; ".join(fields) + "; })"
 
 
 def _has_auto_dealloc(cls: OZClass, module: OZModule) -> bool:
@@ -240,6 +341,9 @@ def _mem_slabs_ctx(module: OZModule, pool_sizes: dict[str, int],
             "base_chain": _base_chain(cls.name, module),
             "pool_count": pool_sizes.get(cls.name,
                                          max(auto_counts.get(cls.name, 0), 1)),
+            "header_stem": _header_stem(cls),
+            "sizeof_expr": _flattened_sizeof(cls, module),
+            "has_source_stem": bool(cls.source_stem),
         })
 
     if item_pool_size is not None:
@@ -264,7 +368,7 @@ def _mem_slabs_ctx(module: OZModule, pool_sizes: dict[str, int],
 # Per-class .h
 # ---------------------------------------------------------------------------
 
-def _class_header_ctx(ctx: _EmitCtx) -> dict:
+def _class_header_ctx(ctx: _EmitCtx, stem: str | None = None) -> dict:
     """Build template context for a class header file."""
     cls = ctx.cls
     module = ctx.module
@@ -301,16 +405,36 @@ def _class_header_ctx(ctx: _EmitCtx) -> dict:
         if qt in module.type_defs and module.type_defs[qt] not in ivar_type_defs:
             ivar_type_defs.append(module.type_defs[qt])
 
+    function_protos = []
+    for func in cls.functions:
+        ret = func.return_type.c_type
+        parts = [p.oz_type.c_param_decl(p.name) for p in func.params]
+        params_str = ", ".join(parts) if parts else "void"
+        function_protos.append(f"{ret} {func.name}({params_str});")
+
+    extern_decls = []
+    for sv in cls.statics:
+        decl_str = sv.oz_type.c_param_decl(sv.name)
+        extern_decls.append(f"extern {decl_str};")
+
+    superclass_stem = None
+    if cls.superclass and cls.superclass in module.classes:
+        superclass_stem = _header_stem(module.classes[cls.superclass])
+
     return {
         "name": cls.name,
+        "stem": stem or _header_stem(cls),
         "is_root": is_root,
+        "inline_header": bool(cls.source_stem),
         "superclass": cls.superclass,
-        "superclass_header": cls.superclass if cls.superclass and cls.superclass in module.classes else None,
+        "superclass_header": superclass_stem,
         "user_ivars": user_ivars,
         "ivar_type_defs": ivar_type_defs,
         "method_prototypes": method_prototypes,
         "auto_dealloc_proto": auto_dealloc_proto,
         "has_any_methods": bool(cls.methods) or is_root,
+        "function_protos": function_protos,
+        "extern_decls": extern_decls,
     }
 
 
@@ -383,7 +507,7 @@ def _emit_synthesized_accessor(cls: OZClass, m: OZMethod,
 # Per-class .c
 # ---------------------------------------------------------------------------
 
-def _class_source_ctx(ctx: _EmitCtx) -> dict:
+def _class_source_ctx(ctx: _EmitCtx, stem: str | None = None) -> dict:
     """Build template context for a class source file. Method bodies are pre-rendered."""
     cls = ctx.cls
     root_class = ctx.root_class
@@ -438,27 +562,89 @@ def _class_source_ctx(ctx: _EmitCtx) -> dict:
         if val:
             dealloc_body = val.rstrip("\n")
 
-    module = ctx.module
-    has_functions_header = bool(
-        module.functions or module.statics or module.verbatim_lines)
+    function_bodies = []
+    for func in cls.functions:
+        ret = func.return_type.c_type
+        parts = [p.oz_type.c_param_decl(p.name) for p in func.params]
+        params_str = ", ".join(parts) if parts else "void"
+        ctx.method = None
+        ctx.scope_vars = []
+        ctx.consumed_vars = set()
+        ctx.loop_scope_depth = []
+        ctx.pre_stmts = []
+        ctx._tmp_counter = 0
+        buf = StringIO()
+        buf.write(f"{ret} {func.name}({params_str})\n")
+        if func.body_ast:
+            _emit_compound_stmt(func.body_ast, buf, ctx, indent=0,
+                                param_retains=_object_params(func))
+        else:
+            buf.write("{\n}\n")
+        function_bodies.append(buf.getvalue().rstrip("\n"))
 
-    all_user_includes = list(module.user_includes)
-    for inc in cls.user_includes:
-        if inc not in all_user_includes:
-            all_user_includes.append(inc)
+    static_decls = []
+    for sv in cls.statics:
+        decl_str = sv.oz_type.c_param_decl(sv.name)
+        init = f" = {sv.init_value}" if sv.init_value is not None else ""
+        static_decls.append(f"{decl_str}{init};")
 
     return {
         "name": cls.name,
+        "stem": stem or _header_stem(cls),
         "is_root": is_root,
+        "inline_header": bool(cls.source_stem),
         "root_retain_release": root_retain_release,
         "root_introspection": root_introspection,
         "method_bodies": method_bodies,
         "dealloc_body": dealloc_body,
-        "has_functions_header": has_functions_header,
+        "function_bodies": function_bodies,
+        "static_decls": static_decls,
         "string_constants": ctx.string_constants,
         "block_functions": ctx.block_functions,
-        "user_includes": all_user_includes,
+        "user_includes": cls.user_includes,
         "verbatim_lines": cls.verbatim_lines,
+    }
+
+
+def _orphan_source_ctx(orphan: OrphanSource, module: OZModule,
+                       root_class: str) -> dict:
+    """Build template context for an orphan source file (no class)."""
+    function_bodies = []
+    for func in orphan.functions:
+        ret = func.return_type.c_type
+        parts = [p.oz_type.c_param_decl(p.name) for p in func.params]
+        params_str = ", ".join(parts) if parts else "void"
+        buf = StringIO()
+        buf.write(f"{ret} {func.name}({params_str})\n")
+        if func.body_ast:
+            # Create a minimal _EmitCtx for body emission
+            dummy_cls = OZClass(name="__orphan__")
+            ctx = _EmitCtx(cls=dummy_cls, module=module,
+                           root_class=root_class)
+            ctx.method = None
+            ctx.scope_vars = []
+            ctx.consumed_vars = set()
+            ctx.loop_scope_depth = []
+            ctx.pre_stmts = []
+            ctx._tmp_counter = 0
+            _emit_compound_stmt(func.body_ast, buf, ctx, indent=0,
+                                param_retains=_object_params(func))
+        else:
+            buf.write("{\n}\n")
+        function_bodies.append(buf.getvalue().rstrip("\n"))
+
+    static_decls = []
+    for sv in orphan.statics:
+        decl_str = sv.oz_type.c_param_decl(sv.name)
+        init = f" = {sv.init_value}" if sv.init_value is not None else ""
+        static_decls.append(f"{decl_str}{init};")
+
+    return {
+        "stem": orphan.stem,
+        "function_bodies": function_bodies,
+        "static_decls": static_decls,
+        "user_includes": orphan.user_includes,
+        "verbatim_lines": orphan.verbatim_lines,
     }
 
 
@@ -1492,59 +1678,6 @@ def _infer_receiver_class(node: dict, cls: OZClass, module: OZModule | None = No
     return cls.name
 
 
-# ---------------------------------------------------------------------------
-# Top-level functions
-# ---------------------------------------------------------------------------
-
-def _functions_ctx(module: OZModule, root_class: str) -> dict:
-    """Build template context for oz_functions.c."""
-    classes = sorted(module.classes.values(), key=lambda c: c.class_id)
-
-    dummy_cls = module.classes.get(root_class, OZClass(name=root_class))
-    ctx = _EmitCtx(cls=dummy_cls, module=module, root_class=root_class)
-
-    function_bodies = []
-    for func in module.functions:
-        ret = func.return_type.c_type
-        parts = [p.oz_type.c_param_decl(p.name) for p in func.params]
-        params_str = ", ".join(parts) if parts else "void"
-        ctx.method = None
-        ctx.scope_vars = []
-        ctx.consumed_vars = set()
-        ctx.loop_scope_depth = []
-        ctx.pre_stmts = []
-        ctx._tmp_counter = 0
-        buf = StringIO()
-        buf.write(f"{ret} {func.name}({params_str})\n")
-        if func.body_ast:
-            _emit_compound_stmt(func.body_ast, buf, ctx, indent=0,
-                                param_retains=_object_params(func))
-        else:
-            buf.write("{\n}\n")
-        function_bodies.append(buf.getvalue().rstrip("\n"))
-
-    static_decls = []
-    extern_decls = []
-    for sv in module.statics:
-        decl_str = sv.oz_type.c_param_decl(sv.name)
-        init = f" = {sv.init_value}" if sv.init_value is not None else ""
-        static_decls.append(f"{decl_str}{init};")
-        extern_decls.append(f"extern {decl_str};")
-
-    function_protos = []
-    for func in module.functions:
-        ret = func.return_type.c_type
-        parts = [p.oz_type.c_param_decl(p.name) for p in func.params]
-        params_str = ", ".join(parts) if parts else "void"
-        function_protos.append(f"{ret} {func.name}({params_str});")
-
-    return {"classes": classes, "function_bodies": function_bodies,
-            "static_decls": static_decls, "extern_decls": extern_decls,
-            "function_protos": function_protos,
-            "verbatim_lines": module.verbatim_lines,
-            "user_includes": module.user_includes,
-            "string_constants": ctx.string_constants,
-            "block_functions": ctx.block_functions}
 
 
 # ---------------------------------------------------------------------------
@@ -2018,6 +2151,9 @@ def _count_item_slots(module: OZModule) -> int:
         for m in cls.methods:
             if m.body_ast:
                 walk(m.body_ast)
+        for func in cls.functions:
+            if func.body_ast:
+                walk(func.body_ast)
     for func in module.functions:
         if func.body_ast:
             walk(func.body_ast)
@@ -2057,6 +2193,9 @@ def _count_alloc_calls(module: OZModule) -> dict[str, int]:
         for m in cls.methods:
             if m.body_ast:
                 walk(m.body_ast)
+        for func in cls.functions:
+            if func.body_ast:
+                walk(func.body_ast)
     for func in module.functions:
         if func.body_ast:
             walk(func.body_ast)

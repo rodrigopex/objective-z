@@ -2,11 +2,12 @@
 #pragma once
 
 #include "platform/oz_platform.h"
+#include "oz_dispatch.h"
 #include <string.h>
 
-#include "OZObject.h"
-#include "Animal.h"
-#include "Dog.h"
+#include "OZObject_ozh.h"
+#include "Animal_ozh.h"
+#include "Dog_ozh.h"
 
 extern oz_slab_t oz_slab_OZObject;
 extern oz_slab_t oz_slab_Animal;

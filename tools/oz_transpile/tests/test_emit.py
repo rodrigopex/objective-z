@@ -113,10 +113,10 @@ class TestEmitFiles:
             assert "oz_dispatch.c" in basenames
             assert "oz_mem_slabs.h" in basenames
             assert "oz_mem_slabs.c" in basenames
-            assert "OZObject.h" in basenames
-            assert "OZObject.c" in basenames
-            assert "OZLed.h" in basenames
-            assert "OZLed.c" in basenames
+            assert "OZObject_ozh.h" in basenames
+            assert "OZObject_ozm.c" in basenames
+            assert "OZLed_ozh.h" in basenames
+            assert "OZLed_ozm.c" in basenames
 
 
 class TestDispatchHeader:
@@ -150,7 +150,7 @@ class TestDispatchHeader:
             assert "vtable_greet" not in dispatch_h
             assert "vtable_greet" not in dispatch_c
             # But the class method should appear in the class header
-            led_h = open(os.path.join(tmpdir, "OZLed.h")).read()
+            led_h = open(os.path.join(tmpdir, "OZLed_ozh.h")).read()
             assert "OZLed_cls_greet(void)" in led_h
 
 
@@ -159,7 +159,7 @@ class TestClassHeader:
         m = _simple_module()
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
-            content = open(os.path.join(tmpdir, "OZLed.h")).read()
+            content = open(os.path.join(tmpdir, "OZLed_ozh.h")).read()
             assert "struct OZLed {" in content
             assert "struct OZObject base;" in content
             assert "int _pin;" in content
@@ -168,7 +168,7 @@ class TestClassHeader:
         m = _simple_module()
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
-            content = open(os.path.join(tmpdir, "OZObject.h")).read()
+            content = open(os.path.join(tmpdir, "OZObject_ozh.h")).read()
             assert "oz_class_id" in content
             assert "_refcount" in content
 
@@ -178,7 +178,7 @@ class TestClassSource:
         m = _simple_module()
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
-            content = open(os.path.join(tmpdir, "OZLed.c")).read()
+            content = open(os.path.join(tmpdir, "OZLed_ozm.c")).read()
             assert "OZLed_turnOn" in content
             assert "struct OZLed *self" in content
 
@@ -186,7 +186,7 @@ class TestClassSource:
         m = _simple_module()
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
-            content = open(os.path.join(tmpdir, "OZObject.c")).read()
+            content = open(os.path.join(tmpdir, "OZObject_ozm.c")).read()
             assert "OZObject_retain" in content
             assert "OZObject_release" in content
             assert "oz_atomic_dec_and_test" in content
@@ -212,7 +212,7 @@ class TestBodyEmission:
         resolve(m)
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
-            content = open(os.path.join(tmpdir, "OZLed.c")).read()
+            content = open(os.path.join(tmpdir, "OZLed_ozm.c")).read()
             assert "self->_pin" in content
 
     def test_super_call(self):
@@ -233,7 +233,7 @@ class TestBodyEmission:
         )
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
-            content = open(os.path.join(tmpdir, "OZLed.c")).read()
+            content = open(os.path.join(tmpdir, "OZLed_ozm.c")).read()
             assert "OZObject_init((struct OZObject *)self)" in content
 
     def test_message_send_static(self):
@@ -259,7 +259,7 @@ class TestBodyEmission:
         resolve(m)
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
-            content = open(os.path.join(tmpdir, "OZLed.c")).read()
+            content = open(os.path.join(tmpdir, "OZLed_ozm.c")).read()
             assert "OZLed_turnOn(self)" in content
 
     def test_if_stmt(self):
@@ -280,7 +280,7 @@ class TestBodyEmission:
         resolve(m)
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
-            content = open(os.path.join(tmpdir, "Foo.c")).read()
+            content = open(os.path.join(tmpdir, "Foo_ozm.c")).read()
             assert "if (1)" in content
 
     def test_binary_operator(self):
@@ -304,7 +304,7 @@ class TestBodyEmission:
         resolve(m)
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
-            content = open(os.path.join(tmpdir, "Foo.c")).read()
+            content = open(os.path.join(tmpdir, "Foo_ozm.c")).read()
             assert "1 + 2" in content
 
 
@@ -366,7 +366,7 @@ class TestARCLocalRelease:
         resolve(m)
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
-            content = open(os.path.join(tmpdir, "Foo.c")).read()
+            content = open(os.path.join(tmpdir, "Foo_ozm.c")).read()
             assert "OZObject_release((struct OZObject *)tmp);" in content
 
     def test_primitive_not_released(self):
@@ -389,7 +389,7 @@ class TestARCLocalRelease:
         resolve(m)
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
-            content = open(os.path.join(tmpdir, "Foo.c")).read()
+            content = open(os.path.join(tmpdir, "Foo_ozm.c")).read()
             assert "release" not in content
 
     def test_returned_object_not_released(self):
@@ -433,7 +433,7 @@ class TestARCLocalRelease:
         resolve(m)
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
-            content = open(os.path.join(tmpdir, "Foo.c")).read()
+            content = open(os.path.join(tmpdir, "Foo_ozm.c")).read()
             # 'other' should be released, 'obj' (returned) should not
             assert "OZObject_release((struct OZObject *)other);" in content
             assert "OZObject_release((struct OZObject *)obj);" not in content
@@ -452,7 +452,7 @@ class TestARCLocalRelease:
         resolve(m)
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
-            content = open(os.path.join(tmpdir, "OZObject.c")).read()
+            content = open(os.path.join(tmpdir, "OZObject_ozm.c")).read()
             # init returns self — self should never be released
             assert "OZObject_release((struct OZObject *)self);" not in content
 
@@ -481,7 +481,7 @@ class TestARCLocalRelease:
         resolve(m)
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
-            content = open(os.path.join(tmpdir, "Foo.c")).read()
+            content = open(os.path.join(tmpdir, "Foo_ozm.c")).read()
             # inner released inside nested scope, outer released at method end
             assert content.count("OZObject_release") == 2
 
@@ -511,7 +511,7 @@ class TestARCLocalRelease:
         resolve(m)
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
-            content = open(os.path.join(tmpdir, "Foo.c")).read()
+            content = open(os.path.join(tmpdir, "Foo_ozm.c")).read()
             # 'a' should be released both by the early return AND at scope exit
             # (the scope-exit release is for the non-return path)
             assert content.count("OZObject_release((struct OZObject *)a)") == 2
@@ -549,7 +549,7 @@ class TestARCAutoDealloc:
         m = _module_with_obj_ivar()
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
-            content = open(os.path.join(tmpdir, "Holder.c")).read()
+            content = open(os.path.join(tmpdir, "Holder_ozm.c")).read()
             assert "Holder_dealloc" in content
             assert "OZObject_release((struct OZObject *)self->_child)" in content
             assert "OZObject_dealloc((struct OZObject *)self)" in content
@@ -570,7 +570,7 @@ class TestARCAutoDealloc:
         resolve(m)
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
-            content = open(os.path.join(tmpdir, "OZObject.c")).read()
+            content = open(os.path.join(tmpdir, "OZObject_ozm.c")).read()
             assert "OZObject_dealloc" in content
             assert "OZObject_dispatch_free((struct OZObject *)self)" in content
 
@@ -588,7 +588,7 @@ class TestARCAutoDealloc:
         resolve(m)
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
-            content = open(os.path.join(tmpdir, "OZObject.c")).read()
+            content = open(os.path.join(tmpdir, "OZObject_ozm.c")).read()
             assert "OZObject_dealloc" not in content
 
     def test_child_without_obj_ivars_still_gets_dealloc(self):
@@ -603,7 +603,7 @@ class TestARCAutoDealloc:
         resolve(m)
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
-            content = open(os.path.join(tmpdir, "Child.c")).read()
+            content = open(os.path.join(tmpdir, "Child_ozm.c")).read()
             # Child has no object ivars but should still call parent dealloc
             assert "Child_dealloc" in content
             assert "OZObject_dealloc((struct OZObject *)self)" in content
@@ -626,7 +626,7 @@ class TestARCAutoDealloc:
         resolve(m)
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
-            content = open(os.path.join(tmpdir, "Holder.c")).read()
+            content = open(os.path.join(tmpdir, "Holder_ozm.c")).read()
             # Ivar release should be prepended
             assert "OZObject_release((struct OZObject *)self->_child)" in content
             # Parent dealloc appended (super dealloc from user filtered out)
@@ -673,7 +673,7 @@ class TestARCBreakContinueCleanup:
         m = self._module_with_method(body)
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
-            content = open(os.path.join(tmpdir, "Foo.c")).read()
+            content = open(os.path.join(tmpdir, "Foo_ozm.c")).read()
             lines = content.split("\n")
             release_line = next(i for i, l in enumerate(lines) if "release" in l and "a)" in l)
             break_line = next(i for i, l in enumerate(lines) if "break;" in l)
@@ -687,7 +687,7 @@ class TestARCBreakContinueCleanup:
         m = self._module_with_method(body)
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
-            content = open(os.path.join(tmpdir, "Foo.c")).read()
+            content = open(os.path.join(tmpdir, "Foo_ozm.c")).read()
             lines = content.split("\n")
             release_line = next(i for i, l in enumerate(lines) if "release" in l and "a)" in l)
             continue_line = next(i for i, l in enumerate(lines) if "continue;" in l)
@@ -707,7 +707,7 @@ class TestARCBreakContinueCleanup:
         m = self._module_with_method(body)
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
-            content = open(os.path.join(tmpdir, "Foo.c")).read()
+            content = open(os.path.join(tmpdir, "Foo_ozm.c")).read()
             break_idx = content.index("break;")
             before_break = content[:break_idx]
             assert "release((struct OZObject *)b)" in before_break
@@ -721,7 +721,7 @@ class TestARCBreakContinueCleanup:
         m = self._module_with_method(body)
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
-            content = open(os.path.join(tmpdir, "Foo.c")).read()
+            content = open(os.path.join(tmpdir, "Foo_ozm.c")).read()
             break_idx = content.index("break;")
             before_break = content[:break_idx]
             assert "release((struct OZObject *)inner)" in before_break
@@ -746,7 +746,7 @@ class TestARCBreakContinueCleanup:
         m = self._module_with_method(body)
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
-            content = open(os.path.join(tmpdir, "Foo.c")).read()
+            content = open(os.path.join(tmpdir, "Foo_ozm.c")).read()
             break_idx = content.index("break;")
             before_break = content[:break_idx]
             assert "release((struct OZObject *)b)" in before_break
@@ -778,7 +778,7 @@ class TestARCBreakContinueCleanup:
         resolve(m)
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
-            content = open(os.path.join(tmpdir, "Holder.c")).read()
+            content = open(os.path.join(tmpdir, "Holder_ozm.c")).read()
             break_idx = content.index("break;")
             before_break = content[:break_idx]
             assert "release((struct OZObject *)obj)" not in before_break
@@ -816,7 +816,7 @@ class TestARCBreakContinueCleanup:
         resolve(m)
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
-            content = open(os.path.join(tmpdir, "Foo.c")).read()
+            content = open(os.path.join(tmpdir, "Foo_ozm.c")).read()
             break_idx = content.index("break;")
             before_break = content[:break_idx]
             assert "release((struct OZObject *)a)" in before_break
@@ -840,7 +840,7 @@ class TestARCBreakContinueCleanup:
         resolve(m)
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
-            content = open(os.path.join(tmpdir, "Foo.c")).read()
+            content = open(os.path.join(tmpdir, "Foo_ozm.c")).read()
             assert "do {" in content
             assert "while (1);" in content
             break_idx = content.index("break;")
@@ -873,7 +873,7 @@ class TestARCAutoreleasePool:
         resolve(m)
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
-            content = open(os.path.join(tmpdir, "Foo.c")).read()
+            content = open(os.path.join(tmpdir, "Foo_ozm.c")).read()
             assert "OZObject_release((struct OZObject *)a);" in content
 
     def test_autoreleasepool_nested(self):
@@ -898,7 +898,7 @@ class TestARCAutoreleasePool:
         resolve(m)
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
-            content = open(os.path.join(tmpdir, "Foo.c")).read()
+            content = open(os.path.join(tmpdir, "Foo_ozm.c")).read()
             assert content.count("OZObject_release") == 2
 
     def test_autoreleasepool_does_not_release_outer_vars(self):
@@ -919,7 +919,7 @@ class TestARCAutoreleasePool:
         resolve(m)
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
-            content = open(os.path.join(tmpdir, "Foo.c")).read()
+            content = open(os.path.join(tmpdir, "Foo_ozm.c")).read()
             # Find the pool block's closing brace area
             inside_release = content.index("release((struct OZObject *)inside)")
             before_release = content.index("release((struct OZObject *)before)")
@@ -939,7 +939,7 @@ class TestARCParameterRetain:
         resolve(m)
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
-            content = open(os.path.join(tmpdir, "Foo.c")).read()
+            content = open(os.path.join(tmpdir, "Foo_ozm.c")).read()
             assert "OZObject_retain((struct OZObject *)item)" in content
 
     def test_object_param_released_at_scope_exit(self):
@@ -953,7 +953,7 @@ class TestARCParameterRetain:
         resolve(m)
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
-            content = open(os.path.join(tmpdir, "Foo.c")).read()
+            content = open(os.path.join(tmpdir, "Foo_ozm.c")).read()
             assert "OZObject_release((struct OZObject *)item)" in content
 
     def test_primitive_param_not_retained(self):
@@ -967,7 +967,7 @@ class TestARCParameterRetain:
         resolve(m)
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
-            content = open(os.path.join(tmpdir, "Foo.c")).read()
+            content = open(os.path.join(tmpdir, "Foo_ozm.c")).read()
             assert "retain" not in content
 
     def test_multiple_object_params_all_retained(self):
@@ -985,7 +985,7 @@ class TestARCParameterRetain:
         resolve(m)
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
-            content = open(os.path.join(tmpdir, "Foo.c")).read()
+            content = open(os.path.join(tmpdir, "Foo_ozm.c")).read()
             assert "OZObject_retain((struct OZObject *)a)" in content
             assert "OZObject_retain((struct OZObject *)b)" in content
             assert "retain((struct OZObject *)count)" not in content
@@ -1003,7 +1003,7 @@ class TestARCParameterRetain:
         resolve(m)
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
-            content = open(os.path.join(tmpdir, "Foo.c")).read()
+            content = open(os.path.join(tmpdir, "Foo_ozm.c")).read()
             assert "OZObject_retain((struct OZObject *)item)" in content
             ret_idx = content.index("return;")
             before_ret = content[:ret_idx]
@@ -1029,7 +1029,7 @@ class TestARCParameterRetain:
         resolve(m)
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
-            content = open(os.path.join(tmpdir, "Holder.c")).read()
+            content = open(os.path.join(tmpdir, "Holder_ozm.c")).read()
             # param retained at entry
             assert "OZObject_retain((struct OZObject *)child)" in content
             # ivar assign also retains
@@ -1062,7 +1062,7 @@ class TestARCStrongIvarAssign:
         resolve(m)
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
-            content = open(os.path.join(tmpdir, "Holder.c")).read()
+            content = open(os.path.join(tmpdir, "Holder_ozm.c")).read()
             assert "OZObject_retain((struct OZObject *)child)" in content
             assert "OZObject_release((struct OZObject *)self->_child)" in content
             assert "self->_child = child;" in content
@@ -1094,7 +1094,7 @@ class TestARCStrongIvarAssign:
         resolve(m)
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
-            content = open(os.path.join(tmpdir, "Holder.c")).read()
+            content = open(os.path.join(tmpdir, "Holder_ozm.c")).read()
             # obj was consumed by ivar assign — should NOT be released at scope exit
             assert "OZObject_release((struct OZObject *)obj);" not in content
             # Consumed local transfers ownership — no extra retain needed
@@ -1181,7 +1181,7 @@ class TestARCLocalReassign:
         ])
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
-            content = open(os.path.join(tmpdir, "Holder.c")).read()
+            content = open(os.path.join(tmpdir, "Holder_ozm.c")).read()
             # Release old f before reassignment
             assert "OZObject_release((struct OZObject *)f);" in content
             # No retain for alloc result (already +1)
@@ -1196,7 +1196,7 @@ class TestARCLocalReassign:
         ])
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
-            content = open(os.path.join(tmpdir, "Holder.c")).read()
+            content = open(os.path.join(tmpdir, "Holder_ozm.c")).read()
             assert "OZObject_release((struct OZObject *)f);" in content
             assert "f = ((void *)0);" in content
 
@@ -1207,7 +1207,7 @@ class TestARCLocalReassign:
         ])
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
-            content = open(os.path.join(tmpdir, "Holder.c")).read()
+            content = open(os.path.join(tmpdir, "Holder_ozm.c")).read()
             # release appears twice: once for reassignment, once at scope exit
             count = content.count("OZObject_release((struct OZObject *)f);")
             assert count == 2
@@ -1228,7 +1228,7 @@ class TestARCLocalReassign:
         ])
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
-            content = open(os.path.join(tmpdir, "Holder.c")).read()
+            content = open(os.path.join(tmpdir, "Holder_ozm.c")).read()
             # obj should be released at scope exit (no longer consumed)
             # 1 release from reassignment + 1 release from scope exit
             count = content.count("OZObject_release((struct OZObject *)obj);")
@@ -1242,7 +1242,7 @@ class TestARCLocalReassign:
         ])
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
-            content = open(os.path.join(tmpdir, "Holder.c")).read()
+            content = open(os.path.join(tmpdir, "Holder_ozm.c")).read()
             # retain(b) before release(a) and assign
             assert "OZObject_retain((struct OZObject *)b);" in content
             assert "OZObject_release((struct OZObject *)a);" in content
@@ -1274,7 +1274,7 @@ class TestARCLocalReassign:
         resolve(m)
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
-            content = open(os.path.join(tmpdir, "Holder.c")).read()
+            content = open(os.path.join(tmpdir, "Holder_ozm.c")).read()
             assert "x = 10;" in content
             # No release for primitive types in doWork body
             dowork_body = content.split("void Holder_doWork")[1].split("}")[0]
@@ -1329,8 +1329,8 @@ class TestIntrospection:
         m = _simple_module()
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
-            h = open(os.path.join(tmpdir, "OZObject.h")).read()
-            c = open(os.path.join(tmpdir, "OZObject.c")).read()
+            h = open(os.path.join(tmpdir, "OZObject_ozh.h")).read()
+            c = open(os.path.join(tmpdir, "OZObject_ozm.c")).read()
             assert "OZObject_isEqual_" in h
             assert "OZObject_isEqual_" in c
             assert "self == anObject" in c
@@ -1339,8 +1339,8 @@ class TestIntrospection:
         m = _simple_module()
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
-            h = open(os.path.join(tmpdir, "OZObject.h")).read()
-            c = open(os.path.join(tmpdir, "OZObject.c")).read()
+            h = open(os.path.join(tmpdir, "OZObject_ozh.h")).read()
+            c = open(os.path.join(tmpdir, "OZObject_ozm.c")).read()
             assert "OZObject_cDescription_maxLength_" in h
             assert "OZObject_cDescription_maxLength_" in c
             assert "oz_platform_snprint" in c
@@ -1378,19 +1378,19 @@ class TestIntrospection:
         m = _simple_module()
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
-            content = open(os.path.join(tmpdir, "OZObject.c")).read()
+            content = open(os.path.join(tmpdir, "OZObject_ozm.c")).read()
             assert "oz_mem_slabs.h" in content
 
 
 class TestStaticVarEmission:
-    """Tests for file-scope static variable emission in oz_functions.c."""
+    """Tests for file-scope static variable emission in class _ozm.c file."""
 
-    def test_static_var_emitted_in_functions_file(self):
+    def test_static_var_emitted_in_class_file(self):
         m = _simple_module()
         m.statics.append(OZStaticVar("_sharedConfig", OZType("AppConfig *")))
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
-            content = open(os.path.join(tmpdir, "oz_functions.c")).read()
+            content = open(os.path.join(tmpdir, "OZObject_ozm.c")).read()
             assert "struct AppConfig * _sharedConfig;" in content
 
     def test_primitive_static_var(self):
@@ -1398,7 +1398,7 @@ class TestStaticVarEmission:
         m.statics.append(OZStaticVar("_count", OZType("int")))
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
-            content = open(os.path.join(tmpdir, "oz_functions.c")).read()
+            content = open(os.path.join(tmpdir, "OZObject_ozm.c")).read()
             assert "int _count;" in content
 
     def test_no_statics_no_functions_file(self):
@@ -1437,7 +1437,7 @@ class TestStaticVarEmission:
         )
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
-            src = open(os.path.join(tmpdir, "OZLed.c")).read()
+            src = open(os.path.join(tmpdir, "OZLed_ozm.c")).read()
             assert "(struct color){255, 0, 0}" in src
 
     def test_string_literal_emits_static_struct(self):
@@ -1486,7 +1486,7 @@ class TestStaticVarEmission:
         ))
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
-            src = open(os.path.join(tmpdir, "oz_functions.c")).read()
+            src = open(os.path.join(tmpdir, "OZObject_ozm.c")).read()
             assert "static struct OZString _oz_str_" in src
             assert '"hello"' in src
             assert "2147483647" in src
@@ -1528,7 +1528,7 @@ class TestStaticVarEmission:
         ))
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
-            src = open(os.path.join(tmpdir, "oz_functions.c")).read()
+            src = open(os.path.join(tmpdir, "OZObject_ozm.c")).read()
             assert src.count('static struct OZString') == 1
             assert src.count('"hello"') == 1
 
@@ -1579,7 +1579,7 @@ class TestStaticVarEmission:
         ))
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
-            src = open(os.path.join(tmpdir, "oz_functions.c")).read()
+            src = open(os.path.join(tmpdir, "OZObject_ozm.c")).read()
             assert "OZArray_initWithItems" in src
             assert "_oz_arr_" in src
             assert "_buf[]" in src
@@ -1632,7 +1632,7 @@ class TestStaticVarEmission:
         ))
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
-            src = open(os.path.join(tmpdir, "oz_functions.c")).read()
+            src = open(os.path.join(tmpdir, "OZObject_ozm.c")).read()
             assert "OZDictionary_initWithKeysValues" in src
             assert "_oz_dict_" in src
             assert "_kv[]" in src
@@ -1672,7 +1672,7 @@ class TestStaticVarEmission:
         ))
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
-            src = open(os.path.join(tmpdir, "oz_functions.c")).read()
+            src = open(os.path.join(tmpdir, "OZObject_ozm.c")).read()
             assert "OZNumber_initInt32(42)" in src
 
     def test_number_literal_each_alloc(self):
@@ -1712,7 +1712,7 @@ class TestStaticVarEmission:
         ))
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
-            src = open(os.path.join(tmpdir, "oz_functions.c")).read()
+            src = open(os.path.join(tmpdir, "OZObject_ozm.c")).read()
             assert src.count("OZNumber_initInt32(42)") == 2
 
     def test_expr_with_cleanups_passthrough(self):
@@ -1743,7 +1743,7 @@ class TestStaticVarEmission:
         ))
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
-            src = open(os.path.join(tmpdir, "oz_functions.c")).read()
+            src = open(os.path.join(tmpdir, "OZObject_ozm.c")).read()
             assert "int x = 99;" in src
 
     def test_block_expr_non_capturing(self):
@@ -1787,7 +1787,7 @@ class TestStaticVarEmission:
         ))
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
-            src = open(os.path.join(tmpdir, "oz_functions.c")).read()
+            src = open(os.path.join(tmpdir, "OZObject_ozm.c")).read()
             assert "static void _oz_block_" in src
             assert "int val" in src
 
@@ -1846,7 +1846,7 @@ class TestStaticVarEmission:
         resolve(m)
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
-            hdr = open(os.path.join(tmpdir, "OZNumber.h")).read()
+            hdr = open(os.path.join(tmpdir, "OZNumber_ozh.h")).read()
             assert "enum oz_number_tag {" in hdr
             assert "OZ_NUM_INT32 = 0," in hdr
             assert "union oz_number_value {" in hdr
@@ -1968,7 +1968,7 @@ class TestStaticVarEmission:
         )
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
-            src = open(os.path.join(tmpdir, "OZLed.c")).read()
+            src = open(os.path.join(tmpdir, "OZLed_ozm.c")).read()
             assert "OZArray_objectAtIndexedSubscript_" in src
 
 
@@ -2125,7 +2125,7 @@ class TestSynchronized:
         resolve(m)
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
-            content = open(os.path.join(tmpdir, "Foo.c")).read()
+            content = open(os.path.join(tmpdir, "Foo_ozm.c")).read()
             assert "struct OZLock *_sync = OZLock_initWithObject(" in content
             assert "OZLock_alloc()" in content
             assert "(struct OZObject *)self" in content
@@ -2170,7 +2170,7 @@ class TestSynchronized:
         resolve(m)
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
-            content = open(os.path.join(tmpdir, "Foo.c")).read()
+            content = open(os.path.join(tmpdir, "Foo_ozm.c")).read()
             ret_pos = content.index("return;")
             release_pos = content.index("OZObject_release((struct OZObject *)_sync)")
             assert release_pos < ret_pos
@@ -2191,7 +2191,7 @@ class TestSynchronized:
         resolve(m)
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
-            content = open(os.path.join(tmpdir, "Foo.c")).read()
+            content = open(os.path.join(tmpdir, "Foo_ozm.c")).read()
             assert "struct OZLock *_sync = " in content
             assert "struct OZLock *_sync2 = " in content
 
@@ -2233,7 +2233,7 @@ class TestSynchronized:
         resolve(m)
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
-            content = open(os.path.join(tmpdir, "Foo.c")).read()
+            content = open(os.path.join(tmpdir, "Foo_ozm.c")).read()
             assert "(struct OZObject *)self->_mutex" in content
 
     def test_synchronized_with_object_local_inside(self):
@@ -2256,7 +2256,7 @@ class TestSynchronized:
         resolve(m)
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
-            content = open(os.path.join(tmpdir, "Foo.c")).read()
+            content = open(os.path.join(tmpdir, "Foo_ozm.c")).read()
             assert "OZObject_release((struct OZObject *)tmp)" in content
             assert "OZObject_release((struct OZObject *)_sync)" in content
 
@@ -2281,7 +2281,7 @@ class TestSynchronized:
         resolve(m)
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
-            content = open(os.path.join(tmpdir, "Foo.c")).read()
+            content = open(os.path.join(tmpdir, "Foo_ozm.c")).read()
             break_idx = content.index("break;")
             before_break = content[:break_idx]
             assert "release((struct OZObject *)_sync)" in before_break
@@ -2305,7 +2305,7 @@ class TestSynchronized:
         resolve(m)
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
-            content = open(os.path.join(tmpdir, "Foo.c")).read()
+            content = open(os.path.join(tmpdir, "Foo_ozm.c")).read()
             ret_pos = content.index("return 42;")
             release_pos = content.index("release((struct OZObject *)_sync)")
             assert release_pos < ret_pos
@@ -2325,7 +2325,7 @@ class TestSynchronized:
         resolve(m)
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
-            content = open(os.path.join(tmpdir, "Foo.c")).read()
+            content = open(os.path.join(tmpdir, "Foo_ozm.c")).read()
             assert "struct OZLock *_sync = " in content
             assert "struct OZLock *_sync2 = " in content
 

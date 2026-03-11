@@ -4,8 +4,8 @@
  * Verifies protocol dispatch generates correct switch-based routing.
  */
 #include "unity.h"
-#include "Circle.h"
-#include "Square.h"
+#include "Circle_ozh.h"
+#include "Square_ozh.h"
 #include "oz_dispatch.h"
 #include "oz_mem_slabs.h"
 

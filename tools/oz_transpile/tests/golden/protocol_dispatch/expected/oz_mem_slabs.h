@@ -2,11 +2,12 @@
 #pragma once
 
 #include "platform/oz_platform.h"
+#include "oz_dispatch.h"
 #include <string.h>
 
-#include "OZObject.h"
-#include "Circle.h"
-#include "Square.h"
+#include "OZObject_ozh.h"
+#include "Circle_ozh.h"
+#include "Square_ozh.h"
 
 extern oz_slab_t oz_slab_OZObject;
 extern oz_slab_t oz_slab_Circle;

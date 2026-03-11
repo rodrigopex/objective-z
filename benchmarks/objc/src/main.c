@@ -16,10 +16,10 @@
 /* Transpiler-generated headers */
 #include "oz_dispatch.h"
 #include "oz_mem_slabs.h"
-#include "OZObject.h"
-#include "BenchBase.h"
-#include "BenchChild.h"
-#include "BenchGrandChild.h"
+#include "OZObject_ozh.h"
+#include "BenchBase_ozh.h"
+#include "BenchChild_ozh.h"
+#include "BenchGrandChild_ozh.h"
 
 /* OZLog declaration (implemented in src/OZLog.c) */
 extern void OZLog(const char *fmt, ...);

@@ -4,9 +4,9 @@
  * Verifies method resolution through a 3-level hierarchy.
  */
 #include "unity.h"
-#include "Animal.h"
-#include "Dog.h"
-#include "Puppy.h"
+#include "Animal_ozh.h"
+#include "Dog_ozh.h"
+#include "Puppy_ozh.h"
 #include "oz_dispatch.h"
 #include "oz_mem_slabs.h"
 

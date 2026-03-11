@@ -4,7 +4,7 @@
  * Verifies property getter/setter attribute behavior.
  */
 #include "unity.h"
-#include "Config.h"
+#include "Config_ozh.h"
 #include "oz_mem_slabs.h"
 
 void test_property_default_zero(void)

@@ -4,7 +4,7 @@
  * Verifies struct layout and method generation from @interface/@implementation.
  */
 #include "unity.h"
-#include "Vehicle.h"
+#include "Vehicle_ozh.h"
 #include "oz_mem_slabs.h"
 #include <stddef.h>
 

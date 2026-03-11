@@ -4,7 +4,7 @@
  */
 
 #include "channels.h"
-#include "oz_functions.h"
+#include "oz_dispatch.h"
 
 ZBUS_MSG_SUBSCRIBER_DEFINE(msub_consumer);
 

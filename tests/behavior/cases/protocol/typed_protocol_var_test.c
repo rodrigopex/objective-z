@@ -1,7 +1,7 @@
 /* Behavior test: protocol dispatch via typed variable */
 #include "unity.h"
-#include "Ruler.h"
-#include "Scale.h"
+#include "Ruler_ozh.h"
+#include "Scale_ozh.h"
 #include "oz_mem_slabs.h"
 
 void test_typed_protocol_ruler(void)

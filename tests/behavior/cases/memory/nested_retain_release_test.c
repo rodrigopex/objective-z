@@ -1,6 +1,6 @@
 /* Behavior test: retain twice, release twice — freed only on last */
 #include "unity.h"
-#include "Handle.h"
+#include "Handle_ozh.h"
 #include "oz_mem_slabs.h"
 
 void test_nested_retain_release(void)

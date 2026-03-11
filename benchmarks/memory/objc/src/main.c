@@ -16,10 +16,10 @@
 /* Transpiler-generated headers */
 #include "oz_dispatch.h"
 #include "oz_mem_slabs.h"
-#include "OZObject.h"
-#include "MemBase.h"
-#include "MemChild.h"
-#include "MemGrandChild.h"
+#include "OZObject_ozh.h"
+#include "MemBase_ozh.h"
+#include "MemChild_ozh.h"
+#include "MemGrandChild_ozh.h"
 
 #define N_BULK 20
 

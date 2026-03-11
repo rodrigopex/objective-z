@@ -1,6 +1,6 @@
 /* Behavior test: empty class alloc/release cycle */
 #include "unity.h"
-#include "EmptyClass.h"
+#include "EmptyClass_ozh.h"
 #include "oz_mem_slabs.h"
 
 void test_alloc_returns_non_null(void)
