@@ -167,8 +167,22 @@ def main(argv: list[str] | None = None) -> int:
                  root_class=args.root_class,
                  item_pool_size=args.item_pool_size)
 
-    for f in files:
-        print(f"oz_transpile: generated {f}", file=sys.stderr)
+    total = len(files)
+    is_tty = sys.stderr.isatty()
+    for i, f in enumerate(files, 1):
+        name = os.path.basename(f)
+        if is_tty:
+            sys.stderr.write(f"\r\033[Koz_transpile: [{i}/{total}] {name}")
+            sys.stderr.flush()
+        else:
+            if args.verbose:
+                print(f"oz_transpile: [{i}/{total}] {name}", file=sys.stderr)
+    summary = f"oz_transpile: {total} files generated in {args.outdir}"
+    if is_tty:
+        sys.stderr.write(f"\r\033[K{summary}\n")
+        sys.stderr.flush()
+    else:
+        print(summary, file=sys.stderr)
 
     if args.manifest:
         with open(args.manifest, "w") as mf:
