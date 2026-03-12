@@ -264,17 +264,19 @@ def _build_impl_context(
                 context[last_key] += "\n" + dealloc_text
             dealloc_text = ""
 
-    # Build preamble text: statics + string constants + block functions
+    # Build preamble text in dependency order:
+    # 1. Static variables
+    # 2. Root retain/release/introspection (already in preamble StringIO)
+    # 3. String constants (referenced by block functions)
+    # 4. Block functions (may reference string constants)
+    # 5. Synthesized property accessors
+    # 6. Auto-dealloc (if no method to attach to)
     preamble_text = preamble.getvalue()
     for sc in ctx.string_constants:
         preamble_text += sc + "\n"
     for bf in ctx.block_functions:
         preamble_text += bf + "\n\n"
-
-    # Add synthesized methods
     preamble_text += synth_buf.getvalue()
-
-    # If there's a dealloc with no method to attach to, add to preamble
     if dealloc_text:
         preamble_text += dealloc_text
 

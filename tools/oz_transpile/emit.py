@@ -2270,11 +2270,6 @@ _OZ_IMPORT_PREFIXES = (
     "OZObject", "OZLog", "OZString", "OZArray", "OZDictionary", "OZNumber",
 )
 
-_OBJC_INTERFACE_TYPES = frozenset({"class_interface", "category_interface"})
-_OBJC_IMPL_TYPES = frozenset({"class_implementation", "category_implementation"})
-_OBJC_SKIP_TYPES = frozenset({"protocol_declaration"})
-
-
 def _is_objc_header(header_path: Path) -> bool:
     """Check if a header file contains ObjC syntax."""
     if not header_path.is_file():
@@ -2382,88 +2377,6 @@ def _extract_func_name(node) -> str | None:
                         if subsub.type == "identifier":
                             return subsub.text.decode()
     return None
-
-
-def _extract_protocol_name(node) -> str | None:
-    """Extract protocol name from a tree-sitter protocol_declaration node."""
-    for child in node.children:
-        if child.type == "identifier":
-            return child.text.decode()
-    return None
-
-
-def _emit_class_methods(cls: OZClass, module: OZModule, out: StringIO,
-                         root_class: str, has_item_pool: bool) -> None:
-    """Emit transpiled C methods for a class (replaces @implementation block)."""
-    ctx = _EmitCtx(cls=cls, module=module, root_class=root_class,
-                   has_item_pool=has_item_pool)
-    is_root = cls.name == root_class
-
-    # Emit methods to a buffer first so we can collect string constants
-    # and block functions that must appear before the methods
-    methods_buf = StringIO()
-
-    for sv in cls.statics:
-        decl_str = sv.oz_type.c_param_decl(sv.name)
-        init = f" = {sv.init_value}" if sv.init_value is not None else ""
-        methods_buf.write(f"{decl_str}{init};\n")
-
-    if is_root:
-        buf = StringIO()
-        _emit_root_retain_release(cls, module, buf)
-        methods_buf.write(buf.getvalue())
-        buf = StringIO()
-        _emit_root_introspection(cls, buf)
-        methods_buf.write(buf.getvalue())
-
-    _root_skip_sels = {"retain", "release", "retainCount",
-                       "isEqual:", "cDescription:maxLength:"}
-
-    has_user_dealloc = False
-    for m in cls.methods:
-        if m.selector in _root_skip_sels and is_root:
-            continue
-        if m.selector == "dealloc":
-            has_user_dealloc = True
-            buf = StringIO()
-            _emit_user_dealloc(ctx, m, buf)
-            methods_buf.write(buf.getvalue())
-            continue
-        ctx.method = m
-        ctx.scope_vars = []
-        ctx.consumed_vars = set()
-        ctx.loop_scope_depth = []
-        ctx.pre_stmts = []
-        ctx._tmp_counter = 0
-        ctx._sync_counter = 0
-        buf = StringIO()
-        buf.write(f"{_method_prototype(cls, m)}\n")
-        if m.synthesized_property:
-            _emit_synthesized_accessor(cls, m, buf, root_class)
-        elif m.body_ast:
-            _emit_compound_stmt(m.body_ast, buf, ctx, indent=0,
-                                param_retains=_object_params(m))
-        else:
-            buf.write("{\n}\n")
-        methods_buf.write(buf.getvalue())
-        methods_buf.write("\n")
-
-    if not has_user_dealloc:
-        buf = StringIO()
-        _emit_auto_dealloc(ctx, buf)
-        val = buf.getvalue()
-        if val:
-            methods_buf.write(val)
-            methods_buf.write("\n")
-
-    # Emit string constants and block functions first, then methods
-    for sc in ctx.string_constants:
-        out.write(sc)
-        out.write("\n")
-    for bf in ctx.block_functions:
-        out.write(bf)
-        out.write("\n\n")
-    out.write(methods_buf.getvalue())
 
 
 def _emit_transpiled_function(func: OZFunction, module: OZModule,
