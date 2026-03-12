@@ -75,6 +75,18 @@ class TestCLI:
             assert "OZObject_release" in root_c
             assert "oz_atomic_dec_and_test" in root_c
 
+    def test_diagnostics_not_emitted_for_valid_input(self):
+        """Valid input should produce no 'not found' diagnostics."""
+        import io
+        import contextlib
+        ast_file = os.path.join(FIXTURE_DIR, "simple_led.ast.json")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            stderr_buf = io.StringIO()
+            with contextlib.redirect_stderr(stderr_buf):
+                rc = main(["--input", ast_file, "--outdir", tmpdir])
+            assert rc == 0
+            assert "not found" not in stderr_buf.getvalue()
+
 
 class TestSynchronizedE2E:
     """End-to-end test: .m -> Clang AST JSON -> transpiler -> C."""

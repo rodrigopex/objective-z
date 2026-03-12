@@ -165,9 +165,18 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     pool_sizes = parse_pool_sizes(args.pool_sizes)
+    pre_emit_diag_count = len(module.diagnostics)
     files = emit(module, args.outdir, pool_sizes=pool_sizes,
                  root_class=args.root_class,
                  item_pool_size=args.item_pool_size)
+
+    # Surface diagnostics added during emit (e.g., class-not-found in context.py)
+    new_diags = module.diagnostics[pre_emit_diag_count:]
+    if new_diags:
+        for d in new_diags:
+            print(f"oz_transpile: warning: {d}", file=sys.stderr)
+        if args.strict:
+            return 1
 
     total = len(files)
     is_tty = sys.stderr.isatty()

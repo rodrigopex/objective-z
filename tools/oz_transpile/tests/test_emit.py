@@ -2592,3 +2592,132 @@ class TestPatchedEmission:
             assert result.count('#include "Foo_ozh.h"') == 1
         finally:
             os.unlink(f.name)
+
+    def test_patched_dedup_normalizes_whitespace(self):
+        """Include dedup should work even with extra whitespace."""
+        with tempfile.NamedTemporaryFile(suffix=".m", mode="w",
+                                          delete=False) as f:
+            # Extra space between #include and path
+            f.write('#include  "Foo_ozh.h"\n')
+            f.write("@implementation Foo\n@end\n")
+            f.name
+        try:
+            from pathlib import Path
+            m = OZModule()
+            m.classes["OZObject"] = OZClass("OZObject",
+                                             class_id=0, base_depth=0)
+            cls = OZClass("Foo", superclass="OZObject",
+                          class_id=1, base_depth=1)
+            m.classes["Foo"] = cls
+            result = _emit_patched_source(
+                Path(f.name), m, [cls], "Foo", "OZObject", False)
+            # The preamble has the canonical include; extra-space one should be deduped
+            assert result.count("Foo_ozh.h") == 1
+        finally:
+            os.unlink(f.name)
+
+    def test_patched_empty_classes_no_crash(self):
+        """Empty classes list should not crash."""
+        with tempfile.NamedTemporaryFile(suffix=".m", mode="w",
+                                          delete=False) as f:
+            f.write("void helper(void) { }\n")
+            f.name
+        try:
+            from pathlib import Path
+            m = OZModule()
+            m.classes["OZObject"] = OZClass("OZObject",
+                                             class_id=0, base_depth=0)
+            result = _emit_patched_source(
+                Path(f.name), m, [], "orphan", "OZObject", False)
+            assert "Auto-generated" in result
+        finally:
+            os.unlink(f.name)
+
+    def test_patched_pool_count_none_defaults_to_1(self):
+        """pool_count_fn returning None should default to 1."""
+        with tempfile.NamedTemporaryFile(suffix=".m", mode="w",
+                                          delete=False) as f:
+            f.write("@implementation Foo\n@end\n")
+            f.name
+        try:
+            from pathlib import Path
+            m = OZModule()
+            m.classes["OZObject"] = OZClass("OZObject",
+                                             class_id=0, base_depth=0)
+            cls = OZClass("Foo", superclass="OZObject",
+                          class_id=1, base_depth=1)
+            m.classes["Foo"] = cls
+            result = _emit_patched_source(
+                Path(f.name), m, [cls], "Foo", "OZObject", False,
+                pool_count_fn=lambda name: None)
+            assert "OZ_SLAB_DEFINE(oz_slab_Foo" in result
+            assert ", 1, 4)" in result
+        finally:
+            os.unlink(f.name)
+
+    def test_patched_pool_count_zero_defaults_to_1(self):
+        """pool_count_fn returning 0 should default to 1."""
+        with tempfile.NamedTemporaryFile(suffix=".m", mode="w",
+                                          delete=False) as f:
+            f.write("@implementation Foo\n@end\n")
+            f.name
+        try:
+            from pathlib import Path
+            m = OZModule()
+            m.classes["OZObject"] = OZClass("OZObject",
+                                             class_id=0, base_depth=0)
+            cls = OZClass("Foo", superclass="OZObject",
+                          class_id=1, base_depth=1)
+            m.classes["Foo"] = cls
+            result = _emit_patched_source(
+                Path(f.name), m, [cls], "Foo", "OZObject", False,
+                pool_count_fn=lambda name: 0)
+            assert ", 1, 4)" in result
+        finally:
+            os.unlink(f.name)
+
+    def test_patched_pool_count_valid(self):
+        """pool_count_fn returning valid int should be used."""
+        with tempfile.NamedTemporaryFile(suffix=".m", mode="w",
+                                          delete=False) as f:
+            f.write("@implementation Foo\n@end\n")
+            f.name
+        try:
+            from pathlib import Path
+            m = OZModule()
+            m.classes["OZObject"] = OZClass("OZObject",
+                                             class_id=0, base_depth=0)
+            cls = OZClass("Foo", superclass="OZObject",
+                          class_id=1, base_depth=1)
+            m.classes["Foo"] = cls
+            result = _emit_patched_source(
+                Path(f.name), m, [cls], "Foo", "OZObject", False,
+                pool_count_fn=lambda name: 8)
+            assert ", 8, 4)" in result
+        finally:
+            os.unlink(f.name)
+
+    def test_patched_aggregates_deps_from_all_classes(self):
+        """Dependency includes should aggregate from all classes, not just first."""
+        with tempfile.NamedTemporaryFile(suffix=".m", mode="w",
+                                          delete=False) as f:
+            f.write("@implementation Foo\n@end\n")
+            f.name
+        try:
+            from pathlib import Path
+            m = OZModule()
+            m.classes["OZObject"] = OZClass("OZObject",
+                                             class_id=0, base_depth=0)
+            cls_a = OZClass("Foo", superclass="OZObject",
+                            class_id=1, base_depth=1)
+            cls_b = OZClass("Bar", superclass="OZObject",
+                            class_id=2, base_depth=1)
+            m.classes["Foo"] = cls_a
+            m.classes["Bar"] = cls_b
+            # Both classes share the same stem — deps should include Bar's deps
+            result = _emit_patched_source(
+                Path(f.name), m, [cls_a, cls_b], "Foo", "OZObject", False)
+            # OZObject is a dep of both; its header should be included
+            assert '#include "OZObject_ozh.h"' in result
+        finally:
+            os.unlink(f.name)

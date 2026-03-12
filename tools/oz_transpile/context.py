@@ -140,6 +140,10 @@ def _build_impl_context(
     class_name = _extract_class_name(node)
     cls = class_map.get(class_name) if class_name else None
     if not cls:
+        if class_name:
+            module.diagnostics.append(
+                f"warning: @implementation {class_name} not found in module"
+            )
         context[_impl_loc_key(node)] = ""
         return
 

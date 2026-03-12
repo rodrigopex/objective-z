@@ -2437,19 +2437,33 @@ def _emit_patched_source(source_path: Path, module: OZModule,
         root_class, has_item_pool, pool_count_fn,
     )
 
+    # Aggregate dependency includes from ALL classes in this stem
+    dep_stem_set = set()
+    for cls in classes:
+        dep_stem_set.update(_dep_includes(cls, module, stem))
+    dep_stems = sorted(dep_stem_set)
+
     # Deduplicate includes: track what the preamble already provides
-    dep_stems = _dep_includes(classes[0], module, stem) if classes else []
     emitted_includes = {f'#include "{stem}_ozh.h"'}
     for dep_stem in dep_stems:
         emitted_includes.add(f'#include "{dep_stem}_ozh.h"')
 
     # Filter include context values to avoid duplicates
+    # Normalize whitespace for comparison: "#include  <x>" -> "#include <x>"
+    def _normalize_include(s: str) -> str:
+        s = s.strip()
+        if s.startswith("#include"):
+            return "#include " + s[len("#include"):].lstrip()
+        return s
+
     for key, val in list(context.items()):
         stripped = val.strip()
-        if stripped.startswith("#include") and stripped in emitted_includes:
-            context[key] = ""
-        elif stripped.startswith("#include"):
-            emitted_includes.add(stripped)
+        if stripped.startswith("#include"):
+            normalized = _normalize_include(stripped)
+            if normalized in emitted_includes:
+                context[key] = ""
+            else:
+                emitted_includes.add(normalized)
 
     env = J2Env(undefined=__import__("jinja2").StrictUndefined)
     rendered = env.from_string(template_str).render(**context)
@@ -2462,6 +2476,8 @@ def _emit_patched_source(source_path: Path, module: OZModule,
         out.write(f'#include "{dep_stem}_ozh.h"\n')
     for cls in classes:
         pc = pool_count_fn(cls.name) if pool_count_fn else 1
+        if not isinstance(pc, int) or pc < 1:
+            pc = 1
         out.write(f"\nOZ_SLAB_DEFINE(oz_slab_{cls.name}, "
                   f"sizeof(struct {cls.name}), {pc}, 4);\n")
 

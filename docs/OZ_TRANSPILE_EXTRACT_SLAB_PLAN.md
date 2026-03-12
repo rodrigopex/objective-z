@@ -54,118 +54,150 @@ Committed as `90b2670`.
 
 ---
 
-## Known Limitations
+## Part C: Unit Tests + Cleanup — DONE
 
-### L1: No unit tests for `extract.py`
+Committed as `bece655`.
 
-`extract_template()` has no dedicated tests. Covered only indirectly by golden/e2e tests. Edge cases (empty `@implementation`, nested preprocessor, multiple classes in one file) are untested in isolation.
+### What was implemented
 
-### L2: No unit tests for `context.py`
+- C1: 44 unit tests for `extract.py` (helpers, templates, categories, fixtures)
+- C2: 19 unit tests for `context.py` (includes, functions, declarations, methods, preamble, dealloc)
+- C3: 3 fixture files (`extract_basic.m`, `extract_category.m`, `extract_multiclass.m`)
+- C4: Removed ~87 lines dead code from `emit.py` (`_emit_class_methods`, `_extract_protocol_name`, 3 constants)
+- C5: Documented preamble ordering with explicit comments + ordering test
+- C6: Verified comment placement already correct (preamble before comments) + regression test
 
-`build_source_context()` and `_build_impl_context()` have no dedicated tests. Method matching, synthesized accessor emission, preamble assembly — all untested in isolation.
+### Resolved limitations from prior analysis
 
-### L3: Dead code in `emit.py`
-
-Functions superseded by extract.py pipeline but not removed:
-- `_emit_class_methods()` (~80 lines)
-- `_extract_protocol_name()` (~8 lines)
-- `_OBJC_INTERFACE_TYPES`, `_OBJC_IMPL_TYPES`, `_OBJC_SKIP_TYPES` constants
-
-These are duplicated in `extract.py` and no longer called from `emit.py`.
-
-### L4: Preamble ordering fragile
-
-`_build_impl_context` appends to `_impl_` preamble in this order: statics → root introspection → string constants → block functions → synthesized methods → (maybe) auto-dealloc. Order is implicit, not enforced. If a block function references a string constant defined after it, compilation may fail.
-
-### L5: Comments inside `@implementation` between methods
-
-Comments between methods are preserved by `extract.py` but may appear BEFORE the preamble placeholder. If preamble emits statics or synthesized methods, comments can end up interleaved with generated code.
-
-### L6: No test fixtures for extract+context pipeline
-
-Original plan called for `OZBlinky.m` + `OZBlinky.ast.json` fixtures. Not created.
+- ~~L1: No unit tests for extract.py~~ → 44 tests
+- ~~L2: No unit tests for context.py~~ → 19 tests
+- ~~L3: Dead code in emit.py~~ → removed
+- ~~L4: Preamble ordering fragile~~ → documented with comments + test
+- ~~L5: Comments placement~~ → verified correct, regression test added
+- ~~L6: No test fixtures~~ → 3 fixtures created
 
 ---
 
-## Part C: Improvements
+## Known Limitations (Post Part C)
 
-Unit tests are mandatory for every step.
+### L7: Single-class-per-stem assumption unvalidated
 
-### Step C1: Unit tests for `extract.py`
+`_emit_patched_source()` uses `classes[0]` for dependency includes (line ~2441). If a stem has multiple classes, sibling dependencies are missed. No assertion enforces one-class-per-stem.
 
-File: `tools/oz_transpile/tests/test_extract.py`
+### L8: Silent class-not-found in context.py
+
+If `@implementation Foo` in source doesn't match any class in the module (collect.py bug), `_build_impl_context` sets `context[_impl_key] = ""` and returns. Methods vanish silently — no warning, no diagnostic.
+
+### L9: Category double-processing risk
+
+If `collect.py` fails to merge a category, context.py processes both `@implementation Foo` and `@implementation Foo (Category)` against the same `OZClass`. Category methods get lost because they have no matching `OZMethod` entries.
+
+### L10: Include deduplication string-based
+
+`_emit_patched_source` deduplicates includes by comparing stripped context values against `emitted_includes` set. No tolerance for whitespace or formatting differences.
+
+### L11: `pool_count_fn` not validated
+
+If `pool_count_fn` returns `None` or raises, `_emit_patched_source` crashes without useful context.
+
+### L12: Unsupported AST expression kinds
+
+`ObjCBoxedExpr`, `BlockExpr` without `BlockDecl`, and unknown expression kinds emit `/* TODO: ... */` comments in generated C. Code using these features won't compile.
+
+### L13: Module diagnostics not surfaced
+
+`ctx.module.diagnostics` is appended to (e.g., capturing blocks) but never checked after context building. Warnings are collected but not shown to user.
+
+---
+
+## Part D: Robustness + Validation
+
+Unit tests mandatory for every step.
+
+### Step D1: Assert single-class-per-stem
+
+Add assertion in `_emit_patched_source()`:
+```python
+assert len(classes) >= 1, f"No classes for stem {stem}"
+```
+
+Aggregate dependency includes from ALL classes in the stem, not just `classes[0]`:
+```python
+dep_stems = set()
+for cls in classes:
+    dep_stems |= set(_dep_includes(cls, module, stem))
+```
 
 Tests:
-- Basic `@implementation` → annotating comments + placeholders
-- `@interface` → `/* @interface Foo — see Foo_ozh.h */`
-- `@protocol` → `/* @protocol Bar — see oz_dispatch.h */`
-- Category: `@implementation Car (Maintenance)` — no `(`, `)` leaked
-- `@synthesize` inside `@implementation` — skipped (no output)
-- Instance variables block — skipped
-- Comments between methods — preserved verbatim
-- `preproc_*` inside `@implementation` — preserved verbatim
-- Top-level `#include`/`#import` → placeholder
-- Top-level `function_definition` → placeholder
-- Top-level `declaration` → placeholder
-- Top-level C code — preserved verbatim
-- Class method `+` vs instance method `-` — correct sign in annotating comment
-- Empty `@implementation` (no methods) — preamble placeholder still present
-- Multiple `@implementation` blocks in one file
+- Verify assertion fires when `classes` is empty
+- Verify multiple classes aggregate dependencies correctly
 
-### Step C2: Unit tests for `context.py`
+### Step D2: Warn on class-not-found in context.py
 
-File: `tools/oz_transpile/tests/test_context.py`
+Add diagnostic when `@implementation` class name not found in module:
+```python
+if not cls:
+    module.diagnostics.append(
+        f"warning: @implementation {class_name} not found in module"
+    )
+```
 
 Tests:
-- Include rewriting (`#import <Foundation/Foundation.h>` → empty, `#include "foo.h"` → preserved)
-- Function definition → transpiled C
-- Declaration: prototype → empty, collected static → empty, other → preserved
-- Method body rendering — correct C signature
-- Class method vs instance method — matched by selector + flag
-- Synthesized accessor emission into preamble
-- Auto-dealloc appended to last method
-- Auto-dealloc in preamble when no methods
-- Root class special methods skipped (`retain`, `release`, etc.)
-- User dealloc handling
-- String constants + block functions in preamble
-- Static variables in preamble
+- Verify diagnostic is appended when class is unknown
+- Verify preamble is empty string (existing behavior preserved)
 
-### Step C3: Test fixtures
+### Step D3: Surface module diagnostics in `__main__.py`
 
-Files:
-- `tools/oz_transpile/tests/fixtures/extract_basic.m` — minimal class with two methods, comment between them
-- `tools/oz_transpile/tests/fixtures/extract_category.m` — category implementation
-- `tools/oz_transpile/tests/fixtures/extract_multiclass.m` — interface + implementation + free function
+After emit, check `module.diagnostics` and print warnings to stderr:
+```python
+for diag in module.diagnostics:
+    print(f"oz_transpile: {diag}", file=sys.stderr)
+```
 
-These are for `test_extract.py` only (pure tree-sitter, no AST needed).
+If `--strict` mode, exit non-zero when diagnostics present.
 
-### Step C4: Dead code removal from `emit.py`
+Tests:
+- Verify warnings printed to stderr
+- Verify `--strict` exits non-zero on diagnostics
 
-Remove from `emit.py`:
-- `_emit_class_methods()` function
-- `_extract_protocol_name()` function
-- `_OBJC_INTERFACE_TYPES`, `_OBJC_IMPL_TYPES`, `_OBJC_SKIP_TYPES` constants
+### Step D4: Validate `pool_count_fn` return
 
-Verify: `just test-transpiler` + `just test`
+Wrap the call:
+```python
+pc = pool_count_fn(cls.name) if pool_count_fn else 1
+if not isinstance(pc, int) or pc < 1:
+    pc = 1
+```
 
-### Step C5: Preamble ordering
+Tests:
+- `pool_count_fn` returns `None` → defaults to 1
+- `pool_count_fn` returns 0 → defaults to 1
+- `pool_count_fn` returns valid int → used as-is
 
-Refactor `_build_impl_context` preamble assembly:
-- Explicit ordered sections: (1) statics, (2) string constants, (3) block functions, (4) root retain/release + introspection, (5) synthesized methods, (6) auto-dealloc
-- String constants always before block functions (dependency order)
-- Unit test verifying order
+### Step D5: Category context integration test
 
-### Step C6: Comment placement relative to preamble
+Add test in `test_context.py` that verifies a category `@implementation Car (Maintenance)` correctly matches methods from the merged `OZClass`.
 
-Fix `_emit_impl_block` so comments between `@implementation` and first method appear AFTER the preamble placeholder, not before. This prevents generated preamble code from splitting user comments.
+Tests:
+- Category methods rendered with correct C signatures
+- Category preamble key present
+
+### Step D6: Include deduplication robustness
+
+Normalize include comparison: strip whitespace, normalize quotes. Add test with whitespace variants.
+
+Tests:
+- `#include "Foo_ozh.h"` and `#include  "Foo_ozh.h"` deduplicated
+- Self-include (`stem_ozh.h`) always deduplicated
 
 ---
 
 ## Execution Order
 
-1. ~~**Part B first**~~ DONE
+1. ~~**Part B**~~ DONE
 2. ~~**Part A**~~ DONE
-3. **Part C** — C1 → C2 → C3 → C4 → C5 → C6, commit after each green step
+3. ~~**Part C**~~ DONE
+4. **Part D** — D1 → D2 → D3 → D4 → D5 → D6, commit after each green step
 
 ## Verification
 

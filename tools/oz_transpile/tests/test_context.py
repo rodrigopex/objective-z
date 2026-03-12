@@ -493,6 +493,73 @@ class TestUnknownClass:
         finally:
             os.unlink(path)
 
+    def test_unknown_class_emits_diagnostic(self):
+        """If class isn't in module, a diagnostic warning should be emitted."""
+        path = _write_temp(
+            "@implementation Unknown\n"
+            "- (void)bar { }\n"
+            "@end\n"
+        )
+        try:
+            m, cls = _minimal_module()
+            m.diagnostics.clear()
+            build_source_context(path, m, [cls], "Foo", "OZObject", False)
+            assert any("Unknown" in d for d in m.diagnostics)
+            assert any("not found" in d for d in m.diagnostics)
+        finally:
+            os.unlink(path)
+
+
+# ---------------------------------------------------------------------------
+# Category context
+# ---------------------------------------------------------------------------
+
+
+class TestCategoryContext:
+    def test_category_methods_rendered(self):
+        """Category @implementation should match methods merged into base class."""
+        path = _write_temp(
+            "@implementation Car (Maintenance)\n"
+            "- (int)mileage { return 100; }\n"
+            "- (int)oilCapacity { return 30; }\n"
+            "@end\n"
+        )
+        try:
+            # Category methods are merged into the base class by collect.py
+            m, cls = _minimal_module(
+                class_name="Car",
+                methods=[
+                    OZMethod("mileage", OZType("int"), body_ast={
+                        "kind": "CompoundStmt",
+                        "inner": [{"kind": "ReturnStmt", "inner": [
+                            {"kind": "IntegerLiteral", "value": "100",
+                             "type": {"qualType": "int"}},
+                        ]}],
+                    }),
+                    OZMethod("oilCapacity", OZType("int"), body_ast={
+                        "kind": "CompoundStmt",
+                        "inner": [{"kind": "ReturnStmt", "inner": [
+                            {"kind": "IntegerLiteral", "value": "30",
+                             "type": {"qualType": "int"}},
+                        ]}],
+                    }),
+                ],
+            )
+            ctx = build_source_context(
+                path, m, [cls], "Car", "OZObject", False)
+            # Preamble key present
+            impl_key = "_impl_1_1"
+            assert impl_key in ctx
+            # Both methods should be rendered
+            mileage_key = "_n_2_1"
+            oil_key = "_n_3_1"
+            assert mileage_key in ctx
+            assert oil_key in ctx
+            assert "Car_mileage" in ctx[mileage_key]
+            assert "Car_oilCapacity" in ctx[oil_key]
+        finally:
+            os.unlink(path)
+
 
 # ---------------------------------------------------------------------------
 # Pool count function
