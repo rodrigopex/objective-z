@@ -1,6 +1,13 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 /* Dispatch tests: super calls, inheritance chain, method override */
 #include <zephyr/ztest.h>
+#include "Base_ozh.h"
+#include "Child_ozh.h"
+#include "Level1_ozh.h"
+#include "Level3_ozh.h"
+#include "Level4_ozh.h"
+#include "OZObject_ozh.h"
+#include "oz_dispatch.h"
 
 ZTEST_SUITE(dispatch, NULL, NULL, NULL, NULL, NULL);
 

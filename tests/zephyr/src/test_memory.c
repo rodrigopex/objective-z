@@ -1,6 +1,9 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 /* Memory tests: retain/release, refcount queries */
 #include <zephyr/ztest.h>
+#include "Node_ozh.h"
+#include "OZObject_ozh.h"
+#include "oz_dispatch.h"
 
 ZTEST_SUITE(memory, NULL, NULL, NULL, NULL, NULL);
 

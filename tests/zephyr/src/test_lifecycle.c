@@ -1,6 +1,9 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 /* Lifecycle tests: alloc, class_id, refcount, release */
 #include <zephyr/ztest.h>
+#include "Widget_ozh.h"
+#include "OZObject_ozh.h"
+#include "oz_dispatch.h"
 
 ZTEST_SUITE(lifecycle, NULL, NULL, NULL, NULL, NULL);
 

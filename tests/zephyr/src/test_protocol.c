@@ -1,6 +1,10 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 /* Protocol dispatch tests: vtable routing to correct class */
 #include <zephyr/ztest.h>
+#include "LightSwitch_ozh.h"
+#include "Fan_ozh.h"
+#include "OZObject_ozh.h"
+#include "oz_dispatch.h"
 
 ZTEST_SUITE(protocol, NULL, NULL, NULL, NULL, NULL);
 
