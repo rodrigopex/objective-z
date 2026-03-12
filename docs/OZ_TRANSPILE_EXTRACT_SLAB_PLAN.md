@@ -194,7 +194,7 @@ Tests:
 
 ## Part E: Round-Trip Integration Test — DONE
 
-Committed as `TBD`.
+Committed as `9cc497c`.
 
 ### Step E1: Golden test for extract→context→render pipeline
 
