@@ -3,6 +3,7 @@
 
 #include "platform/oz_platform.h"
 #include "oz_dispatch.h"
+#include <string.h>
 #include "OZObject_ozh.h"
 
 struct Widget {
@@ -14,3 +15,21 @@ void Widget_setTag_(struct Widget *self, int t);
 int Widget_tag(struct Widget *self);
 void Widget_dealloc(struct Widget *self);
 
+extern oz_slab_t oz_slab_Widget;
+
+static inline struct Widget *Widget_alloc(void)
+{
+	struct Widget *obj;
+	if (oz_slab_alloc(&oz_slab_Widget, (void **)&obj) != 0) {
+		return (struct Widget *)0;
+	}
+	memset(obj, 0, sizeof(struct Widget));
+	obj->base.oz_class_id = OZ_CLASS_Widget;
+	oz_atomic_init(&obj->base._refcount, 1);
+	return obj;
+}
+
+static inline void Widget_free(struct Widget *obj)
+{
+	oz_slab_free(&oz_slab_Widget, (void *)obj);
+}

@@ -3,6 +3,7 @@
 
 #include "platform/oz_platform.h"
 #include "oz_dispatch.h"
+#include <string.h>
 #include "OZObject_ozh.h"
 
 struct Fan {
@@ -13,3 +14,21 @@ struct Fan {
 int Fan_toggle(struct Fan *self);
 void Fan_dealloc(struct Fan *self);
 
+extern oz_slab_t oz_slab_Fan;
+
+static inline struct Fan *Fan_alloc(void)
+{
+	struct Fan *obj;
+	if (oz_slab_alloc(&oz_slab_Fan, (void **)&obj) != 0) {
+		return (struct Fan *)0;
+	}
+	memset(obj, 0, sizeof(struct Fan));
+	obj->base.oz_class_id = OZ_CLASS_Fan;
+	oz_atomic_init(&obj->base._refcount, 1);
+	return obj;
+}
+
+static inline void Fan_free(struct Fan *obj)
+{
+	oz_slab_free(&oz_slab_Fan, (void *)obj);
+}

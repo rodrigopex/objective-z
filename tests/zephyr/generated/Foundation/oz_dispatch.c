@@ -101,3 +101,21 @@ static void oz_register_vtables(void)
 	OZ_vtable_toggle[OZ_CLASS_Fan] = (OZ_fn_toggle)Fan_toggle;
 	OZ_vtable_toggle[OZ_CLASS_LightSwitch] = (OZ_fn_toggle)LightSwitch_toggle;
 }
+
+void OZObject_dispatch_free(struct OZObject *obj)
+{
+	switch (obj->oz_class_id) {
+	case OZ_CLASS_OZObject: OZObject_free((struct OZObject *)obj); break;
+	case OZ_CLASS_Base: Base_free((struct Base *)obj); break;
+	case OZ_CLASS_Child: Child_free((struct Child *)obj); break;
+	case OZ_CLASS_Fan: Fan_free((struct Fan *)obj); break;
+	case OZ_CLASS_Level1: Level1_free((struct Level1 *)obj); break;
+	case OZ_CLASS_Level2: Level2_free((struct Level2 *)obj); break;
+	case OZ_CLASS_Level3: Level3_free((struct Level3 *)obj); break;
+	case OZ_CLASS_Level4: Level4_free((struct Level4 *)obj); break;
+	case OZ_CLASS_LightSwitch: LightSwitch_free((struct LightSwitch *)obj); break;
+	case OZ_CLASS_Node: Node_free((struct Node *)obj); break;
+	case OZ_CLASS_Widget: Widget_free((struct Widget *)obj); break;
+	default: break;
+	}
+}

@@ -3,6 +3,7 @@
 
 #include "platform/oz_platform.h"
 #include "oz_dispatch.h"
+#include <string.h>
 
 struct OZObject {
 	enum oz_class_id oz_class_id;
@@ -20,3 +21,21 @@ int OZObject_cDescription_maxLength_(struct OZObject *self, char *buf, int maxLe
 struct OZObject * OZObject_init(struct OZObject *self);
 void OZObject_dealloc(struct OZObject *self);
 
+extern oz_slab_t oz_slab_OZObject;
+
+static inline struct OZObject *OZObject_alloc(void)
+{
+	struct OZObject *obj;
+	if (oz_slab_alloc(&oz_slab_OZObject, (void **)&obj) != 0) {
+		return (struct OZObject *)0;
+	}
+	memset(obj, 0, sizeof(struct OZObject));
+	obj->oz_class_id = OZ_CLASS_OZObject;
+	oz_atomic_init(&obj->_refcount, 1);
+	return obj;
+}
+
+static inline void OZObject_free(struct OZObject *obj)
+{
+	oz_slab_free(&oz_slab_OZObject, (void *)obj);
+}

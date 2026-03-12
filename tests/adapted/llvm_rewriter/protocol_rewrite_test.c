@@ -7,7 +7,6 @@
 #include "Circle_ozh.h"
 #include "Square_ozh.h"
 #include "oz_dispatch.h"
-#include "oz_mem_slabs.h"
 
 void test_protocol_dispatch_circle(void)
 {

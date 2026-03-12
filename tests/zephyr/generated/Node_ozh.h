@@ -3,6 +3,7 @@
 
 #include "platform/oz_platform.h"
 #include "oz_dispatch.h"
+#include <string.h>
 #include "OZObject_ozh.h"
 
 struct Node {
@@ -10,3 +11,22 @@ struct Node {
 };
 
 void Node_dealloc(struct Node *self);
+
+extern oz_slab_t oz_slab_Node;
+
+static inline struct Node *Node_alloc(void)
+{
+	struct Node *obj;
+	if (oz_slab_alloc(&oz_slab_Node, (void **)&obj) != 0) {
+		return (struct Node *)0;
+	}
+	memset(obj, 0, sizeof(struct Node));
+	obj->base.oz_class_id = OZ_CLASS_Node;
+	oz_atomic_init(&obj->base._refcount, 1);
+	return obj;
+}
+
+static inline void Node_free(struct Node *obj)
+{
+	oz_slab_free(&oz_slab_Node, (void *)obj);
+}

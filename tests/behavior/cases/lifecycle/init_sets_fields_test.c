@@ -1,7 +1,6 @@
 /* Behavior test: init sets ivar defaults */
 #include "unity.h"
 #include "Gadget_ozh.h"
-#include "oz_mem_slabs.h"
 
 void test_init_sets_value(void)
 {

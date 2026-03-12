@@ -3,6 +3,7 @@
 
 #include "platform/oz_platform.h"
 #include "oz_dispatch.h"
+#include <string.h>
 {% if superclass_header %}
 #include "{{ superclass_header }}_ozh.h"
 {% endif %}
@@ -10,6 +11,10 @@
 
 {{ td }}
 {% endfor %}
+{% if name == "OZLock" %}
+
+#include "platform/oz_lock.h"
+{% else %}
 
 struct {{ name }} {
 {% if is_root %}
@@ -22,6 +27,7 @@ struct {{ name }} {
 	{{ ivar.c_type }} {{ ivar.name }};
 {% endfor %}
 };
+{% endif %}
 
 {% if is_root %}
 struct {{ name }} *{{ name }}_retain(struct {{ name }} *self);
@@ -36,7 +42,7 @@ int {{ name }}_cDescription_maxLength_(struct {{ name }} *self, char *buf, int m
 {% for proto in method_prototypes %}
 {{ proto }};
 {% endfor %}
-{% if auto_dealloc_proto %}
+{% if auto_dealloc_proto and name != "OZLock" %}
 void {{ name }}_dealloc(struct {{ name }} *self);
 {% endif %}
 {% for decl in extern_decls %}
@@ -45,6 +51,107 @@ void {{ name }}_dealloc(struct {{ name }} *self);
 {% for proto in function_protos %}
 {{ proto }}
 {% endfor %}
-{% if has_any_methods %}
+
+extern oz_slab_t oz_slab_{{ name }};
+
+static inline struct {{ name }} *{{ name }}_alloc(void)
+{
+	struct {{ name }} *obj;
+	if (oz_slab_alloc(&oz_slab_{{ name }}, (void **)&obj) != 0) {
+		return (struct {{ name }} *)0;
+	}
+	memset(obj, 0, sizeof(struct {{ name }}));
+	{{ base_chain }}oz_class_id = OZ_CLASS_{{ name }};
+	oz_atomic_init(&{{ base_chain }}_refcount, 1);
+	return obj;
+}
+
+static inline void {{ name }}_free(struct {{ name }} *obj)
+{
+	oz_slab_free(&oz_slab_{{ name }}, (void *)obj);
+}
+{% if name == "OZNumber" %}
+
+{% for init in number_inits %}
+static inline struct {{ name }} *{{ name }}_init{{ init.suffix }}({{ init.c_type }} val)
+{
+	struct {{ name }} *obj = {{ name }}_alloc();
+	if (!obj) {
+		return (struct {{ name }} *)0;
+	}
+	obj->_tag = {{ init.tag }};
+	obj->_value.{{ init.field }} = val;
+	return obj;
+}
+
+{% endfor %}
+{% endif %}
+{% if name == "OZLock" %}
+
+static inline struct OZLock *OZLock_initWithObject(struct OZLock *self,
+	struct {{ root_class }} *obj)
+{
+	{{ root_class }}_retain(obj);
+	self->_obj = (struct {{ root_class }} *)obj;
+	self->_key = oz_spin_lock(&self->_lock);
+	return self;
+}
+
+static inline void OZLock_dealloc(struct OZLock *self)
+{
+	oz_spin_unlock(&self->_lock, self->_key);
+	{{ root_class }}_release((struct {{ root_class }} *)self->_obj);
+	OZLock_free(self);
+}
+
+{% endif %}
+{% if name == "OZArray" and item_pool_count > 0 %}
+
+static inline struct {{ name }} *{{ name }}_initWithItems(
+	struct {{ root_class }} **src, unsigned int count)
+{
+	struct {{ name }} *arr = {{ name }}_alloc();
+	if (!arr) {
+		return (struct {{ name }} *)0;
+	}
+	struct {{ root_class }} **items;
+	if (oz_mem_blocks_alloc_contiguous(&oz_item_pool, count,
+					    (void **)&items) != 0) {
+		{{ name }}_free(arr);
+		return (struct {{ name }} *)0;
+	}
+	for (unsigned int i = 0; i < count; i++) {
+		items[i] = src[i];
+	}
+	arr->_items = items;
+	arr->_count = count;
+	return arr;
+}
+
+{% endif %}
+{% if name == "OZDictionary" and item_pool_count > 0 %}
+
+static inline struct {{ name }} *{{ name }}_initWithKeysValues(
+	struct {{ root_class }} **kv_src, unsigned int count)
+{
+	struct {{ name }} *dict = {{ name }}_alloc();
+	if (!dict) {
+		return (struct {{ name }} *)0;
+	}
+	struct {{ root_class }} **buf;
+	if (oz_mem_blocks_alloc_contiguous(&oz_item_pool, count * 2,
+					    (void **)&buf) != 0) {
+		{{ name }}_free(dict);
+		return (struct {{ name }} *)0;
+	}
+	for (unsigned int i = 0; i < count; i++) {
+		buf[i] = kv_src[i];
+		buf[count + i] = kv_src[count + i];
+	}
+	dict->_keys = buf;
+	dict->_values = buf + count;
+	dict->_count = count;
+	return dict;
+}
 
 {% endif %}

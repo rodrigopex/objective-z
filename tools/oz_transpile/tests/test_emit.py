@@ -113,8 +113,6 @@ class TestEmitFiles:
             basenames = {os.path.basename(f) for f in files}
             assert "oz_dispatch.h" in basenames
             assert "oz_dispatch.c" in basenames
-            assert "oz_mem_slabs.h" in basenames
-            assert "oz_mem_slabs.c" in basenames
             assert "OZObject_ozh.h" in basenames
             assert "OZObject_ozm.c" in basenames
             assert "OZLed_ozh.h" in basenames
@@ -540,10 +538,11 @@ class TestARCLocalRelease:
         resolve(m)
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
-            slabs_c = open(os.path.join(tmpdir, "Foundation", "oz_mem_slabs.c")).read()
-            assert "oz_slab_Foo, sizeof(struct Foo), 3, 4)" in slabs_c
+            foo_c = open(os.path.join(tmpdir, "Foo_ozm.c")).read()
+            assert "oz_slab_Foo, sizeof(struct Foo), 3, 4)" in foo_c
             # OZObject has 0 alloc calls -> minimum 1
-            assert "oz_slab_OZObject, sizeof(struct OZObject), 1, 4)" in slabs_c
+            root_c = open(os.path.join(tmpdir, "Foundation", "OZObject_ozm.c")).read()
+            assert "oz_slab_OZObject, sizeof(struct OZObject), 1, 4)" in root_c
 
 
 class TestARCAutoDealloc:
@@ -1376,12 +1375,12 @@ class TestIntrospection:
             content = open(os.path.join(tmpdir, "Foundation", "oz_dispatch.h")).read()
             assert "OZ_SEND_cDescription_maxLength_" in content
 
-    def test_root_source_includes_pal(self):
+    def test_root_source_includes_header(self):
         m = _simple_module()
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
             content = open(os.path.join(tmpdir, "Foundation", "OZObject_ozm.c")).read()
-            assert "oz_mem_slabs.h" in content
+            assert "OZObject_ozh.h" in content
 
 
 class TestStaticVarEmission:
@@ -2147,12 +2146,6 @@ class TestSynchronized:
         resolve(m)
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
-            slabs_c = open(os.path.join(tmpdir, "Foundation", "oz_mem_slabs.c")).read()
-            assert "oz_slab_OZLock" in slabs_c
-            slabs_h = open(os.path.join(tmpdir, "Foundation", "oz_mem_slabs.h")).read()
-            assert "OZLock_alloc" in slabs_h
-            assert "OZLock_initWithObject" in slabs_h
-            assert "OZLock_dealloc" in slabs_h
             dispatch_h = open(os.path.join(tmpdir, "Foundation", "oz_dispatch.h")).read()
             assert "OZ_CLASS_OZLock" in dispatch_h
 
@@ -2345,8 +2338,8 @@ class TestSynchronized:
         resolve(m)
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
-            slabs_h = open(os.path.join(tmpdir, "Foundation", "oz_mem_slabs.h")).read()
-            assert "case OZ_CLASS_OZLock: OZLock_free(" in slabs_h
+            dispatch_c = open(os.path.join(tmpdir, "Foundation", "oz_dispatch.c")).read()
+            assert "case OZ_CLASS_OZLock: OZLock_free(" in dispatch_c
 
     def test_synchronized_compiles_on_host(self):
         """Generated @synchronized code compiles with GCC on host."""

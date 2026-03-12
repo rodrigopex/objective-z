@@ -1,7 +1,6 @@
 /* Behavior test: retain increments refcount */
 #include "unity.h"
 #include "Node_ozh.h"
-#include "oz_mem_slabs.h"
 
 void test_retain_increments_refcount(void)
 {

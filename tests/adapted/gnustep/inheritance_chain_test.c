@@ -8,7 +8,6 @@
 #include "Dog_ozh.h"
 #include "Puppy_ozh.h"
 #include "oz_dispatch.h"
-#include "oz_mem_slabs.h"
 
 void test_base_class_method(void)
 {

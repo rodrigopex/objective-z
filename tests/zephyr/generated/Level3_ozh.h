@@ -3,6 +3,7 @@
 
 #include "platform/oz_platform.h"
 #include "oz_dispatch.h"
+#include <string.h>
 #include "Level2_ozh.h"
 
 struct Level3 {
@@ -12,3 +13,21 @@ struct Level3 {
 int Level3_depth(struct Level3 *self);
 void Level3_dealloc(struct Level3 *self);
 
+extern oz_slab_t oz_slab_Level3;
+
+static inline struct Level3 *Level3_alloc(void)
+{
+	struct Level3 *obj;
+	if (oz_slab_alloc(&oz_slab_Level3, (void **)&obj) != 0) {
+		return (struct Level3 *)0;
+	}
+	memset(obj, 0, sizeof(struct Level3));
+	obj->base.base.base.oz_class_id = OZ_CLASS_Level3;
+	oz_atomic_init(&obj->base.base.base._refcount, 1);
+	return obj;
+}
+
+static inline void Level3_free(struct Level3 *obj)
+{
+	oz_slab_free(&oz_slab_Level3, (void *)obj);
+}

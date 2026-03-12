@@ -4,7 +4,6 @@
  */
 #include "unity.h"
 #include "Geometry_ozh.h"
-#include "oz_mem_slabs.h"
 
 void test_origin_methods(void)
 {

@@ -1,7 +1,6 @@
 /* Behavior test: getter/setter methods work correctly */
 #include "unity.h"
 #include "Config_ozh.h"
-#include "oz_mem_slabs.h"
 
 void test_getter_returns_default(void)
 {

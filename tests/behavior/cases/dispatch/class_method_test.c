@@ -1,7 +1,6 @@
 /* Behavior test: class method dispatch */
 #include "unity.h"
 #include "Factory_ozh.h"
-#include "oz_mem_slabs.h"
 
 void test_class_method_returns_value(void)
 {

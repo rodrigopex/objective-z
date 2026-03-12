@@ -4,7 +4,6 @@
  */
 #include "unity.h"
 #include "Widget_ozh.h"
-#include "oz_mem_slabs.h"
 
 void test_nil_int_return_zero(void)
 {

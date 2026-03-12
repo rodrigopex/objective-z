@@ -55,7 +55,7 @@ Primary compilation path: `.m -> clang -ast-dump=json -> oz_transpile -> .h + .c
 - **`model.py`** — Dataclasses: OZModule, OZClass, OZMethod, OZIvar, OZType, OZProtocol, OZParam, DispatchKind
 - **`collect.py`** — Pass 1: Clang JSON AST → OZModule (walks ObjCInterfaceDecl, ObjCImplementationDecl, etc.)
 - **`resolve.py`** — Pass 2: hierarchy validation, topological class IDs, base_depth, dispatch classification (STATIC vs PROTOCOL)
-- **`emit.py`** — Pass 3: OZModule → per-class `.h`/`.c`, `oz_dispatch.h`/`.c`, `oz_mem_slabs.h`
+- **`emit.py`** — Pass 3: OZModule → per-class `.h`/`.c` (with alloc/free/slab), `oz_dispatch.h`/`.c`
 - **`__main__.py`** — CLI: `--input`, `--outdir`, `--root-class`, `--pool-sizes`, `--verbose`, `--strict`
 - Tests: `python3 -m pytest tools/oz_transpile/tests/ -v` or `just test-transpiler`
 

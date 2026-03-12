@@ -2,14 +2,11 @@
 #include "oz_dispatch.h"
 {% set seen_stems = [] %}
 {% for cls in classes %}
-{% if cls.name != "OZLock" and cls.header_stem not in seen_stems %}
+{% if cls.header_stem not in seen_stems %}
 #include "{{ cls.header_stem }}_ozh.h"
 {% if seen_stems.append(cls.header_stem) %}{% endif %}
 {% endif %}
 {% endfor %}
-{% if has_oz_lock %}
-#include "oz_mem_slabs.h"
-{% endif %}
 
 const char *const oz_class_names[OZ_CLASS_COUNT] = {
 {% for cls in classes %}
@@ -35,4 +32,18 @@ static void oz_register_vtables(void)
 	OZ_vtable_{{ entry.c_sel }}[OZ_CLASS_{{ entry.cls_name }}] = (OZ_fn_{{ entry.c_sel }}){{ entry.impl_name }}_{{ entry.c_sel }};
 {% endfor %}
 }
+{% endif %}
+
+void {{ root_class }}_dispatch_free(struct {{ root_class }} *obj)
+{
+	switch (obj->oz_class_id) {
+{% for cls in classes %}
+	case OZ_CLASS_{{ cls.name }}: {{ cls.name }}_free((struct {{ cls.name }} *)obj); break;
+{% endfor %}
+	default: break;
+	}
+}
+{% if item_pool_count > 0 %}
+
+OZ_MEM_BLOCKS_DEFINE(oz_item_pool, sizeof(struct {{ root_class }} *), {{ item_pool_count }}, 4);
 {% endif %}

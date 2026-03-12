@@ -2,7 +2,6 @@
 #include "unity.h"
 #include "Item_ozh.h"
 #include "Holder_ozh.h"
-#include "oz_mem_slabs.h"
 
 void test_assign_stores_value(void)
 {

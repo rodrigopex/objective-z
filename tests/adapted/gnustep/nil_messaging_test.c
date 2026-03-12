@@ -5,7 +5,6 @@
  */
 #include "unity.h"
 #include "Target_ozh.h"
-#include "oz_mem_slabs.h"
 
 void test_nil_retain_returns_null(void)
 {

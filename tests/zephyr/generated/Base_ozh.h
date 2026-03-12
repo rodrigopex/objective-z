@@ -3,6 +3,7 @@
 
 #include "platform/oz_platform.h"
 #include "oz_dispatch.h"
+#include <string.h>
 #include "OZObject_ozh.h"
 
 struct Base {
@@ -14,3 +15,21 @@ struct Base * Base_init(struct Base *self);
 int Base_baseVal(struct Base *self);
 void Base_dealloc(struct Base *self);
 
+extern oz_slab_t oz_slab_Base;
+
+static inline struct Base *Base_alloc(void)
+{
+	struct Base *obj;
+	if (oz_slab_alloc(&oz_slab_Base, (void **)&obj) != 0) {
+		return (struct Base *)0;
+	}
+	memset(obj, 0, sizeof(struct Base));
+	obj->base.oz_class_id = OZ_CLASS_Base;
+	oz_atomic_init(&obj->base._refcount, 1);
+	return obj;
+}
+
+static inline void Base_free(struct Base *obj)
+{
+	oz_slab_free(&oz_slab_Base, (void *)obj);
+}

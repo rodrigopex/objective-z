@@ -1,7 +1,6 @@
 /* Behavior test: method call routes to correct implementation */
 #include "unity.h"
 #include "Speaker_ozh.h"
-#include "oz_mem_slabs.h"
 
 void test_send_routes_correct(void)
 {

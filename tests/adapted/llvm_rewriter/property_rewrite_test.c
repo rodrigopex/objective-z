@@ -5,7 +5,6 @@
  */
 #include "unity.h"
 #include "Sensor_ozh.h"
-#include "oz_mem_slabs.h"
 
 void test_property_getter_setter(void)
 {

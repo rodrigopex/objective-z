@@ -1,7 +1,6 @@
 /* Behavior test: dot-syntax maps to generated getter/setter */
 #include "unity.h"
 #include "Setting_ozh.h"
-#include "oz_mem_slabs.h"
 
 void test_dot_syntax_set_get(void)
 {

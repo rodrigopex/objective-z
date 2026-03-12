@@ -1,7 +1,6 @@
 /* Behavior test: protocol inheriting another protocol */
 #include "unity.h"
 #include "Athlete_ozh.h"
-#include "oz_mem_slabs.h"
 
 void test_protocol_inherited_method(void)
 {

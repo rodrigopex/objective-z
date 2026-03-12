@@ -29,3 +29,13 @@ static void oz_register_vtables(void)
 	OZ_vtable_init[OZ_CLASS_Animal] = (OZ_fn_init)OZObject_init;
 	OZ_vtable_init[OZ_CLASS_Dog] = (OZ_fn_init)OZObject_init;
 }
+
+void OZObject_dispatch_free(struct OZObject *obj)
+{
+	switch (obj->oz_class_id) {
+	case OZ_CLASS_OZObject: OZObject_free((struct OZObject *)obj); break;
+	case OZ_CLASS_Animal: Animal_free((struct Animal *)obj); break;
+	case OZ_CLASS_Dog: Dog_free((struct Dog *)obj); break;
+	default: break;
+	}
+}

@@ -3,6 +3,7 @@
 
 #include "platform/oz_platform.h"
 #include "oz_dispatch.h"
+#include <string.h>
 #include "OZObject_ozh.h"
 
 struct LightSwitch {
@@ -13,3 +14,21 @@ struct LightSwitch {
 int LightSwitch_toggle(struct LightSwitch *self);
 void LightSwitch_dealloc(struct LightSwitch *self);
 
+extern oz_slab_t oz_slab_LightSwitch;
+
+static inline struct LightSwitch *LightSwitch_alloc(void)
+{
+	struct LightSwitch *obj;
+	if (oz_slab_alloc(&oz_slab_LightSwitch, (void **)&obj) != 0) {
+		return (struct LightSwitch *)0;
+	}
+	memset(obj, 0, sizeof(struct LightSwitch));
+	obj->base.oz_class_id = OZ_CLASS_LightSwitch;
+	oz_atomic_init(&obj->base._refcount, 1);
+	return obj;
+}
+
+static inline void LightSwitch_free(struct LightSwitch *obj)
+{
+	oz_slab_free(&oz_slab_LightSwitch, (void *)obj);
+}

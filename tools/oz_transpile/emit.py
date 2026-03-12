@@ -152,25 +152,31 @@ def emit(module: OZModule, outdir: str, pool_sizes: dict[str, int] | None = None
     _inject_oz_lock(module, root_class)
     _ensure_foundation_tags(module, root_class)
 
+    # Compute pool sizes and item pool count early (needed by per-class templates)
+    auto_counts = _count_alloc_calls(module)
+    _pool_sizes = pool_sizes or {}
+    if item_pool_size is not None:
+        _item_pool_count = item_pool_size
+    else:
+        _item_pool_count = _count_item_slots(module)
+    _has_item_pool = _item_pool_count > 0
+
+    def _pool_count_for(cls_name: str) -> int:
+        return _pool_sizes.get(cls_name,
+                               max(auto_counts.get(cls_name, 0), 1))
+
     files.append(_render(env, "oz_dispatch.h.j2",
-                         _dispatch_header_ctx(module), foundation_dir,
-                         "oz_dispatch.h"))
+                         _dispatch_header_ctx(module, root_class,
+                                              _item_pool_count),
+                         foundation_dir, "oz_dispatch.h"))
     files.append(_render(env, "oz_dispatch.c.j2",
-                         _dispatch_source_ctx(module), foundation_dir,
-                         "oz_dispatch.c"))
-    slabs_ctx = _mem_slabs_ctx(module, pool_sizes or {}, root_class,
-                               item_pool_size)
-    files.append(_render(env, "oz_mem_slabs.h.j2", slabs_ctx,
-                         foundation_dir, "oz_mem_slabs.h"))
-    files.append(_render(env, "oz_mem_slabs.c.j2", slabs_ctx,
-                         foundation_dir, "oz_mem_slabs.c"))
-    _has_item_pool = slabs_ctx["item_pool_count"] > 0
+                         _dispatch_source_ctx(module, root_class,
+                                              _item_pool_count),
+                         foundation_dir, "oz_dispatch.c"))
 
     # Group classes by source stem for per-file emission
     stem_groups: dict[str, list[OZClass]] = {}
     for cls in module.classes.values():
-        if cls.name == "OZLock":
-            continue
         stem = _header_stem(cls)
         stem_groups.setdefault(stem, []).append(cls)
 
@@ -184,7 +190,9 @@ def emit(module: OZModule, outdir: str, pool_sizes: dict[str, int] | None = None
         for cls in classes:
             ctx = _EmitCtx(cls=cls, module=module, root_class=root_class,
                            has_item_pool=_has_item_pool)
-            header_parts.append(header_tmpl.render(**_class_header_ctx(ctx, stem)))
+            header_parts.append(header_tmpl.render(
+                **_class_header_ctx(ctx, stem,
+                                    item_pool_count=_item_pool_count)))
         header_path = os.path.join(dest, f"{stem}_ozh.h")
         _write_file(header_path, "\n".join(header_parts))
         files.append(header_path)
@@ -197,7 +205,7 @@ def emit(module: OZModule, outdir: str, pool_sizes: dict[str, int] | None = None
         if use_patched:
             content = _emit_patched_source(
                 stem_source, module, classes, stem,
-                root_class, _has_item_pool)
+                root_class, _has_item_pool, _pool_count_for)
             source_path = os.path.join(dest, f"{stem}_ozm.c")
             _write_file(source_path, content)
         else:
@@ -207,7 +215,9 @@ def emit(module: OZModule, outdir: str, pool_sizes: dict[str, int] | None = None
                 ctx = _EmitCtx(cls=cls, module=module, root_class=root_class,
                                has_item_pool=_has_item_pool)
                 source_parts.append(
-                    source_tmpl.render(**_class_source_ctx(ctx, stem)))
+                    source_tmpl.render(**_class_source_ctx(
+                        ctx, stem,
+                        pool_count=_pool_count_for(cls.name))))
             source_path = os.path.join(dest, f"{stem}_ozm.c")
             _write_file(source_path, "\n".join(source_parts))
         files.append(source_path)
@@ -225,7 +235,8 @@ def emit(module: OZModule, outdir: str, pool_sizes: dict[str, int] | None = None
 # oz_dispatch.h
 # ---------------------------------------------------------------------------
 
-def _dispatch_header_ctx(module: OZModule) -> dict:
+def _dispatch_header_ctx(module: OZModule, root_class: str = "OZObject",
+                         item_pool_count: int = 0) -> dict:
     """Build template context for oz_dispatch.h."""
     classes = sorted(module.classes.values(), key=lambda c: c.class_id)
 
@@ -257,10 +268,13 @@ def _dispatch_header_ctx(module: OZModule) -> dict:
         "classes": classes,
         "class_count": len(module.classes),
         "proto_sels": proto_sels,
+        "root_class": root_class,
+        "item_pool_count": item_pool_count,
     }
 
 
-def _dispatch_source_ctx(module: OZModule) -> dict:
+def _dispatch_source_ctx(module: OZModule, root_class: str = "OZObject",
+                         item_pool_count: int = 0) -> dict:
     """Build template context for oz_dispatch.c."""
     sorted_classes = sorted(module.classes.values(), key=lambda c: c.class_id)
 
@@ -301,7 +315,8 @@ def _dispatch_source_ctx(module: OZModule) -> dict:
         "classes": classes,
         "proto_sels": proto_sels,
         "vtable_entries": vtable_entries,
-        "has_oz_lock": "OZLock" in module.classes,
+        "root_class": root_class,
+        "item_pool_count": item_pool_count,
     }
 
 
@@ -332,49 +347,11 @@ def _find_implementing_class(cls: OZClass, selector: str,
 
 
 # ---------------------------------------------------------------------------
-# oz_mem_slabs.h
-# ---------------------------------------------------------------------------
-
-def _mem_slabs_ctx(module: OZModule, pool_sizes: dict[str, int],
-                   root_class: str,
-                   item_pool_size: int | None = None) -> dict:
-    """Build template context for oz_mem_slabs.h and oz_mem_slabs.c."""
-    sorted_classes = sorted(module.classes.values(), key=lambda c: c.class_id)
-    auto_counts = _count_alloc_calls(module)
-
-    classes = []
-    for cls in sorted_classes:
-        classes.append({
-            "name": cls.name,
-            "base_chain": _base_chain(cls.name, module),
-            "pool_count": pool_sizes.get(cls.name,
-                                         max(auto_counts.get(cls.name, 0), 1)),
-            "header_stem": _header_stem(cls),
-        })
-
-    if item_pool_size is not None:
-        ipc = item_pool_size
-    else:
-        ipc = _count_item_slots(module)
-
-    number_inits = [
-        {"suffix": "Int32", "c_type": "int32_t", "tag": "OZ_NUM_INT32",
-         "field": "i32"},
-        {"suffix": "Float", "c_type": "float", "tag": "OZ_NUM_FLOAT",
-         "field": "f32"},
-        {"suffix": "Int8", "c_type": "int8_t", "tag": "OZ_NUM_INT8",
-         "field": "i8"},
-    ]
-
-    return {"classes": classes, "root_class": root_class,
-            "item_pool_count": ipc, "number_inits": number_inits}
-
-
-# ---------------------------------------------------------------------------
 # Per-class .h
 # ---------------------------------------------------------------------------
 
-def _class_header_ctx(ctx: _EmitCtx, stem: str | None = None) -> dict:
+def _class_header_ctx(ctx: _EmitCtx, stem: str | None = None,
+                      item_pool_count: int = 0) -> dict:
     """Build template context for a class header file."""
     cls = ctx.cls
     module = ctx.module
@@ -431,6 +408,15 @@ def _class_header_ctx(ctx: _EmitCtx, stem: str | None = None) -> dict:
     if cls.superclass and cls.superclass in module.classes:
         superclass_stem = _header_stem(module.classes[cls.superclass])
 
+    number_inits = [
+        {"suffix": "Int32", "c_type": "int32_t", "tag": "OZ_NUM_INT32",
+         "field": "i32"},
+        {"suffix": "Float", "c_type": "float", "tag": "OZ_NUM_FLOAT",
+         "field": "f32"},
+        {"suffix": "Int8", "c_type": "int8_t", "tag": "OZ_NUM_INT8",
+         "field": "i8"},
+    ]
+
     return {
         "name": cls.name,
         "stem": stem or _header_stem(cls),
@@ -444,6 +430,10 @@ def _class_header_ctx(ctx: _EmitCtx, stem: str | None = None) -> dict:
         "has_any_methods": bool(cls.methods) or is_root,
         "function_protos": function_protos,
         "extern_decls": extern_decls,
+        "base_chain": _base_chain(cls.name, module),
+        "root_class": ctx.root_class,
+        "number_inits": number_inits,
+        "item_pool_count": item_pool_count,
     }
 
 
@@ -516,7 +506,23 @@ def _emit_synthesized_accessor(cls: OZClass, m: OZMethod,
 # Per-class .c
 # ---------------------------------------------------------------------------
 
-def _class_source_ctx(ctx: _EmitCtx, stem: str | None = None) -> dict:
+def _dep_includes(cls: OZClass, module: OZModule, stem: str) -> list[str]:
+    """Collect header stems of other classes this class depends on."""
+    own_stem = stem
+    # Collect stems of all classes whose alloc/init/methods are called
+    deps = set()
+    for other in module.classes.values():
+        other_stem = _header_stem(other)
+        if other_stem == own_stem:
+            continue
+        deps.add(other_stem)
+    # The class header already includes superclass chain via superclass_header,
+    # but source files may call sibling classes. Include all to be safe.
+    return sorted(deps)
+
+
+def _class_source_ctx(ctx: _EmitCtx, stem: str | None = None,
+                      pool_count: int = 1) -> dict:
     """Build template context for a class source file. Method bodies are pre-rendered."""
     cls = ctx.cls
     root_class = ctx.root_class
@@ -564,7 +570,7 @@ def _class_source_ctx(ctx: _EmitCtx, stem: str | None = None) -> dict:
             buf.write("{\n}\n")
         method_bodies.append(buf.getvalue().rstrip("\n"))
 
-    if not has_user_dealloc:
+    if not has_user_dealloc and cls.name != "OZLock":
         buf = StringIO()
         _emit_auto_dealloc(ctx, buf)
         val = buf.getvalue()
@@ -611,6 +617,8 @@ def _class_source_ctx(ctx: _EmitCtx, stem: str | None = None) -> dict:
         "block_functions": ctx.block_functions,
         "user_includes": cls.user_includes,
         "verbatim_lines": cls.verbatim_lines,
+        "pool_count": pool_count,
+        "dep_includes": _dep_includes(cls, ctx.module, stem or _header_stem(cls)),
     }
 
 
@@ -2499,7 +2507,8 @@ def _emit_transpiled_function(func: OZFunction, module: OZModule,
 def _emit_patched_source(source_path: Path, module: OZModule,
                           classes: list[OZClass], stem: str,
                           root_class: str,
-                          has_item_pool: bool) -> str:
+                          has_item_pool: bool,
+                          pool_count_fn=None) -> str:
     """Emit .c by patching original .m: replace ObjC nodes, keep C verbatim."""
     source = source_path.read_bytes()
     parser = Parser(_TS_LANG)
@@ -2508,10 +2517,22 @@ def _emit_patched_source(source_path: Path, module: OZModule,
     out = StringIO()
     out.write("/* Auto-generated by oz_transpile -- do not edit */\n")
     out.write(f'#include "{stem}_ozh.h"\n')
-    out.write('#include "oz_mem_slabs.h"\n')
+
+    # Include headers of other classes this file depends on
+    dep_stems = _dep_includes(classes[0], module, stem) if classes else []
+    for dep_stem in dep_stems:
+        out.write(f'#include "{dep_stem}_ozh.h"\n')
+
+    # Emit per-class OZ_SLAB_DEFINE
+    for cls in classes:
+        pc = pool_count_fn(cls.name) if pool_count_fn else 1
+        out.write(f"\nOZ_SLAB_DEFINE(oz_slab_{cls.name}, "
+                  f"sizeof(struct {cls.name}), {pc}, 4);\n")
 
     # Track emitted includes to avoid duplicates
-    emitted_includes = {f'#include "{stem}_ozh.h"', '#include "oz_mem_slabs.h"'}
+    emitted_includes = {f'#include "{stem}_ozh.h"'}
+    for dep_stem in dep_stems:
+        emitted_includes.add(f'#include "{dep_stem}_ozh.h"')
 
     class_map = {c.name: c for c in classes}
     func_map = {}

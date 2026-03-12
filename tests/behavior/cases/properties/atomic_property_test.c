@@ -2,7 +2,6 @@
 #include "unity.h"
 #include "Counter_ozh.h"
 #include "Container_ozh.h"
-#include "oz_mem_slabs.h"
 
 void test_atomic_assign_set_get(void)
 {

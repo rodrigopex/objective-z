@@ -2,7 +2,6 @@
  * The generated OZObject_release guards against rc <= 0. */
 #include "unity.h"
 #include "Item_ozh.h"
-#include "oz_mem_slabs.h"
 
 void test_double_release_no_crash(void)
 {

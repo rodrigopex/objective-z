@@ -3,6 +3,7 @@
 
 #include "platform/oz_platform.h"
 #include "oz_dispatch.h"
+#include <string.h>
 #include "OZObject_ozh.h"
 
 struct OZLed {
@@ -18,3 +19,21 @@ void OZLed_turnOn(struct OZLed *self);
 int OZLed_pin(struct OZLed *self);
 void OZLed_dealloc(struct OZLed *self);
 
+extern oz_slab_t oz_slab_OZLed;
+
+static inline struct OZLed *OZLed_alloc(void)
+{
+	struct OZLed *obj;
+	if (oz_slab_alloc(&oz_slab_OZLed, (void **)&obj) != 0) {
+		return (struct OZLed *)0;
+	}
+	memset(obj, 0, sizeof(struct OZLed));
+	obj->base.oz_class_id = OZ_CLASS_OZLed;
+	oz_atomic_init(&obj->base._refcount, 1);
+	return obj;
+}
+
+static inline void OZLed_free(struct OZLed *obj)
+{
+	oz_slab_free(&oz_slab_OZLed, (void *)obj);
+}

@@ -3,6 +3,7 @@
 
 #include "platform/oz_platform.h"
 #include "oz_dispatch.h"
+#include <string.h>
 #include "OZObject_ozh.h"
 
 struct Color {
@@ -16,3 +17,21 @@ struct Color * Color_initWithRed_green_blue_(struct Color *self, int r, int g, i
 int Color_red(struct Color *self);
 void Color_dealloc(struct Color *self);
 
+extern oz_slab_t oz_slab_Color;
+
+static inline struct Color *Color_alloc(void)
+{
+	struct Color *obj;
+	if (oz_slab_alloc(&oz_slab_Color, (void **)&obj) != 0) {
+		return (struct Color *)0;
+	}
+	memset(obj, 0, sizeof(struct Color));
+	obj->base.oz_class_id = OZ_CLASS_Color;
+	oz_atomic_init(&obj->base._refcount, 1);
+	return obj;
+}
+
+static inline void Color_free(struct Color *obj)
+{
+	oz_slab_free(&oz_slab_Color, (void *)obj);
+}

@@ -26,3 +26,12 @@ static void oz_register_vtables(void)
 	OZ_vtable_init[OZ_CLASS_OZLed] = (OZ_fn_init)OZLed_init;
 	OZ_vtable_toggle[OZ_CLASS_OZLed] = (OZ_fn_toggle)OZLed_toggle;
 }
+
+void OZObject_dispatch_free(struct OZObject *obj)
+{
+	switch (obj->oz_class_id) {
+	case OZ_CLASS_OZObject: OZObject_free((struct OZObject *)obj); break;
+	case OZ_CLASS_OZLed: OZLed_free((struct OZLed *)obj); break;
+	default: break;
+	}
+}

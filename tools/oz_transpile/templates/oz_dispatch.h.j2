@@ -3,6 +3,9 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+{% if item_pool_count > 0 %}
+#include "platform/oz_platform.h"
+{% endif %}
 
 #ifndef BOOL
 #define BOOL _Bool
@@ -62,6 +65,13 @@ extern OZ_fn_{{ sel.c_sel }} OZ_vtable_{{ sel.c_sel }}[OZ_CLASS_COUNT];
 {% for sel in proto_sels %}
 #define OZ_SEND_{{ sel.c_sel }}({{ sel.macro_params }}) OZ_vtable_{{ sel.c_sel }}[((struct OZObject *)(obj))->oz_class_id]({{ sel.call_args }})
 {% endfor %}
+
+{% endif %}
+
+void {{ root_class }}_dispatch_free(struct {{ root_class }} *obj);
+
+{% if item_pool_count > 0 %}
+extern oz_mem_blocks_t oz_item_pool;
 
 {% endif %}
 /* OZLog — formatted logging with %@ object support */

@@ -3,6 +3,7 @@
 
 #include "platform/oz_platform.h"
 #include "oz_dispatch.h"
+#include <string.h>
 #include "OZObject_ozh.h"
 
 struct Timer {
@@ -14,3 +15,21 @@ void Timer_start(struct Timer *self);
 void Timer_stop(struct Timer *self);
 void Timer_dealloc(struct Timer *self);
 
+extern oz_slab_t oz_slab_Timer;
+
+static inline struct Timer *Timer_alloc(void)
+{
+	struct Timer *obj;
+	if (oz_slab_alloc(&oz_slab_Timer, (void **)&obj) != 0) {
+		return (struct Timer *)0;
+	}
+	memset(obj, 0, sizeof(struct Timer));
+	obj->base.oz_class_id = OZ_CLASS_Timer;
+	oz_atomic_init(&obj->base._refcount, 1);
+	return obj;
+}
+
+static inline void Timer_free(struct Timer *obj)
+{
+	oz_slab_free(&oz_slab_Timer, (void *)obj);
+}

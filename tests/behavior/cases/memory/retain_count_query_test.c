@@ -1,7 +1,6 @@
 /* Behavior test: retainCount returns correct value at each step */
 #include "unity.h"
 #include "Tracker_ozh.h"
-#include "oz_mem_slabs.h"
 
 void test_retain_count_query(void)
 {

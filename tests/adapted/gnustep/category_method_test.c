@@ -5,7 +5,6 @@
  */
 #include "unity.h"
 #include "Printer_ozh.h"
-#include "oz_mem_slabs.h"
 
 void test_category_method_callable(void)
 {

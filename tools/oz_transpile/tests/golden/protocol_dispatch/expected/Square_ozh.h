@@ -3,6 +3,7 @@
 
 #include "platform/oz_platform.h"
 #include "oz_dispatch.h"
+#include <string.h>
 #include "OZObject_ozh.h"
 
 struct Square {
@@ -14,3 +15,21 @@ void Square_draw(struct Square *self);
 int Square_color(struct Square *self);
 void Square_dealloc(struct Square *self);
 
+extern oz_slab_t oz_slab_Square;
+
+static inline struct Square *Square_alloc(void)
+{
+	struct Square *obj;
+	if (oz_slab_alloc(&oz_slab_Square, (void **)&obj) != 0) {
+		return (struct Square *)0;
+	}
+	memset(obj, 0, sizeof(struct Square));
+	obj->base.oz_class_id = OZ_CLASS_Square;
+	oz_atomic_init(&obj->base._refcount, 1);
+	return obj;
+}
+
+static inline void Square_free(struct Square *obj)
+{
+	oz_slab_free(&oz_slab_Square, (void *)obj);
+}

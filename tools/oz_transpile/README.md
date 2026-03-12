@@ -38,11 +38,10 @@ PYTHONPATH=tools python3 -m oz_transpile --input source.ast.json --outdir genera
 
 | File | Content |
 |------|---------|
-| `oz_dispatch.h` | Class ID enum, BOOL typedef, forward decls, OZ_SEND macros |
-| `oz_dispatch.c` | Protocol vtable array definitions |
-| `oz_mem_slabs.h` | K_MEM_SLAB pools, alloc/free inlines per class |
-| `ClassName.h` | Struct definition, method prototypes |
-| `ClassName.c` | Method implementations |
+| `oz_dispatch.h` | Class ID enum, BOOL typedef, forward decls, OZ_SEND macros, dispatch_free |
+| `oz_dispatch.c` | Protocol vtable array definitions, class name/superclass tables |
+| `ClassName_ozh.h` | Struct definition, method prototypes, alloc/free inlines, slab extern |
+| `ClassName_ozm.c` | Method implementations, OZ_SLAB_DEFINE |
 
 ## Supported Language Features
 

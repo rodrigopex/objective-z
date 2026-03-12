@@ -24,3 +24,12 @@ static void oz_register_vtables(void)
 	OZ_vtable_init[OZ_CLASS_OZObject] = (OZ_fn_init)OZObject_init;
 	OZ_vtable_init[OZ_CLASS_EmptyClass] = (OZ_fn_init)OZObject_init;
 }
+
+void OZObject_dispatch_free(struct OZObject *obj)
+{
+	switch (obj->oz_class_id) {
+	case OZ_CLASS_OZObject: OZObject_free((struct OZObject *)obj); break;
+	case OZ_CLASS_EmptyClass: EmptyClass_free((struct EmptyClass *)obj); break;
+	default: break;
+	}
+}

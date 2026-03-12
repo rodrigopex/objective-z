@@ -1,7 +1,6 @@
 /* Behavior test: releasing nil is safe (no crash) */
 #include "unity.h"
 #include "Marker_ozh.h"
-#include "oz_mem_slabs.h"
 
 void test_release_nil_no_crash(void)
 {

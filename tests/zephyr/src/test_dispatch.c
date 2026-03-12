@@ -1,7 +1,6 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 /* Dispatch tests: super calls, inheritance chain, method override */
 #include <zephyr/ztest.h>
-#include "oz_mem_slabs.h"
 
 ZTEST_SUITE(dispatch, NULL, NULL, NULL, NULL, NULL);
 

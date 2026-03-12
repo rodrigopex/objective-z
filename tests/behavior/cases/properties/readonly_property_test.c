@@ -1,7 +1,6 @@
 /* Behavior test: readonly — getter exists, no setter */
 #include "unity.h"
 #include "Stamp_ozh.h"
-#include "oz_mem_slabs.h"
 
 void test_readonly_getter(void)
 {

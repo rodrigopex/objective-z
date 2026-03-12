@@ -1,7 +1,6 @@
 /* Behavior test: custom getter/setter names and custom ivar via @synthesize */
 #include "unity.h"
 #include "Switch_ozh.h"
-#include "oz_mem_slabs.h"
 
 void test_custom_getter_name(void)
 {

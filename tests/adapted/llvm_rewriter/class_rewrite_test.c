@@ -5,7 +5,6 @@
  */
 #include "unity.h"
 #include "Vehicle_ozh.h"
-#include "oz_mem_slabs.h"
 #include <stddef.h>
 
 void test_struct_has_class_id_field(void)

@@ -1,7 +1,6 @@
 /* Behavior test: child inherits parent's method without override */
 #include "unity.h"
 #include "Car_ozh.h"
-#include "oz_mem_slabs.h"
 
 void test_inherited_method_via_parent(void)
 {

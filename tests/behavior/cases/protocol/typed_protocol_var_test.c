@@ -2,7 +2,6 @@
 #include "unity.h"
 #include "Ruler_ozh.h"
 #include "Scale_ozh.h"
-#include "oz_mem_slabs.h"
 
 void test_typed_protocol_ruler(void)
 {

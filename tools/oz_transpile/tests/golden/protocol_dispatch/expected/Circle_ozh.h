@@ -3,6 +3,7 @@
 
 #include "platform/oz_platform.h"
 #include "oz_dispatch.h"
+#include <string.h>
 #include "OZObject_ozh.h"
 
 struct Circle {
@@ -14,3 +15,21 @@ void Circle_draw(struct Circle *self);
 int Circle_color(struct Circle *self);
 void Circle_dealloc(struct Circle *self);
 
+extern oz_slab_t oz_slab_Circle;
+
+static inline struct Circle *Circle_alloc(void)
+{
+	struct Circle *obj;
+	if (oz_slab_alloc(&oz_slab_Circle, (void **)&obj) != 0) {
+		return (struct Circle *)0;
+	}
+	memset(obj, 0, sizeof(struct Circle));
+	obj->base.oz_class_id = OZ_CLASS_Circle;
+	oz_atomic_init(&obj->base._refcount, 1);
+	return obj;
+}
+
+static inline void Circle_free(struct Circle *obj)
+{
+	oz_slab_free(&oz_slab_Circle, (void *)obj);
+}

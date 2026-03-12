@@ -65,5 +65,8 @@ extern OZ_fn_init OZ_vtable_init[OZ_CLASS_COUNT];
 #define OZ_SEND_draw(obj) OZ_vtable_draw[((struct OZObject *)(obj))->oz_class_id]((struct OZObject *)(obj))
 #define OZ_SEND_init(obj) OZ_vtable_init[((struct OZObject *)(obj))->oz_class_id]((struct OZObject *)(obj))
 
+
+void OZObject_dispatch_free(struct OZObject *obj);
+
 /* OZLog — formatted logging with %@ object support */
 void OZLog(const char *fmt, ...);

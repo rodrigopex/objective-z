@@ -1,7 +1,6 @@
 /* Behavior test: 4-level inheritance chain */
 #include "unity.h"
 #include "Level4_ozh.h"
-#include "oz_mem_slabs.h"
 
 void test_level4_depth(void)
 {

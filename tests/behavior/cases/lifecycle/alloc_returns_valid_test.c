@@ -1,7 +1,6 @@
 /* Behavior test: alloc returns a valid, non-null pointer */
 #include "unity.h"
 #include "Widget_ozh.h"
-#include "oz_mem_slabs.h"
 
 void test_alloc_returns_non_null(void)
 {

@@ -3,6 +3,7 @@
 
 #include "platform/oz_platform.h"
 #include "oz_dispatch.h"
+#include <string.h>
 #include "Animal_ozh.h"
 
 struct Dog {
@@ -13,3 +14,21 @@ struct Dog {
 void Dog_fetch(struct Dog *self);
 void Dog_dealloc(struct Dog *self);
 
+extern oz_slab_t oz_slab_Dog;
+
+static inline struct Dog *Dog_alloc(void)
+{
+	struct Dog *obj;
+	if (oz_slab_alloc(&oz_slab_Dog, (void **)&obj) != 0) {
+		return (struct Dog *)0;
+	}
+	memset(obj, 0, sizeof(struct Dog));
+	obj->base.base.oz_class_id = OZ_CLASS_Dog;
+	oz_atomic_init(&obj->base.base._refcount, 1);
+	return obj;
+}
+
+static inline void Dog_free(struct Dog *obj)
+{
+	oz_slab_free(&oz_slab_Dog, (void *)obj);
+}

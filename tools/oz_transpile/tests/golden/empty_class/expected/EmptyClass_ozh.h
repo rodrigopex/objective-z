@@ -3,6 +3,7 @@
 
 #include "platform/oz_platform.h"
 #include "oz_dispatch.h"
+#include <string.h>
 #include "OZObject_ozh.h"
 
 struct EmptyClass {
@@ -10,3 +11,22 @@ struct EmptyClass {
 };
 
 void EmptyClass_dealloc(struct EmptyClass *self);
+
+extern oz_slab_t oz_slab_EmptyClass;
+
+static inline struct EmptyClass *EmptyClass_alloc(void)
+{
+	struct EmptyClass *obj;
+	if (oz_slab_alloc(&oz_slab_EmptyClass, (void **)&obj) != 0) {
+		return (struct EmptyClass *)0;
+	}
+	memset(obj, 0, sizeof(struct EmptyClass));
+	obj->base.oz_class_id = OZ_CLASS_EmptyClass;
+	oz_atomic_init(&obj->base._refcount, 1);
+	return obj;
+}
+
+static inline void EmptyClass_free(struct EmptyClass *obj)
+{
+	oz_slab_free(&oz_slab_EmptyClass, (void *)obj);
+}

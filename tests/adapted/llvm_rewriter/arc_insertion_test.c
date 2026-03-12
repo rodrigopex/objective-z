@@ -6,7 +6,6 @@
 #include "unity.h"
 #include "Resource_ozh.h"
 #include "Manager_ozh.h"
-#include "oz_mem_slabs.h"
 
 void test_object_ivar_lifetime(void)
 {

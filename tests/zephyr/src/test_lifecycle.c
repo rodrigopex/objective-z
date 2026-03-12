@@ -1,7 +1,6 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 /* Lifecycle tests: alloc, class_id, refcount, release */
 #include <zephyr/ztest.h>
-#include "oz_mem_slabs.h"
 
 ZTEST_SUITE(lifecycle, NULL, NULL, NULL, NULL, NULL);
 

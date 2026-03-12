@@ -35,3 +35,13 @@ static void oz_register_vtables(void)
 	OZ_vtable_init[OZ_CLASS_Circle] = (OZ_fn_init)OZObject_init;
 	OZ_vtable_init[OZ_CLASS_Square] = (OZ_fn_init)OZObject_init;
 }
+
+void OZObject_dispatch_free(struct OZObject *obj)
+{
+	switch (obj->oz_class_id) {
+	case OZ_CLASS_OZObject: OZObject_free((struct OZObject *)obj); break;
+	case OZ_CLASS_Circle: Circle_free((struct Circle *)obj); break;
+	case OZ_CLASS_Square: Square_free((struct Square *)obj); break;
+	default: break;
+	}
+}

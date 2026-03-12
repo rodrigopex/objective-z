@@ -3,6 +3,7 @@
 
 #include "platform/oz_platform.h"
 #include "oz_dispatch.h"
+#include <string.h>
 #include "OZObject_ozh.h"
 
 struct Logger {
@@ -13,3 +14,21 @@ struct Logger {
 void Logger_log(struct Logger *self);
 void Logger_dealloc(struct Logger *self);
 
+extern oz_slab_t oz_slab_Logger;
+
+static inline struct Logger *Logger_alloc(void)
+{
+	struct Logger *obj;
+	if (oz_slab_alloc(&oz_slab_Logger, (void **)&obj) != 0) {
+		return (struct Logger *)0;
+	}
+	memset(obj, 0, sizeof(struct Logger));
+	obj->base.oz_class_id = OZ_CLASS_Logger;
+	oz_atomic_init(&obj->base._refcount, 1);
+	return obj;
+}
+
+static inline void Logger_free(struct Logger *obj)
+{
+	oz_slab_free(&oz_slab_Logger, (void *)obj);
+}

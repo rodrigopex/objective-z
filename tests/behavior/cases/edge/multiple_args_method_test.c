@@ -1,7 +1,6 @@
 /* Behavior test: method with 3 arguments */
 #include "unity.h"
 #include "Calc_ozh.h"
-#include "oz_mem_slabs.h"
 
 void test_three_args_sum(void)
 {

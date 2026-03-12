@@ -3,6 +3,7 @@
 
 #include "platform/oz_platform.h"
 #include "oz_dispatch.h"
+#include <string.h>
 #include "OZObject_ozh.h"
 
 struct Sensor {
@@ -13,3 +14,21 @@ struct Sensor {
 int Sensor_value(struct Sensor *self);
 void Sensor_dealloc(struct Sensor *self);
 
+extern oz_slab_t oz_slab_Sensor;
+
+static inline struct Sensor *Sensor_alloc(void)
+{
+	struct Sensor *obj;
+	if (oz_slab_alloc(&oz_slab_Sensor, (void **)&obj) != 0) {
+		return (struct Sensor *)0;
+	}
+	memset(obj, 0, sizeof(struct Sensor));
+	obj->base.oz_class_id = OZ_CLASS_Sensor;
+	oz_atomic_init(&obj->base._refcount, 1);
+	return obj;
+}
+
+static inline void Sensor_free(struct Sensor *obj)
+{
+	oz_slab_free(&oz_slab_Sensor, (void *)obj);
+}

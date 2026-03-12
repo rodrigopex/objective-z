@@ -1,7 +1,6 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 /* Memory tests: retain/release, refcount queries */
 #include <zephyr/ztest.h>
-#include "oz_mem_slabs.h"
 
 ZTEST_SUITE(memory, NULL, NULL, NULL, NULL, NULL);
 

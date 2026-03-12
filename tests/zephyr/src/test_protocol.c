@@ -1,7 +1,6 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 /* Protocol dispatch tests: vtable routing to correct class */
 #include <zephyr/ztest.h>
-#include "oz_mem_slabs.h"
 
 ZTEST_SUITE(protocol, NULL, NULL, NULL, NULL, NULL);
 

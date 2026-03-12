@@ -5,7 +5,6 @@
  */
 #include "unity.h"
 #include "Counter_ozh.h"
-#include "oz_mem_slabs.h"
 
 void test_message_send_and_return(void)
 {

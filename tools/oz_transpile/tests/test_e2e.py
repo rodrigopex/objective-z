@@ -24,7 +24,6 @@ class TestCLI:
             user_files = set(os.listdir(tmpdir)) - {"Foundation"}
 
             assert {"oz_dispatch.h", "oz_dispatch.c",
-                    "oz_mem_slabs.h", "oz_mem_slabs.c",
                     "OZObject_ozh.h", "OZObject_ozm.c"}.issubset(foundation_files)
             assert {"OZLed_ozh.h", "OZLed_ozm.c"}.issubset(user_files)
 
@@ -61,10 +60,11 @@ class TestCLI:
         with tempfile.TemporaryDirectory() as tmpdir:
             main(["--input", ast_file, "--outdir", tmpdir,
                   "--pool-sizes", "OZLed=8"])
-            slabs_h = open(os.path.join(tmpdir, "Foundation", "oz_mem_slabs.h")).read()
-            slabs_c = open(os.path.join(tmpdir, "Foundation", "oz_mem_slabs.c")).read()
-            assert "oz_slab_OZLed" in slabs_h
-            assert "8" in slabs_c
+            led_h = open(os.path.join(tmpdir, "OZLed_ozh.h")).read()
+            led_c = open(os.path.join(tmpdir, "OZLed_ozm.c")).read()
+            assert "oz_slab_OZLed" in led_h
+            assert "OZ_SLAB_DEFINE(oz_slab_OZLed" in led_c
+            assert "8" in led_c
 
     def test_retain_release_in_root(self):
         ast_file = os.path.join(FIXTURE_DIR, "simple_led.ast.json")
@@ -88,10 +88,6 @@ class TestSynchronizedE2E:
             counter_c = open(os.path.join(tmpdir, "Counter_ozm.c")).read()
             assert "OZLock_initWithObject(OZLock_alloc()" in counter_c
             assert "OZObject_release((struct OZObject *)_sync)" in counter_c
-
-            slabs_h = open(os.path.join(tmpdir, "Foundation", "oz_mem_slabs.h")).read()
-            assert "OZLock_initWithObject" in slabs_h
-            assert "OZLock_dealloc" in slabs_h
 
             dispatch_h = open(os.path.join(tmpdir, "Foundation", "oz_dispatch.h")).read()
             assert "OZ_CLASS_OZLock" in dispatch_h

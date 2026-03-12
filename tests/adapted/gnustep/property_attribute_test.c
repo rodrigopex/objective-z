@@ -5,7 +5,6 @@
  */
 #include "unity.h"
 #include "Config_ozh.h"
-#include "oz_mem_slabs.h"
 
 void test_property_default_zero(void)
 {

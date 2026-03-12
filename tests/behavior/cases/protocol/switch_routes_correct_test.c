@@ -2,7 +2,6 @@
 #include "unity.h"
 #include "LightSwitch_ozh.h"
 #include "Fan_ozh.h"
-#include "oz_mem_slabs.h"
 
 void test_protocol_routes_light(void)
 {

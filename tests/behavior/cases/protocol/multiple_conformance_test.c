@@ -1,7 +1,6 @@
 /* Behavior test: one class conforms to two protocols */
 #include "unity.h"
 #include "Stream_ozh.h"
-#include "oz_mem_slabs.h"
 
 void test_stream_read_via_protocol(void)
 {
