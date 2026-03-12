@@ -79,6 +79,7 @@ def merge_modules(modules: list[OZModule]) -> OZModule:
         merged.diagnostics.extend(m.diagnostics)
         merged.errors.extend(m.errors)
         merged.orphan_sources.extend(m.orphan_sources)
+        merged.source_paths.update(m.source_paths)
     return merged
 
 
@@ -89,6 +90,11 @@ def collect(ast_root: dict) -> OZModule:
     # Remove auto-generated Clang classes
     for name in SKIP_CLASSES:
         module.classes.pop(name, None)
+    main_file = _find_main_file(ast_root)
+    if main_file:
+        path = Path(main_file)
+        if path.is_file():
+            module.source_path = path
     _collect_verbatim_lines(ast_root, module)
     _check_unsupported_features(ast_root, module)
     _distribute_verbatim_to_classes(module)

@@ -5,7 +5,9 @@ import tempfile
 
 from oz_transpile.emit import (
     emit, _selector_to_c, _base_chain, _method_prototype,
-    _emit_synthesized_accessor, _EmitCtx,
+    _emit_synthesized_accessor, _emit_patched_source, _EmitCtx,
+    _is_func_prototype, _extract_func_name, _extract_class_name,
+    _extract_decl_name,
 )
 from oz_transpile.model import (
     DispatchKind,
@@ -2405,3 +2407,195 @@ class TestSynchronized:
                 assert result.returncode == 0, (
                     f"Compile failed for {os.path.basename(f)}:\n{result.stderr}"
                 )
+
+
+class TestPatchedEmission:
+    """Tests for tree-sitter patched source emission."""
+
+    def _parse_node(self, source_text):
+        """Parse source text and return tree-sitter root node children."""
+        import tree_sitter_objc as tsobjc
+        from tree_sitter import Language, Parser
+        lang = Language(tsobjc.language())
+        parser = Parser(lang)
+        source = source_text.encode()
+        tree = parser.parse(source)
+        return tree.root_node.children
+
+    def test_is_func_prototype_true(self):
+        children = self._parse_node("int printk(const char *fmt, ...);\n")
+        decl = [c for c in children if c.type == "declaration"]
+        assert len(decl) == 1
+        assert _is_func_prototype(decl[0]) is True
+
+    def test_is_func_prototype_false_for_var(self):
+        children = self._parse_node("static int count = 0;\n")
+        decl = [c for c in children if c.type == "declaration"]
+        assert len(decl) == 1
+        assert _is_func_prototype(decl[0]) is False
+
+    def test_extract_func_name(self):
+        children = self._parse_node(
+            "void foo(void) { }\n"
+        )
+        func = [c for c in children if c.type == "function_definition"]
+        assert len(func) == 1
+        assert _extract_func_name(func[0]) == "foo"
+
+    def test_extract_func_name_pointer_return(self):
+        children = self._parse_node(
+            "static int *bar(int x) { return 0; }\n"
+        )
+        func = [c for c in children if c.type == "function_definition"]
+        assert len(func) == 1
+        assert _extract_func_name(func[0]) == "bar"
+
+    def test_extract_class_name(self):
+        children = self._parse_node(
+            "@implementation Foo\n@end\n"
+        )
+        impl = [c for c in children if c.type == "class_implementation"]
+        assert len(impl) == 1
+        assert _extract_class_name(impl[0]) == "Foo"
+
+    def test_extract_decl_name_static_var(self):
+        children = self._parse_node("static int _count;\n")
+        decl = [c for c in children if c.type == "declaration"]
+        assert _extract_decl_name(decl[0]) == "_count"
+
+    def test_extract_decl_name_pointer_var(self):
+        children = self._parse_node("static AppConfig *_shared;\n")
+        decl = [c for c in children if c.type == "declaration"]
+        assert _extract_decl_name(decl[0]) == "_shared"
+
+    def test_patched_preserves_comment(self):
+        """Comments from original source should appear in patched output."""
+        with tempfile.NamedTemporaryFile(suffix=".m", mode="w",
+                                          delete=False) as f:
+            f.write("/* Copyright header */\n")
+            f.write("#import <Foundation/Foundation.h>\n")
+            f.write("@interface Foo: OZObject\n@end\n")
+            f.write("@implementation Foo\n@end\n")
+            f.name
+        try:
+            from pathlib import Path
+            m = OZModule()
+            m.classes["OZObject"] = OZClass("OZObject",
+                                             class_id=0, base_depth=0)
+            cls = OZClass("Foo", superclass="OZObject",
+                          class_id=1, base_depth=1)
+            m.classes["Foo"] = cls
+            result = _emit_patched_source(
+                Path(f.name), m, [cls], "Foo", "OZObject", False)
+            assert "/* Copyright header */" in result
+            assert "/* struct Foo" in result
+            assert "#import" not in result
+        finally:
+            os.unlink(f.name)
+
+    def test_patched_skips_func_prototype(self):
+        """Function prototypes (stubs) should be filtered out."""
+        with tempfile.NamedTemporaryFile(suffix=".m", mode="w",
+                                          delete=False) as f:
+            f.write("int printk(const char *fmt, ...);\n")
+            f.write("@implementation Foo\n@end\n")
+            f.name
+        try:
+            from pathlib import Path
+            m = OZModule()
+            m.classes["OZObject"] = OZClass("OZObject",
+                                             class_id=0, base_depth=0)
+            cls = OZClass("Foo", superclass="OZObject",
+                          class_id=1, base_depth=1)
+            m.classes["Foo"] = cls
+            result = _emit_patched_source(
+                Path(f.name), m, [cls], "Foo", "OZObject", False)
+            assert "printk" not in result
+        finally:
+            os.unlink(f.name)
+
+    def test_patched_skips_collected_static(self):
+        """Static vars collected by Clang AST should not be duplicated."""
+        with tempfile.NamedTemporaryFile(suffix=".m", mode="w",
+                                          delete=False) as f:
+            f.write("static int _count;\n")
+            f.write("@implementation Foo\n@end\n")
+            f.name
+        try:
+            from pathlib import Path
+            m = OZModule()
+            m.classes["OZObject"] = OZClass("OZObject",
+                                             class_id=0, base_depth=0)
+            cls = OZClass("Foo", superclass="OZObject",
+                          class_id=1, base_depth=1,
+                          statics=[OZStaticVar("_count", OZType("int"))])
+            m.classes["Foo"] = cls
+            result = _emit_patched_source(
+                Path(f.name), m, [cls], "Foo", "OZObject", False)
+            # Should appear once (from _emit_class_methods), not twice
+            assert result.count("_count") == 1
+        finally:
+            os.unlink(f.name)
+
+    def test_patched_preserves_macro(self):
+        """Top-level macro invocations should be preserved verbatim."""
+        with tempfile.NamedTemporaryFile(suffix=".m", mode="w",
+                                          delete=False) as f:
+            f.write("ZBUS_LISTENER_DEFINE(lis, callback);\n")
+            f.write("@implementation Foo\n@end\n")
+            f.name
+        try:
+            from pathlib import Path
+            m = OZModule()
+            m.classes["OZObject"] = OZClass("OZObject",
+                                             class_id=0, base_depth=0)
+            cls = OZClass("Foo", superclass="OZObject",
+                          class_id=1, base_depth=1)
+            m.classes["Foo"] = cls
+            result = _emit_patched_source(
+                Path(f.name), m, [cls], "Foo", "OZObject", False)
+            assert "ZBUS_LISTENER_DEFINE(lis, callback)" in result
+        finally:
+            os.unlink(f.name)
+
+    def test_patched_preserves_define(self):
+        """#define directives should be preserved."""
+        with tempfile.NamedTemporaryFile(suffix=".m", mode="w",
+                                          delete=False) as f:
+            f.write("#define MY_CONST 42\n")
+            f.write("@implementation Foo\n@end\n")
+            f.name
+        try:
+            from pathlib import Path
+            m = OZModule()
+            m.classes["OZObject"] = OZClass("OZObject",
+                                             class_id=0, base_depth=0)
+            cls = OZClass("Foo", superclass="OZObject",
+                          class_id=1, base_depth=1)
+            m.classes["Foo"] = cls
+            result = _emit_patched_source(
+                Path(f.name), m, [cls], "Foo", "OZObject", False)
+            assert "#define MY_CONST 42" in result
+        finally:
+            os.unlink(f.name)
+
+    def test_patched_no_duplicate_preamble_include(self):
+        """Includes that duplicate the preamble should be deduplicated."""
+        with tempfile.NamedTemporaryFile(suffix=".m", mode="w",
+                                          delete=False) as f:
+            f.write('#include "Foo_ozh.h"\n')
+            f.write("@implementation Foo\n@end\n")
+            f.name
+        try:
+            from pathlib import Path
+            m = OZModule()
+            m.classes["OZObject"] = OZClass("OZObject",
+                                             class_id=0, base_depth=0)
+            cls = OZClass("Foo", superclass="OZObject",
+                          class_id=1, base_depth=1)
+            m.classes["Foo"] = cls
+            result = _emit_patched_source(
+                Path(f.name), m, [cls], "Foo", "OZObject", False)
+            assert result.count('#include "Foo_ozh.h"') == 1
+        finally:
+            os.unlink(f.name)

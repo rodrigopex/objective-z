@@ -10,6 +10,12 @@ from io import StringIO
 
 from jinja2 import Environment, FileSystemLoader
 
+import re
+from pathlib import Path
+
+import tree_sitter_objc as tsobjc
+from tree_sitter import Language, Parser
+
 from .model import (DispatchKind, OZClass, OZFunction, OZIvar, OZMethod,
                      OZModule, OZParam, OZType, OrphanSource)
 
@@ -169,22 +175,41 @@ def emit(module: OZModule, outdir: str, pool_sizes: dict[str, int] | None = None
         stem_groups.setdefault(stem, []).append(cls)
 
     for stem, classes in stem_groups.items():
+        is_foundation = all(c.is_foundation for c in classes)
+        dest = foundation_dir if is_foundation else outdir
+
+        # Headers always use templates
         header_tmpl = env.get_template("class_header.h.j2")
-        source_tmpl = env.get_template("class_source.c.j2")
         header_parts = []
-        source_parts = []
         for cls in classes:
             ctx = _EmitCtx(cls=cls, module=module, root_class=root_class,
                            has_item_pool=_has_item_pool)
             header_parts.append(header_tmpl.render(**_class_header_ctx(ctx, stem)))
-            source_parts.append(source_tmpl.render(**_class_source_ctx(ctx, stem)))
-        is_foundation = all(c.is_foundation for c in classes)
-        dest = foundation_dir if is_foundation else outdir
         header_path = os.path.join(dest, f"{stem}_ozh.h")
-        source_path = os.path.join(dest, f"{stem}_ozm.c")
         _write_file(header_path, "\n".join(header_parts))
-        _write_file(source_path, "\n".join(source_parts))
         files.append(header_path)
+
+        # Sources: use patched emission for user classes with source_path
+        stem_source = module.source_paths.get(stem)
+        use_patched = (not is_foundation
+                       and stem_source is not None
+                       and stem_source.is_file())
+        if use_patched:
+            content = _emit_patched_source(
+                stem_source, module, classes, stem,
+                root_class, _has_item_pool)
+            source_path = os.path.join(dest, f"{stem}_ozm.c")
+            _write_file(source_path, content)
+        else:
+            source_tmpl = env.get_template("class_source.c.j2")
+            source_parts = []
+            for cls in classes:
+                ctx = _EmitCtx(cls=cls, module=module, root_class=root_class,
+                               has_item_pool=_has_item_pool)
+                source_parts.append(
+                    source_tmpl.render(**_class_source_ctx(ctx, stem)))
+            source_path = os.path.join(dest, f"{stem}_ozm.c")
+            _write_file(source_path, "\n".join(source_parts))
         files.append(source_path)
 
     # Emit orphan sources (class-less .m files)
@@ -2228,6 +2253,344 @@ def _method_prototype(cls: OZClass, m: OZMethod) -> str:
         for p in m.params:
             params_str += f", {p.oz_type.c_param_decl(p.name)}"
     return f"{ret} {cls.name}_{prefix}{c_sel}({params_str})"
+
+
+_TS_LANG = Language(tsobjc.language())
+
+_OZ_IMPORT_PREFIXES = (
+    "Foundation/", "Foundation.h", "objc/", "objc.h",
+    "OZObject", "OZLog", "OZString", "OZArray", "OZDictionary", "OZNumber",
+)
+
+_OBJC_INTERFACE_TYPES = frozenset({"class_interface", "category_interface"})
+_OBJC_IMPL_TYPES = frozenset({"class_implementation", "category_implementation"})
+_OBJC_SKIP_TYPES = frozenset({"protocol_declaration"})
+
+
+def _is_objc_header(header_path: Path) -> bool:
+    """Check if a header file contains ObjC syntax."""
+    if not header_path.is_file():
+        return False
+    content = header_path.read_text(errors="replace")
+    return "@interface" in content or "@implementation" in content
+
+
+def _find_header(name: str, source_dir: Path) -> Path | None:
+    """Find a header file relative to source or include directories."""
+    candidates = [
+        source_dir / name,
+        source_dir.parent / "include" / name,
+    ]
+    for header in candidates:
+        if header.is_file():
+            return header
+    return None
+
+
+def _emit_include_replacement(text: str, out: StringIO,
+                               source_dir: Path | None = None) -> None:
+    """Handle #import and #include directives.
+
+    - #import of OZ SDK headers → skip (covered by generated includes)
+    - #import of ObjC headers → #include "Header_ozh.h"
+    - #import of non-ObjC → #include
+    - #include of ObjC headers → #include "Header_ozh.h"
+    - #include of non-ObjC → keep as-is
+    """
+    stripped = text.strip()
+    is_import = stripped.startswith("#import")
+
+    if is_import:
+        for prefix in _OZ_IMPORT_PREFIXES:
+            if prefix in stripped:
+                return
+
+    # For #include, check if it references an ObjC header
+    m = re.search(r'"([^"]+)"', stripped)
+    if m and source_dir:
+        header_name = m.group(1)
+        header = _find_header(header_name, source_dir)
+        if header and _is_objc_header(header):
+            stem = header_name.rsplit(".", 1)[0]
+            out.write(f'#include "{stem}_ozh.h"\n')
+            return
+
+    if is_import:
+        out.write(stripped.replace("#import", "#include", 1))
+        out.write("\n")
+    else:
+        out.write(text)
+        out.write("\n")
+
+
+def _is_func_prototype(node) -> bool:
+    """Check if a tree-sitter declaration is a function prototype (no body)."""
+    has_func_decl = False
+    for child in node.children:
+        if child.type == "function_declarator":
+            has_func_decl = True
+        elif child.type == "pointer_declarator":
+            for sub in child.children:
+                if sub.type == "function_declarator":
+                    has_func_decl = True
+    return has_func_decl
+
+
+def _extract_decl_name(node) -> str | None:
+    """Extract variable name from a tree-sitter declaration node."""
+    for child in node.children:
+        if child.type == "identifier":
+            return child.text.decode()
+        elif child.type in ("pointer_declarator", "init_declarator"):
+            for sub in child.children:
+                if sub.type == "identifier":
+                    return sub.text.decode()
+                elif sub.type == "pointer_declarator":
+                    for subsub in sub.children:
+                        if subsub.type == "identifier":
+                            return subsub.text.decode()
+    return None
+
+
+def _extract_class_name(node) -> str | None:
+    """Extract the class name from a tree-sitter class_implementation node."""
+    for child in node.children:
+        if child.type == "identifier":
+            return child.text.decode()
+    return None
+
+
+def _extract_func_name(node) -> str | None:
+    """Extract function name from a tree-sitter function_definition node."""
+    for child in node.children:
+        if child.type == "function_declarator":
+            for sub in child.children:
+                if sub.type == "identifier":
+                    return sub.text.decode()
+        elif child.type == "pointer_declarator":
+            for sub in child.children:
+                if sub.type == "function_declarator":
+                    for subsub in sub.children:
+                        if subsub.type == "identifier":
+                            return subsub.text.decode()
+    return None
+
+
+def _extract_protocol_name(node) -> str | None:
+    """Extract protocol name from a tree-sitter protocol_declaration node."""
+    for child in node.children:
+        if child.type == "identifier":
+            return child.text.decode()
+    return None
+
+
+def _emit_class_methods(cls: OZClass, module: OZModule, out: StringIO,
+                         root_class: str, has_item_pool: bool) -> None:
+    """Emit transpiled C methods for a class (replaces @implementation block)."""
+    ctx = _EmitCtx(cls=cls, module=module, root_class=root_class,
+                   has_item_pool=has_item_pool)
+    is_root = cls.name == root_class
+
+    # Emit methods to a buffer first so we can collect string constants
+    # and block functions that must appear before the methods
+    methods_buf = StringIO()
+
+    for sv in cls.statics:
+        decl_str = sv.oz_type.c_param_decl(sv.name)
+        init = f" = {sv.init_value}" if sv.init_value is not None else ""
+        methods_buf.write(f"{decl_str}{init};\n")
+
+    if is_root:
+        buf = StringIO()
+        _emit_root_retain_release(cls, module, buf)
+        methods_buf.write(buf.getvalue())
+        buf = StringIO()
+        _emit_root_introspection(cls, buf)
+        methods_buf.write(buf.getvalue())
+
+    _root_skip_sels = {"retain", "release", "retainCount",
+                       "isEqual:", "cDescription:maxLength:"}
+
+    has_user_dealloc = False
+    for m in cls.methods:
+        if m.selector in _root_skip_sels and is_root:
+            continue
+        if m.selector == "dealloc":
+            has_user_dealloc = True
+            buf = StringIO()
+            _emit_user_dealloc(ctx, m, buf)
+            methods_buf.write(buf.getvalue())
+            continue
+        ctx.method = m
+        ctx.scope_vars = []
+        ctx.consumed_vars = set()
+        ctx.loop_scope_depth = []
+        ctx.pre_stmts = []
+        ctx._tmp_counter = 0
+        ctx._sync_counter = 0
+        buf = StringIO()
+        buf.write(f"{_method_prototype(cls, m)}\n")
+        if m.synthesized_property:
+            _emit_synthesized_accessor(cls, m, buf, root_class)
+        elif m.body_ast:
+            _emit_compound_stmt(m.body_ast, buf, ctx, indent=0,
+                                param_retains=_object_params(m))
+        else:
+            buf.write("{\n}\n")
+        methods_buf.write(buf.getvalue())
+        methods_buf.write("\n")
+
+    if not has_user_dealloc:
+        buf = StringIO()
+        _emit_auto_dealloc(ctx, buf)
+        val = buf.getvalue()
+        if val:
+            methods_buf.write(val)
+            methods_buf.write("\n")
+
+    # Emit string constants and block functions first, then methods
+    for sc in ctx.string_constants:
+        out.write(sc)
+        out.write("\n")
+    for bf in ctx.block_functions:
+        out.write(bf)
+        out.write("\n\n")
+    out.write(methods_buf.getvalue())
+
+
+def _emit_transpiled_function(func: OZFunction, module: OZModule,
+                               out: StringIO,
+                               root_class: str,
+                               has_item_pool: bool) -> None:
+    """Emit a transpiled C function (replacing one that contained ObjC)."""
+    dummy_cls = OZClass(name="__patched__")
+    ctx = _EmitCtx(cls=dummy_cls, module=module, root_class=root_class,
+                   has_item_pool=has_item_pool)
+    ctx.method = None
+    ctx.scope_vars = []
+    ctx.consumed_vars = set()
+    ctx.loop_scope_depth = []
+    ctx.pre_stmts = []
+    ctx._tmp_counter = 0
+
+    ret = func.return_type.c_type
+    parts = [p.oz_type.c_param_decl(p.name) for p in func.params]
+    params_str = ", ".join(parts) if parts else "void"
+
+    # Emit body to buffer first to collect string constants/block functions
+    body_buf = StringIO()
+    body_buf.write(f"{ret} {func.name}({params_str})\n")
+    if func.body_ast:
+        _emit_compound_stmt(func.body_ast, body_buf, ctx, indent=0,
+                            param_retains=_object_params(func))
+    else:
+        body_buf.write("{\n}\n")
+
+    # Emit string constants and block functions before the function body
+    for sc in ctx.string_constants:
+        out.write(sc)
+        out.write("\n")
+    for bf in ctx.block_functions:
+        out.write(bf)
+        out.write("\n\n")
+    out.write(body_buf.getvalue())
+
+
+def _emit_patched_source(source_path: Path, module: OZModule,
+                          classes: list[OZClass], stem: str,
+                          root_class: str,
+                          has_item_pool: bool) -> str:
+    """Emit .c by patching original .m: replace ObjC nodes, keep C verbatim."""
+    source = source_path.read_bytes()
+    parser = Parser(_TS_LANG)
+    tree = parser.parse(source)
+
+    out = StringIO()
+    out.write("/* Auto-generated by oz_transpile -- do not edit */\n")
+    out.write(f'#include "{stem}_ozh.h"\n')
+    out.write('#include "oz_mem_slabs.h"\n')
+
+    # Track emitted includes to avoid duplicates
+    emitted_includes = {f'#include "{stem}_ozh.h"', '#include "oz_mem_slabs.h"'}
+
+    class_map = {c.name: c for c in classes}
+    func_map = {}
+    for cls in classes:
+        for f in cls.functions:
+            func_map[f.name] = f
+    for f in module.functions:
+        func_map[f.name] = f
+
+    # Build set of collected static var names (emitted by _emit_class_methods)
+    static_names = set()
+    for cls in classes:
+        for sv in cls.statics:
+            static_names.add(sv.name)
+
+    source_dir = source_path.parent
+
+    for child in tree.root_node.children:
+        text = source[child.start_byte:child.end_byte].decode()
+
+        if child.type in _OBJC_INTERFACE_TYPES:
+            name = _extract_class_name(child)
+            if name:
+                out.write(f"\n/* struct {name} — see {stem}_ozh.h */\n")
+
+        elif child.type in _OBJC_IMPL_TYPES:
+            name = _extract_class_name(child)
+            cls = class_map.get(name) if name else None
+            if cls:
+                out.write("\n")
+                _emit_class_methods(cls, module, out, root_class,
+                                    has_item_pool)
+            else:
+                out.write(f"\n/* @implementation {name} — not found */\n")
+
+        elif child.type in _OBJC_SKIP_TYPES:
+            name = _extract_protocol_name(child)
+            if name:
+                out.write(
+                    f"\n/* protocol {name} — see oz_dispatch.h */\n")
+
+        elif child.type == "preproc_include":
+            # Capture to a buffer to check for duplicates
+            inc_buf = StringIO()
+            _emit_include_replacement(text, inc_buf, source_dir)
+            inc_text = inc_buf.getvalue().strip()
+            if inc_text and inc_text not in emitted_includes:
+                emitted_includes.add(inc_text)
+                out.write(inc_text)
+                out.write("\n")
+
+        elif child.type == "function_definition":
+            name = _extract_func_name(child)
+            func = func_map.get(name) if name else None
+            if func and func.body_ast:
+                out.write("\n")
+                _emit_transpiled_function(func, module, out, root_class,
+                                          has_item_pool)
+                out.write("\n")
+            else:
+                out.write(text)
+                out.write("\n")
+
+        elif child.type == "declaration":
+            # Skip function prototypes (stubs for Clang AST)
+            if _is_func_prototype(child):
+                continue
+            # Skip static vars already collected (emitted with proper C types)
+            name = _extract_decl_name(child)
+            if name and name in static_names:
+                continue
+            out.write(text)
+            out.write("\n")
+
+        else:
+            out.write(text)
+            out.write("\n")
+
+    return out.getvalue()
 
 
 def _write_file(path: str, content: str) -> None:
