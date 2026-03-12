@@ -192,12 +192,33 @@ Tests:
 
 ---
 
+## Part E: Round-Trip Integration Test — DONE
+
+Committed as `TBD`.
+
+### Step E1: Golden test for extract→context→render pipeline
+
+No existing test takes a `.m` fixture + AST through the full `extract_template()` → `build_source_context()` → Jinja render pipeline and compares output character-by-character. Golden tests only cover the `.j2` template path (Foundation classes).
+
+Add `test_roundtrip.py`:
+- Hand-craft AST JSON for OZObject + OZBlinky matching `extract_basic.m`
+- Go through `collect()` → `resolve()` → `emit()` with `source_paths` set
+- Compare `OZBlinky_ozm.c` output against golden expected `.c` file
+- Verify comments preserved, includes deduplicated, slab define present, auto-dealloc emitted
+
+Tests:
+- Output matches golden `.c` character-by-character (normalized)
+- Key structural assertions: preamble header, slab define, comment preservation
+
+---
+
 ## Execution Order
 
 1. ~~**Part B**~~ DONE
 2. ~~**Part A**~~ DONE
 3. ~~**Part C**~~ DONE
-4. **Part D** — D1 → D2 → D3 → D4 → D5 → D6, commit after each green step
+4. ~~**Part D**~~ DONE
+5. ~~**Part E**~~ DONE
 
 ## Verification
 

@@ -1,0 +1,159 @@
+{
+  "kind": "TranslationUnitDecl",
+  "inner": [
+    {
+      "kind": "ObjCInterfaceDecl",
+      "loc": {"file": "__FIXTURE__"},
+      "name": "OZObject",
+      "inner": []
+    },
+    {
+      "kind": "ObjCImplementationDecl",
+      "name": "OZObject",
+      "inner": [
+        {
+          "kind": "ObjCMethodDecl",
+          "name": "init",
+          "returnType": {"qualType": "instancetype"},
+          "inner": [
+            {
+              "kind": "CompoundStmt",
+              "inner": [
+                {
+                  "kind": "ReturnStmt",
+                  "inner": [
+                    {
+                      "kind": "DeclRefExpr",
+                      "referencedDecl": {"name": "self"},
+                      "type": {"qualType": "OZObject *"}
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "ObjCMethodDecl",
+          "name": "dealloc",
+          "returnType": {"qualType": "void"},
+          "inner": [
+            {
+              "kind": "CompoundStmt",
+              "inner": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "kind": "ObjCInterfaceDecl",
+      "name": "OZBlinky",
+      "super": {"name": "OZObject"},
+      "inner": [
+        {
+          "kind": "ObjCIvarDecl",
+          "name": "_pin",
+          "type": {"qualType": "int"}
+        }
+      ]
+    },
+    {
+      "kind": "ObjCImplementationDecl",
+      "name": "OZBlinky",
+      "super": {"name": "OZObject"},
+      "inner": [
+        {
+          "kind": "ObjCMethodDecl",
+          "name": "initWithPin:",
+          "returnType": {"qualType": "id"},
+          "inner": [
+            {
+              "kind": "ParmVarDecl",
+              "name": "pin",
+              "type": {"qualType": "int"}
+            },
+            {
+              "kind": "CompoundStmt",
+              "inner": [
+                {
+                  "kind": "BinaryOperator",
+                  "opcode": "=",
+                  "inner": [
+                    {
+                      "kind": "DeclRefExpr",
+                      "referencedDecl": {"name": "self"},
+                      "type": {"qualType": "OZBlinky *"}
+                    },
+                    {
+                      "kind": "ObjCMessageExpr",
+                      "selector": "init",
+                      "receiverKind": "super",
+                      "inner": []
+                    }
+                  ]
+                },
+                {
+                  "kind": "IfStmt",
+                  "inner": [
+                    {
+                      "kind": "DeclRefExpr",
+                      "referencedDecl": {"name": "self"},
+                      "type": {"qualType": "OZBlinky *"}
+                    },
+                    {
+                      "kind": "CompoundStmt",
+                      "inner": [
+                        {
+                          "kind": "BinaryOperator",
+                          "opcode": "=",
+                          "inner": [
+                            {
+                              "kind": "ObjCIvarRefExpr",
+                              "decl": {"name": "_pin"}
+                            },
+                            {
+                              "kind": "ImplicitCastExpr",
+                              "inner": [
+                                {
+                                  "kind": "DeclRefExpr",
+                                  "referencedDecl": {"name": "pin"},
+                                  "type": {"qualType": "int"}
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "kind": "ReturnStmt",
+                  "inner": [
+                    {
+                      "kind": "DeclRefExpr",
+                      "referencedDecl": {"name": "self"},
+                      "type": {"qualType": "OZBlinky *"}
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "ObjCMethodDecl",
+          "name": "toggle",
+          "returnType": {"qualType": "void"},
+          "inner": [
+            {
+              "kind": "CompoundStmt",
+              "inner": []
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
