@@ -2481,7 +2481,7 @@ class TestPatchedEmission:
             result = _emit_patched_source(
                 Path(f.name), m, [cls], "Foo", "OZObject", False)
             assert "/* Copyright header */" in result
-            assert "/* struct Foo" in result
+            assert "/* @interface Foo" in result
             assert "#import" not in result
         finally:
             os.unlink(f.name)
