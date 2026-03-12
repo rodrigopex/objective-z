@@ -40,6 +40,11 @@ transpiler pipeline.
 
 ## Literals and Expressions
 
+- **No boxed expressions (`@(expr)`).** `ObjCBoxedExpr` AST nodes are not
+  transpiled. The generated code will contain a `/* TODO: ObjCBoxedExpr */`
+  comment and will not compile. Use explicit `OZNumber` initializers instead
+  (e.g., `[OZNumber numberWithInt:42]`).
+
 - **OZNumber supports 8/16/32-bit integers and float.** `OZNumber` boxes
   `int8_t`, `uint8_t`, `int16_t`, `uint16_t`, `int32_t`, `uint32_t`, `float`,
   and `BOOL`. 64-bit types (`int64_t`, `double`) are not supported. A future
