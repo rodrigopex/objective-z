@@ -1,0 +1,13 @@
+sample:
+  description: C++ virtual dispatch and lifecycle timing
+  name: C++ Benchmark
+common:
+  tags: benchmark cpp
+  harness: console
+  harness_config:
+    type: one_line
+    regex:
+      - "PROJECT EXECUTION SUCCESSFUL"
+tests:
+  benchmark.cpp.timing:
+    tags: benchmark cpp

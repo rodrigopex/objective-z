@@ -1,0 +1,13 @@
+sample:
+  description: Objective-Z memory allocation overhead
+  name: ObjZ Memory Benchmark
+common:
+  tags: benchmark memory objz
+  harness: console
+  harness_config:
+    type: one_line
+    regex:
+      - "PROJECT EXECUTION SUCCESSFUL"
+tests:
+  benchmark.memory.objz:
+    tags: benchmark memory objz

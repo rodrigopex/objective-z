@@ -1,0 +1,13 @@
+sample:
+  description: C++ memory allocation overhead
+  name: C++ Memory Benchmark
+common:
+  tags: benchmark memory cpp
+  harness: console
+  harness_config:
+    type: one_line
+    regex:
+      - "PROJECT EXECUTION SUCCESSFUL"
+tests:
+  benchmark.memory.cpp:
+    tags: benchmark memory cpp

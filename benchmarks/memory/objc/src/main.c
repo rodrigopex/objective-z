@@ -16,7 +16,7 @@
 /* Transpiler-generated headers */
 #include "oz_dispatch.h"
 #include "OZObject_ozh.h"
-#include "MemBase_ozh.h"
+#include "mem_helpers_ozh.h"
 #include "MemChild_ozh.h"
 #include "MemGrandChild_ozh.h"
 

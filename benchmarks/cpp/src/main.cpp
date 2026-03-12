@@ -196,8 +196,9 @@ static void bench_introspection(void)
 
         BENCH_LOOP("typeid()", {
                 BenchBase *p = child_as_base;
-                volatile auto &ti = typeid(*p);
-                (void)ti;
+                const auto &ti = typeid(*p);
+                volatile const char *name = ti.name();
+                (void)name;
         });
 
         delete child_as_base;

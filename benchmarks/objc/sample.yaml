@@ -1,0 +1,13 @@
+sample:
+  description: Objective-Z transpiler dispatch and lifecycle timing
+  name: ObjZ Benchmark
+common:
+  tags: benchmark objz
+  harness: console
+  harness_config:
+    type: one_line
+    regex:
+      - "PROJECT EXECUTION SUCCESSFUL"
+tests:
+  benchmark.objz.timing:
+    tags: benchmark objz

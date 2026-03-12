@@ -36,40 +36,26 @@ test-zephyr:
     west twister -T tests/zephyr/ -p {{ if os() == "linux" { "native_sim" } else { board } }} -O /tmp/twister-out
 
 bench:
-    west build -p -b {{ board }} benchmarks/objc && west build -t run
+    west build -p -b {{ board }} benchmarks/objc && west flash
 
 bench-cpp:
-    west build -p -b {{ board }} benchmarks/cpp && west build -t run
-
-bench-rust:
-    west build -p -b {{ board }} benchmarks/rust && west build -t run
-
-bench-zig:
-    west build -p -b {{ board }} benchmarks/zig && west build -t run
-
-bench-c3:
-    west build -p -b {{ board }} benchmarks/c3 && west build -t run
+    west build -p -b {{ board }} benchmarks/cpp && west flash
 
 bench-mem-c:
-    west build -p -b {{ board }} benchmarks/memory/c && west build -t run
+    west build -p -b {{ board }} benchmarks/memory/c && west flash
 
 bench-mem-cpp:
-    west build -p -b {{ board }} benchmarks/memory/cpp && west build -t run
-
-bench-mem-rust:
-    west build -p -b {{ board }} benchmarks/memory/rust && west build -t run
+    west build -p -b {{ board }} benchmarks/memory/cpp && west flash
 
 bench-mem-objc:
-    west build -p -b {{ board }} benchmarks/memory/objc && west build -t run
+    west build -p -b {{ board }} benchmarks/memory/objc && west flash
 
-bench-mem-zig:
-    west build -p -b {{ board }} benchmarks/memory/zig && west build -t run
+test-bench:
+    west twister -T benchmarks/ --device-testing --hardware-map hardware-map.yaml -O /tmp/twister-out
 
 bench-mem:
     just bench-mem-c
     just bench-mem-cpp
-    just bench-mem-rust
-    just bench-mem-zig
     just bench-mem-objc
 
 ast-dump file *includes:

@@ -16,7 +16,7 @@
 /* Transpiler-generated headers */
 #include "oz_dispatch.h"
 #include "OZObject_ozh.h"
-#include "BenchBase_ozh.h"
+#include "bench_helpers_ozh.h"
 #include "BenchChild_ozh.h"
 #include "BenchGrandChild_ozh.h"
 

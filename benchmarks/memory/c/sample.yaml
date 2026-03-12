@@ -1,0 +1,13 @@
+sample:
+  description: Plain C memory allocation overhead
+  name: C Memory Benchmark
+common:
+  tags: benchmark memory c
+  harness: console
+  harness_config:
+    type: one_line
+    regex:
+      - "PROJECT EXECUTION SUCCESSFUL"
+tests:
+  benchmark.memory.c:
+    tags: benchmark memory c

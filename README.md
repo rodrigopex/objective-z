@@ -24,34 +24,26 @@ Built on Zephyr primitives (`k_mem_slab`, `SYS_INIT`, `k_spinlock_t`, `atomic_t`
 
 ### Why not just C++?
 
-C++ virtual dispatch matches Objective-Z vtable dispatch at 16 cycles (see [benchmarks](#benchmark)). Objective-Z trades raw static dispatch speed for:
+C++ virtual dispatch is 2x slower than Objective-Z vtable dispatch on real hardware (20 vs 10 cycles, nRF52833 @ 64 MHz). Objective-Z also offers:
 
 - **Familiar ObjC syntax** — `[obj method]`, `@property`, `@autoreleasepool`, `@synchronized`
 - **Compile-time ARC** — automatic `retain`/`release` with scope-based cleanup, no manual `delete`
 - **Protocol-based polymorphism** — protocol vtables with zero-cost conformance checking
 - **Foundation classes** — `OZString`, `OZArray`, `OZDictionary`, `OZNumber` with fast enumeration
-- **Slab allocation** — 8x faster than C++ `new`/`delete` (320 vs 2,548 cycles)
-
-### Why not just Rust?
-
-Rust is excellent for embedded but:
-
-- **Zephyr integration** is still maturing (zephyr-lang-rust module required)
-- **Ownership model** has a learning curve; ObjC ARC is simpler for teams already using C
-- **Binary size** — Rust benchmarks show 22.3 KB FLASH / 30.8 KB RAM vs transpiler's 16.9 KB / 9.9 KB
-- **Vtable dispatch** — Rust trait objects (22 cycles) are slightly slower than ObjC vtable (16 cycles)
-- **Object allocation** — `Box::new` + drop (2,496 cycles) is 7.8x slower than slab alloc (320 cycles)
+- **Slab allocation** — 4x faster than C++ `new`/`delete` (246 vs 995 cycles)
 
 ## How It Compares
 
+All benchmarks on **nRF52833 DK** (ARM Cortex-M4F @ 64 MHz), DWT cycle counter, 10 000 iterations.
+
 ### Dispatch & Allocation
 
-| Operation                      |    C |  C++ | Rust |  Zig | ObjC (transpiler) |
-| ------------------------------ | ---: | ---: | ---: | ---: | ----------------: |
-| Static / direct call           |   13 |   ~0 |   ~1 |   ~0 |              7–10 |
-| Virtual / vtable dispatch      |    — |   16 |   22 |   16 |                16 |
-| Slab / heap alloc+dealloc      |    — | 2548 | 2496 | 2054 |               320 |
-| Atomic increment (refcount)    |    — |   29 |   16 |   16 |                39 |
+| Operation                      |  C++ | ObjC (transpiler) |
+| ------------------------------ | ---: | ----------------: |
+| Static / direct call           |    2 |               5–6 |
+| Virtual / vtable dispatch      |   20 |             10–12 |
+| Slab / heap alloc+dealloc      |  995 |               246 |
+| Atomic increment (refcount)    |   14 |                17 |
 
 ### Foundation Classes
 
@@ -332,12 +324,10 @@ Requires [just](https://github.com/casey/just). Default board: `mps2/an385`.
 | `just test-behavior`   | Run compiled behavior tests            |
 | `just test-adapted`    | Run adapted upstream tests             |
 | `just smoke`           | Run host-side PAL smoke test           |
-| `just bench`           | Run ObjC benchmark                     |
+| `just bench`           | Run ObjC benchmark (build + flash)     |
 | `just bench-cpp`       | Run C++ comparison benchmark           |
-| `just bench-rust`      | Run Rust comparison benchmark          |
-| `just bench-zig`       | Run Zig comparison benchmark           |
-| `just bench-c3`        | Run C3 comparison benchmark (RISC-V)  |
-| `just bench-mem`       | Run memory comparison (all languages)  |
+| `just bench-mem`       | Run memory comparison (C, C++, ObjC)   |
+| `just test-bench`      | Run all benchmarks via twister (HW)    |
 | `just transpile`       | Run OZ transpiler directly             |
 | `just ast-dump file`   | Clang JSON AST dump                    |
 
@@ -509,63 +499,64 @@ void no_leak(void)
 
 ## Benchmark
 
-Cycle-accurate benchmarks using the DWT cycle counter. Results from QEMU (mps2/an385, ARM Cortex-M3, 25 MHz):
+Cycle-accurate benchmarks on **nRF52833 DK** (ARM Cortex-M4F @ 64 MHz) using the DWT cycle counter. 10 000 iterations, 100 warmup, overhead-calibrated.
 
 ```sh
-just bench       # ObjC transpiler benchmark
-just bench-cpp   # C++ comparison benchmark
-just bench-rust  # Rust comparison benchmark
-just bench-zig   # Zig comparison benchmark
-just bench-mem   # Memory comparison (C, C++, Rust, Zig, ObjC)
+just board=nrf52833dk/nrf52833 bench       # ObjC transpiler benchmark
+just board=nrf52833dk/nrf52833 bench-cpp   # C++ comparison benchmark
+just board=nrf52833dk/nrf52833 bench-mem   # Memory comparison (C, C++, ObjC)
+just test-bench                            # Run all via twister (hardware map)
 ```
 
 ### Dispatch
 
 Transpiler uses compile-time vtable arrays indexed by `class_id`. No hash lookups, no cache — a single array dereference per dispatch:
 
-| Operation                         | Cycles |    ns |
-| --------------------------------- | -----: | ----: |
-| C function pointer (baseline)     |     13 |   520 |
-| Static dispatch (direct call)     |     10 |   400 |
-| Class method (static function)    |      7 |   280 |
-| Vtable dispatch (depth=0)         |     16 |   640 |
-| Vtable dispatch (depth=1)         |     16 |   640 |
-| Vtable dispatch (depth=2)         |     16 |   640 |
+| Operation                         | Cycles |   ns |
+| --------------------------------- | -----: | ---: |
+| C function pointer (baseline)     |      8 |  125 |
+| Static dispatch (direct call)     |      6 |   93 |
+| Class method (static function)    |      5 |   78 |
+| Vtable dispatch (depth=0)         |     10 |  156 |
+| Vtable dispatch (depth=1)         |     10 |  156 |
+| Vtable dispatch (depth=2)         |     12 |  187 |
 
-> **Key result:** Vtable dispatch (16 cycles) matches C++ virtual calls exactly. Inheritance depth is free — all depths resolve in identical cycles. Static dispatch (10 cycles) and class methods (7 cycles) inline to near-zero overhead.
+> **Key result:** Vtable dispatch (10–12 cycles) is **2x faster** than C++ virtual calls (20 cycles) on real hardware. Inheritance depth has negligible effect. Static dispatch (6 cycles) and class methods (5 cycles) approach direct function calls.
 
 ### Object Lifecycle
 
-| Operation                     | Cycles |     ns |
-| ----------------------------- | -----: | -----: |
-| slab alloc + init + release   |    320 | 12,800 |
+| Operation                     | Cycles |    ns |
+| ----------------------------- | -----: | ----: |
+| slab alloc + init + release   |    246 | 3,843 |
 
-> Slab-based allocation (320 cycles) is **14x faster** than legacy heap alloc (4,474 cycles) and **6.7x faster** than legacy static pools (2,151 cycles). No message dispatch overhead — `alloc`/`free` are direct slab operations, `init` is a vtable call.
+> Slab-based allocation (246 cycles) is **4x faster** than C++ `new`/`delete` (995 cycles) and **4.4x faster** than `unique_ptr` create/destroy (1,072 cycles). No heap metadata overhead — `alloc`/`free` are direct slab operations.
 
 ### Reference Counting
 
-| Operation                       | Cycles |    ns |
-| ------------------------------- | -----: | ----: |
-| `OZObject_retain` (atomic inc)  |     39 | 1,560 |
-| retain + release pair           |     90 | 3,600 |
+| Operation                       | Cycles |  ns |
+| ------------------------------- | -----: | --: |
+| `OZObject_retain` (atomic inc)  |     17 | 265 |
+| retain + release pair           |     42 | 656 |
 
-> `OZObject_retain` (39 cycles) is **1.5x faster** than legacy `objc_retain` (58 cycles) and **6.2x faster** than legacy retain-via-dispatch (240 cycles). The inline implementation avoids function call overhead and immortal-object guards.
+> `OZObject_retain` (17 cycles) is close to raw `atomic_fetch_add` (14 cycles in C++) — only 3 cycles overhead for null check. Both are inline operations with no function call overhead.
 
 ### Logging
 
 Comparison of `printk`, Zephyr `LOG_INF` (minimal mode), and `OZLog` (50 iterations):
 
-| Operation                    | Cycles |      ns |
-| ---------------------------- | -----: | ------: |
-| `printk` (simple string)     |  2,301 |  92,040 |
-| `LOG_INF` (simple string)    |  2,906 | 116,240 |
-| `OZLog` (simple string)      |  3,325 | 133,000 |
-| `printk` (integer format)    |  2,196 |  87,840 |
-| `LOG_INF` (integer format)   |  2,797 | 111,880 |
-| `OZLog` (integer format)     |  3,917 | 156,680 |
-| `printk` (string format)     |  2,039 |  81,560 |
-| `LOG_INF` (string format)    |  2,640 | 105,600 |
-| `OZLog` (string format)      |  3,924 | 156,960 |
+| Operation                    |  Cycles |        ns |
+| ---------------------------- | ------: | --------: |
+| `printk` (simple string)     |  94,463 | 1,475,984 |
+| `LOG_INF` (simple string)    | 111,137 | 1,736,515 |
+| `OZLog` (simple string)      |  94,459 | 1,475,921 |
+| `printk` (integer format)    |  61,103 |   954,734 |
+| `LOG_INF` (integer format)   |  77,776 | 1,215,250 |
+| `OZLog` (integer format)     |  61,094 |   954,593 |
+| `printk` (string format)     |  66,667 | 1,041,671 |
+| `LOG_INF` (string format)    |  83,339 | 1,302,171 |
+| `OZLog` (string format)      |  66,661 | 1,041,578 |
+
+> On real hardware with UART output, logging is dominated by serial I/O (~1 ms per line). `OZLog` matches `printk` exactly — both use the same `printk` backend. `LOG_INF` adds ~17% overhead from the logging subsystem.
 
 ### Object Sizes
 
@@ -576,22 +567,12 @@ Comparison of `printk`, Zephyr `LOG_INF` (minimal mode), and `OZLog` (50 iterati
 | BenchChild (no extra)     |  12 B |
 | BenchGrandChild (no extra)|  12 B |
 
-### Memory Footprint
-
-Transpiler binary size (mps2/an385, benchmark sample):
-
-| Configuration         |    FLASH |     RAM |
-| --------------------- | -------: | ------: |
-| Transpiler benchmark  | 21,684 B | 9,940 B |
-
 **Key takeaways:**
 
-- **Vtable dispatch matches C++** at 16 cycles per indirect call. No hash lookups, no cache misses — just an array index.
-- **Slab allocation is 14x faster** than legacy heap (320 vs 4,474 cycles). Per-class `k_mem_slab` pools have zero allocator overhead.
-- **Inline ARC is 1.5x faster** than legacy `objc_retain` (39 vs 58 cycles) and 6.2x faster than retain-via-dispatch (39 vs 240 cycles).
-- **Binary size: 21.7 KB FLASH, 9.9 KB RAM** — 45% less FLASH and 62% less RAM than the legacy runtime benchmark (39.6 KB / 26.0 KB).
-- **OZLog vs printk**: OZLog is ~1.4x `printk` for simple strings. `LOG_INF` in minimal mode adds ~26% over `printk`.
-- **QEMU caveat**: these are instruction-accurate counts, not true cycle-accurate. Real hardware numbers will differ, but relative comparisons hold.
+- **Vtable dispatch is 2x faster than C++** (10 vs 20 cycles) — single array dereference vs vptr indirection.
+- **Slab allocation is 4x faster** than C++ `new`/`delete` (246 vs 995 cycles). Per-class `k_mem_slab` pools have zero allocator overhead.
+- **Inline ARC** adds only 3 cycles over raw atomics (17 vs 14 cycles).
+- **OZLog matches printk** — zero overhead over the underlying `printk` backend on real UART.
 
 ### Legacy Runtime Reference
 
@@ -711,239 +692,106 @@ Blocks runtime cost:
 
 ### C++ Comparison
 
-Side-by-side C++ vs Objective-Z (same board, same iteration count, `just bench-cpp` vs `just bench`). All values in cycles. "ObjC (legacy)" column shows the retired runtime for reference.
+Side-by-side C++ vs Objective-Z on **nRF52833 DK** (ARM Cortex-M4F @ 64 MHz). All values in cycles.
 
 #### Dispatch
 
-| Operation                          | C++ | ObjC (transpiler) | ObjC (legacy) |
-| ---------------------------------- | --: | ----------------: | ------------: |
-| C function pointer (baseline)      |  13 |                13 |            13 |
-| Static / class method              |  ~0 |              7–10 |           212 |
-| Virtual / vtable dispatch (depth=0)|  16 |                16 |           205 |
-| Virtual / vtable dispatch (depth=1)|  16 |                16 |           205 |
-| Virtual / vtable dispatch (depth=2)|  16 |                16 |           205 |
+| Operation                          | C++ | ObjC (transpiler) |
+| ---------------------------------- | --: | ----------------: |
+| C function pointer (baseline)      |   8 |                 8 |
+| Direct / static / class method     |   2 |               5–6 |
+| Virtual / vtable dispatch (depth=0)|  20 |                10 |
+| Virtual / vtable dispatch (depth=1)|  21 |                10 |
+| Virtual / vtable dispatch (depth=2)|  20 |                12 |
 
-> Transpiler vtable dispatch (16 cycles) matches C++ virtual calls exactly — both use a single indirect call through a function pointer array. Static/class methods inline to near-zero (7–10 cycles). Legacy `objc_msgSend` (205 cycles) did pointer-hash cache lookup + table index.
+> Transpiler vtable dispatch (10–12 cycles) is **2x faster** than C++ virtual calls (20–21 cycles). C++ uses vptr indirection; the transpiler uses a direct vtable array indexed by `class_id`.
 
 #### Object Lifecycle
 
-| Operation                   |   C++ | ObjC (transpiler) | ObjC (legacy) |
-| --------------------------- | ----: | ----------------: | ------------: |
-| Slab / heap alloc+dealloc   | 2,548 |               320 |         4,474 |
-| Static pool (slab)          |   170 |                 — |         2,151 |
-| `unique_ptr` create/destroy | 2,612 |                 — |             — |
+| Operation                              |   C++ | ObjC (transpiler) |
+| -------------------------------------- | ----: | ----------------: |
+| Slab / heap alloc+dealloc              |   995 |               246 |
+| Placement new + dtor + slab free       |   130 |                 — |
+| `unique_ptr` create/destroy            | 1,072 |                 — |
 
-> Transpiler slab alloc+init+release (320 cycles) is **8x faster** than C++ `new`/`delete` (2,548 cycles). `k_mem_slab` is a fixed-size block pool with O(1) alloc/free — no heap metadata overhead.
+> Transpiler slab alloc+init+release (246 cycles) is **4x faster** than C++ `new`/`delete` (995 cycles). Both C++ placement new (130 cycles) and ObjC slab (246 cycles) use `k_mem_slab` — the extra ObjC cycles cover `init` vtable call + ARC release.
 
 #### Reference Counting
 
-| Operation                 |   C++ | ObjC (transpiler) | ObjC (legacy) |
-| ------------------------- | ----: | ----------------: | ------------: |
-| Atomic increment          |    29 |                39 |            58 |
-| Atomic inc + dec pair     |    52 |                90 |           135 |
-| `shared_ptr` copy / —     | 2,740 |                 — |             — |
+| Operation                     |   C++ | ObjC (transpiler) |
+| ----------------------------- | ----: | ----------------: |
+| Atomic increment              |    14 |                17 |
+| Atomic inc + dec pair         |    24 |                42 |
+| `shared_ptr` copy             | 1,140 |                 — |
+| `shared_ptr` copy + reset     | 1,182 |                 — |
 
-> Transpiler `OZObject_retain` (39 cycles) is competitive with raw `atomic_fetch_add` (29 cycles) — only 10 cycles overhead for null check. Both are inline operations with no function call or dispatch overhead.
+> `OZObject_retain` (17 cycles) is close to raw `atomic_fetch_add` (14 cycles) — 3 cycles for null check. C++ `shared_ptr` operations (1,140+ cycles) are 67x slower due to control block allocation and atomic operations on the control block.
 
-### Rust Comparison
+#### Introspection (C++)
 
-Side-by-side Rust vs Objective-Z (same board, same iteration count, `just bench-rust` vs `just bench`). All values in cycles. "ObjC (legacy)" column shows the retired runtime for reference.
+| Operation          | Cycles |
+| ------------------ | -----: |
+| `dynamic_cast` (hit)  |      2 |
+| `dynamic_cast` (miss) |      2 |
+| `typeid()`             |      4 |
 
-**Prerequisites** (one-time setup):
+#### Lambdas / std::function (C++)
 
-```sh
-west config manifest.project-filter "+zephyr-lang-rust,+nanopb"
-west update
-rustup target add thumbv7m-none-eabi
-```
-
-#### Dispatch (Rust)
-
-| Operation                            | Rust | ObjC (transpiler) | ObjC (legacy) |
-| ------------------------------------ | ---: | ----------------: | ------------: |
-| Direct / C function call (baseline)  |   ~1 |                13 |            13 |
-| Static function call                 |   ~1 |              7–10 |           212 |
-| Trait object / vtable dispatch (d=0) |   22 |                16 |           205 |
-| Trait object / vtable dispatch (d=1) |   22 |                16 |           205 |
-| Trait object / vtable dispatch (d=2) |   22 |                16 |           205 |
-
-> Transpiler vtable dispatch (16 cycles) is slightly faster than Rust trait objects (22 cycles) — both use indirect calls through function pointer arrays. Rust's 6-cycle overhead may be from fat pointer dereferencing. Legacy `objc_msgSend` was 9.3x slower.
-
-#### Object Lifecycle (Rust)
-
-| Operation                          |  Rust | ObjC (transpiler) | ObjC (legacy) |
-| ---------------------------------- | ----: | ----------------: | ------------: |
-| Slab / `Box::new` + drop (heap)   | 2,496 |               320 |         4,474 |
-| `Box<dyn Trait>` create + drop     | 2,538 |                 — |             — |
-
-> Transpiler slab alloc+init+release (320 cycles) is **7.8x faster** than Rust `Box::new` + drop (2,496 cycles). Slab allocation is O(1) with no heap metadata.
-
-#### Reference Counting (Rust)
-
-| Operation                | Rust | ObjC (transpiler) | ObjC (legacy) |
-| ------------------------ | ---: | ----------------: | ------------: |
-| Atomic increment         |   16 |                39 |            58 |
-| Atomic inc + dec pair    |   38 |                90 |           135 |
-| `Arc::clone`             |   22 |                 — |            58 |
-| `Arc::clone` + drop      |   58 |                 — |           135 |
-
-> Raw `AtomicI32::fetch_add` (16 cycles) vs transpiler `OZObject_retain` (39 cycles) — 2.4x gap due to null check + function call overhead. Both are inline operations. Legacy was 3.6x slower than Rust.
-
-### Zig Comparison
-
-Side-by-side Zig vs Objective-Z (same board, same iteration count, `just bench-zig` vs `just bench`). All values in cycles. "ObjC (legacy)" column shows the retired runtime for reference.
-
-Zig uses fat-pointer interfaces (ptr + vtable\*) for dynamic dispatch — similar to Rust trait objects. No inheritance; "depth" refers to struct composition depth, which does not affect dispatch cost. Zig calls Zephyr C APIs directly via `@cImport` (no FFI shim needed).
-
-#### Dispatch (Zig)
-
-| Operation                        |  Zig | ObjC (transpiler) | ObjC (legacy) |
-| -------------------------------- | ---: | ----------------: | ------------: |
-| Direct function call (baseline)  |   ~0 |                13 |            13 |
-| Static function call             |   ~0 |              7–10 |           212 |
-| Interface / vtable dispatch (d=0)|   16 |                16 |           205 |
-| Interface / vtable dispatch (d=1)|   12 |                16 |           205 |
-| Interface / vtable dispatch (d=2)|   13 |                16 |           205 |
-
-> Transpiler vtable dispatch (16 cycles) matches Zig interface dispatch (12–16 cycles) — both use function pointer array indirection. Legacy `objc_msgSend` was 12.8x–15.8x slower.
-
-#### Object Lifecycle (Zig)
-
-| Operation                        |  Zig | ObjC (transpiler) | ObjC (legacy) |
-| -------------------------------- | ---: | ----------------: | ------------: |
-| Slab / `k_malloc` + `k_free`    | 2,054 |               320 |         4,474 |
-| Stack allocation (baseline)      |   10 |                 — |             — |
-
-> Transpiler slab alloc+init+release (320 cycles) is **6.4x faster** than Zig `k_malloc` + `k_free` (2,054 cycles). Slab pools avoid heap overhead entirely.
-
-#### Reference Counting (Zig)
-
-| Operation                     |  Zig | ObjC (transpiler) | ObjC (legacy) |
-| ----------------------------- | ---: | ----------------: | ------------: |
-| Atomic increment              |   16 |                39 |            58 |
-| Atomic inc + dec pair         |   41 |                90 |           135 |
-
-> Zig `@atomicRmw` (16 cycles) vs transpiler `OZObject_retain` (39 cycles) — 2.4x gap from null check overhead. Legacy was 3.6x slower than Zig.
-
-### C3 Comparison
-
-Side-by-side C3 vs Objective-Z on RISC-V (`just board=qemu_riscv32 bench-c3` vs `just board=qemu_riscv32 bench`). All values in cycles. C3 currently only supports `elf-riscv32` for freestanding targets (no ARM Cortex-M), so all comparisons use `qemu_riscv32`. Tables include both ObjC transpiler and legacy runtime data.
-
-C3 uses `interface` + `@dynamic` methods for dynamic dispatch — runtime registration via `.init_array` constructors, dispatch via vtable lookup through `any` type. Calls Zephyr C APIs directly via `extern fn` declarations (timing shim needed only for `static inline` helpers).
-
-#### Dispatch (C3)
-
-| Operation                       |  C3 | ObjC (transpiler) | ObjC (legacy) | C3 vs transpiler |
-| ------------------------------- | --: | ----------------: | ------------: | ---------------: |
-| Direct function call (baseline) |  12 |                 2 |             2 | 6.0x             |
-| Static function call            |  12 |                 2 |             2 | 6.0x             |
-| Interface dispatch (depth=0)    |   4 |                 5 |            71 | 0.8x             |
-| Interface dispatch (depth=1)    |   4 |                 5 |            71 | 0.8x             |
-| Interface dispatch (depth=2)    |   4 |                 5 |            71 | 0.8x             |
-
-> C3 interface dispatch (4 cycles) uses `@dynamic` vtable lookup via `any` — comparable to C++ virtual calls. ObjC transpiler vtable dispatch (5 cycles) is nearly identical — both use indexed vtable arrays. Depth has no effect for either approach. Legacy ObjC `objc_msg_lookup_sender` on RISC-V (71 cycles) was 14x slower due to hash-based slot dispatch. Direct/static calls show C3 volatile-store overhead (12 cycles) vs ObjC's bare C call (2 cycles).
-
-#### Object Lifecycle (C3)
-
-| Operation                  |  C3 | ObjC (transpiler) | ObjC (legacy) | C3 vs transpiler |
-| -------------------------- | --: | ----------------: | ------------: | ---------------: |
-| Alloc + init + release     | 624 |                95 |         1,245 | 6.6x slower      |
-| Stack allocation (baseline)|  12 |                 — |             — | —                |
-
-> ObjC transpiler slab alloc + init + release (95 cycles) is 6.6x faster than C3 `k_malloc` + `k_free` (624 cycles) and 13.1x faster than legacy ObjC (1,245 cycles). Slab allocation is O(1) — no free-list walk or fragmentation.
-
-#### Reference Counting (C3)
-
-| Operation             |  C3 | ObjC (transpiler) | ObjC (legacy) | C3 vs transpiler |
-| --------------------- | --: | ----------------: | ------------: | ---------------: |
-| Atomic increment      |  12 |                 5 |            59 | 2.4x slower      |
-| Atomic inc + dec pair |   1 |                11 |            85 | 0.1x             |
-
-> ObjC transpiler `OZObject_retain` (5 cycles) is 2.4x faster than C3 `$$atomic_fetch_add` (12 cycles) — both are inline atomics, but C3 has volatile-store overhead. The C3 inc+dec pair (1 cycle) suggests optimizer combining. Legacy ObjC retain (59 cycles) added immortal-object guard + function call overhead.
-
-#### Introspection (C3)
-
-| Operation              |  C3 | ObjC (legacy) | Ratio |
-| ---------------------- | --: | ------------: | ----- |
-| `any.type` check (hit) |  12 |            43 | 3.6x  |
-| `any.type` check (miss)|  12 |           128 | 10.7x |
-
-> C3 `any` type stores a typeid alongside the pointer — type checks are a simple integer comparison (12 cycles, same cost hit or miss). ObjC `respondsToSelector:` is asymmetric: 43 cycles on hit (found in dispatch table) vs 128 cycles on miss (full method list walk).
-
-#### Function Pointers (C3)
-
-| Operation                          |  C3 | ObjC (legacy) | Ratio |
-| ---------------------------------- | --: | ------------: | ----- |
-| Function pointer call              |   1 |             2 | 0.5x  |
-| Struct closure invocation          |   1 |             4 | 0.3x  |
-
-> Plain function pointers (1 cycle) and struct closure invocation (1 cycle) are at or below timing resolution — effectively zero overhead. C3 closures are struct methods with a captured field.
-
-#### Function Pointer Memory (C3)
-
-| Metric                       |  C3 | ObjC (legacy) |
-| ---------------------------- | --: | ------------: |
-| Function pointer             | 4 B |           4 B |
-| Struct closure (int capture) | 4 B |          24 B |
-| `any` type (ptr + typeid)   | 8 B |          20 B |
-
-> C3 struct closures with captures are 4 B (only the captured data). The `any` type (ptr + typeid = 8 B) is C3's runtime type erasure, comparable to Zig's fat pointers. ObjC blocks carry a fixed `Block_layout` header (20 B minimum).
+| Operation                          | Cycles |
+| ---------------------------------- | -----: |
+| C function pointer call            |      8 |
+| Non-capturing lambda (func ptr)    |      9 |
+| `std::function` invocation         |     25 |
+| `std::function` copy + destroy     |    102 |
 
 ### Memory Comparison
 
-Per-object memory cost across C, C++, Rust, Zig, and Objective-C (`just bench-mem`). All values from the same board (mps2/an385, ARM Cortex-M3). C/C++/Rust/Zig use a dedicated 8 KB `sys_heap`. The transpiler ObjC column uses per-class `k_mem_slab` pools (zero allocator overhead). The legacy ObjC column (in parentheses) used `sys_heap`.
+Per-object memory cost across C, C++, and Objective-Z on **nRF52833 DK**. C/C++ use a dedicated 8 KB `sys_heap`. ObjC uses per-class `k_mem_slab` pools (zero allocator overhead).
 
 #### Object Sizes
 
-| Metric                     |    C |  C++ | Rust |  Zig | ObjC (transpiler) | ObjC (legacy) |
-| -------------------------- | ---: | ---: | ---: | ---: | ----------------: | ------------: |
-| Base object (sizeof)       |  8 B |  8 B |  4 B |  4 B |               8 B |           8 B |
-| Child (+ 1 int)            | 12 B | 12 B |  8 B |  8 B |              12 B |          12 B |
-| GrandChild (+ 2 ints)      | 16 B | 16 B | 12 B | 12 B |              16 B |          16 B |
-| Dispatch mechanism         |  4 B |  4 B |  8 B |  8 B |       4 B (enum)  |    4 B (isa)  |
-| Refcount field             |  4 B |  4 B |  4 B |  4 B |               4 B |           4 B |
+| Metric                     |    C |  C++ | ObjC (transpiler) |
+| -------------------------- | ---: | ---: | ----------------: |
+| Base object (sizeof)       |  8 B |  8 B |               8 B |
+| Child (+ 1 int)            | 12 B | 12 B |              12 B |
+| GrandChild (+ 2 ints)      | 16 B | 16 B |              16 B |
+| Dispatch mechanism         |  4 B |  4 B |       4 B (enum)  |
+| Refcount field             |  4 B |  4 B |               4 B |
 
-> Object sizes are identical between transpiler and legacy — both embed a 4 B dispatch field + 4 B refcount. The transpiler uses an `enum oz_class_id` (4 B) as vtable index instead of an isa pointer. Rust and Zig structs have no embedded dispatch pointer — dispatch goes through fat pointers (8 B) on the stack.
+> Object sizes are identical — all embed a 4 B dispatch field + 4 B refcount. The transpiler uses `enum oz_class_id` as vtable index instead of a vptr.
 
 #### Single Allocation
 
-| Object type   |     C |   C++ |  Rust |   Zig | ObjC (transpiler) | ObjC (legacy) |
-| ------------- | ----: | ----: | ----: | ----: | ----------------: | ------------: |
-| Base          | 16 B  | 16 B  |  8 B  |  8 B  |               8 B |          16 B |
-| Child         | 16 B  | 16 B  | 16 B  | 16 B  |              12 B |          16 B |
-| GrandChild    | 24 B  | 24 B  | 16 B  | 16 B  |              16 B |          24 B |
+| Object type   |     C |   C++ | ObjC (transpiler) |
+| ------------- | ----: | ----: | ----------------: |
+| Base          | 16 B  | 16 B  |               8 B |
+| Child         | 16 B  | 16 B  |              12 B |
+| GrandChild    | 24 B  | 24 B  |              16 B |
 
-> Transpiler slab allocation has **zero overhead** per object — block size equals `sizeof(struct)`. Legacy and C/C++ used `sys_heap` which adds ~8 B per allocation (chunk header). The transpiler matches or beats Rust/Zig for per-object memory.
+> Transpiler slab allocation has **zero overhead** — block size equals `sizeof(struct)`. C/C++ `sys_heap` adds 4–8 B per allocation (chunk header).
 
 #### Bulk Allocation (20 objects)
 
-| Object type        |      C |    C++ |   Rust |    Zig | ObjC (transpiler) | ObjC (legacy) |
-| ------------------ | -----: | -----: | -----: | -----: | ----------------: | ------------: |
-| 20x Child          | 320 B  | 320 B  | 320 B  | 320 B  |             240 B |         320 B |
-| 20x GrandChild     | 480 B  | 480 B  | 320 B  | 320 B  |             320 B |         480 B |
-| Per GrandChild avg |  24 B  |  24 B  |  16 B  |  16 B  |              16 B |          24 B |
+| Object type        |      C |    C++ | ObjC (transpiler) |
+| ------------------ | -----: | -----: | ----------------: |
+| 20x Child          | 320 B  | 320 B  |             240 B |
+| 20x GrandChild     | 480 B  | 480 B  |             320 B |
+| Per GrandChild avg |  24 B  |  24 B  |              16 B |
 
-> Transpiler slab allocation (16 B/GrandChild) matches Rust/Zig — zero allocator overhead means per-object cost equals `sizeof`. Legacy ObjC and C/C++ paid 8 B overhead per allocation.
+> 33% less memory per object with slab allocation (16 B vs 24 B) — zero heap metadata overhead.
 
-#### Smart Pointers / Reference Counting
+#### Smart Pointers / Reference Counting (C++)
 
-| Metric                          |        C |               C++ |        Rust |       Zig |          ObjC |
-| ------------------------------- | -------: | ----------------: | ----------: | --------: | ------------: |
-| `sizeof` pointer on stack       |      4 B |     4 B (unique)  |   4 B (Box) |       4 B |           4 B |
-|                                 |        — |     8 B (shared)  |   4 B (Arc) |         — |             — |
-| Control block (heap)            |      0 B | ~16 B (make_shared) | ~8 B (Arc) |       0 B |          0 B |
-| Refcount storage                | inline   |            inline |  ctrl block |    inline |        inline |
+| Metric                          |               C++ |          ObjC |
+| ------------------------------- | ----------------: | ------------: |
+| `sizeof(unique_ptr)`            |               4 B |             — |
+| `sizeof(shared_ptr)`            |               8 B |             — |
+| `make_unique` heap cost         |              16 B |             — |
+| `make_shared` heap cost         |    24 B (+ ctrl)  |             — |
+| `shared_ptr(new T)` heap cost   | 40 B (2 allocs)   |             — |
+| Manual `atomic<int>` refcount   |     4 B (inline)  |  4 B (inline) |
 
-> ObjC (both transpiler and legacy), C, and Zig store the refcount inline (0 extra heap). The transpiler uses `oz_atomic_t` (4 B inline in `OZObject`).
-
-#### Binary Size
-
-| Metric |       C |     C++ |     Zig |    Rust | ObjC (transpiler) | ObjC (legacy) |
-| ------ | ------: | ------: | ------: | ------: | ----------------: | ------------: |
-| FLASH  | 14.1 KB | 15.6 KB | 18.7 KB | 22.3 KB |           16.9 KB |       29.8 KB |
-| RAM    | 17.4 KB | 21.4 KB | 20.9 KB | 30.8 KB |            9.9 KB |       25.4 KB |
-
-> Transpiler binary size (16.9 KB FLASH, 9.9 KB RAM) is competitive with C/C++. The 43% FLASH and 61% RAM reduction vs legacy comes from eliminating the runtime (class tables, message dispatch, ARC runtime, Foundation classes). Only generated vtable arrays, slab definitions, and PAL headers remain.
+> ObjC stores the refcount inline (0 extra heap cost). C++ `make_shared` adds a ~16 B control block; `shared_ptr(new T)` does two allocations totaling 40 B.
 
 ## License
 
