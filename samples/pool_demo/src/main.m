@@ -17,7 +17,7 @@ int printk(const char *fmt, ...);
 
 /* ── Sensor class ─────────────────────────────────────────────────── */
 
-@interface Sensor : OZObject {
+@interface Sensor: OZObject {
 	int _value;
 }
 - (void)setValue:(int)v;
@@ -55,7 +55,9 @@ int main(void)
 	for (int i = 1; i <= 3; i++) {
 		@autoreleasepool {
 			Sensor *s = [[Sensor alloc] init];
-			[s setValue:i];
+			@synchronized(s) {
+				[s setValue:i];
+			}
 			printk("pool alloc sensor value=%d\n", [s value]);
 			/* ARC releases s at @autoreleasepool scope exit */
 		}
