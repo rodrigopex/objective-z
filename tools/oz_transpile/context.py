@@ -34,6 +34,7 @@ def build_source_context(
     root_class: str,
     has_item_pool: bool,
     pool_count_fn=None,
+    extra_static_names: set[str] | None = None,
 ) -> dict[str, str]:
     """Build context dict mapping _n_L_C keys to rendered C strings.
 
@@ -45,6 +46,7 @@ def build_source_context(
         root_class: Name of root class (e.g., "OZObject").
         has_item_pool: Whether item pool is needed.
         pool_count_fn: Callable(cls_name) -> pool count.
+        extra_static_names: Additional static variable names to blank.
 
     Returns:
         Dict mapping placeholder keys to rendered C strings.
@@ -70,7 +72,7 @@ def build_source_context(
     for f in module.functions:
         func_map[f.name] = f
 
-    static_names = set()
+    static_names = set(extra_static_names) if extra_static_names else set()
     for cls in classes:
         for sv in cls.statics:
             static_names.add(sv.name)

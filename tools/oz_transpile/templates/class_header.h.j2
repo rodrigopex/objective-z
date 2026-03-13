@@ -7,6 +7,9 @@
 {% if superclass_header %}
 #include "{{ superclass_header }}_ozh.h"
 {% endif %}
+{% for inc in user_includes %}
+{{ inc }}
+{% endfor %}
 {% for td in ivar_type_defs %}
 
 {{ td }}

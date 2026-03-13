@@ -5,9 +5,6 @@
 {% endfor %}
 
 OZ_SLAB_DEFINE(oz_slab_{{ name }}, sizeof(struct {{ name }}), {{ pool_count }}, 4);
-{% for inc in user_includes %}
-{{ inc }}
-{% endfor %}
 
 {% for line in verbatim_lines %}
 {{ line }}

@@ -124,15 +124,21 @@ _SYSTEM_PATH_SEGMENTS = frozenset({"/zephyr/", "/sdk/", "/clang/", "/picolibc/",
                                    "/SDKs/", "/usr/include/", "zephyr-sdk"})
 
 
-def _is_user_struct(node: dict) -> bool:
-    """Check if a RecordDecl is a user-defined struct (main file or user header)."""
+def _is_user_struct(node: dict, last_file: str = "") -> bool:
+    """Check if a RecordDecl is a user-defined struct (main file or user header).
+
+    When Clang omits 'file' from loc (same as previous node), fall back to
+    last_file to determine the actual definition file.  This prevents structs
+    from system headers (e.g. gpio_dt_spec from zephyr/drivers/gpio.h) being
+    mistakenly collected when they are transitively included via a user header.
+    """
     if not node.get("completeDefinition"):
         return False
     name = node.get("name", "")
     if not name:
         return False
     loc = node.get("loc", {})
-    file_path = loc.get("file", "")
+    file_path = loc.get("file", "") or last_file
     if not file_path:
         # For nodes from included headers, try the includedFrom path
         included = loc.get("includedFrom", {})
@@ -261,7 +267,7 @@ def _walk(node: dict, module: OZModule, impl_name: str | None = None,
             tag = node.get("tagUsed", "struct")
             if tag == "union":
                 _collect_union_def(node, module)
-        elif _is_user_struct(node):
+        elif _is_user_struct(node, last_file):
             _collect_struct_def(node, module)
         return
     elif kind == "VarDecl":
@@ -515,8 +521,21 @@ def _collect_function(node: dict, module: OZModule) -> None:
     ))
 
 
+def _has_initializer(node: dict) -> bool:
+    """Check if a VarDecl has an initializer expression in the AST."""
+    for child in node.get("inner", []):
+        if child.get("kind", "").endswith("Expr") or child.get("kind") == "InitListExpr":
+            return True
+    return False
+
+
 def _collect_static_var(node: dict, module: OZModule) -> None:
-    """Collect a file-scope static variable declaration."""
+    """Collect a file-scope static variable declaration.
+
+    Only collects variables whose initializer can be faithfully reproduced
+    (simple literals or no initializer).  Variables with complex initializers
+    (macros, compound literals) are left for roundtrip source preservation.
+    """
     name = node.get("name", "")
     if not name:
         return
@@ -524,6 +543,8 @@ def _collect_static_var(node: dict, module: OZModule) -> None:
     if not qual_type:
         return
     init_value = _extract_init_value(node)
+    if init_value is None and _has_initializer(node):
+        return
     module.statics.append(OZStaticVar(name=name, oz_type=OZType(qual_type),
                                       init_value=init_value))
 
@@ -628,6 +649,21 @@ def _is_user_include(line: str, source_dir: Path | None = None) -> bool:
     return True
 
 
+def _scan_includes(path: Path, module: OZModule) -> None:
+    """Scan a source or header file for user includes and add to module."""
+    if not path.is_file():
+        return
+    source = path.read_bytes()
+    parser = Parser(_TS_LANG)
+    tree = parser.parse(source)
+    for child in tree.root_node.children:
+        if child.type == "preproc_include":
+            line = source[child.start_byte:child.end_byte].decode()
+            if _is_user_include(line, path.parent):
+                if line not in module.user_includes:
+                    module.user_includes.append(line)
+
+
 def _collect_verbatim_lines(ast_root: dict, module: OZModule) -> None:
     """Scan original source for top-level expression statements and includes."""
     main_file = _find_main_file(ast_root)
@@ -636,6 +672,15 @@ def _collect_verbatim_lines(ast_root: dict, module: OZModule) -> None:
     path = Path(main_file)
     if not path.is_file():
         return
+
+    # Also scan companion header file(s) for user includes
+    header_candidates = [
+        path.with_suffix(".h"),
+        path.parent / "include" / (path.stem + ".h"),
+        path.parent.parent / "include" / (path.stem + ".h"),
+    ]
+    for header in header_candidates:
+        _scan_includes(header, module)
 
     source = path.read_bytes()
     parser = Parser(_TS_LANG)

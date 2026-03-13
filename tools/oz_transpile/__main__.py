@@ -79,6 +79,7 @@ def _associate_module_items_with_class(module):
                 statics=list(module.statics),
                 verbatim_lines=list(module.verbatim_lines),
                 user_includes=list(module.user_includes),
+                source_path=module.source_paths.get(module.source_stem),
             ))
             module.functions = []
             module.statics = []
@@ -94,13 +95,24 @@ def _associate_module_items_with_class(module):
         if any(m.body_ast for m in cls.methods):
             primary = cls
             break
+
+    # No class with implementation — treat as orphan source
     if primary is None:
-        for cls in module.classes.values():
-            if cls.methods or cls.ivars:
-                primary = cls
-                break
-    if primary is None:
-        primary = next(iter(module.classes.values()))
+        if has_items and module.source_stem:
+            module.orphan_sources.append(OrphanSource(
+                stem=module.source_stem,
+                functions=list(module.functions),
+                statics=list(module.statics),
+                verbatim_lines=list(module.verbatim_lines),
+                user_includes=list(module.user_includes),
+                source_path=module.source_paths.get(module.source_stem),
+            ))
+            module.functions = []
+            module.statics = []
+            module.verbatim_lines = []
+            module.user_includes = []
+        return
+
     primary.functions.extend(module.functions)
     primary.statics.extend(module.statics)
     for line in module.verbatim_lines:

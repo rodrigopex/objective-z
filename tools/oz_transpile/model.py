@@ -182,6 +182,7 @@ class OrphanSource:
     statics: list[OZStaticVar] = field(default_factory=list)
     verbatim_lines: list[str] = field(default_factory=list)
     user_includes: list[str] = field(default_factory=list)
+    source_path: Path | None = None
 
 
 @dataclass(slots=True)
