@@ -271,12 +271,20 @@ def _dispatch_header_ctx(module: OZModule, root_class: str = "OZObject",
             "call_args": call_args, "macro_params": macro_params,
         })
 
+    # Collect user includes needed by protocol dispatch param types
+    dispatch_includes = []
+    for cls in module.classes.values():
+        for inc in cls.user_includes:
+            if inc not in dispatch_includes:
+                dispatch_includes.append(inc)
+
     return {
         "classes": classes,
         "class_count": len(module.classes),
         "proto_sels": proto_sels,
         "root_class": root_class,
         "item_pool_count": item_pool_count,
+        "dispatch_includes": dispatch_includes,
     }
 
 

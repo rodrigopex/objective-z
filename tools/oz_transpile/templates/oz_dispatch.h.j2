@@ -10,6 +10,9 @@
 #ifndef BOOL
 #define BOOL _Bool
 #endif
+{% for inc in dispatch_includes %}
+{{ inc }}
+{% endfor %}
 
 {% for cls in classes %}
 struct {{ cls.name }};

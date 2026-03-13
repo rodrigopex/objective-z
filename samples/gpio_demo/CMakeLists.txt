@@ -13,4 +13,5 @@ objz_transpile_sources(app
     src/main.m
     src/GPIOPin.m
     src/GPIOInput.m
+    src/GPIOOutput.m
 )

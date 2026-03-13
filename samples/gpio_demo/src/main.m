@@ -4,58 +4,51 @@
  */
 
 #import <Foundation/Foundation.h>
+#import "GPIOOutput.h"
 #import "GPIOInput.h"
 #include <zephyr/kernel.h>
 
-// static const struct gpio_dt_spec kLedSpec = GPIO_DT_SPEC_GET(DT_ALIAS(led0), gpios);
+static const struct gpio_dt_spec kLedSpec = GPIO_DT_SPEC_GET(DT_ALIAS(led0), gpios);
 static const struct gpio_dt_spec kBtnSpec = GPIO_DT_SPEC_GET(DT_ALIAS(sw0), gpios);
 
-// static GPIOOutput *led;
+static GPIOOutput *led;
 static GPIOInput *btn;
 
 int main(void)
 {
-	printk("=== GPIO Demo ===\n");
+	OZLog("=== GPIO Demo ===");
 
-	// led = [[OZGPIOOutput alloc] initWithDTSpec:&kLedSpec flags:0];
-	// if (led != nil) {
-	// 	printk("LED configured\n");
-	// }
+	led = [[GPIOOutput alloc] initWithDTSpec:&kLedSpec flags:0];
+	if (led != nil) {
+		OZLog("LED configured");
+	}
 
-	/* Block callback variant */
 	btn = [[GPIOInput alloc] initWithDTSpec:&kBtnSpec
 					  flags:GPIO_INT_EDGE_TO_ACTIVE
 				  blockCallback:^(const struct device *port,
 						  struct gpio_callback *cb, gpio_port_pins_t pins) {
-				    printk("Button pressed (%lld)!\n", k_uptime_get());
-				    // [led toggle];
+				    OZLog("Button pressed (%lld)!", k_uptime_get());
+				    [led toggle];
 				  }];
 
-	/* C callback variant (uncomment to use instead):
-	btn = [[OZGPIOInput alloc]
-		initWithDTSpec:&kBtnSpec
-			 flags:GPIO_INT_EDGE_TO_ACTIVE
-		      callback:btn_callback];
-	*/
-
 	if (btn != nil) {
-		printk("Button configured\n");
+		OZLog("Button configured");
 	}
 
-	// [led setActive:YES];
-	// printk("LED on\n");
+	[led setActive:YES];
+	OZLog("LED on");
 
-	// k_msleep(1000);
+	k_msleep(1000);
 
-	// [led setActive:NO];
-	// printk("LED off\n");
+	[led setActive:NO];
+	OZLog("LED off");
 
-	// k_msleep(1000);
+	k_msleep(1000);
 
-	// [led toggle];
-	// printk("LED toggled\n");
+	[led toggle];
+	OZLog("LED toggled");
 
-	printk("=== GPIO Demo complete ===\n");
+	OZLog("=== GPIO Demo complete ===");
 
 	return 0;
 }
