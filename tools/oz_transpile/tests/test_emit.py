@@ -2953,3 +2953,23 @@ class TestSwitchCaseEmission:
             assert "self->_state = 1;" in content
             assert "break;" in content
             assert "default:" in content
+
+
+class TestUserIncludePreservation:
+    """OZ-011: quoted #include for plain C headers must be preserved."""
+
+    def test_user_include_in_template_path(self):
+        """user_includes on a class should appear in the generated .c file."""
+        m = OZModule()
+        m.classes["OZObject"] = OZClass("OZObject")
+        m.classes["Pub"] = OZClass("Pub", superclass="OZObject",
+            user_includes=['#include "px_zbus_defs.h"'],
+            methods=[OZMethod("publish", OZType("void"), body_ast={
+                "kind": "CompoundStmt", "inner": []})])
+        resolve(m)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            source = open(os.path.join(tmpdir, "Pub_ozm.c")).read()
+            header = open(os.path.join(tmpdir, "Pub_ozh.h")).read()
+            assert '#include "px_zbus_defs.h"' in source or \
+                   '#include "px_zbus_defs.h"' in header
