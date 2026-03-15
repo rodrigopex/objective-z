@@ -30,11 +30,11 @@ transpiler pipeline.
 
 ## Control Flow
 
-- **`switch` / `case` supported with C enum types.** The transpiler passes
-  `switch`/`case` through to generated C. User-defined enums from the main
-  source file are collected and emitted in the class header when used as an
-  ivar type. Ensure the enum ivar uses the explicit `enum Name` type so the
-  transpiler includes the definition in the generated header.
+- **`switch` / `case` supported.** The transpiler emits `switch`/`case`/`default`
+  statements. User-defined C enums from the main source file are collected and
+  emitted in the class header when used as an ivar type. Ensure the enum ivar
+  uses the explicit `enum Name` type so the transpiler includes the definition
+  in the generated header.
 
 - **`for-in` uses IteratorProtocol, not NSFastEnumeration.** The transpiler
   lowers `for (id obj in collection)` to a scoped iterator loop via
