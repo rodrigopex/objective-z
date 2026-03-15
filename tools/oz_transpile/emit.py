@@ -415,9 +415,7 @@ def _class_header_ctx(ctx: _EmitCtx, stem: str | None = None,
         function_protos.append(f"{ret} {func.name}({params_str});")
 
     extern_decls = []
-    for sv in cls.statics:
-        decl_str = sv.oz_type.c_param_decl(sv.name)
-        extern_decls.append(f"extern {decl_str};")
+    # Static variables are TU-private — no extern declarations in headers
 
     superclass_stem = None
     if cls.superclass and cls.superclass in module.classes:
