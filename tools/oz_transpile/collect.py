@@ -372,6 +372,12 @@ def _collect_interface(node: dict, module: OZModule) -> None:
     protocols = []
     properties = []
 
+    # Collect protocols from top-level "protocols" array (Clang JSON format)
+    for proto_entry in node.get("protocols", []):
+        proto_name = proto_entry.get("name", "")
+        if proto_name:
+            protocols.append(proto_name)
+
     for child in node.get("inner", []):
         ckind = child.get("kind", "")
         if ckind == "ObjCIvarDecl":
@@ -382,7 +388,7 @@ def _collect_interface(node: dict, module: OZModule) -> None:
             ivars.append(OZIvar(ivar_name, OZType(qual_type)))
         elif ckind == "ObjCProtocol":
             proto_name = child.get("name", "")
-            if proto_name:
+            if proto_name and proto_name not in protocols:
                 protocols.append(proto_name)
         elif ckind == "ObjCPropertyDecl":
             prop = _collect_property(child, module)
