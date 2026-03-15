@@ -631,8 +631,17 @@ def _scan_unsupported(node: dict, module: OZModule) -> None:
     """Recursively scan for unsupported AST node kinds."""
     kind = node.get("kind", "")
     if kind in _UNSUPPORTED_AST_KINDS:
+        loc = node.get("loc", {})
+        line = loc.get("line", "")
+        src = ""
+        if module.source_path:
+            src = f"{module.source_path.name}"
+        if src and line:
+            src = f"{src}:{line}: "
+        elif src:
+            src = f"{src}: "
         module.errors.append(
-            "@try/@catch/@finally is not supported")
+            f"{src}@try/@catch/@finally is not supported")
         return
     for child in node.get("inner", []):
         _scan_unsupported(child, module)
