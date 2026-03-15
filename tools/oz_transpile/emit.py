@@ -1693,6 +1693,12 @@ def _emit_msg_expr(node: dict, out: StringIO, ctx: _EmitCtx) -> None:
         inferred_class = _infer_receiver_class(receiver, cls, module) if receiver else cls.name
         # Walk up hierarchy to find class that actually defines the selector
         defining_class = _find_defining_class(inferred_class, selector, module)
+        if defining_class == inferred_class:
+            cls_obj = module.classes.get(inferred_class)
+            if cls_obj and not any(m.selector == selector for m in cls_obj.methods):
+                module.diagnostics.append(
+                    f"warning: method '{selector}' not found on class "
+                    f"'{inferred_class}' or its superclasses")
         out.write(f"{defining_class}_{c_sel}(")
         if receiver:
             needs_cast = defining_class != inferred_class
