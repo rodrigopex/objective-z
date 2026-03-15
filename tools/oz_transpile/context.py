@@ -168,7 +168,7 @@ def _build_impl_context(
     for sv in cls.statics:
         decl_str = sv.oz_type.c_param_decl(sv.name)
         init = f" = {sv.init_value}" if sv.init_value is not None else ""
-        preamble.write(f"{decl_str}{init};\n")
+        preamble.write(f"static {decl_str}{init};\n")
 
     if is_root:
         _emit_root_retain_release(cls, module, preamble)
