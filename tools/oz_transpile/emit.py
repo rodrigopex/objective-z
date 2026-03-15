@@ -2641,11 +2641,13 @@ def _emit_patched_orphan_source(orphan: OrphanSource, module: OZModule,
     out.write('#include "oz_dispatch.h"\n')
     for dep_stem in dep_stems:
         out.write(f'#include "{dep_stem}_ozh.h"\n')
-    # Emit orphan statics (includes __block promoted vars and typed statics)
+    # Emit orphan statics not already preserved in the roundtrip
     for sv in orphan.statics:
+        if sv.name not in orphan_static_names:
+            continue
         decl_str = sv.oz_type.c_param_decl(sv.name)
         init = f" = {sv.init_value}" if sv.init_value is not None else ""
-        out.write(f"{decl_str}{init};\n")
+        out.write(f"static {decl_str}{init};\n")
     out.write(rendered)
     return out.getvalue()
 
