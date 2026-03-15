@@ -2973,3 +2973,22 @@ class TestUserIncludePreservation:
             header = open(os.path.join(tmpdir, "Pub_ozh.h")).read()
             assert '#include "px_zbus_defs.h"' in source or \
                    '#include "px_zbus_defs.h"' in header
+
+
+class TestStaticVarNoExternInHeader:
+    """OZ-018: static variables must never appear as extern in headers."""
+
+    def test_static_var_not_extern_in_header(self):
+        m = OZModule()
+        m.classes["OZObject"] = OZClass("OZObject")
+        m.classes["Mgr"] = OZClass("Mgr", superclass="OZObject",
+            statics=[OZStaticVar("_shared", OZType("int"))],
+            methods=[OZMethod("run", OZType("void"), body_ast={
+                "kind": "CompoundStmt", "inner": []})])
+        resolve(m)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            header = open(os.path.join(tmpdir, "Mgr_ozh.h")).read()
+            source = open(os.path.join(tmpdir, "Mgr_ozm.c")).read()
+            assert "extern" not in header or "_shared" not in header
+            assert "static" in source and "_shared" in source
