@@ -883,6 +883,18 @@ def _emit_stmt(node: dict, out: StringIO, ctx: _EmitCtx,
     elif kind == "ObjCForCollectionStmt":
         _emit_forin_stmt(node, out, ctx, indent)
 
+    elif kind == "SwitchStmt":
+        _emit_switch_stmt(node, out, ctx, indent)
+
+    elif kind == "CaseStmt":
+        _emit_case_stmt(node, out, ctx, indent)
+
+    elif kind == "DefaultStmt":
+        inner = node.get("inner", [])
+        out.write(f"{tabs}default:\n")
+        for child in inner:
+            _emit_stmt(child, out, ctx, indent + 1)
+
     elif kind == "NullStmt":
         out.write(f"{tabs};\n")
 
@@ -998,6 +1010,42 @@ def _emit_if_stmt(node: dict, out: StringIO, ctx: _EmitCtx,
             out.write(f"{tabs}else {{\n")
             _emit_stmt(else_body, out, ctx, indent + 1)
             out.write(f"{tabs}}}\n")
+
+
+def _emit_switch_stmt(node: dict, out: StringIO, ctx: _EmitCtx,
+                      indent: int) -> None:
+    """Emit switch(cond) { case/default ... }."""
+    tabs = "\t" * indent
+    inner = node.get("inner", [])
+    if len(inner) < 2:
+        return
+    cond = inner[0]
+    body = inner[1]
+    cond_buf = StringIO()
+    _emit_expr(cond, cond_buf, ctx)
+    _flush_pre_stmts(out, ctx, indent)
+    out.write(f"{tabs}switch ({cond_buf.getvalue()}) {{\n")
+    if body.get("kind") == "CompoundStmt":
+        for child in body.get("inner", []):
+            _emit_stmt(child, out, ctx, indent)
+    else:
+        _emit_stmt(body, out, ctx, indent)
+    out.write(f"{tabs}}}\n")
+
+
+def _emit_case_stmt(node: dict, out: StringIO, ctx: _EmitCtx,
+                    indent: int) -> None:
+    """Emit case <expr>: <body>."""
+    tabs = "\t" * indent
+    inner = node.get("inner", [])
+    if not inner:
+        return
+    case_val = inner[0]
+    val_buf = StringIO()
+    _emit_expr(case_val, val_buf, ctx)
+    out.write(f"{tabs}case {val_buf.getvalue()}:\n")
+    for child in inner[1:]:
+        _emit_stmt(child, out, ctx, indent + 1)
 
 
 def _emit_for_stmt(node: dict, out: StringIO, ctx: _EmitCtx,
@@ -1369,6 +1417,14 @@ def _emit_expr(node: dict, out: StringIO, ctx: _EmitCtx) -> None:
             _emit_expr(inner[1], out, ctx)
             out.write(" : ")
             _emit_expr(inner[2], out, ctx)
+        return
+
+    if kind == "ConstantExpr":
+        inner = node.get("inner", [])
+        if inner:
+            _emit_expr(inner[0], out, ctx)
+        else:
+            out.write(node.get("value", "0"))
         return
 
     if kind == "IntegerLiteral":

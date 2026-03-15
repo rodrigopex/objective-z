@@ -2898,3 +2898,58 @@ class TestUserEnumEmission:
             header = open(os.path.join(tmpdir, "Manager_ozh.h")).read()
             assert "PXDeviceStateIdle" in header
             assert "PXDeviceStateRunning" in header
+
+
+class TestSwitchCaseEmission:
+    """OZ-012: switch/case statement emission."""
+
+    def test_switch_case_emitted(self):
+        """switch(cond) { case X: ... break; } should be fully emitted."""
+        m = OZModule()
+        m.classes["OZObject"] = OZClass("OZObject")
+        m.classes["Mgr"] = OZClass("Mgr", superclass="OZObject",
+            ivars=[OZIvar("_state", OZType("int"))],
+            methods=[OZMethod("start", OZType("void"), body_ast={
+                "kind": "CompoundStmt",
+                "inner": [{
+                    "kind": "SwitchStmt",
+                    "inner": [
+                        {"kind": "ImplicitCastExpr",
+                         "castKind": "LValueToRValue",
+                         "type": {"qualType": "int"},
+                         "inner": [{"kind": "ObjCIvarRefExpr",
+                                    "decl": {"name": "_state"},
+                                    "type": {"qualType": "int"}}]},
+                        {"kind": "CompoundStmt", "inner": [
+                            {"kind": "CaseStmt", "inner": [
+                                {"kind": "ConstantExpr", "value": "0",
+                                 "inner": [{"kind": "DeclRefExpr",
+                                            "referencedDecl": {"name": "PXDeviceStateIdle"},
+                                            "type": {"qualType": "int"}}]},
+                                {"kind": "BinaryOperator", "opcode": "=",
+                                 "type": {"qualType": "int"},
+                                 "inner": [
+                                     {"kind": "ObjCIvarRefExpr",
+                                      "decl": {"name": "_state"},
+                                      "type": {"qualType": "int"}},
+                                     {"kind": "IntegerLiteral", "value": "1",
+                                      "type": {"qualType": "int"}},
+                                 ]},
+                            ]},
+                            {"kind": "BreakStmt"},
+                            {"kind": "DefaultStmt", "inner": [
+                                {"kind": "BreakStmt"},
+                            ]},
+                        ]},
+                    ],
+                }],
+            })])
+        resolve(m)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            content = open(os.path.join(tmpdir, "Mgr_ozm.c")).read()
+            assert "switch (self->_state)" in content
+            assert "case PXDeviceStateIdle:" in content
+            assert "self->_state = 1;" in content
+            assert "break;" in content
+            assert "default:" in content
