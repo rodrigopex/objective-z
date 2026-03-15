@@ -617,7 +617,7 @@ def _class_source_ctx(ctx: _EmitCtx, stem: str | None = None,
     for sv in cls.statics:
         decl_str = sv.oz_type.c_param_decl(sv.name)
         init = f" = {sv.init_value}" if sv.init_value is not None else ""
-        static_decls.append(f"{decl_str}{init};")
+        static_decls.append(f"static {decl_str}{init};")
 
     return {
         "name": cls.name,
@@ -669,7 +669,7 @@ def _orphan_source_ctx(orphan: OrphanSource, module: OZModule,
     for sv in orphan.statics:
         decl_str = sv.oz_type.c_param_decl(sv.name)
         init = f" = {sv.init_value}" if sv.init_value is not None else ""
-        static_decls.append(f"{decl_str}{init};")
+        static_decls.append(f"static {decl_str}{init};")
 
     return {
         "stem": orphan.stem,
