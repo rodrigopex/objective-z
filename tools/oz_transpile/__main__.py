@@ -187,6 +187,12 @@ def main(argv: list[str] | None = None) -> int:
                  root_class=args.root_class,
                  item_pool_size=args.item_pool_size)
 
+    # Check for errors added during emit (e.g., unsupported boxed expr, capturing block)
+    if module.errors:
+        for e in module.errors:
+            print(f"oz_transpile: error: {e}", file=sys.stderr)
+        return 1
+
     # Surface diagnostics added during emit (e.g., class-not-found in context.py)
     new_diags = module.diagnostics[pre_emit_diag_count:]
     if new_diags:
