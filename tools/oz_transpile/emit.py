@@ -2338,7 +2338,7 @@ def _emit_include_replacement(text: str, out: StringIO,
         header_name = m.group(1)
         header = _find_header(header_name, source_dir)
         if header and _is_objc_header(header):
-            stem = header_name.rsplit(".", 1)[0]
+            stem = Path(header_name).stem
             out.write(f'#include "{stem}_ozh.h"\n')
             return
 
