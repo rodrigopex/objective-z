@@ -1174,7 +1174,10 @@ def _emit_boxed_number(node: dict, out: StringIO, ctx: _EmitCtx) -> None:
     """Emit a dynamically allocated OZNumber via OZNumber_initXxx() helper."""
     inner = node.get("inner", [])
     if not inner:
-        out.write("/* TODO: empty ObjCBoxedExpr */")
+        ctx.module.errors.append(
+            "boxed expression @(...) is not supported; "
+            "use OZNumber_initInt32() or [[OZNumber alloc] initWithInt:]")
+        out.write("((void *)0)")
         return
 
     child = inner[0]
@@ -1203,7 +1206,10 @@ def _emit_boxed_number(node: dict, out: StringIO, ctx: _EmitCtx) -> None:
             val = "1" if raw else "0"
         out.write(f"OZNumber_initInt8({val})")
     else:
-        out.write(f"/* TODO: ObjCBoxedExpr({child_kind}) */")
+        ctx.module.errors.append(
+            f"boxed expression @({child_kind}) is not supported; "
+            f"use OZNumber_initInt32() or [[OZNumber alloc] initWithInt:]")
+        out.write("((void *)0)")
         return
 
 
