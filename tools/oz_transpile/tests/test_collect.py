@@ -357,6 +357,27 @@ class TestCollectTypeDefs:
         assert "OZ_NUM_UINT32," in defn
         assert "OZ_NUM_FLOAT," in defn
 
+    def test_user_enum_from_main_file(self):
+        """OZ-007: user-defined enum from main source file should be collected."""
+        ast = _make_ast(
+            {
+                "kind": "EnumDecl",
+                "name": "PXDeviceState",
+                "loc": {"file": "/path/src/PXDeviceManager.m"},
+                "inner": [
+                    {"kind": "EnumConstantDecl", "name": "PXDeviceStateIdle",
+                     "inner": [{"kind": "IntegerLiteral", "value": "0"}]},
+                    {"kind": "EnumConstantDecl", "name": "PXDeviceStateRunning",
+                     "inner": [{"kind": "IntegerLiteral", "value": "1"}]},
+                ],
+            },
+        )
+        mod = collect(ast)
+        assert "enum PXDeviceState" in mod.type_defs
+        defn = mod.type_defs["enum PXDeviceState"]
+        assert "PXDeviceStateIdle = 0," in defn
+        assert "PXDeviceStateRunning = 1," in defn
+
     def test_union_from_oz_transpile(self):
         ast = _make_ast(
             {

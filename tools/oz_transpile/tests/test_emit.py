@@ -2875,3 +2875,26 @@ class TestReturnProtocolDispatch:
             recv_pos = content.index("_oz_recv")
             ret_pos = content.index("return")
             assert recv_pos < ret_pos
+
+
+class TestUserEnumEmission:
+    """OZ-007: user-defined enum collected and emitted in class header."""
+
+    def test_enum_ivar_type_emitted_in_header(self):
+        """Enum used as ivar type appears in the generated header."""
+        m = OZModule()
+        m.classes["OZObject"] = OZClass("OZObject")
+        m.type_defs["enum PXDeviceState"] = (
+            "enum PXDeviceState {\n"
+            "\tPXDeviceStateIdle = 0,\n"
+            "\tPXDeviceStateRunning = 1,\n"
+            "};"
+        )
+        m.classes["Manager"] = OZClass("Manager", superclass="OZObject",
+            ivars=[OZIvar("_state", OZType("enum PXDeviceState"))])
+        resolve(m)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            header = open(os.path.join(tmpdir, "Manager_ozh.h")).read()
+            assert "PXDeviceStateIdle" in header
+            assert "PXDeviceStateRunning" in header
