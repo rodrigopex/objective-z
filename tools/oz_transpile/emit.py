@@ -1681,11 +1681,14 @@ def _emit_msg_expr(node: dict, out: StringIO, ctx: _EmitCtx) -> None:
             _emit_expr(arg, out, ctx)
         out.write(")")
     else:
-        recv_class = _infer_receiver_class(receiver, cls, module) if receiver else cls.name
+        inferred_class = _infer_receiver_class(receiver, cls, module) if receiver else cls.name
         # Walk up hierarchy to find class that actually defines the selector
-        recv_class = _find_defining_class(recv_class, selector, module)
-        out.write(f"{recv_class}_{c_sel}(")
+        defining_class = _find_defining_class(inferred_class, selector, module)
+        out.write(f"{defining_class}_{c_sel}(")
         if receiver:
+            needs_cast = defining_class != inferred_class
+            if needs_cast:
+                out.write(f"(struct {defining_class} *)")
             _emit_expr(receiver, out, ctx)
         for arg in args_exprs:
             out.write(", ")

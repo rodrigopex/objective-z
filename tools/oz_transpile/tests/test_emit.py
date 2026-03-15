@@ -3132,3 +3132,36 @@ class TestSwitchCaseEdgeCases:
             assert "switch (self->_x)" in content
             assert "case 42:" in content
             assert "default:" not in content
+
+
+class TestInheritedMethodCast:
+    """OZ-017: inherited method calls must cast self to declaring class."""
+
+    def test_inherited_method_casts_self(self):
+        """[self parentMethod] where parentMethod is in grandparent class."""
+        m = OZModule()
+        m.classes["OZObject"] = OZClass("OZObject")
+        m.classes["Base"] = OZClass("Base", superclass="OZObject",
+            methods=[OZMethod("readRaw", OZType("int"), body_ast={
+                "kind": "CompoundStmt", "inner": []})])
+        m.classes["Child"] = OZClass("Child", superclass="Base",
+            methods=[OZMethod("process", OZType("int"), body_ast={
+                "kind": "CompoundStmt", "inner": [{
+                    "kind": "ReturnStmt", "inner": [{
+                        "kind": "ObjCMessageExpr",
+                        "selector": "readRaw",
+                        "type": {"qualType": "int"},
+                        "inner": [{
+                            "kind": "DeclRefExpr",
+                            "referencedDecl": {"name": "self"},
+                            "type": {"qualType": "Child *"},
+                        }],
+                    }],
+                }],
+            })])
+        resolve(m)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            content = open(os.path.join(tmpdir, "Child_ozm.c")).read()
+            assert "(struct Base *)self" in content
+            assert "Base_readRaw(" in content
