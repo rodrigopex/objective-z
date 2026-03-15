@@ -1780,9 +1780,12 @@ def _emit_return_stmt(node: dict, out: StringIO, ctx: _EmitCtx,
             ret_inner = ret_expr.get("inner", [])
             if ret_inner:
                 ret_expr = ret_inner[0]
-        out.write(f"{tabs}return ")
-        _emit_expr(ret_expr, out, ctx)
-        out.write(";\n")
+        # Buffer the expression first so any pre_stmts (e.g. protocol
+        # dispatch receiver vars) are emitted before the return keyword
+        expr_buf = StringIO()
+        _emit_expr(ret_expr, expr_buf, ctx)
+        _flush_pre_stmts(out, ctx, indent)
+        out.write(f"{tabs}return {expr_buf.getvalue()};\n")
     else:
         out.write(f"{tabs}return;\n")
 
