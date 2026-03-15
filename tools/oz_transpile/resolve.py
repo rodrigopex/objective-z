@@ -15,6 +15,7 @@ def resolve(module: OZModule) -> None:
     _assign_class_ids(module)
     _compute_base_depths(module)
     _classify_dispatch(module)
+    _check_protocol_conformance(module)
 
 
 def _validate_hierarchy(module: OZModule) -> None:
@@ -165,3 +166,26 @@ def _classify_dispatch(module: OZModule) -> None:
                 m.dispatch = DispatchKind.PROTOCOL
             elif len(selector_classes.get(m.selector, set())) > 1:
                 m.dispatch = DispatchKind.PROTOCOL
+
+
+def _check_protocol_conformance(module: OZModule) -> None:
+    """Check that classes implementing protocols provide all required methods."""
+    for cls in module.classes.values():
+        if not cls.protocols:
+            continue
+        cls_sels = {m.selector for m in cls.methods}
+        # Also check inherited methods
+        cur = cls
+        while cur.superclass and cur.superclass in module.classes:
+            cur = module.classes[cur.superclass]
+            cls_sels.update(m.selector for m in cur.methods)
+        for proto_name in cls.protocols:
+            proto = module.protocols.get(proto_name)
+            if not proto:
+                continue
+            for pm in proto.methods:
+                if pm.selector not in cls_sels:
+                    module.errors.append(
+                        f"class '{cls.name}' conforms to protocol "
+                        f"'{proto_name}' but does not implement "
+                        f"required method '{pm.selector}'")
