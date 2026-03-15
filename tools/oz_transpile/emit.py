@@ -1359,7 +1359,9 @@ def _emit_expr(node: dict, out: StringIO, ctx: _EmitCtx) -> None:
                 _emit_expr(inner[0], out, ctx)
                 out.write(f"->{ivar_name}")
                 return
-        out.write(f"self->{ivar_name}")
+        # Build base chain for inherited ivars
+        base_prefix = _ivar_base_chain(ivar_name, ctx.cls, ctx.module)
+        out.write(f"self->{base_prefix}{ivar_name}")
         return
 
     if kind == "DeclRefExpr":
@@ -2323,6 +2325,26 @@ def _base_chain(class_name: str, module: OZModule) -> str:
         cur = module.classes[cur.superclass]
     prefix = "obj->" + "".join(parts)
     return prefix
+
+
+def _ivar_base_chain(ivar_name: str, cls: OZClass, module: OZModule) -> str:
+    """Build 'base.' prefix chain to reach an inherited ivar.
+
+    Returns '' if the ivar is in the current class, 'base.' if in the
+    parent, 'base.base.' if in the grandparent, etc.
+    """
+    # Check if ivar is in the current class
+    if any(iv.name == ivar_name for iv in cls.ivars):
+        return ""
+    # Walk up the hierarchy
+    depth = 0
+    cur = cls
+    while cur.superclass and cur.superclass in module.classes:
+        depth += 1
+        cur = module.classes[cur.superclass]
+        if any(iv.name == ivar_name for iv in cur.ivars):
+            return "base." * depth
+    return ""
 
 
 def _method_prototype(cls: OZClass, m: OZMethod) -> str:

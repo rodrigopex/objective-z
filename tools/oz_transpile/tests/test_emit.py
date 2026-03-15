@@ -3165,3 +3165,104 @@ class TestInheritedMethodCast:
             content = open(os.path.join(tmpdir, "Child_ozm.c")).read()
             assert "(struct Base *)self" in content
             assert "Base_readRaw(" in content
+
+    def test_same_class_method_no_cast(self):
+        """OZ-028: same-class method must NOT cast self."""
+        m = OZModule()
+        m.classes["OZObject"] = OZClass("OZObject")
+        m.classes["Foo"] = OZClass("Foo", superclass="OZObject",
+            methods=[
+                OZMethod("helper", OZType("int"), body_ast={
+                    "kind": "CompoundStmt", "inner": []}),
+                OZMethod("run", OZType("void"), body_ast={
+                    "kind": "CompoundStmt", "inner": [{
+                        "kind": "ObjCMessageExpr", "selector": "helper",
+                        "type": {"qualType": "int"},
+                        "inner": [{"kind": "DeclRefExpr",
+                                   "referencedDecl": {"name": "self"},
+                                   "type": {"qualType": "Foo *"}}],
+                    }]}),
+            ])
+        resolve(m)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            content = open(os.path.join(tmpdir, "Foo_ozm.c")).read()
+            assert "Foo_helper(self)" in content
+            assert "(struct Foo *)self" not in content
+
+
+class TestParentIvarAccess:
+    """OZ-019: subclass access to parent ivars via base chain."""
+
+    def test_parent_ivar_uses_base_prefix(self):
+        """self->_parentIvar must become self->base._parentIvar."""
+        m = OZModule()
+        m.classes["OZObject"] = OZClass("OZObject")
+        m.classes["Parent"] = OZClass("Parent", superclass="OZObject",
+            ivars=[OZIvar("_count", OZType("int"))])
+        m.classes["Child"] = OZClass("Child", superclass="Parent",
+            ivars=[OZIvar("_value", OZType("int"))],
+            methods=[OZMethod("inc", OZType("void"), body_ast={
+                "kind": "CompoundStmt", "inner": [{
+                    "kind": "BinaryOperator", "opcode": "=",
+                    "type": {"qualType": "int"},
+                    "inner": [
+                        {"kind": "ObjCIvarRefExpr",
+                         "decl": {"name": "_count"},
+                         "type": {"qualType": "int"}},
+                        {"kind": "IntegerLiteral", "value": "1",
+                         "type": {"qualType": "int"}},
+                    ],
+                }]})])
+        resolve(m)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            content = open(os.path.join(tmpdir, "Child_ozm.c")).read()
+            assert "self->base._count" in content
+
+    def test_grandparent_ivar_double_base(self):
+        """Grandparent ivar needs self->base.base._ivar."""
+        m = OZModule()
+        m.classes["OZObject"] = OZClass("OZObject")
+        m.classes["GrandP"] = OZClass("GrandP", superclass="OZObject",
+            ivars=[OZIvar("_gval", OZType("int"))])
+        m.classes["Parent"] = OZClass("Parent", superclass="GrandP",
+            ivars=[OZIvar("_pval", OZType("int"))])
+        m.classes["Child"] = OZClass("Child", superclass="Parent",
+            ivars=[OZIvar("_cval", OZType("int"))],
+            methods=[OZMethod("read", OZType("int"), body_ast={
+                "kind": "CompoundStmt", "inner": [{
+                    "kind": "ReturnStmt", "inner": [{
+                        "kind": "ObjCIvarRefExpr",
+                        "decl": {"name": "_gval"},
+                        "type": {"qualType": "int"},
+                    }],
+                }]})])
+        resolve(m)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            content = open(os.path.join(tmpdir, "Child_ozm.c")).read()
+            assert "self->base.base._gval" in content
+
+    def test_own_ivar_no_base_prefix(self):
+        """Own class ivar must NOT get base prefix."""
+        m = OZModule()
+        m.classes["OZObject"] = OZClass("OZObject")
+        m.classes["Parent"] = OZClass("Parent", superclass="OZObject",
+            ivars=[OZIvar("_count", OZType("int"))])
+        m.classes["Child"] = OZClass("Child", superclass="Parent",
+            ivars=[OZIvar("_value", OZType("int"))],
+            methods=[OZMethod("get", OZType("int"), body_ast={
+                "kind": "CompoundStmt", "inner": [{
+                    "kind": "ReturnStmt", "inner": [{
+                        "kind": "ObjCIvarRefExpr",
+                        "decl": {"name": "_value"},
+                        "type": {"qualType": "int"},
+                    }],
+                }]})])
+        resolve(m)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            content = open(os.path.join(tmpdir, "Child_ozm.c")).read()
+            assert "self->_value" in content
+            assert "self->base._value" not in content
