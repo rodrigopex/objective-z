@@ -266,6 +266,72 @@ class TestCollectStaticVar:
         mod = collect(ast)
         assert len(mod.statics) == 0
 
+    def test_static_with_gnu_null_init(self):
+        """OZ-004: static PXAppConfig *_shared = nil; with GNUNullExpr."""
+        ast = _make_ast({
+            "kind": "VarDecl",
+            "name": "_shared",
+            "storageClass": "static",
+            "type": {"qualType": "PXAppConfig *"},
+            "inner": [{"kind": "GNUNullExpr"}],
+        })
+        mod = collect(ast)
+        assert len(mod.statics) == 1
+        assert mod.statics[0].name == "_shared"
+        assert mod.statics[0].init_value == "NULL"
+        assert mod.statics[0].oz_type.c_type == "struct PXAppConfig *"
+
+    def test_static_with_null_to_pointer_cast(self):
+        """OZ-004: nil as ImplicitCastExpr with NullToPointer."""
+        ast = _make_ast({
+            "kind": "VarDecl",
+            "name": "_shared",
+            "storageClass": "static",
+            "type": {"qualType": "PXAppConfig *"},
+            "inner": [{
+                "kind": "ImplicitCastExpr",
+                "castKind": "NullToPointer",
+                "inner": [{"kind": "IntegerLiteral", "value": "0"}],
+            }],
+        })
+        mod = collect(ast)
+        assert len(mod.statics) == 1
+        assert mod.statics[0].init_value == "NULL"
+
+    def test_static_with_cstyle_null_cast(self):
+        """OZ-004: nil as CStyleCastExpr with NullToPointer."""
+        ast = _make_ast({
+            "kind": "VarDecl",
+            "name": "_shared",
+            "storageClass": "static",
+            "type": {"qualType": "PXAppConfig *"},
+            "inner": [{
+                "kind": "CStyleCastExpr",
+                "castKind": "NullToPointer",
+                "inner": [{"kind": "IntegerLiteral", "value": "0"}],
+            }],
+        })
+        mod = collect(ast)
+        assert len(mod.statics) == 1
+        assert mod.statics[0].init_value == "NULL"
+
+    def test_static_objc_type_unsupported_init_warns(self):
+        """OZ-006: diagnostic when ObjC-typed static has unsupported init."""
+        ast = _make_ast({
+            "kind": "VarDecl",
+            "name": "_shared",
+            "storageClass": "static",
+            "type": {"qualType": "PXAppConfig *"},
+            "inner": [{
+                "kind": "CallExpr",
+                "type": {"qualType": "PXAppConfig *"},
+            }],
+        })
+        mod = collect(ast)
+        assert len(mod.statics) == 0
+        assert any("_shared" in d and "unsupported initializer" in d
+                    for d in mod.diagnostics)
+
 
 class TestCollectTypeDefs:
     def test_enum_from_oz_transpile(self):

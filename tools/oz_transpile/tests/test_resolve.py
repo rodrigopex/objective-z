@@ -5,6 +5,7 @@ import pytest
 from oz_transpile.model import (
     DispatchKind,
     OZClass,
+    OZIvar,
     OZMethod,
     OZModule,
     OZProperty,
@@ -186,3 +187,28 @@ class TestSynthesizeProperties:
         getter = [method for method in m.classes["Car"].methods
                   if method.selector == "speed"][0]
         assert getter.synthesized_property is prop
+
+    def test_bare_synthesize_uses_existing_ivar(self):
+        """OZ-002: @synthesize propName; (no explicit ivar) should use the
+        bare ivar name when it already exists in cls.ivars."""
+        m = OZModule()
+        m.classes["Config"] = OZClass("Config",
+            ivars=[OZIvar("sampleRate", OZType("int"))],
+            properties=[OZProperty("sampleRate", OZType("int"),
+                                   is_nonatomic=True, ownership="assign")])
+        resolve(m)
+        prop = m.classes["Config"].properties[0]
+        assert prop.ivar_name == "sampleRate"
+        assert any("bare ivar" in d for d in m.diagnostics)
+
+    def test_bare_synthesize_accessor_matches_struct(self):
+        """OZ-002: synthesized accessor must reference same name as struct field."""
+        m = OZModule()
+        m.classes["Config"] = OZClass("Config",
+            ivars=[OZIvar("sampleRate", OZType("int"))],
+            properties=[OZProperty("sampleRate", OZType("int"),
+                                   is_nonatomic=True, ownership="assign")])
+        resolve(m)
+        getter = [method for method in m.classes["Config"].methods
+                  if method.selector == "sampleRate"][0]
+        assert getter.synthesized_property.ivar_name == "sampleRate"

@@ -50,7 +50,22 @@ transpiler pipeline.
   and `BOOL`. 64-bit types (`int64_t`, `double`) are not supported. A future
   `OZNumber64` class may address this.
 
+## Properties
+
+- **`@synthesize` requires explicit ivar form.** Use `@synthesize propName = _propName;`
+  (explicit ivar assignment). The bare form `@synthesize propName;` is supported but
+  creates an ivar with the bare property name (no underscore prefix), which differs
+  from the modern ObjC implicit synthesis convention. A diagnostic warning is emitted
+  when the bare form is detected.
+
 ## Types
+
+- **File-scope statics with ObjC types need care.** A file-scope `static` variable
+  with an ObjC class type (e.g., `static MyClass *shared = nil;`) requires the
+  initializer to be a simple literal or `NULL`. Complex initializers like `nil`
+  (when represented as a non-literal AST node) may not be recognized. Prefer
+  declaring without initializer and assigning in `+initialize`:
+  `static MyClass *shared;` then `shared = [MyClass alloc];` in the method body.
 
 - **No `typedef`.** `typedef` declarations are not collected by the transpiler.
   Use explicit types instead. For block types, use inline block syntax

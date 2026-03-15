@@ -542,10 +542,16 @@ def _collect_static_var(node: dict, module: OZModule) -> None:
     qual_type = node.get("type", {}).get("qualType", "")
     if not qual_type:
         return
+    oz_type = OZType(qual_type)
     init_value = _extract_init_value(node)
     if init_value is None and _has_initializer(node):
+        if oz_type.is_object:
+            module.diagnostics.append(
+                f"warning: static variable '{name}' with ObjC type "
+                f"'{qual_type}' has unsupported initializer; "
+                f"declare without initializer and assign in +initialize")
         return
-    module.statics.append(OZStaticVar(name=name, oz_type=OZType(qual_type),
+    module.statics.append(OZStaticVar(name=name, oz_type=oz_type,
                                       init_value=init_value))
 
 
@@ -561,11 +567,21 @@ def _extract_init_value(node: dict) -> str | None:
         if kind in ("IntegerLiteral", "FloatingLiteral"):
             return child.get("value")
         if kind == "ImplicitCastExpr":
+            cast_kind = child.get("castKind", "")
+            if cast_kind == "NullToPointer":
+                return "NULL"
             return _extract_init_value(child)
         if kind == "UnaryOperator" and child.get("opcode") == "-":
             inner_val = _extract_init_value(child)
             if inner_val is not None:
                 return f"-{inner_val}"
+        if kind == "GNUNullExpr":
+            return "NULL"
+        if kind == "CStyleCastExpr":
+            cast_kind = child.get("castKind", "")
+            if cast_kind == "NullToPointer":
+                return "NULL"
+            return _extract_init_value(child)
     return None
 
 

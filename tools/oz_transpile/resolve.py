@@ -43,9 +43,17 @@ def _synthesize_properties(module: OZModule) -> None:
     """Synthesize getter/setter methods for declared properties."""
     for cls in module.classes.values():
         existing_sels = {m.selector for m in cls.methods}
+        existing_ivar_names = {iv.name for iv in cls.ivars}
         for prop in cls.properties:
             if prop.ivar_name is None:
-                prop.ivar_name = f"_{prop.name}"
+                if prop.name in existing_ivar_names:
+                    prop.ivar_name = prop.name
+                    module.diagnostics.append(
+                        f"warning: '@synthesize {prop.name};' uses bare "
+                        f"ivar name '{prop.name}' in class '{cls.name}'; "
+                        f"prefer '@synthesize {prop.name} = _{prop.name};'")
+                else:
+                    prop.ivar_name = f"_{prop.name}"
 
             getter_sel = prop.getter_sel or prop.name
             if getter_sel not in existing_sels:
