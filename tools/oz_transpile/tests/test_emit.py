@@ -6,6 +6,7 @@ import tempfile
 from oz_transpile.emit import (
     emit, _selector_to_c, _base_chain, _method_prototype,
     _emit_synthesized_accessor, _emit_patched_source, _EmitCtx,
+    _emit_include_replacement,
     _is_func_prototype, _extract_func_name, _extract_class_name,
     _extract_decl_name,
 )
@@ -2721,3 +2722,55 @@ class TestPatchedEmission:
             assert '#include "OZObject_ozh.h"' in result
         finally:
             os.unlink(f.name)
+
+    def test_include_replacement_flattens_subdir_path(self):
+        """#import with subdirectory prefix should emit flat #include (OZ-001)."""
+        from io import StringIO
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create services/PXAppConfig.h as an ObjC header
+            svc_dir = os.path.join(tmpdir, "services")
+            os.makedirs(svc_dir)
+            hdr = os.path.join(svc_dir, "PXAppConfig.h")
+            with open(hdr, "w") as f:
+                f.write("@interface PXAppConfig : OZObject\n@end\n")
+
+            buf = StringIO()
+            _emit_include_replacement(
+                '#import "services/PXAppConfig.h"',
+                buf,
+                source_dir=Path(tmpdir),
+            )
+            result = buf.getvalue()
+            # Must be flat — no "services/" prefix
+            assert result.strip() == '#include "PXAppConfig_ozh.h"'
+
+    def test_patched_source_flattens_subdir_import(self):
+        """Patched source with subdirectory #import should flatten include (OZ-001)."""
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create main.m that imports a subdirectory header
+            main_m = os.path.join(tmpdir, "main.m")
+            with open(main_m, "w") as f:
+                f.write('#import "services/PXAppConfig.h"\n')
+                f.write("@implementation Foo\n@end\n")
+
+            # Create the subdirectory header so _find_header can locate it
+            svc_dir = os.path.join(tmpdir, "services")
+            os.makedirs(svc_dir)
+            with open(os.path.join(svc_dir, "PXAppConfig.h"), "w") as f:
+                f.write("@interface PXAppConfig : OZObject\n@end\n")
+
+            m = OZModule()
+            m.classes["OZObject"] = OZClass("OZObject",
+                                             class_id=0, base_depth=0)
+            cls = OZClass("Foo", superclass="OZObject",
+                          class_id=1, base_depth=1)
+            m.classes["Foo"] = cls
+            result = _emit_patched_source(
+                Path(main_m), m, [cls], "Foo", "OZObject", False)
+            # Generated include must be flat, not "services/PXAppConfig_ozh.h"
+            assert '#include "PXAppConfig_ozh.h"' in result
+            assert "services/PXAppConfig_ozh.h" not in result
