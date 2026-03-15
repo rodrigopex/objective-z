@@ -1826,7 +1826,7 @@ class TestStaticVarEmission:
         ))
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
-            assert any("sum" in d for d in m.diagnostics)
+            assert any("sum" in e for e in m.errors)
 
     def test_ivar_type_defs_in_class_header(self):
         """Class with enum/union ivars gets type_defs in header."""
