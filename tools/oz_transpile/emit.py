@@ -1599,14 +1599,14 @@ def _emit_msg_expr(node: dict, out: StringIO, ctx: _EmitCtx) -> None:
 
     dispatch = _find_dispatch_kind(selector, module)
     if dispatch == DispatchKind.PROTOCOL:
-        # Protocol vtable returns root class pointer; cast if the method
-        # returns an object type and the receiver is a subclass
+        # Protocol vtable returns root class pointer; cast to the declared
+        # return type if it is a more specific object type
         ret_qt = node.get("type", {}).get("qualType", "void")
         ret_oz = OZType(ret_qt)
-        recv_class = _infer_receiver_class(receiver, cls, module) if receiver else cls.name
-        needs_cast = ret_oz.is_object and recv_class != root_class
+        ret_c = ret_oz.c_type
+        needs_cast = ret_oz.is_object and ret_c != f"struct {root_class} *"
         if needs_cast:
-            out.write(f"(struct {recv_class} *)")
+            out.write(f"({ret_c})")
         # Emit receiver into a temp var to avoid double evaluation
         # in the OZ_SEND macro
         if receiver:
