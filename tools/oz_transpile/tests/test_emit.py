@@ -2992,3 +2992,143 @@ class TestStaticVarNoExternInHeader:
             source = open(os.path.join(tmpdir, "Mgr_ozm.c")).read()
             assert "extern" not in header or "_shared" not in header
             assert "static" in source and "_shared" in source
+
+
+class TestProtocolDispatchEdgeCases:
+    """OZ-020: protocol dispatch edge cases."""
+
+    def _make_protocol_module(self):
+        m = OZModule()
+        m.classes["OZObject"] = OZClass("OZObject")
+        m.classes["OZString"] = OZClass("OZString", superclass="OZObject")
+        m.classes["OZArray"] = OZClass("OZArray", superclass="OZObject")
+        m.protocols["Proto"] = OZProtocol("Proto", methods=[
+            OZMethod("name", OZType("OZString *")),
+            OZMethod("count", OZType("unsigned int")),
+            OZMethod("reset", OZType("void")),
+        ])
+        m.classes["Impl"] = OZClass("Impl", superclass="OZObject",
+            protocols=["Proto"],
+            methods=[
+                OZMethod("name", OZType("OZString *"), body_ast={
+                    "kind": "CompoundStmt", "inner": []}),
+                OZMethod("count", OZType("unsigned int"), body_ast={
+                    "kind": "CompoundStmt", "inner": []}),
+                OZMethod("reset", OZType("void"), body_ast={
+                    "kind": "CompoundStmt", "inner": []}),
+            ])
+        return m
+
+    def test_void_return_no_cast(self):
+        """void-returning protocol method should NOT cast."""
+        m = self._make_protocol_module()
+        m.classes["App"] = OZClass("App", superclass="OZObject",
+            methods=[OZMethod("run", OZType("void"), body_ast={
+                "kind": "CompoundStmt", "inner": [{
+                    "kind": "ObjCMessageExpr", "selector": "reset",
+                    "type": {"qualType": "void"},
+                    "inner": [{"kind": "DeclRefExpr",
+                               "referencedDecl": {"name": "obj"},
+                               "type": {"qualType": "id"}}],
+                }]})])
+        resolve(m)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            content = open(os.path.join(tmpdir, "App_ozm.c")).read()
+            assert "OZ_SEND_reset" in content
+            assert "(struct" not in content.split("OZ_SEND_reset")[0].split("\n")[-1]
+
+    def test_int_return_no_struct_cast(self):
+        """int-returning protocol method should NOT cast to struct."""
+        m = self._make_protocol_module()
+        m.classes["App"] = OZClass("App", superclass="OZObject",
+            methods=[OZMethod("run", OZType("void"), body_ast={
+                "kind": "CompoundStmt", "inner": [{
+                    "kind": "DeclStmt", "inner": [{
+                        "kind": "VarDecl", "name": "n",
+                        "type": {"qualType": "unsigned int"},
+                        "inner": [{
+                            "kind": "ObjCMessageExpr", "selector": "count",
+                            "type": {"qualType": "unsigned int"},
+                            "inner": [{"kind": "DeclRefExpr",
+                                       "referencedDecl": {"name": "obj"},
+                                       "type": {"qualType": "id"}}],
+                        }],
+                    }],
+                }]})])
+        resolve(m)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            content = open(os.path.join(tmpdir, "App_ozm.c")).read()
+            assert "OZ_SEND_count" in content
+            assert "(struct OZObject *)OZ_SEND_count" not in content
+
+
+class TestSwitchCaseEdgeCases:
+    """OZ-022: switch/case edge cases."""
+
+    def test_fall_through_cases(self):
+        """Consecutive cases without break (fall-through)."""
+        m = OZModule()
+        m.classes["OZObject"] = OZClass("OZObject")
+        m.classes["Mgr"] = OZClass("Mgr", superclass="OZObject",
+            ivars=[OZIvar("_state", OZType("int"))],
+            methods=[OZMethod("handle", OZType("void"), body_ast={
+                "kind": "CompoundStmt", "inner": [{
+                    "kind": "SwitchStmt", "inner": [
+                        {"kind": "ImplicitCastExpr", "castKind": "LValueToRValue",
+                         "type": {"qualType": "int"},
+                         "inner": [{"kind": "ObjCIvarRefExpr",
+                                    "decl": {"name": "_state"},
+                                    "type": {"qualType": "int"}}]},
+                        {"kind": "CompoundStmt", "inner": [
+                            {"kind": "CaseStmt", "inner": [
+                                {"kind": "IntegerLiteral", "value": "0",
+                                 "type": {"qualType": "int"}},
+                            ]},
+                            {"kind": "CaseStmt", "inner": [
+                                {"kind": "IntegerLiteral", "value": "1",
+                                 "type": {"qualType": "int"}},
+                                {"kind": "BreakStmt"},
+                            ]},
+                        ]},
+                    ],
+                }]})])
+        resolve(m)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            content = open(os.path.join(tmpdir, "Mgr_ozm.c")).read()
+            assert "case 0:" in content
+            assert "case 1:" in content
+            assert "break;" in content
+
+    def test_switch_no_default(self):
+        """Switch with only case labels, no default."""
+        m = OZModule()
+        m.classes["OZObject"] = OZClass("OZObject")
+        m.classes["Mgr"] = OZClass("Mgr", superclass="OZObject",
+            ivars=[OZIvar("_x", OZType("int"))],
+            methods=[OZMethod("go", OZType("void"), body_ast={
+                "kind": "CompoundStmt", "inner": [{
+                    "kind": "SwitchStmt", "inner": [
+                        {"kind": "ImplicitCastExpr", "castKind": "LValueToRValue",
+                         "type": {"qualType": "int"},
+                         "inner": [{"kind": "ObjCIvarRefExpr",
+                                    "decl": {"name": "_x"},
+                                    "type": {"qualType": "int"}}]},
+                        {"kind": "CompoundStmt", "inner": [
+                            {"kind": "CaseStmt", "inner": [
+                                {"kind": "IntegerLiteral", "value": "42",
+                                 "type": {"qualType": "int"}},
+                                {"kind": "BreakStmt"},
+                            ]},
+                        ]},
+                    ],
+                }]})])
+        resolve(m)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            content = open(os.path.join(tmpdir, "Mgr_ozm.c")).read()
+            assert "switch (self->_x)" in content
+            assert "case 42:" in content
+            assert "default:" not in content

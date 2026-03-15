@@ -212,3 +212,20 @@ class TestSynthesizeProperties:
         getter = [method for method in m.classes["Config"].methods
                   if method.selector == "sampleRate"][0]
         assert getter.synthesized_property.ivar_name == "sampleRate"
+
+    def test_mixed_bare_and_explicit_synthesize(self):
+        """OZ-026: class with both bare and explicit @synthesize forms."""
+        m = OZModule()
+        m.classes["Config"] = OZClass("Config",
+            ivars=[OZIvar("rate", OZType("int")),
+                   OZIvar("_name", OZType("OZString *"))],
+            properties=[
+                OZProperty("rate", OZType("int"),
+                           is_nonatomic=True, ownership="assign"),
+                OZProperty("name", OZType("OZString *"),
+                           ivar_name="_name", is_nonatomic=True),
+            ])
+        resolve(m)
+        props = {p.name: p for p in m.classes["Config"].properties}
+        assert props["rate"].ivar_name == "rate"
+        assert props["name"].ivar_name == "_name"

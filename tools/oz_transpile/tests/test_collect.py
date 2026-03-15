@@ -430,6 +430,70 @@ class TestCollectTypeDefs:
         mod = collect(ast)
         assert len(mod.type_defs) == 0
 
+    def test_user_enum_non_sequential_values(self):
+        """OZ-024: enum with explicit non-sequential values."""
+        ast = _make_ast({
+            "kind": "EnumDecl",
+            "name": "PXPriority",
+            "loc": {"file": "/path/src/App.m"},
+            "inner": [
+                {"kind": "EnumConstantDecl", "name": "PXLow",
+                 "inner": [{"kind": "IntegerLiteral", "value": "0"}]},
+                {"kind": "EnumConstantDecl", "name": "PXMedium",
+                 "inner": [{"kind": "IntegerLiteral", "value": "5"}]},
+                {"kind": "EnumConstantDecl", "name": "PXHigh",
+                 "inner": [{"kind": "IntegerLiteral", "value": "100"}]},
+            ],
+        })
+        mod = collect(ast)
+        defn = mod.type_defs["enum PXPriority"]
+        assert "PXLow = 0," in defn
+        assert "PXMedium = 5," in defn
+        assert "PXHigh = 100," in defn
+
+    def test_user_enum_in_header_not_collected(self):
+        """OZ-024: enum in included .h file must NOT be collected."""
+        ast = _make_ast({
+            "kind": "EnumDecl",
+            "name": "HeaderEnum",
+            "loc": {"file": "/path/src/MyHeader.h",
+                    "includedFrom": {"file": "/path/src/App.m"}},
+            "inner": [
+                {"kind": "EnumConstantDecl", "name": "HE_A"},
+            ],
+        })
+        mod = collect(ast)
+        assert "enum HeaderEnum" not in mod.type_defs
+
+    def test_user_anonymous_enum_not_collected(self):
+        """OZ-024: anonymous enum from main file must be skipped."""
+        ast = _make_ast({
+            "kind": "EnumDecl",
+            "name": "",
+            "loc": {"file": "/path/src/App.m"},
+            "inner": [
+                {"kind": "EnumConstantDecl", "name": "ANON_VAL"},
+            ],
+        })
+        mod = collect(ast)
+        assert len(mod.type_defs) == 0
+
+    def test_multiple_user_enums_collected(self):
+        """OZ-024: multiple enums in same .m file both collected."""
+        ast = _make_ast(
+            {"kind": "EnumDecl", "name": "EnumA",
+             "loc": {"file": "/path/src/App.m"},
+             "inner": [{"kind": "EnumConstantDecl", "name": "A1",
+                        "inner": [{"kind": "IntegerLiteral", "value": "0"}]}]},
+            {"kind": "EnumDecl", "name": "EnumB",
+             "loc": {"file": "/path/src/App.m"},
+             "inner": [{"kind": "EnumConstantDecl", "name": "B1",
+                        "inner": [{"kind": "IntegerLiteral", "value": "0"}]}]},
+        )
+        mod = collect(ast)
+        assert "enum EnumA" in mod.type_defs
+        assert "enum EnumB" in mod.type_defs
+
 
 class TestCollectVerbatimLines:
     def test_k_thread_define_collected(self, tmp_path):
