@@ -229,3 +229,48 @@ class TestSynthesizeProperties:
         props = {p.name: p for p in m.classes["Config"].properties}
         assert props["rate"].ivar_name == "rate"
         assert props["name"].ivar_name == "_name"
+
+
+class TestProtocolConformance:
+    """OZ-033: missing protocol method must produce an error."""
+
+    def test_missing_protocol_method_errors(self):
+        m = OZModule()
+        m.classes["OZObject"] = OZClass("OZObject")
+        m.protocols["SensorProto"] = OZProtocol("SensorProto", methods=[
+            OZMethod("readValue", OZType("int")),
+            OZMethod("name", OZType("OZString *")),
+        ])
+        m.classes["Sensor"] = OZClass("Sensor", superclass="OZObject",
+            protocols=["SensorProto"],
+            methods=[OZMethod("name", OZType("OZString *"), body_ast={
+                "kind": "CompoundStmt", "inner": []})])
+        resolve(m)
+        assert any("readValue" in e for e in m.errors)
+
+    def test_conforming_class_no_error(self):
+        m = OZModule()
+        m.classes["OZObject"] = OZClass("OZObject")
+        m.protocols["SensorProto"] = OZProtocol("SensorProto", methods=[
+            OZMethod("readValue", OZType("int")),
+        ])
+        m.classes["Sensor"] = OZClass("Sensor", superclass="OZObject",
+            protocols=["SensorProto"],
+            methods=[OZMethod("readValue", OZType("int"), body_ast={
+                "kind": "CompoundStmt", "inner": []})])
+        resolve(m)
+        assert not any("readValue" in e for e in m.errors)
+
+    def test_inherited_method_satisfies_protocol(self):
+        m = OZModule()
+        m.classes["OZObject"] = OZClass("OZObject")
+        m.protocols["Proto"] = OZProtocol("Proto", methods=[
+            OZMethod("doWork", OZType("void")),
+        ])
+        m.classes["Base"] = OZClass("Base", superclass="OZObject",
+            methods=[OZMethod("doWork", OZType("void"), body_ast={
+                "kind": "CompoundStmt", "inner": []})])
+        m.classes["Child"] = OZClass("Child", superclass="Base",
+            protocols=["Proto"])
+        resolve(m)
+        assert not any("doWork" in e for e in m.errors)
