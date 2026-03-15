@@ -1234,11 +1234,12 @@ def _emit_block_expr(node: dict, out: StringIO, ctx: _EmitCtx) -> None:
             if child.get("byref"):
                 # __block var → already promoted to file-scope static
                 continue
-            ctx.module.diagnostics.append(
-                f"error: capturing blocks not supported "
-                f"(block captures '{var_name}'). Use a regular loop instead."
+            ctx.module.errors.append(
+                f"capturing blocks not supported "
+                f"(block captures '{var_name}'). "
+                f"Use a non-capturing block or a file-scope static variable instead."
             )
-            out.write(f"/* ERROR: capturing block (captures '{var_name}') */")
+            out.write("((void *)0)")
             return
 
     # Extract params and body
