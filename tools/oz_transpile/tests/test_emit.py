@@ -2774,3 +2774,57 @@ class TestPatchedEmission:
             # Generated include must be flat, not "services/PXAppConfig_ozh.h"
             assert '#include "PXAppConfig_ozh.h"' in result
             assert "services/PXAppConfig_ozh.h" not in result
+
+
+class TestProtocolDispatchReturnCast:
+    """OZ-003: protocol dispatch with object return type must cast to
+    the declared return type, not the receiver class."""
+
+    def test_protocol_dispatch_object_return_cast(self):
+        """OZ_SEND for a protocol method returning OZString * should cast
+        to (struct OZString *), not (struct __patched__ *)."""
+        m = OZModule()
+        m.classes["OZObject"] = OZClass("OZObject")
+        m.classes["OZString"] = OZClass("OZString", superclass="OZObject")
+        m.protocols["PXSensorProtocol"] = OZProtocol(
+            "PXSensorProtocol",
+            methods=[OZMethod("name", OZType("OZString *"))])
+        # Sensor class implements the protocol method (needed for PROTOCOL dispatch)
+        m.classes["PXSensor"] = OZClass("PXSensor", superclass="OZObject",
+            protocols=["PXSensorProtocol"],
+            methods=[OZMethod("name", OZType("OZString *"), body_ast={
+                "kind": "CompoundStmt", "inner": []})])
+        # Class with a method that calls [sensor name] via protocol dispatch
+        m.classes["App"] = OZClass("App", superclass="OZObject",
+            methods=[OZMethod("run", OZType("void"), body_ast={
+                "kind": "CompoundStmt",
+                "inner": [{
+                    "kind": "DeclStmt",
+                    "inner": [{
+                        "kind": "VarDecl",
+                        "name": "sensorName",
+                        "type": {"qualType": "OZString *"},
+                        "inner": [{
+                            "kind": "ObjCMessageExpr",
+                            "selector": "name",
+                            "type": {"qualType": "OZString *"},
+                            "inner": [{
+                                "kind": "ImplicitCastExpr",
+                                "type": {"qualType": "id"},
+                                "inner": [{
+                                    "kind": "DeclRefExpr",
+                                    "referencedDecl": {"name": "sensor"},
+                                    "type": {"qualType": "id"},
+                                }],
+                            }],
+                        }],
+                    }],
+                }],
+            })])
+        resolve(m)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            content = open(os.path.join(tmpdir, "App_ozm.c")).read()
+            assert "__patched__" not in content
+            assert "(struct OZString *)" in content
+            assert "OZ_SEND_name" in content
