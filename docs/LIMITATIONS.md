@@ -31,10 +31,12 @@ transpiler pipeline.
 ## Control Flow
 
 - **`switch` / `case` supported.** The transpiler emits `switch`/`case`/`default`
-  statements. User-defined C enums from the main source file are collected and
-  emitted in the class header when used as an ivar type. Ensure the enum ivar
-  uses the explicit `enum Name` type so the transpiler includes the definition
-  in the generated header.
+  statements. User-defined C enums are collected and emitted in the class header
+  when used as an ivar type. Ensure the enum ivar uses the explicit `enum Name`
+  type so the transpiler includes the definition in the generated header.
+  **Note:** Only enums in `.m` files listed in `objz_transpile_sources()` are
+  scanned — enums in `.h` files are not collected. To share an enum across
+  classes, define it in each `.m` file or use integer constants in a shared header.
 
 - **`for-in` uses IteratorProtocol, not NSFastEnumeration.** The transpiler
   lowers `for (id obj in collection)` to a scoped iterator loop via
