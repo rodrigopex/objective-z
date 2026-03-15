@@ -21,9 +21,18 @@ from oz_transpile.extract import (
     _is_class_method,
     _loc_key,
 )
-from oz_transpile.model import OZClass, OZModule
+from oz_transpile.model import OZClass, OZModule, OZStaticVar
 
 _TS_LANG = Language(tsobjc.language())
+
+
+def _find_static_var(name: str, classes: list[OZClass]) -> OZStaticVar | None:
+    """Find a static variable by name across classes."""
+    for cls in classes:
+        for sv in cls.statics:
+            if sv.name == name:
+                return sv
+    return None
 
 
 def build_source_context(
@@ -72,7 +81,7 @@ def build_source_context(
     for f in module.functions:
         func_map[f.name] = f
 
-    static_names = set(extra_static_names) if extra_static_names else set()
+    static_names = extra_static_names if extra_static_names is not None else set()
     for cls in classes:
         for sv in cls.statics:
             static_names.add(sv.name)
@@ -85,7 +94,7 @@ def build_source_context(
         if child.type in _OBJC_IMPL_TYPES:
             _build_impl_context(
                 child, source, context, class_map, module,
-                root_class, has_item_pool,
+                root_class, has_item_pool, static_names,
             )
 
         elif child.type == "preproc_include":
@@ -114,8 +123,16 @@ def build_source_context(
                 continue
             name = _extract_decl_name(child)
             if name and name in static_names:
-                context[key] = ""
-                continue
+                # Emit the transpiled declaration at the original position
+                # (preserves ordering for C functions that reference it).
+                # Look up the OZStaticVar to get the correct C type.
+                sv = _find_static_var(name, classes)
+                if sv:
+                    decl_str = sv.oz_type.c_param_decl(sv.name)
+                    init = f" = {sv.init_value}" if sv.init_value is not None else ""
+                    context[key] = f"static {decl_str}{init};"
+                    static_names.discard(name)
+                    continue
             context[key] = text
 
     return context
@@ -125,6 +142,7 @@ def _build_impl_context(
     node, source: bytes, context: dict[str, str],
     class_map: dict[str, OZClass], module: OZModule,
     root_class: str, has_item_pool: bool,
+    static_names: set[str] | None = None,
 ) -> None:
     """Build context entries for methods inside @implementation."""
     from oz_transpile.emit import (
@@ -164,8 +182,12 @@ def _build_impl_context(
                 method_nodes.append(md)
 
     # Build preamble: static vars, root retain/release, root introspection
+    # Only emit statics not already preserved in the roundtrip template
+    _remaining_statics = static_names or set()
     preamble = StringIO()
     for sv in cls.statics:
+        if sv.name not in _remaining_statics:
+            continue
         decl_str = sv.oz_type.c_param_decl(sv.name)
         init = f" = {sv.init_value}" if sv.init_value is not None else ""
         preamble.write(f"static {decl_str}{init};\n")

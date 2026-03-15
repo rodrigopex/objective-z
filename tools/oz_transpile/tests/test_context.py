@@ -161,7 +161,9 @@ class TestDeclarations:
         finally:
             os.unlink(path)
 
-    def test_collected_static_filtered(self):
+    def test_collected_static_preserved_with_type(self):
+        """OZ-013: static declaration preserved at original position with
+        transpiled C type (not blanked and re-emitted in preamble)."""
         path = _write_temp(
             "static int _count;\n"
             "@implementation Foo\n@end\n"
@@ -173,7 +175,8 @@ class TestDeclarations:
             ctx = build_source_context(path, m, [cls], "Foo", "OZObject", False)
             key = "_n_1_1"
             assert key in ctx
-            assert ctx[key] == ""
+            assert "static" in ctx[key]
+            assert "_count" in ctx[key]
         finally:
             os.unlink(path)
 
@@ -312,7 +315,9 @@ class TestSynthesizedAccessors:
 
 
 class TestStaticVarsInPreamble:
-    def test_static_var_in_preamble(self):
+    def test_static_var_at_original_position(self):
+        """Static vars are emitted at their original file-scope position,
+        not in the @implementation preamble (OZ-013 fix)."""
         path = _write_temp(
             "static int _count;\n"
             "@implementation Foo\n"
@@ -329,9 +334,10 @@ class TestStaticVarsInPreamble:
                 ],
             )
             ctx = build_source_context(path, m, [cls], "Foo", "OZObject", False)
-            impl_key = "_impl_2_1"
-            assert impl_key in ctx
-            assert "_count" in ctx[impl_key]
+            decl_key = "_n_1_1"
+            assert decl_key in ctx
+            assert "static" in ctx[decl_key]
+            assert "_count" in ctx[decl_key]
         finally:
             os.unlink(path)
 
@@ -346,10 +352,10 @@ class TestStaticVarsInPreamble:
                                      init_value="5")],
             )
             ctx = build_source_context(path, m, [cls], "Foo", "OZObject", False)
-            impl_key = "_impl_2_1"
-            assert impl_key in ctx
-            assert "_count" in ctx[impl_key]
-            assert "= 5" in ctx[impl_key]
+            decl_key = "_n_1_1"
+            assert decl_key in ctx
+            assert "_count" in ctx[decl_key]
+            assert "= 5" in ctx[decl_key]
         finally:
             os.unlink(path)
 
@@ -361,7 +367,7 @@ class TestStaticVarsInPreamble:
 
 class TestPreambleOrdering:
     def test_statics_before_synthesized(self):
-        """Static vars should appear before synthesized accessor methods."""
+        """Static vars at file scope appear before @implementation preamble."""
         path = _write_temp(
             "static int _count;\n"
             "@implementation Foo\n"
@@ -380,15 +386,12 @@ class TestPreambleOrdering:
                 properties=[prop],
             )
             ctx = build_source_context(path, m, [cls], "Foo", "OZObject", False)
+            decl_key = "_n_1_1"
+            assert decl_key in ctx
+            assert "_count" in ctx[decl_key]
             impl_key = "_impl_2_1"
             assert impl_key in ctx
-            preamble = ctx[impl_key]
-            count_pos = preamble.find("_count")
-            color_pos = preamble.find("Foo_color")
-            assert count_pos >= 0, "static _count missing from preamble"
-            assert color_pos >= 0, "synthesized Foo_color missing from preamble"
-            assert count_pos < color_pos, \
-                "static vars must come before synthesized methods"
+            assert "Foo_color" in ctx[impl_key]
         finally:
             os.unlink(path)
 

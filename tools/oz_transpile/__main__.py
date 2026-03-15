@@ -8,6 +8,7 @@ import argparse
 import json
 import os
 import sys
+from pathlib import Path
 
 from .collect import collect, is_stub_source, merge_modules
 from .emit import emit
@@ -141,8 +142,12 @@ def main(argv: list[str] | None = None) -> int:
             src_path = sources[i]
             m.source_stem = _source_stem(src_path)
             stub = is_stub_source(src_path)
-            if not stub and m.source_path:
-                m.source_paths[m.source_stem] = m.source_path
+            if not stub:
+                src_file = Path(src_path)
+                if m.source_path is None and src_file.is_file():
+                    m.source_path = src_file
+                if m.source_path:
+                    m.source_paths[m.source_stem] = m.source_path
             for cls in m.classes.values():
                 if stub:
                     cls.is_foundation = True
