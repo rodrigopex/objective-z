@@ -2828,3 +2828,50 @@ class TestProtocolDispatchReturnCast:
             assert "__patched__" not in content
             assert "(struct OZString *)" in content
             assert "OZ_SEND_name" in content
+
+
+class TestReturnProtocolDispatch:
+    """OZ-005: protocol dispatch in return statement must declare receiver var."""
+
+    def test_return_protocol_dispatch_emits_receiver_var(self):
+        """return [_sensors count]; must declare _oz_recv before the return."""
+        m = OZModule()
+        m.classes["OZObject"] = OZClass("OZObject")
+        m.classes["OZArray"] = OZClass("OZArray", superclass="OZObject",
+            methods=[OZMethod("count", OZType("unsigned int"), body_ast={
+                "kind": "CompoundStmt", "inner": []})])
+        m.protocols["IteratorProtocol"] = OZProtocol(
+            "IteratorProtocol",
+            methods=[OZMethod("count", OZType("unsigned int"))])
+        m.classes["Registry"] = OZClass("Registry", superclass="OZObject",
+            ivars=[OZIvar("_sensors", OZType("OZArray *"))],
+            methods=[OZMethod("sensorCount", OZType("int"), body_ast={
+                "kind": "CompoundStmt",
+                "inner": [{
+                    "kind": "ReturnStmt",
+                    "inner": [{
+                        "kind": "ObjCMessageExpr",
+                        "selector": "count",
+                        "type": {"qualType": "unsigned int"},
+                        "inner": [{
+                            "kind": "ImplicitCastExpr",
+                            "type": {"qualType": "OZArray *"},
+                            "inner": [{
+                                "kind": "ObjCIvarRefExpr",
+                                "decl": {"name": "_sensors"},
+                                "type": {"qualType": "OZArray *"},
+                            }],
+                        }],
+                    }],
+                }],
+            })])
+        resolve(m)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            content = open(os.path.join(tmpdir, "Registry_ozm.c")).read()
+            assert "_oz_recv" in content
+            assert "OZ_SEND_count" in content
+            # The receiver var must appear BEFORE the return statement
+            recv_pos = content.index("_oz_recv")
+            ret_pos = content.index("return")
+            assert recv_pos < ret_pos
