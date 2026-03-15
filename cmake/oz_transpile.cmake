@@ -134,6 +134,7 @@ function(objz_transpile_sources target)
                 --outdir ${_outdir}
                 --root-class=${OZT_ROOT_CLASS}
                 --manifest=${_manifest}
+                --verbose
                 ${_pool_flag}
         RESULT_VARIABLE _rc
     )
@@ -171,6 +172,7 @@ function(objz_transpile_sources target)
            --outdir ${_outdir}
            --root-class=${OZT_ROOT_CLASS}
            --manifest=${_manifest}
+           --verbose
            ${_pool_flag})
     # Run transpiler; on failure dump Clang error logs for diagnosis
     string(JOIN " " _err_logs_str ${_err_logs})
