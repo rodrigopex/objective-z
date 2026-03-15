@@ -152,6 +152,26 @@ def _is_user_struct(node: dict, last_file: str = "") -> bool:
     return True
 
 
+def _is_user_enum(node: dict, last_file: str = "") -> bool:
+    """Check if an EnumDecl is a user-defined enum (main file or user header)."""
+    name = node.get("name", "")
+    if not name:
+        return False
+    if not node.get("inner"):
+        return False
+    loc = node.get("loc", {})
+    if "includedFrom" in loc:
+        return False
+    file_path = loc.get("file", "") or last_file
+    if not file_path:
+        return False
+    if any(p in file_path for p in _SYSTEM_PATH_SEGMENTS):
+        return False
+    if "oz_transpile" in file_path or "/oz_sdk/" in file_path:
+        return False
+    return True
+
+
 def is_stub_source(path: str) -> bool:
     """Check if a path belongs to oz_transpile SDK headers."""
     return "oz_transpile" in path or "/oz_sdk/" in path
@@ -260,6 +280,8 @@ def _walk(node: dict, module: OZModule, impl_name: str | None = None,
         return
     elif kind == "EnumDecl":
         if _is_oz_transpile_type(node, last_file):
+            _collect_enum_def(node, module)
+        elif _is_user_enum(node, last_file):
             _collect_enum_def(node, module)
         return
     elif kind == "RecordDecl":
