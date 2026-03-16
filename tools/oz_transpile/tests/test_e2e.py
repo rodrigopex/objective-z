@@ -345,6 +345,87 @@ class TestCLIErrors:
             assert "OZLed_ozm.c" in content
             assert "oz_dispatch.h" in content
 
+    def test_missing_protocol_method_error(self):
+        """OZ-033: missing protocol method should cause exit code 1."""
+        import json
+        ast = {
+            "kind": "TranslationUnitDecl",
+            "inner": [
+                {"kind": "ObjCInterfaceDecl", "name": "OZObject", "inner": []},
+                {"kind": "ObjCImplementationDecl", "name": "OZObject",
+                 "inner": []},
+                {"kind": "ObjCProtocolDecl", "name": "SensorProto",
+                 "inner": [
+                     {"kind": "ObjCMethodDecl", "name": "readValue",
+                      "returnType": {"qualType": "int"}, "inner": []},
+                 ]},
+                {"kind": "ObjCInterfaceDecl", "name": "Sensor",
+                 "super": {"name": "OZObject"},
+                 "protocols": [{"name": "SensorProto"}],
+                 "inner": []},
+                {"kind": "ObjCImplementationDecl", "name": "Sensor",
+                 "super": {"name": "OZObject"},
+                 "inner": [
+                     {"kind": "ObjCMethodDecl", "name": "name",
+                      "returnType": {"qualType": "void"},
+                      "inner": [{"kind": "CompoundStmt", "inner": []}]},
+                 ]},
+            ],
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ast_file = os.path.join(tmpdir, "proto.ast.json")
+            with open(ast_file, "w") as f:
+                json.dump(ast, f)
+            rc = main(["--input", ast_file, "--outdir", tmpdir])
+            assert rc == 1
+
+    def test_protocol_conformance_passes_when_complete(self):
+        """OZ-033: class implementing all protocol methods should succeed."""
+        import json
+        ast = {
+            "kind": "TranslationUnitDecl",
+            "inner": [
+                {"kind": "ObjCInterfaceDecl", "name": "OZObject", "inner": []},
+                {"kind": "ObjCImplementationDecl", "name": "OZObject",
+                 "inner": [
+                     {"kind": "ObjCMethodDecl", "name": "init",
+                      "returnType": {"qualType": "instancetype"},
+                      "inner": [{"kind": "CompoundStmt", "inner": [
+                          {"kind": "ReturnStmt", "inner": [
+                              {"kind": "DeclRefExpr",
+                               "referencedDecl": {"name": "self"},
+                               "type": {"qualType": "OZObject *"}}]}]}]},
+                     {"kind": "ObjCMethodDecl", "name": "dealloc",
+                      "returnType": {"qualType": "void"},
+                      "inner": [{"kind": "CompoundStmt", "inner": []}]},
+                 ]},
+                {"kind": "ObjCProtocolDecl", "name": "SensorProto",
+                 "inner": [
+                     {"kind": "ObjCMethodDecl", "name": "readValue",
+                      "returnType": {"qualType": "int"}, "inner": []},
+                 ]},
+                {"kind": "ObjCInterfaceDecl", "name": "Sensor",
+                 "super": {"name": "OZObject"},
+                 "protocols": [{"name": "SensorProto"}],
+                 "inner": []},
+                {"kind": "ObjCImplementationDecl", "name": "Sensor",
+                 "super": {"name": "OZObject"},
+                 "inner": [
+                     {"kind": "ObjCMethodDecl", "name": "readValue",
+                      "returnType": {"qualType": "int"},
+                      "inner": [{"kind": "CompoundStmt", "inner": [
+                          {"kind": "ReturnStmt", "inner": [
+                              {"kind": "IntegerLiteral", "value": "42"}]}]}]},
+                 ]},
+            ],
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ast_file = os.path.join(tmpdir, "proto_ok.ast.json")
+            with open(ast_file, "w") as f:
+                json.dump(ast, f)
+            rc = main(["--input", ast_file, "--outdir", tmpdir])
+            assert rc == 0
+
     def test_unsupported_method_selector_error(self):
         """Methods with unsupported selectors should produce errors."""
         import json
