@@ -585,3 +585,179 @@ class TestPoolCount:
             assert "_impl_1_1" in ctx
         finally:
             os.unlink(path)
+
+
+# ---------------------------------------------------------------------------
+# Multi-class context
+# ---------------------------------------------------------------------------
+
+
+class TestMultiClassContext:
+    def test_two_implementations_in_one_file(self):
+        """Two @implementation blocks in one .m file each get their own context."""
+        path = _write_temp(
+            "@implementation Foo\n"
+            "- (void)doWork { }\n"
+            "@end\n"
+            "@implementation Bar\n"
+            "- (void)run { }\n"
+            "@end\n"
+        )
+        try:
+            m = OZModule()
+            m.classes["OZObject"] = OZClass("OZObject", methods=[
+                OZMethod("init", OZType("instancetype"), body_ast={
+                    "kind": "CompoundStmt",
+                    "inner": [{"kind": "ReturnStmt", "inner": [
+                        {"kind": "DeclRefExpr",
+                         "referencedDecl": {"name": "self"},
+                         "type": {"qualType": "OZObject *"}}
+                    ]}],
+                }),
+                OZMethod("dealloc", OZType("void"), body_ast={
+                    "kind": "CompoundStmt", "inner": [],
+                }),
+            ])
+            m.classes["Foo"] = OZClass("Foo", superclass="OZObject", methods=[
+                OZMethod("doWork", OZType("void"), body_ast={
+                    "kind": "CompoundStmt", "inner": [],
+                }),
+            ])
+            m.classes["Bar"] = OZClass("Bar", superclass="OZObject", methods=[
+                OZMethod("run", OZType("void"), body_ast={
+                    "kind": "CompoundStmt", "inner": [],
+                }),
+            ])
+            resolve(m)
+
+            classes = [m.classes["Foo"], m.classes["Bar"]]
+            ctx = build_source_context(
+                path, m, classes, "Foo", "OZObject", False)
+
+            # Foo @implementation at line 1
+            assert "_impl_1_1" in ctx
+            # Foo method at line 2
+            assert "_n_2_1" in ctx
+            assert "Foo_doWork" in ctx["_n_2_1"]
+
+            # Bar @implementation at line 4
+            assert "_impl_4_1" in ctx
+            # Bar method at line 5
+            assert "_n_5_1" in ctx
+            assert "Bar_run" in ctx["_n_5_1"]
+        finally:
+            os.unlink(path)
+
+    def test_category_alongside_regular_impl(self):
+        """Category @implementation alongside regular @implementation."""
+        path = _write_temp(
+            "@implementation Car\n"
+            "- (void)drive { }\n"
+            "@end\n"
+            "@implementation Car (Maintenance)\n"
+            "- (int)mileage { return 100; }\n"
+            "@end\n"
+        )
+        try:
+            m = OZModule()
+            m.classes["OZObject"] = OZClass("OZObject", methods=[
+                OZMethod("init", OZType("instancetype"), body_ast={
+                    "kind": "CompoundStmt",
+                    "inner": [{"kind": "ReturnStmt", "inner": [
+                        {"kind": "DeclRefExpr",
+                         "referencedDecl": {"name": "self"},
+                         "type": {"qualType": "OZObject *"}}
+                    ]}],
+                }),
+                OZMethod("dealloc", OZType("void"), body_ast={
+                    "kind": "CompoundStmt", "inner": [],
+                }),
+            ])
+            m.classes["Car"] = OZClass("Car", superclass="OZObject", methods=[
+                OZMethod("drive", OZType("void"), body_ast={
+                    "kind": "CompoundStmt", "inner": [],
+                }),
+                OZMethod("mileage", OZType("int"), body_ast={
+                    "kind": "CompoundStmt",
+                    "inner": [{"kind": "ReturnStmt", "inner": [
+                        {"kind": "IntegerLiteral", "value": "100",
+                         "type": {"qualType": "int"}},
+                    ]}],
+                }),
+            ])
+            resolve(m)
+
+            classes = [m.classes["Car"]]
+            ctx = build_source_context(
+                path, m, classes, "Car", "OZObject", False)
+
+            # Regular @implementation at line 1
+            assert "_impl_1_1" in ctx
+            # drive method at line 2
+            assert "_n_2_1" in ctx
+            assert "Car_drive" in ctx["_n_2_1"]
+
+            # Category @implementation at line 4
+            assert "_impl_4_1" in ctx
+            # mileage method at line 5
+            assert "_n_5_1" in ctx
+            assert "Car_mileage" in ctx["_n_5_1"]
+        finally:
+            os.unlink(path)
+
+    def test_auto_dealloc_per_class(self):
+        """Each class with object ivars gets its own auto-dealloc."""
+        path = _write_temp(
+            "@implementation Foo\n"
+            "- (void)doWork { }\n"
+            "@end\n"
+            "@implementation Bar\n"
+            "- (void)run { }\n"
+            "@end\n"
+        )
+        try:
+            m = OZModule()
+            m.classes["OZObject"] = OZClass("OZObject", methods=[
+                OZMethod("init", OZType("instancetype"), body_ast={
+                    "kind": "CompoundStmt",
+                    "inner": [{"kind": "ReturnStmt", "inner": [
+                        {"kind": "DeclRefExpr",
+                         "referencedDecl": {"name": "self"},
+                         "type": {"qualType": "OZObject *"}}
+                    ]}],
+                }),
+                OZMethod("dealloc", OZType("void"), body_ast={
+                    "kind": "CompoundStmt", "inner": [],
+                }),
+            ])
+            m.classes["Foo"] = OZClass("Foo", superclass="OZObject",
+                ivars=[OZIvar("_name", OZType("OZString *"))],
+                methods=[
+                    OZMethod("doWork", OZType("void"), body_ast={
+                        "kind": "CompoundStmt", "inner": [],
+                    }),
+                ],
+            )
+            m.classes["Bar"] = OZClass("Bar", superclass="OZObject",
+                ivars=[OZIvar("_tag", OZType("OZString *"))],
+                methods=[
+                    OZMethod("run", OZType("void"), body_ast={
+                        "kind": "CompoundStmt", "inner": [],
+                    }),
+                ],
+            )
+            resolve(m)
+
+            classes = [m.classes["Foo"], m.classes["Bar"]]
+            ctx = build_source_context(
+                path, m, classes, "Foo", "OZObject", False)
+
+            # Foo's last method should have auto-dealloc appended
+            foo_method = ctx.get("_n_2_1", "")
+            assert "Foo_dealloc" in foo_method
+
+            # Bar's last method should have auto-dealloc appended
+            bar_method = ctx.get("_n_5_1", "")
+            assert "Bar_dealloc" in bar_method
+        finally:
+            os.unlink(path)
