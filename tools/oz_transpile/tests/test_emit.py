@@ -1828,6 +1828,84 @@ class TestStaticVarEmission:
             emit(m, tmpdir)
             assert any("sum" in e for e in m.errors)
 
+    def test_block_name_uses_loc(self):
+        """BlockExpr with loc → _oz_block_L{line}_C{col}."""
+        m = _simple_module()
+        m.functions.append(OZFunction(
+            name="test_loc_block",
+            return_type=OZType("void"),
+            body_ast={
+                "kind": "CompoundStmt",
+                "inner": [{
+                    "kind": "DeclStmt",
+                    "inner": [{
+                        "kind": "VarDecl",
+                        "name": "blk",
+                        "type": {"qualType": "void (^)(void)"},
+                        "inner": [{
+                            "kind": "ExprWithCleanups",
+                            "inner": [{
+                                "kind": "BlockExpr",
+                                "loc": {"line": 42, "col": 10},
+                                "type": {"qualType": "void (^)(void)"},
+                                "inner": [{
+                                    "kind": "BlockDecl",
+                                    "inner": [{
+                                        "kind": "CompoundStmt",
+                                        "inner": [],
+                                    }],
+                                }],
+                            }],
+                        }],
+                    }],
+                }],
+            },
+        ))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            src = open(os.path.join(tmpdir, "Foundation", "OZObject_ozm.c")).read()
+            assert "_oz_block_L42_C10" in src
+
+    def test_block_names_unique_across_methods(self):
+        """Two methods each with a block → unique file-scope function names."""
+        m = _simple_module()
+        for i, (fn_name, line) in enumerate([("method_a", 10), ("method_b", 20)]):
+            m.functions.append(OZFunction(
+                name=fn_name,
+                return_type=OZType("void"),
+                body_ast={
+                    "kind": "CompoundStmt",
+                    "inner": [{
+                        "kind": "DeclStmt",
+                        "inner": [{
+                            "kind": "VarDecl",
+                            "name": "blk",
+                            "type": {"qualType": "void (^)(void)"},
+                            "inner": [{
+                                "kind": "ExprWithCleanups",
+                                "inner": [{
+                                    "kind": "BlockExpr",
+                                    "loc": {"line": line, "col": 5},
+                                    "type": {"qualType": "void (^)(void)"},
+                                    "inner": [{
+                                        "kind": "BlockDecl",
+                                        "inner": [{
+                                            "kind": "CompoundStmt",
+                                            "inner": [],
+                                        }],
+                                    }],
+                                }],
+                            }],
+                        }],
+                    }],
+                },
+            ))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            src = open(os.path.join(tmpdir, "Foundation", "OZObject_ozm.c")).read()
+            assert "_oz_block_L10_C5" in src
+            assert "_oz_block_L20_C5" in src
+
     def test_ivar_type_defs_in_class_header(self):
         """Class with enum/union ivars gets type_defs in header."""
         m = _simple_module()

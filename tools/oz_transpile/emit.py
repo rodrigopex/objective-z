@@ -1342,9 +1342,14 @@ def _emit_block_expr(node: dict, out: StringIO, ctx: _EmitCtx) -> None:
             if paren_idx > 0:
                 ret_type = OZType(block_qt[:paren_idx].strip()).c_type
 
-    # Generate function name
-    func_name = f"_oz_block_{ctx._tmp_counter}"
-    ctx._tmp_counter += 1
+    # Generate function name (loc-based to avoid collisions across methods)
+    loc = node.get("loc", {})
+    line = loc.get("line")
+    col = loc.get("col")
+    if line is not None and col is not None:
+        func_name = f"_oz_block_L{line}_C{col}"
+    else:
+        func_name = f"_oz_block_{len(ctx.block_functions)}"
 
     # Build param string
     param_parts = []
