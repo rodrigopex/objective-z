@@ -201,3 +201,89 @@ class TestGCCSyntax:
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
             _gcc_syntax_check(tmpdir)
+
+
+class TestCLIErrors:
+    def test_resolve_error_returns_exit_1(self):
+        """Inheritance cycle should cause resolve error and exit code 1."""
+        import json
+        cycle_ast = {
+            "kind": "TranslationUnitDecl",
+            "inner": [
+                {"kind": "ObjCInterfaceDecl", "name": "A",
+                 "super": {"name": "B"}, "inner": []},
+                {"kind": "ObjCInterfaceDecl", "name": "B",
+                 "super": {"name": "A"}, "inner": []},
+                {"kind": "ObjCImplementationDecl", "name": "A",
+                 "super": {"name": "B"}, "inner": []},
+                {"kind": "ObjCImplementationDecl", "name": "B",
+                 "super": {"name": "A"}, "inner": []},
+            ],
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ast_file = os.path.join(tmpdir, "cycle.ast.json")
+            with open(ast_file, "w") as f:
+                json.dump(cycle_ast, f)
+            rc = main(["--input", ast_file, "--outdir", tmpdir])
+            assert rc == 1
+
+    def test_strict_with_diagnostics_returns_exit_1(self):
+        """--strict should fail when diagnostics are present."""
+        import json
+        ast = {
+            "kind": "TranslationUnitDecl",
+            "inner": [
+                {"kind": "ObjCInterfaceDecl", "name": "OZObject", "inner": []},
+                {"kind": "ObjCImplementationDecl", "name": "OZObject",
+                 "inner": []},
+                {"kind": "VarDecl", "name": "_shared",
+                 "storageClass": "static",
+                 "type": {"qualType": "OZObject *"},
+                 "inner": [{"kind": "CallExpr",
+                            "type": {"qualType": "OZObject *"}}]},
+            ],
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ast_file = os.path.join(tmpdir, "diag.ast.json")
+            with open(ast_file, "w") as f:
+                json.dump(ast, f)
+            rc = main(["--input", ast_file, "--outdir", tmpdir, "--strict"])
+            assert rc == 1
+
+    def test_manifest_written(self):
+        """--manifest should write generated file paths."""
+        ast_file = os.path.join(FIXTURE_DIR, "simple_led.ast.json")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest = os.path.join(tmpdir, "manifest.txt")
+            rc = main(["--input", ast_file, "--outdir", tmpdir,
+                        "--manifest", manifest])
+            assert rc == 0
+            content = open(manifest).read()
+            assert "OZLed_ozm.c" in content
+            assert "oz_dispatch.h" in content
+
+    def test_unsupported_method_selector_error(self):
+        """Methods with unsupported selectors should produce errors."""
+        import json
+        ast = {
+            "kind": "TranslationUnitDecl",
+            "inner": [
+                {"kind": "ObjCInterfaceDecl", "name": "OZObject", "inner": []},
+                {"kind": "ObjCImplementationDecl", "name": "OZObject",
+                 "inner": [
+                     {"kind": "ObjCMethodDecl",
+                      "name": "forwardInvocation:",
+                      "returnType": {"qualType": "void"},
+                      "inner": [
+                          {"kind": "ParmVarDecl", "name": "inv",
+                           "type": {"qualType": "id"}},
+                      ]},
+                 ]},
+            ],
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ast_file = os.path.join(tmpdir, "unsupported.ast.json")
+            with open(ast_file, "w") as f:
+                json.dump(ast, f)
+            rc = main(["--input", ast_file, "--outdir", tmpdir])
+            assert rc == 1
