@@ -2,6 +2,7 @@
 #include "oz_dispatch.h"
 #include "OZObject_ozh.h"
 #include "Base_ozh.h"
+#include "BoxedTest_ozh.h"
 #include "Child_ozh.h"
 #include "Fan_ozh.h"
 #include "Level1_ozh.h"
@@ -10,11 +11,13 @@
 #include "Level4_ozh.h"
 #include "LightSwitch_ozh.h"
 #include "Node_ozh.h"
+#include "OZNumber_ozh.h"
 #include "Widget_ozh.h"
 
 const char *const oz_class_names[OZ_CLASS_COUNT] = {
 	[OZ_CLASS_OZObject] = "OZObject",
 	[OZ_CLASS_Base] = "Base",
+	[OZ_CLASS_BoxedTest] = "BoxedTest",
 	[OZ_CLASS_Child] = "Child",
 	[OZ_CLASS_Fan] = "Fan",
 	[OZ_CLASS_Level1] = "Level1",
@@ -23,12 +26,14 @@ const char *const oz_class_names[OZ_CLASS_COUNT] = {
 	[OZ_CLASS_Level4] = "Level4",
 	[OZ_CLASS_LightSwitch] = "LightSwitch",
 	[OZ_CLASS_Node] = "Node",
+	[OZ_CLASS_OZNumber] = "OZNumber",
 	[OZ_CLASS_Widget] = "Widget",
 };
 
 const uint8_t oz_superclass_id[OZ_CLASS_COUNT] = {
 	[OZ_CLASS_OZObject] = OZ_CLASS_COUNT,
 	[OZ_CLASS_Base] = OZ_CLASS_OZObject,
+	[OZ_CLASS_BoxedTest] = OZ_CLASS_OZObject,
 	[OZ_CLASS_Child] = OZ_CLASS_Base,
 	[OZ_CLASS_Fan] = OZ_CLASS_OZObject,
 	[OZ_CLASS_Level1] = OZ_CLASS_OZObject,
@@ -37,6 +42,7 @@ const uint8_t oz_superclass_id[OZ_CLASS_COUNT] = {
 	[OZ_CLASS_Level4] = OZ_CLASS_Level3,
 	[OZ_CLASS_LightSwitch] = OZ_CLASS_OZObject,
 	[OZ_CLASS_Node] = OZ_CLASS_OZObject,
+	[OZ_CLASS_OZNumber] = OZ_CLASS_OZObject,
 	[OZ_CLASS_Widget] = OZ_CLASS_OZObject,
 };
 
@@ -52,6 +58,7 @@ static void oz_register_vtables(void)
 {
 	OZ_vtable_cDescription_maxLength_[OZ_CLASS_OZObject] = (OZ_fn_cDescription_maxLength_)OZObject_cDescription_maxLength_;
 	OZ_vtable_cDescription_maxLength_[OZ_CLASS_Base] = (OZ_fn_cDescription_maxLength_)OZObject_cDescription_maxLength_;
+	OZ_vtable_cDescription_maxLength_[OZ_CLASS_BoxedTest] = (OZ_fn_cDescription_maxLength_)OZObject_cDescription_maxLength_;
 	OZ_vtable_cDescription_maxLength_[OZ_CLASS_Child] = (OZ_fn_cDescription_maxLength_)OZObject_cDescription_maxLength_;
 	OZ_vtable_cDescription_maxLength_[OZ_CLASS_Fan] = (OZ_fn_cDescription_maxLength_)OZObject_cDescription_maxLength_;
 	OZ_vtable_cDescription_maxLength_[OZ_CLASS_Level1] = (OZ_fn_cDescription_maxLength_)OZObject_cDescription_maxLength_;
@@ -60,9 +67,11 @@ static void oz_register_vtables(void)
 	OZ_vtable_cDescription_maxLength_[OZ_CLASS_Level4] = (OZ_fn_cDescription_maxLength_)OZObject_cDescription_maxLength_;
 	OZ_vtable_cDescription_maxLength_[OZ_CLASS_LightSwitch] = (OZ_fn_cDescription_maxLength_)OZObject_cDescription_maxLength_;
 	OZ_vtable_cDescription_maxLength_[OZ_CLASS_Node] = (OZ_fn_cDescription_maxLength_)OZObject_cDescription_maxLength_;
+	OZ_vtable_cDescription_maxLength_[OZ_CLASS_OZNumber] = (OZ_fn_cDescription_maxLength_)OZObject_cDescription_maxLength_;
 	OZ_vtable_cDescription_maxLength_[OZ_CLASS_Widget] = (OZ_fn_cDescription_maxLength_)OZObject_cDescription_maxLength_;
 	OZ_vtable_dealloc[OZ_CLASS_OZObject] = (OZ_fn_dealloc)OZObject_dealloc;
 	OZ_vtable_dealloc[OZ_CLASS_Base] = (OZ_fn_dealloc)Base_dealloc;
+	OZ_vtable_dealloc[OZ_CLASS_BoxedTest] = (OZ_fn_dealloc)BoxedTest_dealloc;
 	OZ_vtable_dealloc[OZ_CLASS_Child] = (OZ_fn_dealloc)Child_dealloc;
 	OZ_vtable_dealloc[OZ_CLASS_Fan] = (OZ_fn_dealloc)Fan_dealloc;
 	OZ_vtable_dealloc[OZ_CLASS_Level1] = (OZ_fn_dealloc)Level1_dealloc;
@@ -71,6 +80,7 @@ static void oz_register_vtables(void)
 	OZ_vtable_dealloc[OZ_CLASS_Level4] = (OZ_fn_dealloc)Level4_dealloc;
 	OZ_vtable_dealloc[OZ_CLASS_LightSwitch] = (OZ_fn_dealloc)LightSwitch_dealloc;
 	OZ_vtable_dealloc[OZ_CLASS_Node] = (OZ_fn_dealloc)Node_dealloc;
+	OZ_vtable_dealloc[OZ_CLASS_OZNumber] = (OZ_fn_dealloc)OZNumber_dealloc;
 	OZ_vtable_dealloc[OZ_CLASS_Widget] = (OZ_fn_dealloc)Widget_dealloc;
 	OZ_vtable_depth[OZ_CLASS_Level1] = (OZ_fn_depth)Level1_depth;
 	OZ_vtable_depth[OZ_CLASS_Level2] = (OZ_fn_depth)Level2_depth;
@@ -78,6 +88,7 @@ static void oz_register_vtables(void)
 	OZ_vtable_depth[OZ_CLASS_Level4] = (OZ_fn_depth)Level4_depth;
 	OZ_vtable_init[OZ_CLASS_OZObject] = (OZ_fn_init)OZObject_init;
 	OZ_vtable_init[OZ_CLASS_Base] = (OZ_fn_init)Base_init;
+	OZ_vtable_init[OZ_CLASS_BoxedTest] = (OZ_fn_init)OZObject_init;
 	OZ_vtable_init[OZ_CLASS_Child] = (OZ_fn_init)Child_init;
 	OZ_vtable_init[OZ_CLASS_Fan] = (OZ_fn_init)OZObject_init;
 	OZ_vtable_init[OZ_CLASS_Level1] = (OZ_fn_init)OZObject_init;
@@ -86,9 +97,11 @@ static void oz_register_vtables(void)
 	OZ_vtable_init[OZ_CLASS_Level4] = (OZ_fn_init)OZObject_init;
 	OZ_vtable_init[OZ_CLASS_LightSwitch] = (OZ_fn_init)OZObject_init;
 	OZ_vtable_init[OZ_CLASS_Node] = (OZ_fn_init)OZObject_init;
+	OZ_vtable_init[OZ_CLASS_OZNumber] = (OZ_fn_init)OZObject_init;
 	OZ_vtable_init[OZ_CLASS_Widget] = (OZ_fn_init)OZObject_init;
 	OZ_vtable_isEqual_[OZ_CLASS_OZObject] = (OZ_fn_isEqual_)OZObject_isEqual_;
 	OZ_vtable_isEqual_[OZ_CLASS_Base] = (OZ_fn_isEqual_)OZObject_isEqual_;
+	OZ_vtable_isEqual_[OZ_CLASS_BoxedTest] = (OZ_fn_isEqual_)OZObject_isEqual_;
 	OZ_vtable_isEqual_[OZ_CLASS_Child] = (OZ_fn_isEqual_)OZObject_isEqual_;
 	OZ_vtable_isEqual_[OZ_CLASS_Fan] = (OZ_fn_isEqual_)OZObject_isEqual_;
 	OZ_vtable_isEqual_[OZ_CLASS_Level1] = (OZ_fn_isEqual_)OZObject_isEqual_;
@@ -97,6 +110,7 @@ static void oz_register_vtables(void)
 	OZ_vtable_isEqual_[OZ_CLASS_Level4] = (OZ_fn_isEqual_)OZObject_isEqual_;
 	OZ_vtable_isEqual_[OZ_CLASS_LightSwitch] = (OZ_fn_isEqual_)OZObject_isEqual_;
 	OZ_vtable_isEqual_[OZ_CLASS_Node] = (OZ_fn_isEqual_)OZObject_isEqual_;
+	OZ_vtable_isEqual_[OZ_CLASS_OZNumber] = (OZ_fn_isEqual_)OZObject_isEqual_;
 	OZ_vtable_isEqual_[OZ_CLASS_Widget] = (OZ_fn_isEqual_)OZObject_isEqual_;
 	OZ_vtable_toggle[OZ_CLASS_Fan] = (OZ_fn_toggle)Fan_toggle;
 	OZ_vtable_toggle[OZ_CLASS_LightSwitch] = (OZ_fn_toggle)LightSwitch_toggle;
@@ -107,6 +121,7 @@ void OZObject_dispatch_free(struct OZObject *obj)
 	switch (obj->oz_class_id) {
 	case OZ_CLASS_OZObject: OZObject_free((struct OZObject *)obj); break;
 	case OZ_CLASS_Base: Base_free((struct Base *)obj); break;
+	case OZ_CLASS_BoxedTest: BoxedTest_free((struct BoxedTest *)obj); break;
 	case OZ_CLASS_Child: Child_free((struct Child *)obj); break;
 	case OZ_CLASS_Fan: Fan_free((struct Fan *)obj); break;
 	case OZ_CLASS_Level1: Level1_free((struct Level1 *)obj); break;
@@ -115,6 +130,7 @@ void OZObject_dispatch_free(struct OZObject *obj)
 	case OZ_CLASS_Level4: Level4_free((struct Level4 *)obj); break;
 	case OZ_CLASS_LightSwitch: LightSwitch_free((struct LightSwitch *)obj); break;
 	case OZ_CLASS_Node: Node_free((struct Node *)obj); break;
+	case OZ_CLASS_OZNumber: OZNumber_free((struct OZNumber *)obj); break;
 	case OZ_CLASS_Widget: Widget_free((struct Widget *)obj); break;
 	default: break;
 	}

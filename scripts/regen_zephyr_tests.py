@@ -37,6 +37,7 @@ SOURCES = [
     "memory/retain_increments.m",
     "protocol/switch_routes_correct.m",
     "edge/deep_inheritance.m",
+    "edge/boxed_expression.m",
 ]
 
 
