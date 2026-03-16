@@ -203,6 +203,89 @@ class TestGCCSyntax:
             _gcc_syntax_check(tmpdir)
 
 
+class TestMultiFileTranspilation:
+    """E2E tests for multi-file transpilation with --input taking multiple ASTs."""
+
+    def test_cross_file_class_reference(self):
+        """Class in file A, subclass in file B — merged correctly."""
+        base_ast = os.path.join(FIXTURE_DIR, "multi_base.ast.json")
+        sub_ast = os.path.join(FIXTURE_DIR, "multi_sub.ast.json")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rc = main(["--input", base_ast, sub_ast, "--outdir", tmpdir])
+            assert rc == 0
+
+            # Vehicle defined in base, Car in sub — both should be emitted
+            all_files = set()
+            for dirpath, _, filenames in os.walk(tmpdir):
+                all_files.update(filenames)
+
+            assert "Vehicle_ozh.h" in all_files
+            assert "Vehicle_ozm.c" in all_files
+            assert "Car_ozh.h" in all_files
+            assert "Car_ozm.c" in all_files
+
+    def test_cross_file_inheritance_hierarchy(self):
+        """Car (file B) extends Vehicle (file A) — struct nesting correct."""
+        base_ast = os.path.join(FIXTURE_DIR, "multi_base.ast.json")
+        sub_ast = os.path.join(FIXTURE_DIR, "multi_sub.ast.json")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            main(["--input", base_ast, sub_ast, "--outdir", tmpdir])
+
+            car_h = open(os.path.join(tmpdir, "Car_ozh.h")).read()
+            assert "struct Vehicle base;" in car_h
+            assert "int _doors;" in car_h
+
+            vehicle_h = open(os.path.join(tmpdir, "Vehicle_ozh.h")).read()
+            assert "struct OZObject base;" in vehicle_h
+            assert "int _speed;" in vehicle_h
+
+    def test_cross_file_super_call(self):
+        """Car.init calls [super init] which resolves to Vehicle_init."""
+        base_ast = os.path.join(FIXTURE_DIR, "multi_base.ast.json")
+        sub_ast = os.path.join(FIXTURE_DIR, "multi_sub.ast.json")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            main(["--input", base_ast, sub_ast, "--outdir", tmpdir])
+
+            car_c = open(os.path.join(tmpdir, "Car_ozm.c")).read()
+            assert "Vehicle_init" in car_c
+
+    def test_category_in_separate_file(self):
+        """Category in separate AST merges methods into base class."""
+        base_ast = os.path.join(FIXTURE_DIR, "multi_base.ast.json")
+        cat_ast = os.path.join(FIXTURE_DIR, "multi_category.ast.json")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rc = main(["--input", base_ast, cat_ast, "--outdir", tmpdir])
+            assert rc == 0
+
+            vehicle_c = open(os.path.join(tmpdir, "Vehicle_ozm.c")).read()
+            assert "Vehicle_honk" in vehicle_c
+
+    def test_dispatch_header_includes_all_classes(self):
+        """Dispatch header should have class IDs for all merged classes."""
+        base_ast = os.path.join(FIXTURE_DIR, "multi_base.ast.json")
+        sub_ast = os.path.join(FIXTURE_DIR, "multi_sub.ast.json")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            main(["--input", base_ast, sub_ast, "--outdir", tmpdir])
+
+            dispatch_h = open(os.path.join(tmpdir, "Foundation",
+                                           "oz_dispatch.h")).read()
+            assert "OZ_CLASS_OZObject" in dispatch_h
+            assert "OZ_CLASS_Vehicle" in dispatch_h
+            assert "OZ_CLASS_Car" in dispatch_h
+
+    @pytest.mark.skipif(
+        subprocess.run(["gcc", "--version"], capture_output=True).returncode != 0,
+        reason="gcc not available",
+    )
+    def test_multi_file_generated_c_compiles(self):
+        """GCC syntax check on multi-file output."""
+        base_ast = os.path.join(FIXTURE_DIR, "multi_base.ast.json")
+        sub_ast = os.path.join(FIXTURE_DIR, "multi_sub.ast.json")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            main(["--input", base_ast, sub_ast, "--outdir", tmpdir])
+            _gcc_syntax_check(tmpdir)
+
+
 class TestCLIErrors:
     def test_resolve_error_returns_exit_1(self):
         """Inheritance cycle should cause resolve error and exit code 1."""

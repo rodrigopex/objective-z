@@ -1,0 +1,117 @@
+{
+  "kind": "TranslationUnitDecl",
+  "inner": [
+    {
+      "kind": "ObjCInterfaceDecl",
+      "name": "OZObject",
+      "inner": []
+    },
+    {
+      "kind": "ObjCImplementationDecl",
+      "name": "OZObject",
+      "inner": [
+        {
+          "kind": "ObjCMethodDecl",
+          "name": "init",
+          "returnType": {"qualType": "instancetype"},
+          "inner": [
+            {
+              "kind": "CompoundStmt",
+              "inner": [
+                {
+                  "kind": "ReturnStmt",
+                  "inner": [
+                    {
+                      "kind": "DeclRefExpr",
+                      "referencedDecl": {"name": "self"},
+                      "type": {"qualType": "OZObject *"}
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "ObjCMethodDecl",
+          "name": "dealloc",
+          "returnType": {"qualType": "void"},
+          "inner": [
+            {
+              "kind": "CompoundStmt",
+              "inner": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "kind": "ObjCInterfaceDecl",
+      "name": "Vehicle",
+      "super": {"name": "OZObject"},
+      "inner": [
+        {
+          "kind": "ObjCIvarDecl",
+          "name": "_speed",
+          "type": {"qualType": "int"}
+        }
+      ]
+    },
+    {
+      "kind": "ObjCImplementationDecl",
+      "name": "Vehicle",
+      "super": {"name": "OZObject"},
+      "inner": [
+        {
+          "kind": "ObjCMethodDecl",
+          "name": "init",
+          "returnType": {"qualType": "instancetype"},
+          "inner": [
+            {
+              "kind": "CompoundStmt",
+              "inner": [
+                {
+                  "kind": "ObjCMessageExpr",
+                  "selector": "init",
+                  "receiverKind": "super",
+                  "inner": []
+                },
+                {
+                  "kind": "ReturnStmt",
+                  "inner": [
+                    {
+                      "kind": "DeclRefExpr",
+                      "referencedDecl": {"name": "self"},
+                      "type": {"qualType": "Vehicle *"}
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "ObjCMethodDecl",
+          "name": "speed",
+          "returnType": {"qualType": "int"},
+          "inner": [
+            {
+              "kind": "CompoundStmt",
+              "inner": [
+                {
+                  "kind": "ReturnStmt",
+                  "inner": [
+                    {
+                      "kind": "ObjCIvarRefExpr",
+                      "decl": {"name": "_speed"}
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
