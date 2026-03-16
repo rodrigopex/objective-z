@@ -1,6 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 
-from oz_transpile.collect import collect
+from oz_transpile.collect import collect, is_stub_source, merge_modules
+from oz_transpile.model import (OZClass, OZFunction, OZIvar, OZMethod, OZModule,
+                                OZParam, OZProperty, OZProtocol, OZStaticVar,
+                                OZType)
 
 
 def _make_ast(*inner):
@@ -706,3 +709,287 @@ class TestCollectProperty:
         mod = collect(ast)
         assert len(mod.classes["Car"].properties) == 0
         assert any("weak" in e and "delegate" in e for e in mod.errors)
+
+
+class TestIsStubSource:
+    def test_oz_transpile_path(self):
+        assert is_stub_source("/path/to/oz_transpile/OZObject.m") is True
+
+    def test_oz_sdk_path(self):
+        assert is_stub_source("/path/to/include/oz_sdk/Foundation/OZString.h") is True
+
+    def test_user_source(self):
+        assert is_stub_source("/path/to/src/MyClass.m") is False
+
+    def test_empty_path(self):
+        assert is_stub_source("") is False
+
+
+class TestMergeModules:
+    def test_disjoint_classes(self):
+        m1 = OZModule()
+        m1.classes["Foo"] = OZClass("Foo", superclass="OZObject")
+        m2 = OZModule()
+        m2.classes["Bar"] = OZClass("Bar", superclass="OZObject")
+
+        merged = merge_modules([m1, m2])
+        assert "Foo" in merged.classes
+        assert "Bar" in merged.classes
+
+    def test_superclass_fill_in(self):
+        m1 = OZModule()
+        m1.classes["Foo"] = OZClass("Foo")
+        m2 = OZModule()
+        m2.classes["Foo"] = OZClass("Foo", superclass="OZObject")
+
+        merged = merge_modules([m1, m2])
+        assert merged.classes["Foo"].superclass == "OZObject"
+
+    def test_superclass_not_overwritten(self):
+        m1 = OZModule()
+        m1.classes["Foo"] = OZClass("Foo", superclass="OZObject")
+        m2 = OZModule()
+        m2.classes["Foo"] = OZClass("Foo", superclass="OtherBase")
+
+        merged = merge_modules([m1, m2])
+        assert merged.classes["Foo"].superclass == "OZObject"
+
+    def test_ivar_fill_in(self):
+        m1 = OZModule()
+        m1.classes["Foo"] = OZClass("Foo")
+        m2 = OZModule()
+        m2.classes["Foo"] = OZClass("Foo", ivars=[
+            OZIvar("_x", OZType("int")),
+        ])
+
+        merged = merge_modules([m1, m2])
+        assert len(merged.classes["Foo"].ivars) == 1
+        assert merged.classes["Foo"].ivars[0].name == "_x"
+
+    def test_ivars_not_overwritten(self):
+        m1 = OZModule()
+        m1.classes["Foo"] = OZClass("Foo", ivars=[
+            OZIvar("_a", OZType("int")),
+        ])
+        m2 = OZModule()
+        m2.classes["Foo"] = OZClass("Foo", ivars=[
+            OZIvar("_b", OZType("float")),
+        ])
+
+        merged = merge_modules([m1, m2])
+        assert len(merged.classes["Foo"].ivars) == 1
+        assert merged.classes["Foo"].ivars[0].name == "_a"
+
+    def test_method_body_ast_override(self):
+        body = {"kind": "CompoundStmt", "inner": []}
+        m1 = OZModule()
+        m1.classes["Foo"] = OZClass("Foo", methods=[
+            OZMethod("init", OZType("instancetype")),
+        ])
+        m2 = OZModule()
+        m2.classes["Foo"] = OZClass("Foo", methods=[
+            OZMethod("init", OZType("instancetype"), body_ast=body),
+        ])
+
+        merged = merge_modules([m1, m2])
+        assert len(merged.classes["Foo"].methods) == 1
+        assert merged.classes["Foo"].methods[0].body_ast is body
+
+    def test_method_with_body_not_overwritten_by_decl(self):
+        body = {"kind": "CompoundStmt", "inner": []}
+        m1 = OZModule()
+        m1.classes["Foo"] = OZClass("Foo", methods=[
+            OZMethod("init", OZType("instancetype"), body_ast=body),
+        ])
+        m2 = OZModule()
+        m2.classes["Foo"] = OZClass("Foo", methods=[
+            OZMethod("init", OZType("instancetype")),
+        ])
+
+        merged = merge_modules([m1, m2])
+        assert merged.classes["Foo"].methods[0].body_ast is body
+
+    def test_new_method_appended(self):
+        m1 = OZModule()
+        m1.classes["Foo"] = OZClass("Foo", methods=[
+            OZMethod("init", OZType("instancetype")),
+        ])
+        m2 = OZModule()
+        m2.classes["Foo"] = OZClass("Foo", methods=[
+            OZMethod("doWork", OZType("void")),
+        ])
+
+        merged = merge_modules([m1, m2])
+        selectors = [m.selector for m in merged.classes["Foo"].methods]
+        assert selectors == ["init", "doWork"]
+
+    def test_protocol_deduplication(self):
+        m1 = OZModule()
+        m1.protocols["Proto"] = OZProtocol("Proto", methods=[
+            OZMethod("run", OZType("void")),
+        ])
+        m2 = OZModule()
+        m2.protocols["Proto"] = OZProtocol("Proto", methods=[
+            OZMethod("run", OZType("void")),
+        ])
+
+        merged = merge_modules([m1, m2])
+        assert len(merged.protocols) == 1
+        assert "Proto" in merged.protocols
+
+    def test_protocol_class_list_dedup(self):
+        m1 = OZModule()
+        m1.classes["Foo"] = OZClass("Foo", protocols=["ProtoA", "ProtoB"])
+        m2 = OZModule()
+        m2.classes["Foo"] = OZClass("Foo", protocols=["ProtoB", "ProtoC"])
+
+        merged = merge_modules([m1, m2])
+        assert merged.classes["Foo"].protocols == ["ProtoA", "ProtoB", "ProtoC"]
+
+    def test_property_fill_in(self):
+        m1 = OZModule()
+        m1.classes["Foo"] = OZClass("Foo")
+        m2 = OZModule()
+        m2.classes["Foo"] = OZClass("Foo", properties=[
+            OZProperty("color", OZType("int")),
+        ])
+
+        merged = merge_modules([m1, m2])
+        assert len(merged.classes["Foo"].properties) == 1
+        assert merged.classes["Foo"].properties[0].name == "color"
+
+    def test_properties_not_overwritten(self):
+        m1 = OZModule()
+        m1.classes["Foo"] = OZClass("Foo", properties=[
+            OZProperty("color", OZType("int")),
+        ])
+        m2 = OZModule()
+        m2.classes["Foo"] = OZClass("Foo", properties=[
+            OZProperty("speed", OZType("float")),
+        ])
+
+        merged = merge_modules([m1, m2])
+        assert len(merged.classes["Foo"].properties) == 1
+        assert merged.classes["Foo"].properties[0].name == "color"
+
+    def test_diagnostics_accumulated(self):
+        m1 = OZModule()
+        m1.diagnostics.append("warn1")
+        m2 = OZModule()
+        m2.diagnostics.append("warn2")
+
+        merged = merge_modules([m1, m2])
+        assert merged.diagnostics == ["warn1", "warn2"]
+
+    def test_errors_accumulated(self):
+        m1 = OZModule()
+        m1.errors.append("err1")
+        m2 = OZModule()
+        m2.errors.append("err2")
+
+        merged = merge_modules([m1, m2])
+        assert merged.errors == ["err1", "err2"]
+
+    def test_verbatim_lines_dedup(self):
+        m1 = OZModule()
+        m1.verbatim_lines.append("K_THREAD_DEFINE(a);")
+        m2 = OZModule()
+        m2.verbatim_lines.append("K_THREAD_DEFINE(a);")
+        m2.verbatim_lines.append("K_THREAD_DEFINE(b);")
+
+        merged = merge_modules([m1, m2])
+        assert merged.verbatim_lines == [
+            "K_THREAD_DEFINE(a);", "K_THREAD_DEFINE(b);"]
+
+    def test_user_includes_dedup(self):
+        m1 = OZModule()
+        m1.user_includes.append('#include "foo.h"')
+        m2 = OZModule()
+        m2.user_includes.append('#include "foo.h"')
+        m2.user_includes.append('#include "bar.h"')
+
+        merged = merge_modules([m1, m2])
+        assert merged.user_includes == ['#include "foo.h"', '#include "bar.h"']
+
+    def test_type_defs_merged(self):
+        m1 = OZModule()
+        m1.type_defs["enum A"] = "enum A { A1 };"
+        m2 = OZModule()
+        m2.type_defs["enum B"] = "enum B { B1 };"
+
+        merged = merge_modules([m1, m2])
+        assert "enum A" in merged.type_defs
+        assert "enum B" in merged.type_defs
+
+    def test_module_level_functions_merged(self):
+        m1 = OZModule()
+        m1.functions.append(OZFunction("func1", OZType("void")))
+        m2 = OZModule()
+        m2.functions.append(OZFunction("func2", OZType("int")))
+
+        merged = merge_modules([m1, m2])
+        assert len(merged.functions) == 2
+
+    def test_module_level_statics_merged(self):
+        m1 = OZModule()
+        m1.statics.append(OZStaticVar("s1", OZType("int")))
+        m2 = OZModule()
+        m2.statics.append(OZStaticVar("s2", OZType("float")))
+
+        merged = merge_modules([m1, m2])
+        assert len(merged.statics) == 2
+
+    def test_class_functions_and_statics_merged(self):
+        m1 = OZModule()
+        m1.classes["Foo"] = OZClass("Foo", functions=[
+            OZFunction("helper1", OZType("void")),
+        ])
+        m2 = OZModule()
+        m2.classes["Foo"] = OZClass("Foo", statics=[
+            OZStaticVar("_count", OZType("int")),
+        ])
+
+        merged = merge_modules([m1, m2])
+        assert len(merged.classes["Foo"].functions) == 1
+        assert len(merged.classes["Foo"].statics) == 1
+
+    def test_orphan_sources_accumulated(self):
+        from oz_transpile.model import OrphanSource
+        m1 = OZModule()
+        m1.orphan_sources.append(OrphanSource(stem="helpers"))
+        m2 = OZModule()
+
+        merged = merge_modules([m1, m2])
+        assert len(merged.orphan_sources) == 1
+
+    def test_source_paths_merged(self):
+        from pathlib import Path
+        m1 = OZModule()
+        m1.source_paths["Foo"] = Path("/a/Foo.m")
+        m2 = OZModule()
+        m2.source_paths["Bar"] = Path("/b/Bar.m")
+
+        merged = merge_modules([m1, m2])
+        assert merged.source_paths["Foo"] == Path("/a/Foo.m")
+        assert merged.source_paths["Bar"] == Path("/b/Bar.m")
+
+    def test_source_stem_fill_in(self):
+        m1 = OZModule()
+        m1.classes["Foo"] = OZClass("Foo")
+        m2 = OZModule()
+        m2.classes["Foo"] = OZClass("Foo")
+        m2.classes["Foo"].source_stem = "FooImpl"
+
+        merged = merge_modules([m1, m2])
+        assert merged.classes["Foo"].source_stem == "FooImpl"
+
+    def test_empty_modules(self):
+        merged = merge_modules([OZModule(), OZModule()])
+        assert len(merged.classes) == 0
+        assert len(merged.protocols) == 0
+
+    def test_single_module(self):
+        m = OZModule()
+        m.classes["Foo"] = OZClass("Foo")
+        merged = merge_modules([m])
+        assert "Foo" in merged.classes
