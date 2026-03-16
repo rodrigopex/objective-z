@@ -21,6 +21,7 @@ int OZObject_cDescription_maxLength_(struct OZObject *self, char *buf, int maxLe
 struct OZObject * OZObject_cls_alloc(void);
 struct OZObject * OZObject_init(struct OZObject *self);
 void OZObject_dealloc(struct OZObject *self);
+int triple(int x);
 
 extern oz_slab_t oz_slab_OZObject;
 

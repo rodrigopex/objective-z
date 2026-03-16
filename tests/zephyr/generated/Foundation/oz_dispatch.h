@@ -10,6 +10,7 @@
 
 struct OZObject;
 struct Base;
+struct BoxedTest;
 struct Child;
 struct Fan;
 struct Level1;
@@ -18,6 +19,7 @@ struct Level3;
 struct Level4;
 struct LightSwitch;
 struct Node;
+struct OZNumber;
 struct Widget;
 
 typedef struct OZObject *id;
@@ -25,16 +27,18 @@ typedef struct OZObject *id;
 enum oz_class_id {
 	OZ_CLASS_OZObject = 0,
 	OZ_CLASS_Base = 1,
-	OZ_CLASS_Child = 2,
-	OZ_CLASS_Fan = 3,
-	OZ_CLASS_Level1 = 4,
-	OZ_CLASS_Level2 = 5,
-	OZ_CLASS_Level3 = 6,
-	OZ_CLASS_Level4 = 7,
-	OZ_CLASS_LightSwitch = 8,
-	OZ_CLASS_Node = 9,
-	OZ_CLASS_Widget = 10,
-	OZ_CLASS_COUNT = 11
+	OZ_CLASS_BoxedTest = 2,
+	OZ_CLASS_Child = 3,
+	OZ_CLASS_Fan = 4,
+	OZ_CLASS_Level1 = 5,
+	OZ_CLASS_Level2 = 6,
+	OZ_CLASS_Level3 = 7,
+	OZ_CLASS_Level4 = 8,
+	OZ_CLASS_LightSwitch = 9,
+	OZ_CLASS_Node = 10,
+	OZ_CLASS_OZNumber = 11,
+	OZ_CLASS_Widget = 12,
+	OZ_CLASS_COUNT = 13
 };
 
 /* Class introspection tables */
