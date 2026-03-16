@@ -1702,6 +1702,19 @@ def _emit_msg_expr(node: dict, out: StringIO, ctx: _EmitCtx) -> None:
     receiver_kind = node.get("receiverKind", "")
     inner = node.get("inner", [])
 
+    # Track explicit [obj release] so ARC doesn't double-release at scope exit
+    if selector == "release" and inner:
+        recv = inner[0]
+        if recv.get("kind") == "ImplicitCastExpr":
+            recv = recv.get("inner", [{}])[0]
+        if recv.get("kind") == "DeclRefExpr":
+            var_name = recv.get("referencedDecl", {}).get("name", "")
+            if var_name and var_name != "self":
+                for frame in ctx.scope_vars:
+                    if var_name in frame:
+                        ctx.consumed_vars.add(var_name)
+                        break
+
     # [super sel] -> ParentClass_sel((struct ParentClass *)self)
     if receiver_kind.startswith("super"):
         parent = cls.superclass or root_class
