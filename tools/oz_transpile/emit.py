@@ -424,10 +424,18 @@ def _class_header_ctx(ctx: _EmitCtx, stem: str | None = None,
     number_inits = [
         {"suffix": "Int32", "c_type": "int32_t", "tag": "OZ_NUM_INT32",
          "field": "i32"},
+        {"suffix": "Uint32", "c_type": "uint32_t", "tag": "OZ_NUM_UINT32",
+         "field": "u32"},
         {"suffix": "Float", "c_type": "float", "tag": "OZ_NUM_FLOAT",
          "field": "f32"},
         {"suffix": "Int8", "c_type": "int8_t", "tag": "OZ_NUM_INT8",
          "field": "i8"},
+        {"suffix": "Uint8", "c_type": "uint8_t", "tag": "OZ_NUM_UINT8",
+         "field": "u8"},
+        {"suffix": "Int16", "c_type": "int16_t", "tag": "OZ_NUM_INT16",
+         "field": "i16"},
+        {"suffix": "Uint16", "c_type": "uint16_t", "tag": "OZ_NUM_UINT16",
+         "field": "u16"},
     ]
 
     return {
@@ -1170,6 +1178,46 @@ def _emit_forin_stmt(node: dict, out: StringIO, ctx: _EmitCtx,
     out.write(f"{tabs}}}\n")
 
 
+_BOXED_TYPE_MAP: dict[str, tuple[str, str | None]] = {
+    "int":              ("Int32",  None),
+    "int32_t":          ("Int32",  None),
+    "signed int":       ("Int32",  None),
+    "unsigned int":     ("Uint32", None),
+    "uint32_t":         ("Uint32", None),
+    "float":            ("Float",  None),
+    "int8_t":           ("Int8",   None),
+    "signed char":      ("Int8",   None),
+    "char":             ("Int8",   None),
+    "uint8_t":          ("Uint8",  None),
+    "unsigned char":    ("Uint8",  None),
+    "int16_t":          ("Int16",  None),
+    "short":            ("Int16",  None),
+    "signed short":     ("Int16",  None),
+    "uint16_t":         ("Uint16", None),
+    "unsigned short":   ("Uint16", None),
+    "long":             ("Int32",  "(int32_t)"),
+    "unsigned long":    ("Uint32", "(uint32_t)"),
+    "BOOL":             ("Int8",   "(int8_t)"),
+    "_Bool":            ("Int8",   "(int8_t)"),
+    "double":           ("Float",  "(float)"),
+    "long double":      ("Float",  "(float)"),
+}
+
+
+def _boxed_type_lookup(qt: str) -> tuple[str, str | None, bool]:
+    """Look up boxed number suffix and optional cast for a qualType string.
+
+    Returns (suffix, cast_or_None, needs_warning).
+    """
+    entry = _BOXED_TYPE_MAP.get(qt)
+    if entry:
+        warn = qt in ("double", "long double")
+        return entry[0], entry[1], warn
+    if qt.startswith("enum "):
+        return "Int32", "(int32_t)", False
+    return "Int32", "(int32_t)", True
+
+
 def _emit_boxed_number(node: dict, out: StringIO, ctx: _EmitCtx) -> None:
     """Emit a dynamically allocated OZNumber via OZNumber_initXxx() helper."""
     inner = node.get("inner", [])
@@ -1180,37 +1228,63 @@ def _emit_boxed_number(node: dict, out: StringIO, ctx: _EmitCtx) -> None:
         out.write("((void *)0)")
         return
 
-    child = inner[0]
+    original_child = inner[0]
+    inner_qt = original_child.get("type", {}).get("qualType", "")
+
+    child = original_child
     child_kind = child.get("kind", "")
 
-    # Unwrap ImplicitCastExpr wrappers
+    # Unwrap ImplicitCastExpr wrappers to inspect the leaf kind
     while child_kind == "ImplicitCastExpr":
         child = child.get("inner", [{}])[0]
         child_kind = child.get("kind", "")
 
+    # Fast path: literal children (existing behavior, unchanged)
     if child_kind == "IntegerLiteral":
         val = child.get("value", "0")
         out.write(f"OZNumber_initInt32({val})")
-    elif child_kind == "FloatingLiteral":
+        return
+    if child_kind == "FloatingLiteral":
         val = child.get("value", "0.0")
         fval = val if val.endswith("f") or val.endswith("F") else f"{val}f"
         out.write(f"OZNumber_initFloat({fval})")
-    elif child_kind == "CharacterLiteral":
+        return
+    if child_kind == "CharacterLiteral":
         val = str(child.get("value", 0))
         out.write(f"OZNumber_initInt32({val})")
-    elif child_kind == "ObjCBoolLiteralExpr":
+        return
+    if child_kind == "ObjCBoolLiteralExpr":
         raw = child.get("value", False)
         if isinstance(raw, str):
             val = "0" if "no" in raw.lower() else "1"
         else:
             val = "1" if raw else "0"
         out.write(f"OZNumber_initInt8({val})")
-    else:
+        return
+
+    # Expression path: variables, arithmetic, function calls, etc.
+    # Reject string types — OZString has no factory for dynamic creation.
+    if "char *" in inner_qt or "NSString" in inner_qt or "OZString" in inner_qt:
         ctx.module.errors.append(
-            f"boxed expression @({child_kind}) is not supported; "
-            f"use OZNumber_initInt32() or [[OZNumber alloc] initWithInt:]")
+            f"boxed string expression @(expr) is not supported; "
+            f"use OZString literals instead")
         out.write("((void *)0)")
         return
+
+    suffix, cast, warn = _boxed_type_lookup(inner_qt)
+    if warn:
+        ctx.module.diagnostics.append(
+            f"warning: @(expr) with type '{inner_qt}' narrowed to "
+            f"OZNumber_{suffix}; verify no precision loss")
+
+    buf = StringIO()
+    _emit_expr(original_child, buf, ctx)
+    expr_str = buf.getvalue()
+
+    if cast:
+        out.write(f"OZNumber_init{suffix}({cast}({expr_str}))")
+    else:
+        out.write(f"OZNumber_init{suffix}({expr_str})")
 
 
 def _emit_block_expr(node: dict, out: StringIO, ctx: _EmitCtx) -> None:
