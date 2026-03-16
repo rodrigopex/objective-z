@@ -45,10 +45,13 @@ transpiler pipeline.
 
 ## Literals and Expressions
 
-- **No boxed expressions (`@(expr)`).** `ObjCBoxedExpr` AST nodes are not
-  transpiled. The generated code will contain a `/* TODO: ObjCBoxedExpr */`
-  comment and will not compile. Use explicit `OZNumber` initializers instead
-  (e.g., `[OZNumber numberWithInt:42]`).
+- **Boxed expressions (`@(expr)`) supported for numeric types.** Both literal
+  (`@42`, `@3.14f`, `@YES`) and expression (`@(myVar)`, `@(a + b)`,
+  `@(getValue())`) forms are transpiled to `OZNumber_initXxx()` calls. The init
+  suffix is chosen by the inner expression's C type (`int` → `Int32`, `float` →
+  `Float`, `uint16_t` → `Uint16`, etc.). `double` values are narrowed to `float`
+  with a diagnostic warning. String boxing (`@("hello")`) is not supported — use
+  OZString literals instead.
 
 - **OZNumber supports 8/16/32-bit integers and float.** `OZNumber` boxes
   `int8_t`, `uint8_t`, `int16_t`, `uint16_t`, `int32_t`, `uint32_t`, `float`,

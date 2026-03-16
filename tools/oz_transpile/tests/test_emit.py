@@ -3266,3 +3266,251 @@ class TestParentIvarAccess:
             content = open(os.path.join(tmpdir, "Child_ozm.c")).read()
             assert "self->_value" in content
             assert "self->base._value" not in content
+
+    # -------------------------------------------------------------------
+    # Boxed expression @(expr) tests
+    # -------------------------------------------------------------------
+
+    def _boxed_expr_module(self, inner_ast, inner_qt="int"):
+        """Helper: build a module with a function containing @(expr)."""
+        m = _simple_module()
+        m.classes["OZNumber"] = OZClass(
+            "OZNumber", superclass="OZObject",
+            ivars=[
+                OZIvar("_tag", OZType("enum oz_number_tag")),
+                OZIvar("_value", OZType("union oz_number_value")),
+            ],
+        )
+        m.functions.append(OZFunction(
+            name="test_boxed",
+            return_type=OZType("void"),
+            body_ast={
+                "kind": "CompoundStmt",
+                "inner": [{
+                    "kind": "DeclStmt",
+                    "inner": [{
+                        "kind": "VarDecl",
+                        "name": "n",
+                        "type": {"qualType": "OZNumber *"},
+                        "inner": [{
+                            "kind": "ObjCBoxedExpr",
+                            "type": {"qualType": "NSNumber *"},
+                            "inner": [{
+                                "kind": "ImplicitCastExpr",
+                                "type": {"qualType": inner_qt},
+                                "castKind": "LValueToRValue",
+                                "inner": [inner_ast],
+                            }],
+                        }],
+                    }],
+                }],
+            },
+        ))
+        return m
+
+    def test_boxed_variable_int(self):
+        """@(myInt) with int type → OZNumber_initInt32(myInt)."""
+        m = self._boxed_expr_module(
+            {"kind": "DeclRefExpr",
+             "referencedDecl": {"name": "myInt"},
+             "type": {"qualType": "int"}},
+            inner_qt="int",
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            src = open(os.path.join(tmpdir, "Foundation", "OZObject_ozm.c")).read()
+            assert "OZNumber_initInt32(myInt)" in src
+
+    def test_boxed_binary_expr(self):
+        """@(a + b) with int type → OZNumber_initInt32(a + b)."""
+        inner_ast = {
+            "kind": "BinaryOperator",
+            "opcode": "+",
+            "type": {"qualType": "int"},
+            "inner": [
+                {"kind": "ImplicitCastExpr",
+                 "type": {"qualType": "int"},
+                 "castKind": "LValueToRValue",
+                 "inner": [{"kind": "DeclRefExpr",
+                            "referencedDecl": {"name": "a"},
+                            "type": {"qualType": "int"}}]},
+                {"kind": "ImplicitCastExpr",
+                 "type": {"qualType": "int"},
+                 "castKind": "LValueToRValue",
+                 "inner": [{"kind": "DeclRefExpr",
+                            "referencedDecl": {"name": "b"},
+                            "type": {"qualType": "int"}}]},
+            ],
+        }
+        m = _simple_module()
+        m.classes["OZNumber"] = OZClass(
+            "OZNumber", superclass="OZObject",
+            ivars=[
+                OZIvar("_tag", OZType("enum oz_number_tag")),
+                OZIvar("_value", OZType("union oz_number_value")),
+            ],
+        )
+        m.functions.append(OZFunction(
+            name="test_boxed",
+            return_type=OZType("void"),
+            body_ast={
+                "kind": "CompoundStmt",
+                "inner": [{
+                    "kind": "DeclStmt",
+                    "inner": [{
+                        "kind": "VarDecl",
+                        "name": "n",
+                        "type": {"qualType": "OZNumber *"},
+                        "inner": [{
+                            "kind": "ObjCBoxedExpr",
+                            "type": {"qualType": "NSNumber *"},
+                            "inner": [inner_ast],
+                        }],
+                    }],
+                }],
+            },
+        ))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            src = open(os.path.join(tmpdir, "Foundation", "OZObject_ozm.c")).read()
+            assert "OZNumber_initInt32(a + b)" in src
+
+    def test_boxed_variable_float(self):
+        """@(myFloat) with float type → OZNumber_initFloat(myFloat)."""
+        m = self._boxed_expr_module(
+            {"kind": "DeclRefExpr",
+             "referencedDecl": {"name": "myFloat"},
+             "type": {"qualType": "float"}},
+            inner_qt="float",
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            src = open(os.path.join(tmpdir, "Foundation", "OZObject_ozm.c")).read()
+            assert "OZNumber_initFloat(myFloat)" in src
+
+    def test_boxed_variable_uint16(self):
+        """@(myU16) with uint16_t type → OZNumber_initUint16(myU16)."""
+        m = self._boxed_expr_module(
+            {"kind": "DeclRefExpr",
+             "referencedDecl": {"name": "myU16"},
+             "type": {"qualType": "uint16_t"}},
+            inner_qt="uint16_t",
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            src = open(os.path.join(tmpdir, "Foundation", "OZObject_ozm.c")).read()
+            assert "OZNumber_initUint16(myU16)" in src
+
+    def test_boxed_call_expr(self):
+        """@(getValue()) with int return → OZNumber_initInt32(getValue())."""
+        inner_ast = {
+            "kind": "CallExpr",
+            "type": {"qualType": "int"},
+            "inner": [
+                {"kind": "ImplicitCastExpr",
+                 "type": {"qualType": "int (*)(void)"},
+                 "castKind": "FunctionToPointerDecay",
+                 "inner": [{"kind": "DeclRefExpr",
+                            "referencedDecl": {"name": "getValue"},
+                            "type": {"qualType": "int (void)"}}]},
+            ],
+        }
+        m = _simple_module()
+        m.classes["OZNumber"] = OZClass(
+            "OZNumber", superclass="OZObject",
+            ivars=[
+                OZIvar("_tag", OZType("enum oz_number_tag")),
+                OZIvar("_value", OZType("union oz_number_value")),
+            ],
+        )
+        m.functions.append(OZFunction(
+            name="test_boxed",
+            return_type=OZType("void"),
+            body_ast={
+                "kind": "CompoundStmt",
+                "inner": [{
+                    "kind": "DeclStmt",
+                    "inner": [{
+                        "kind": "VarDecl",
+                        "name": "n",
+                        "type": {"qualType": "OZNumber *"},
+                        "inner": [{
+                            "kind": "ObjCBoxedExpr",
+                            "type": {"qualType": "NSNumber *"},
+                            "inner": [inner_ast],
+                        }],
+                    }],
+                }],
+            },
+        ))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            src = open(os.path.join(tmpdir, "Foundation", "OZObject_ozm.c")).read()
+            assert "OZNumber_initInt32(getValue())" in src
+
+    def test_boxed_enum(self):
+        """@(enumVar) with enum type → OZNumber_initInt32((int32_t)(enumVar))."""
+        m = self._boxed_expr_module(
+            {"kind": "DeclRefExpr",
+             "referencedDecl": {"name": "enumVar"},
+             "type": {"qualType": "enum Color"}},
+            inner_qt="enum Color",
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            src = open(os.path.join(tmpdir, "Foundation", "OZObject_ozm.c")).read()
+            assert "OZNumber_initInt32((int32_t)(enumVar))" in src
+
+    def test_boxed_double_warns(self):
+        """@(myDouble) with double → OZNumber_initFloat((float)(...)) + diagnostic."""
+        m = self._boxed_expr_module(
+            {"kind": "DeclRefExpr",
+             "referencedDecl": {"name": "myDouble"},
+             "type": {"qualType": "double"}},
+            inner_qt="double",
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            src = open(os.path.join(tmpdir, "Foundation", "OZObject_ozm.c")).read()
+            assert "OZNumber_initFloat((float)(myDouble))" in src
+            assert any("double" in d and "narrowed" in d
+                       for d in m.diagnostics)
+
+    def test_boxed_literal_regression(self):
+        """Existing @42 literal path still works after refactor."""
+        m = _simple_module()
+        m.classes["OZNumber"] = OZClass(
+            "OZNumber", superclass="OZObject",
+            ivars=[
+                OZIvar("_tag", OZType("enum oz_number_tag")),
+                OZIvar("_value", OZType("union oz_number_value")),
+            ],
+        )
+        m.functions.append(OZFunction(
+            name="test_lit",
+            return_type=OZType("void"),
+            body_ast={
+                "kind": "CompoundStmt",
+                "inner": [{
+                    "kind": "DeclStmt",
+                    "inner": [{
+                        "kind": "VarDecl",
+                        "name": "n",
+                        "type": {"qualType": "OZNumber *"},
+                        "inner": [{
+                            "kind": "ObjCBoxedExpr",
+                            "type": {"qualType": "NSNumber *"},
+                            "inner": [{
+                                "kind": "IntegerLiteral",
+                                "value": "99",
+                            }],
+                        }],
+                    }],
+                }],
+            },
+        ))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            src = open(os.path.join(tmpdir, "Foundation", "OZObject_ozm.c")).read()
+            assert "OZNumber_initInt32(99)" in src
+            assert not m.errors
