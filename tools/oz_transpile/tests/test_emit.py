@@ -3838,3 +3838,63 @@ class TestEmitEdgeCases:
             emit(m, tmpdir)
             src = open(os.path.join(tmpdir, "Foo_ozm.c")).read()
             assert "_oz_str_L10_C5" in src
+
+    def test_explicit_release_prevents_double_release(self):
+        """OZ-041: explicit [obj release] must suppress ARC auto-release."""
+        m = OZModule()
+        m.classes["OZObject"] = OZClass("OZObject", methods=[
+            OZMethod("init", OZType("instancetype"), body_ast={
+                "kind": "CompoundStmt",
+                "inner": [{"kind": "ReturnStmt", "inner": [
+                    {"kind": "DeclRefExpr",
+                     "referencedDecl": {"name": "self"},
+                     "type": {"qualType": "OZObject *"}},
+                ]}],
+            }),
+            OZMethod("dealloc", OZType("void"), body_ast={
+                "kind": "CompoundStmt", "inner": [],
+            }),
+        ])
+        m.classes["Foo"] = OZClass("Foo", superclass="OZObject", methods=[
+            OZMethod("doWork", OZType("void"), body_ast={
+                "kind": "CompoundStmt",
+                "inner": [
+                    {"kind": "DeclStmt", "inner": [{
+                        "kind": "VarDecl",
+                        "name": "obj",
+                        "type": {"qualType": "OZObject *"},
+                        "inner": [{
+                            "kind": "ObjCMessageExpr",
+                            "selector": "init",
+                            "receiverKind": "instance",
+                            "type": {"qualType": "OZObject *"},
+                            "inner": [{
+                                "kind": "ObjCMessageExpr",
+                                "selector": "alloc",
+                                "receiverKind": "class",
+                                "classType": {"qualType": "OZObject"},
+                                "inner": [],
+                            }],
+                        }],
+                    }]},
+                    {"kind": "ObjCMessageExpr",
+                     "selector": "release",
+                     "receiverKind": "instance",
+                     "inner": [{
+                         "kind": "ImplicitCastExpr",
+                         "inner": [{
+                             "kind": "DeclRefExpr",
+                             "referencedDecl": {"name": "obj"},
+                             "type": {"qualType": "OZObject *"},
+                         }],
+                     }],
+                    },
+                ],
+            }),
+        ])
+        resolve(m)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            src = open(os.path.join(tmpdir, "Foo_ozm.c")).read()
+            # Should have exactly one release call, not two
+            assert src.count("OZObject_release") == 1
