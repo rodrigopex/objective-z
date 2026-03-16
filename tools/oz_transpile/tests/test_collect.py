@@ -993,3 +993,81 @@ class TestMergeModules:
         m.classes["Foo"] = OZClass("Foo")
         merged = merge_modules([m])
         assert "Foo" in merged.classes
+
+
+class TestDiagnostics:
+    def test_unsupported_selector_skipped(self):
+        """KVO methods like forwardInvocation: should produce errors."""
+        ast = _make_ast(
+            _interface("OZObject"),
+            _impl("OZObject", methods=[
+                _method("forwardInvocation:", ret="void",
+                        params=[("inv", "id")]),
+            ]),
+        )
+        mod = collect(ast)
+        assert len(mod.classes["OZObject"].methods) == 0
+        assert any("forwardInvocation:" in e for e in mod.errors)
+
+    def test_kvo_add_observer_skipped(self):
+        ast = _make_ast(
+            _interface("OZObject"),
+            _impl("OZObject", methods=[
+                _method("addObserver:forKeyPath:options:context:", ret="void",
+                        params=[("obs", "id"), ("kp", "id"),
+                                ("opt", "int"), ("ctx", "id")]),
+            ]),
+        )
+        mod = collect(ast)
+        assert len(mod.classes["OZObject"].methods) == 0
+        assert any("addObserver:" in e for e in mod.errors)
+
+    def test_try_stmt_produces_error(self):
+        """@try statements should produce an error."""
+        ast = _make_ast(
+            _interface("Foo", "OZObject"),
+            {
+                "kind": "ObjCImplementationDecl",
+                "name": "Foo",
+                "inner": [{
+                    "kind": "ObjCMethodDecl",
+                    "name": "doWork",
+                    "returnType": {"qualType": "void"},
+                    "inner": [{
+                        "kind": "CompoundStmt",
+                        "inner": [{
+                            "kind": "ObjCAtTryStmt",
+                            "loc": {"line": 10},
+                            "inner": [],
+                        }],
+                    }],
+                }],
+            },
+        )
+        mod = collect(ast)
+        assert any("@try" in e for e in mod.errors)
+
+    def test_implicit_method_skipped(self):
+        """Implicit (compiler-generated) methods should be skipped."""
+        ast = _make_ast(
+            _impl("Foo", methods=[{
+                "kind": "ObjCMethodDecl",
+                "name": "dealloc",
+                "returnType": {"qualType": "void"},
+                "isImplicit": True,
+                "inner": [],
+            }]),
+        )
+        mod = collect(ast)
+        assert len(mod.classes["Foo"].methods) == 0
+
+    def test_weak_property_error(self):
+        """Weak properties produce an error and are not collected."""
+        ast = _make_ast(
+            _interface("Foo", "OZObject", inner=[
+                _property_decl("delegate", "id", weak=True, nonatomic=True),
+            ]),
+        )
+        mod = collect(ast)
+        assert len(mod.classes["Foo"].properties) == 0
+        assert any("weak" in e for e in mod.errors)
