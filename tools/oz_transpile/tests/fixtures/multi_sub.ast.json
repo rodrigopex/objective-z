@@ -1,0 +1,90 @@
+{
+  "kind": "TranslationUnitDecl",
+  "inner": [
+    {
+      "kind": "ObjCInterfaceDecl",
+      "name": "OZObject",
+      "inner": []
+    },
+    {
+      "kind": "ObjCInterfaceDecl",
+      "name": "Vehicle",
+      "super": {"name": "OZObject"},
+      "inner": [
+        {
+          "kind": "ObjCIvarDecl",
+          "name": "_speed",
+          "type": {"qualType": "int"}
+        }
+      ]
+    },
+    {
+      "kind": "ObjCInterfaceDecl",
+      "name": "Car",
+      "super": {"name": "Vehicle"},
+      "inner": [
+        {
+          "kind": "ObjCIvarDecl",
+          "name": "_doors",
+          "type": {"qualType": "int"}
+        }
+      ]
+    },
+    {
+      "kind": "ObjCImplementationDecl",
+      "name": "Car",
+      "super": {"name": "Vehicle"},
+      "inner": [
+        {
+          "kind": "ObjCMethodDecl",
+          "name": "init",
+          "returnType": {"qualType": "instancetype"},
+          "inner": [
+            {
+              "kind": "CompoundStmt",
+              "inner": [
+                {
+                  "kind": "ObjCMessageExpr",
+                  "selector": "init",
+                  "receiverKind": "super",
+                  "inner": []
+                },
+                {
+                  "kind": "ReturnStmt",
+                  "inner": [
+                    {
+                      "kind": "DeclRefExpr",
+                      "referencedDecl": {"name": "self"},
+                      "type": {"qualType": "Car *"}
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "ObjCMethodDecl",
+          "name": "doors",
+          "returnType": {"qualType": "int"},
+          "inner": [
+            {
+              "kind": "CompoundStmt",
+              "inner": [
+                {
+                  "kind": "ReturnStmt",
+                  "inner": [
+                    {
+                      "kind": "ObjCIvarRefExpr",
+                      "decl": {"name": "_doors"}
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

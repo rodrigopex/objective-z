@@ -1,0 +1,39 @@
+{
+  "kind": "TranslationUnitDecl",
+  "inner": [
+    {
+      "kind": "ObjCInterfaceDecl",
+      "name": "OZObject",
+      "inner": []
+    },
+    {
+      "kind": "ObjCInterfaceDecl",
+      "name": "Vehicle",
+      "super": {"name": "OZObject"},
+      "inner": [
+        {
+          "kind": "ObjCIvarDecl",
+          "name": "_speed",
+          "type": {"qualType": "int"}
+        }
+      ]
+    },
+    {
+      "kind": "ObjCCategoryImplDecl",
+      "interface": {"name": "Vehicle"},
+      "inner": [
+        {
+          "kind": "ObjCMethodDecl",
+          "name": "honk",
+          "returnType": {"qualType": "void"},
+          "inner": [
+            {
+              "kind": "CompoundStmt",
+              "inner": []
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
