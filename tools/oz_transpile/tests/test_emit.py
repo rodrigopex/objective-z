@@ -3762,3 +3762,79 @@ class TestEmitEdgeCases:
             assert "OZ_SEND_iter" in src
             assert "OZ_SEND_next" in src
             assert "item" in src
+
+    def test_string_dedup_unique_across_methods(self):
+        """OZ-039: different string literals in separate methods must get
+        unique constant names (no _oz_str_N redefinition)."""
+        m = OZModule()
+        m.classes["Foo"] = OZClass("Foo", methods=[
+            OZMethod("hello", OZType("void"), body_ast={
+                "kind": "CompoundStmt",
+                "inner": [{
+                    "kind": "DeclStmt",
+                    "inner": [{
+                        "kind": "VarDecl",
+                        "name": "s",
+                        "type": {"qualType": "OZString *"},
+                        "inner": [{
+                            "kind": "ObjCStringLiteral",
+                            "inner": [{"kind": "StringLiteral",
+                                        "value": '"hello"'}],
+                        }],
+                    }],
+                }],
+            }),
+            OZMethod("bye", OZType("void"), body_ast={
+                "kind": "CompoundStmt",
+                "inner": [{
+                    "kind": "DeclStmt",
+                    "inner": [{
+                        "kind": "VarDecl",
+                        "name": "s",
+                        "type": {"qualType": "OZString *"},
+                        "inner": [{
+                            "kind": "ObjCStringLiteral",
+                            "inner": [{"kind": "StringLiteral",
+                                        "value": '"bye"'}],
+                        }],
+                    }],
+                }],
+            }),
+        ])
+        resolve(m)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            src = open(os.path.join(tmpdir, "Foo_ozm.c")).read()
+            assert '"hello"' in src
+            assert '"bye"' in src
+            # Each string should have a unique constant name
+            assert src.count("static struct OZString _oz_str_") == 2
+            assert not m.errors
+
+    def test_string_dedup_uses_loc_when_available(self):
+        """OZ-039: string constants use _L{line}_C{col} naming from AST loc."""
+        m = OZModule()
+        m.classes["Foo"] = OZClass("Foo", methods=[
+            OZMethod("greet", OZType("void"), body_ast={
+                "kind": "CompoundStmt",
+                "inner": [{
+                    "kind": "DeclStmt",
+                    "inner": [{
+                        "kind": "VarDecl",
+                        "name": "s",
+                        "type": {"qualType": "OZString *"},
+                        "inner": [{
+                            "kind": "ObjCStringLiteral",
+                            "loc": {"line": 10, "col": 5},
+                            "inner": [{"kind": "StringLiteral",
+                                        "value": '"hi"'}],
+                        }],
+                    }],
+                }],
+            }),
+        ])
+        resolve(m)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            src = open(os.path.join(tmpdir, "Foo_ozm.c")).read()
+            assert "_oz_str_L10_C5" in src

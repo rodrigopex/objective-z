@@ -1535,8 +1535,13 @@ def _emit_expr(node: dict, out: StringIO, ctx: _EmitCtx) -> None:
             name = ctx._string_dedup[val]
         else:
             raw = val[1:-1]  # strip surrounding quotes
-            name = f"_oz_str_{ctx._tmp_counter}"
-            ctx._tmp_counter += 1
+            loc = node.get("loc", {})
+            line = loc.get("line")
+            col = loc.get("col")
+            if line is not None and col is not None:
+                name = f"_oz_str_L{line}_C{col}"
+            else:
+                name = f"_oz_str_{len(ctx._string_dedup)}"
             ctx._string_dedup[val] = name
             ctx.string_constants.append(
                 f"static struct OZString {name} = {{"
