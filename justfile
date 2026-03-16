@@ -73,10 +73,14 @@ test-behavior:
 test-adapted:
     python3 -m pytest tests/adapted/ -v
 
+test-pal:
+    python3 -m pytest tests/pal/ -v
+
 test-all-transpiler:
     just test-transpiler
     just test-behavior
     just test-adapted
+    just test-pal
 
 smoke:
     python3 tests/smoke/run.py
