@@ -113,10 +113,13 @@ def _run_pipeline_inner(m_path: Path, test_file: Path, tmpdir: Path,
 
     oz_hdr = REPO_ROOT / "include" / "oz_sdk"
     oz_src = REPO_ROOT / "src"
+    stubs_dir = REPO_ROOT / "tests" / "behavior" / "include" / "stubs"
 
     result = subprocess.run(
         [llvm_clang, "-Xclang", "-ast-dump=json", "-fsyntax-only",
          "-fobjc-runtime=macosx", "--target=x86_64-unknown-linux-gnu",
+         "-fblocks",
+         "-isystem", str(stubs_dir),
          "-I", str(inc_dir),
          "-I", str(oz_hdr),
          "-I", str(oz_src),
