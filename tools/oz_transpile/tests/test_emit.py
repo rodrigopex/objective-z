@@ -3514,3 +3514,251 @@ class TestParentIvarAccess:
             src = open(os.path.join(tmpdir, "Foundation", "OZObject_ozm.c")).read()
             assert "OZNumber_initInt32(99)" in src
             assert not m.errors
+
+
+class TestEmitEdgeCases:
+    """Tests for AST node types with missing or light coverage."""
+
+    def _emit_method(self, body_ast, class_name="Foo",
+                     method_name="doWork", ret="void"):
+        """Helper: emit a single method body and return the .c content."""
+        m = OZModule()
+        m.classes[class_name] = OZClass(class_name, methods=[
+            OZMethod(method_name, OZType(ret), body_ast=body_ast),
+        ])
+        resolve(m)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            return open(os.path.join(tmpdir, f"{class_name}_ozm.c")).read()
+
+    def test_null_stmt(self):
+        content = self._emit_method({
+            "kind": "CompoundStmt",
+            "inner": [{"kind": "NullStmt"}],
+        })
+        assert ";\n" in content
+
+    def test_objc_bool_literal_yes(self):
+        content = self._emit_method({
+            "kind": "CompoundStmt",
+            "inner": [{
+                "kind": "ReturnStmt",
+                "inner": [{
+                    "kind": "ObjCBoolLiteralExpr",
+                    "value": True,
+                }],
+            }],
+        }, ret="BOOL")
+        assert "return 1;" in content
+
+    def test_objc_bool_literal_no(self):
+        content = self._emit_method({
+            "kind": "CompoundStmt",
+            "inner": [{
+                "kind": "ReturnStmt",
+                "inner": [{
+                    "kind": "ObjCBoolLiteralExpr",
+                    "value": False,
+                }],
+            }],
+        }, ret="BOOL")
+        assert "return 0;" in content
+
+    def test_objc_bool_literal_string_yes(self):
+        """Clang sometimes encodes YES/NO as string values."""
+        content = self._emit_method({
+            "kind": "CompoundStmt",
+            "inner": [{
+                "kind": "ReturnStmt",
+                "inner": [{
+                    "kind": "ObjCBoolLiteralExpr",
+                    "value": "__objc_yes",
+                }],
+            }],
+        }, ret="BOOL")
+        assert "return 1;" in content
+
+    def test_objc_bool_literal_string_no(self):
+        content = self._emit_method({
+            "kind": "CompoundStmt",
+            "inner": [{
+                "kind": "ReturnStmt",
+                "inner": [{
+                    "kind": "ObjCBoolLiteralExpr",
+                    "value": "__objc_no",
+                }],
+            }],
+        }, ret="BOOL")
+        assert "return 0;" in content
+
+    def test_string_literal(self):
+        content = self._emit_method({
+            "kind": "CompoundStmt",
+            "inner": [{
+                "kind": "DeclStmt",
+                "inner": [{
+                    "kind": "VarDecl",
+                    "name": "s",
+                    "type": {"qualType": "const char *"},
+                    "inner": [{
+                        "kind": "StringLiteral",
+                        "value": '"hello world"',
+                    }],
+                }],
+            }],
+        })
+        assert '"hello world"' in content
+
+    def test_string_literal_escape(self):
+        content = self._emit_method({
+            "kind": "CompoundStmt",
+            "inner": [{
+                "kind": "DeclStmt",
+                "inner": [{
+                    "kind": "VarDecl",
+                    "name": "s",
+                    "type": {"qualType": "const char *"},
+                    "inner": [{
+                        "kind": "StringLiteral",
+                        "value": '"line\\n"',
+                    }],
+                }],
+            }],
+        })
+        assert '"line\\n"' in content
+
+    def test_array_literal(self):
+        m = OZModule()
+        m.classes["OZObject"] = OZClass("OZObject", methods=[
+            OZMethod("init", OZType("instancetype"), body_ast={
+                "kind": "CompoundStmt",
+                "inner": [{"kind": "ReturnStmt", "inner": [
+                    {"kind": "DeclRefExpr",
+                     "referencedDecl": {"name": "self"},
+                     "type": {"qualType": "OZObject *"}},
+                ]}],
+            }),
+            OZMethod("dealloc", OZType("void"), body_ast={
+                "kind": "CompoundStmt", "inner": [],
+            }),
+            OZMethod("test_lit", OZType("void"), body_ast={
+                "kind": "CompoundStmt",
+                "inner": [{
+                    "kind": "DeclStmt",
+                    "inner": [{
+                        "kind": "VarDecl",
+                        "name": "arr",
+                        "type": {"qualType": "OZArray *"},
+                        "inner": [{
+                            "kind": "ObjCArrayLiteral",
+                            "type": {"qualType": "NSArray *"},
+                            "inner": [
+                                {"kind": "ObjCStringLiteral",
+                                 "inner": [{"kind": "StringLiteral",
+                                            "value": '"a"'}]},
+                                {"kind": "ObjCStringLiteral",
+                                 "inner": [{"kind": "StringLiteral",
+                                            "value": '"b"'}]},
+                            ],
+                        }],
+                    }],
+                }],
+            }),
+        ])
+        resolve(m)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            src = open(os.path.join(tmpdir, "Foundation",
+                                    "OZObject_ozm.c")).read()
+            assert "OZArray_initWithItems" in src
+            assert "_oz_arr_" in src
+            assert not m.errors
+
+    def test_dictionary_literal(self):
+        m = OZModule()
+        m.classes["OZObject"] = OZClass("OZObject", methods=[
+            OZMethod("init", OZType("instancetype"), body_ast={
+                "kind": "CompoundStmt",
+                "inner": [{"kind": "ReturnStmt", "inner": [
+                    {"kind": "DeclRefExpr",
+                     "referencedDecl": {"name": "self"},
+                     "type": {"qualType": "OZObject *"}},
+                ]}],
+            }),
+            OZMethod("dealloc", OZType("void"), body_ast={
+                "kind": "CompoundStmt", "inner": [],
+            }),
+            OZMethod("test_lit", OZType("void"), body_ast={
+                "kind": "CompoundStmt",
+                "inner": [{
+                    "kind": "DeclStmt",
+                    "inner": [{
+                        "kind": "VarDecl",
+                        "name": "dict",
+                        "type": {"qualType": "OZDictionary *"},
+                        "inner": [{
+                            "kind": "ObjCDictionaryLiteral",
+                            "type": {"qualType": "NSDictionary *"},
+                            "inner": [
+                                {"kind": "ObjCStringLiteral",
+                                 "inner": [{"kind": "StringLiteral",
+                                            "value": '"key"'}]},
+                                {"kind": "ObjCStringLiteral",
+                                 "inner": [{"kind": "StringLiteral",
+                                            "value": '"val"'}]},
+                            ],
+                        }],
+                    }],
+                }],
+            }),
+        ])
+        resolve(m)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            src = open(os.path.join(tmpdir, "Foundation",
+                                    "OZObject_ozm.c")).read()
+            assert "OZDictionary_initWithKeysValues" in src
+            assert "_oz_dict_" in src
+            assert not m.errors
+
+    def test_forin_stmt(self):
+        m = OZModule()
+        m.classes["OZObject"] = OZClass("OZObject", methods=[
+            OZMethod("init", OZType("instancetype"), body_ast={
+                "kind": "CompoundStmt",
+                "inner": [{"kind": "ReturnStmt", "inner": [
+                    {"kind": "DeclRefExpr",
+                     "referencedDecl": {"name": "self"},
+                     "type": {"qualType": "OZObject *"}},
+                ]}],
+            }),
+            OZMethod("dealloc", OZType("void"), body_ast={
+                "kind": "CompoundStmt", "inner": [],
+            }),
+        ])
+        m.classes["Foo"] = OZClass("Foo", superclass="OZObject", methods=[
+            OZMethod("iterate", OZType("void"), body_ast={
+                "kind": "CompoundStmt",
+                "inner": [{
+                    "kind": "ObjCForCollectionStmt",
+                    "inner": [
+                        {"kind": "DeclStmt", "inner": [{
+                            "kind": "VarDecl",
+                            "name": "item",
+                            "type": {"qualType": "id"},
+                        }]},
+                        {"kind": "DeclRefExpr",
+                         "referencedDecl": {"name": "self"},
+                         "type": {"qualType": "Foo *"}},
+                        {"kind": "CompoundStmt", "inner": []},
+                    ],
+                }],
+            }),
+        ])
+        resolve(m)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            src = open(os.path.join(tmpdir, "Foo_ozm.c")).read()
+            assert "OZ_SEND_iter" in src
+            assert "OZ_SEND_next" in src
+            assert "item" in src
