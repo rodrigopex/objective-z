@@ -429,6 +429,116 @@ class TestCLIErrors:
             rc = main(["--input", ast_file, "--outdir", tmpdir])
             assert rc == 0
 
+    def test_external_protected_ivar_access_error(self):
+        """OZ-043: external access to protected ivar should fail."""
+        import json
+        ast = {
+            "kind": "TranslationUnitDecl",
+            "inner": [
+                {"kind": "ObjCInterfaceDecl", "name": "OZObject", "inner": []},
+                {"kind": "ObjCImplementationDecl", "name": "OZObject",
+                 "inner": [
+                     {"kind": "ObjCMethodDecl", "name": "init",
+                      "returnType": {"qualType": "instancetype"},
+                      "inner": [{"kind": "CompoundStmt", "inner": [
+                          {"kind": "ReturnStmt", "inner": [
+                              {"kind": "DeclRefExpr",
+                               "referencedDecl": {"name": "self"},
+                               "type": {"qualType": "OZObject *"}}]}]}]},
+                     {"kind": "ObjCMethodDecl", "name": "dealloc",
+                      "returnType": {"qualType": "void"},
+                      "inner": [{"kind": "CompoundStmt", "inner": []}]},
+                 ]},
+                {"kind": "ObjCInterfaceDecl", "name": "Car",
+                 "super": {"name": "OZObject"},
+                 "inner": [
+                     {"kind": "ObjCIvarDecl", "name": "_color",
+                      "type": {"qualType": "int"},
+                      "access": "protected"},
+                 ]},
+                {"kind": "ObjCImplementationDecl", "name": "Car",
+                 "super": {"name": "OZObject"}, "inner": []},
+                {"kind": "FunctionDecl", "name": "main",
+                 "type": {"qualType": "int ()"},
+                 "inner": [{"kind": "CompoundStmt", "inner": [{
+                     "kind": "ObjCIvarRefExpr",
+                     "decl": {"name": "_color"},
+                     "isFreeIvar": False,
+                     "inner": [{
+                         "kind": "ImplicitCastExpr",
+                         "castKind": "LValueToRValue",
+                         "inner": [{
+                             "kind": "DeclRefExpr",
+                             "referencedDecl": {"name": "myCar"},
+                             "type": {"qualType": "Car *"},
+                         }],
+                     }],
+                 }]}],
+                },
+            ],
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ast_file = os.path.join(tmpdir, "protected.ast.json")
+            with open(ast_file, "w") as f:
+                json.dump(ast, f)
+            rc = main(["--input", ast_file, "--outdir", tmpdir])
+            assert rc == 1
+
+    def test_external_public_ivar_access_succeeds(self):
+        """OZ-043: external access to public ivar should succeed."""
+        import json
+        ast = {
+            "kind": "TranslationUnitDecl",
+            "inner": [
+                {"kind": "ObjCInterfaceDecl", "name": "OZObject", "inner": []},
+                {"kind": "ObjCImplementationDecl", "name": "OZObject",
+                 "inner": [
+                     {"kind": "ObjCMethodDecl", "name": "init",
+                      "returnType": {"qualType": "instancetype"},
+                      "inner": [{"kind": "CompoundStmt", "inner": [
+                          {"kind": "ReturnStmt", "inner": [
+                              {"kind": "DeclRefExpr",
+                               "referencedDecl": {"name": "self"},
+                               "type": {"qualType": "OZObject *"}}]}]}]},
+                     {"kind": "ObjCMethodDecl", "name": "dealloc",
+                      "returnType": {"qualType": "void"},
+                      "inner": [{"kind": "CompoundStmt", "inner": []}]},
+                 ]},
+                {"kind": "ObjCInterfaceDecl", "name": "Car",
+                 "super": {"name": "OZObject"},
+                 "inner": [
+                     {"kind": "ObjCIvarDecl", "name": "_color",
+                      "type": {"qualType": "int"},
+                      "access": "public"},
+                 ]},
+                {"kind": "ObjCImplementationDecl", "name": "Car",
+                 "super": {"name": "OZObject"}, "inner": []},
+                {"kind": "FunctionDecl", "name": "main",
+                 "type": {"qualType": "int ()"},
+                 "inner": [{"kind": "CompoundStmt", "inner": [{
+                     "kind": "ObjCIvarRefExpr",
+                     "decl": {"name": "_color"},
+                     "isFreeIvar": False,
+                     "inner": [{
+                         "kind": "ImplicitCastExpr",
+                         "castKind": "LValueToRValue",
+                         "inner": [{
+                             "kind": "DeclRefExpr",
+                             "referencedDecl": {"name": "myCar"},
+                             "type": {"qualType": "Car *"},
+                         }],
+                     }],
+                 }]}],
+                },
+            ],
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ast_file = os.path.join(tmpdir, "public.ast.json")
+            with open(ast_file, "w") as f:
+                json.dump(ast, f)
+            rc = main(["--input", ast_file, "--outdir", tmpdir])
+            assert rc == 0
+
     def test_unsupported_method_selector_error(self):
         """Methods with unsupported selectors should produce errors."""
         import json

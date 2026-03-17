@@ -94,6 +94,35 @@ class TestCollectInterface:
         assert mod.classes["OZObject"].superclass is None
 
 
+    def test_ivar_access_collected(self):
+        ast = _make_ast(
+            _interface("Car", "OZObject", inner=[{
+                "kind": "ObjCIvarDecl",
+                "name": "_color",
+                "type": {"qualType": "int"},
+                "access": "protected",
+            }, {
+                "kind": "ObjCIvarDecl",
+                "name": "_speed",
+                "type": {"qualType": "int"},
+                "access": "public",
+            }]),
+        )
+        mod = collect(ast)
+        ivars = mod.classes["Car"].ivars
+        assert ivars[0].name == "_color"
+        assert ivars[0].access == "protected"
+        assert ivars[1].name == "_speed"
+        assert ivars[1].access == "public"
+
+    def test_ivar_access_default_protected(self):
+        ast = _make_ast(
+            _interface("Car", "OZObject", [("_color", "int")]),
+        )
+        mod = collect(ast)
+        assert mod.classes["Car"].ivars[0].access == "protected"
+
+
 class TestCollectImplementation:
     def test_methods(self):
         body = _compound({"kind": "ReturnStmt", "inner": []})

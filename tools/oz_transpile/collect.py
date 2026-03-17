@@ -385,7 +385,8 @@ def _collect_interface(node: dict, module: OZModule) -> None:
             type_info = child.get("type", {})
             qual_type = type_info.get("desugaredQualType",
                                       type_info.get("qualType", ""))
-            ivars.append(OZIvar(ivar_name, OZType(qual_type)))
+            access = child.get("access", "protected")
+            ivars.append(OZIvar(ivar_name, OZType(qual_type), access=access))
         elif ckind == "ObjCProtocol":
             proto_name = child.get("name", "")
             if proto_name and proto_name not in protocols:
@@ -435,7 +436,9 @@ def _collect_implementation(node: dict, module: OZModule) -> None:
             type_info = child.get("type", {})
             qual_type = type_info.get("desugaredQualType",
                                       type_info.get("qualType", ""))
-            cls.ivars.append(OZIvar(ivar_name, OZType(qual_type)))
+            access = child.get("access", "protected")
+            cls.ivars.append(OZIvar(ivar_name, OZType(qual_type),
+                                    access=access))
         elif ckind == "ObjCMethodDecl":
             if child.get("isImplicit"):
                 continue

@@ -123,6 +123,7 @@ class OZProperty:
 class OZIvar:
     name: str
     oz_type: OZType
+    access: str = "protected"
 
 
 @dataclass(slots=True)

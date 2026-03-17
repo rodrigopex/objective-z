@@ -1453,6 +1453,23 @@ def _emit_expr(node: dict, out: StringIO, ctx: _EmitCtx) -> None:
                 base = base.get("inner", [{}])[0]
             ref_name = base.get("referencedDecl", {}).get("name", "")
             if ref_name and ref_name != "self":
+                # Enforce access control on external ivar access
+                owner = _find_ivar_owner(ivar_name, ctx.module)
+                if owner:
+                    owner_cls, ivar = owner
+                    # For free functions (method is None), use a dummy
+                    # class that never matches any real class
+                    if ctx.method is None:
+                        accessor = OZClass(name="__free_function__")
+                    else:
+                        accessor = ctx.cls
+                    if not _check_ivar_access(ivar, owner_cls,
+                                              accessor, ctx.module):
+                        ctx.module.errors.append(
+                            f"instance variable '{ivar_name}' "
+                            f"is {ivar.access}")
+                        out.write(f"/* access error: {ivar_name} */")
+                        return
                 _emit_expr(inner[0], out, ctx)
                 out.write(f"->{ivar_name}")
                 return
@@ -2510,6 +2527,39 @@ def _ivar_base_chain(ivar_name: str, cls: OZClass, module: OZModule) -> str:
         if any(iv.name == ivar_name for iv in cur.ivars):
             return "base." * depth
     return ""
+
+
+def _find_ivar_owner(ivar_name: str,
+                     module: OZModule) -> tuple[OZClass, OZIvar] | None:
+    """Find the class that declares a given ivar."""
+    for cls in module.classes.values():
+        for iv in cls.ivars:
+            if iv.name == ivar_name:
+                return cls, iv
+    return None
+
+
+def _is_subclass(cls_name: str, parent_name: str, module: OZModule) -> bool:
+    """Check if cls_name is a subclass of parent_name."""
+    cur = module.classes.get(cls_name)
+    while cur and cur.superclass:
+        if cur.superclass == parent_name:
+            return True
+        cur = module.classes.get(cur.superclass)
+    return False
+
+
+def _check_ivar_access(ivar: OZIvar, owner_cls: OZClass,
+                       accessor_cls: OZClass,
+                       module: OZModule) -> bool:
+    """Check if accessor_cls is allowed to access an ivar owned by owner_cls."""
+    if ivar.access == "public":
+        return True
+    if ivar.access == "private":
+        return accessor_cls.name == owner_cls.name
+    # protected: allow if accessor is the owner or a subclass
+    return (accessor_cls.name == owner_cls.name
+            or _is_subclass(accessor_cls.name, owner_cls.name, module))
 
 
 def _method_prototype(cls: OZClass, m: OZMethod) -> str:
