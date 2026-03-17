@@ -2,7 +2,12 @@
 #import <objc/objc.h>
 #include "Car.h"
 
-@implementation Car
+@implementation Car {
+	struct color *_color;
+	OZString *_model;
+	int _throttleLevel;
+	int _breakLevel;
+}
 
 @synthesize color = _color;
 @synthesize model = _model;

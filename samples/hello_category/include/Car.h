@@ -10,15 +10,13 @@ struct color {
 };
 
 @interface Car: OZObject {
-	struct color *_color;
-	OZString *_model;
-	int _throttleLevel;
-	int _breakLevel;
+      @public
+	int _plate;
 }
 
 @property(readonly) struct color *color;
-
 @property(readonly, atomic) OZString *model;
+
 - (Car *)initWithColor:(struct color *)c andModel:(OZString *)model;
 
 - (BOOL)throttleWithLevel:(int)level;
