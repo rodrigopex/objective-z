@@ -4015,3 +4015,167 @@ class TestEmitEdgeCases:
             src = open(os.path.join(tmpdir, "Foo_ozm.c")).read()
             # Should have exactly one release call, not two
             assert src.count("OZObject_release") == 1
+
+
+class TestIvarAccessControl:
+    def test_external_ivar_access_protected_rejected(self):
+        """External access to a protected ivar from a free function is rejected."""
+        m = OZModule()
+        m.classes["OZObject"] = OZClass("OZObject")
+        m.classes["Car"] = OZClass(
+            "Car", superclass="OZObject",
+            ivars=[OZIvar("_color", OZType("int"), access="protected")],
+        )
+        m.functions.append(OZFunction("main", OZType("int"), body_ast={
+            "kind": "CompoundStmt",
+            "inner": [{
+                "kind": "ObjCIvarRefExpr",
+                "decl": {"name": "_color"},
+                "isFreeIvar": False,
+                "inner": [{
+                    "kind": "ImplicitCastExpr",
+                    "castKind": "LValueToRValue",
+                    "inner": [{
+                        "kind": "DeclRefExpr",
+                        "referencedDecl": {"name": "myCar"},
+                        "type": {"qualType": "Car *"},
+                    }],
+                }],
+            }],
+        }))
+        resolve(m)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+        assert any("_color" in e and "protected" in e for e in m.errors)
+
+    def test_external_ivar_access_public_allowed(self):
+        """External access to a public ivar is allowed."""
+        m = OZModule()
+        m.classes["OZObject"] = OZClass("OZObject")
+        m.classes["Car"] = OZClass(
+            "Car", superclass="OZObject",
+            ivars=[OZIvar("_color", OZType("int"), access="public")],
+        )
+        m.functions.append(OZFunction("main", OZType("int"), body_ast={
+            "kind": "CompoundStmt",
+            "inner": [{
+                "kind": "ObjCIvarRefExpr",
+                "decl": {"name": "_color"},
+                "isFreeIvar": False,
+                "inner": [{
+                    "kind": "ImplicitCastExpr",
+                    "castKind": "LValueToRValue",
+                    "inner": [{
+                        "kind": "DeclRefExpr",
+                        "referencedDecl": {"name": "myCar"},
+                        "type": {"qualType": "Car *"},
+                    }],
+                }],
+            }],
+        }))
+        resolve(m)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+        assert not any("_color" in e for e in m.errors)
+
+    def test_external_ivar_access_private_rejected(self):
+        """External access to a private ivar from a subclass is rejected."""
+        m = OZModule()
+        m.classes["OZObject"] = OZClass("OZObject")
+        m.classes["Car"] = OZClass(
+            "Car", superclass="OZObject",
+            ivars=[OZIvar("_secret", OZType("int"), access="private")],
+        )
+        m.classes["SportsCar"] = OZClass(
+            "SportsCar", superclass="Car",
+            methods=[OZMethod("reveal", OZType("void"), body_ast={
+                "kind": "CompoundStmt",
+                "inner": [{
+                    "kind": "ObjCIvarRefExpr",
+                    "decl": {"name": "_secret"},
+                    "isFreeIvar": False,
+                    "inner": [{
+                        "kind": "ImplicitCastExpr",
+                        "castKind": "LValueToRValue",
+                        "inner": [{
+                            "kind": "DeclRefExpr",
+                            "referencedDecl": {"name": "other"},
+                            "type": {"qualType": "Car *"},
+                        }],
+                    }],
+                }],
+            })],
+        )
+        resolve(m)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+        assert any("_secret" in e and "private" in e for e in m.errors)
+
+    def test_protected_ivar_access_from_subclass_allowed(self):
+        """Subclass method accessing protected ivar externally on another
+        instance is still external — but self-access through isFreeIvar
+        is not affected.  This test checks the subclass self-access path."""
+        m = OZModule()
+        m.classes["OZObject"] = OZClass("OZObject")
+        m.classes["Car"] = OZClass(
+            "Car", superclass="OZObject",
+            ivars=[OZIvar("_color", OZType("int"), access="protected")],
+        )
+        m.classes["SportsCar"] = OZClass(
+            "SportsCar", superclass="Car",
+            methods=[OZMethod("getColor", OZType("int"), body_ast={
+                "kind": "CompoundStmt",
+                "inner": [{
+                    "kind": "ReturnStmt",
+                    "inner": [{
+                        "kind": "ObjCIvarRefExpr",
+                        "decl": {"name": "_color"},
+                        "isFreeIvar": True,
+                    }],
+                }],
+            })],
+        )
+        resolve(m)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            content = open(os.path.join(tmpdir, "SportsCar_ozm.c")).read()
+            assert "self->base._color" in content
+        assert not m.errors
+
+    def test_protected_external_access_from_subclass_method(self):
+        """Subclass accessing protected ivar on another instance (not self)
+        should be allowed since accessor is a subclass of owner."""
+        m = OZModule()
+        m.classes["OZObject"] = OZClass("OZObject")
+        m.classes["Car"] = OZClass(
+            "Car", superclass="OZObject",
+            ivars=[OZIvar("_color", OZType("int"), access="protected")],
+        )
+        m.classes["SportsCar"] = OZClass(
+            "SportsCar", superclass="Car",
+            methods=[OZMethod("copyColor:", OZType("void"),
+                              params=[OZParam("other", OZType("Car *"))],
+                              body_ast={
+                "kind": "CompoundStmt",
+                "inner": [{
+                    "kind": "ObjCIvarRefExpr",
+                    "decl": {"name": "_color"},
+                    "isFreeIvar": False,
+                    "inner": [{
+                        "kind": "ImplicitCastExpr",
+                        "castKind": "LValueToRValue",
+                        "inner": [{
+                            "kind": "DeclRefExpr",
+                            "referencedDecl": {"name": "other"},
+                            "type": {"qualType": "Car *"},
+                        }],
+                    }],
+                }],
+            })],
+        )
+        resolve(m)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            content = open(os.path.join(tmpdir, "SportsCar_ozm.c")).read()
+            assert "other->_color" in content
+        assert not m.errors
