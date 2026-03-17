@@ -12,7 +12,7 @@ Existing Objective-C runtimes — Apple libobjc, GNUstep libobjc2, ObjFW, mulle-
 
 ### Static-first design
 
-Objective-Z inverts this: the transpiler converts `.m` files to plain C at build time via Clang JSON AST analysis. All dispatch tables are statically sized vtable arrays indexed by `class_id`. Object instances are served from per-class `k_mem_slab` pools (BSS), auto-generated from AST analysis. No heap allocation needed.
+Objective-Z inverts this: the transpiler converts `.m` files to plain C at build time via Clang JSON AST analysis. Dispatch tables are `const` vtable arrays in `.rodata` (FLASH), indexed by `class_id` — zero RAM overhead. When the receiver type is known at transpile time, protocol calls are resolved to direct function calls via compile-time dispatch (`OZ_SEND` macro with token concatenation). Object instances are served from per-class `k_mem_slab` pools (BSS), auto-generated from AST analysis. No heap allocation needed.
 
 ### No dynamic ObjC magic
 
@@ -40,9 +40,10 @@ All benchmarks on **nRF52833 DK** (ARM Cortex-M4F @ 64 MHz), DWT cycle counter, 
 
 | Operation                      |  C++ | ObjC (transpiler) |
 | ------------------------------ | ---: | ----------------: |
-| Static / direct call           |    2 |               5–6 |
-| Virtual / vtable dispatch      |   20 |             10–12 |
-| Slab / heap alloc+dealloc      |  995 |               246 |
+| Static / direct call           |    2 |               5–9 |
+| Compile-time protocol dispatch |   — |               5–9 |
+| Const vtable dispatch (polymorphic) |   20 |                19 |
+| Slab / heap alloc+dealloc      |  995 |               228 |
 | Atomic increment (refcount)    |   14 |                17 |
 
 ### Foundation Classes
@@ -59,8 +60,9 @@ All benchmarks on **nRF52833 DK** (ARM Cortex-M4F @ 64 MHz), DWT cycle counter, 
 ## Features
 
 - **Three-pass transpiler** — Clang JSON AST → collect → resolve → emit → pure C
-- **Static dispatch** — direct C function calls for non-protocol methods (7–10 cycles)
-- **Protocol vtable dispatch** — indexed vtable arrays, 16 cycles, depth-independent
+- **Static dispatch** — direct C function calls for non-protocol methods (5–9 cycles)
+- **Compile-time dispatch** — protocol calls resolved to direct calls when receiver type known at transpile time (5–9 cycles)
+- **Protocol vtable dispatch** — `const` vtable arrays in `.rodata` (zero RAM), 19 cycles polymorphic fallback for `id`-typed receivers
 - **Compile-time ARC** — scope-based retain/release, auto-dealloc, break/continue cleanup
 - **Categories** — merged at AST collection time
 - **`@property` / `@synthesize`** — atomic and strong semantics
@@ -181,7 +183,7 @@ Three-pass architecture in `tools/oz_transpile/`:
 
 1. **Collect** (`collect.py`) — Walks Clang JSON AST nodes, builds `OZModule` with classes, methods, ivars, protocols, categories
 2. **Resolve** (`resolve.py`) — Validates hierarchy, assigns topological class IDs, computes `base_depth`, classifies dispatch (STATIC vs PROTOCOL)
-3. **Emit** (`emit.py`) — Generates per-class `.h`/`.c` files + `oz_dispatch.h`/`.c` (vtable arrays, slab definitions)
+3. **Emit** (`emit.py`) — Generates per-class `.h`/`.c` files + `oz_dispatch.h`/`.c` (`const` vtable arrays, compile-time dispatch macros, slab definitions)
 
 ### Platform Abstraction Layer
 
@@ -204,8 +206,8 @@ For each class, the transpiler emits:
 
 - **`ClassName.h`** — struct definition, method prototypes, vtable extern
 - **`ClassName.c`** — method implementations, vtable array, slab pool definition
-- **`oz_dispatch.h`** — class ID enum, vtable type, dispatch macros
-- **`oz_dispatch.c`** — global vtable arrays
+- **`oz_dispatch.h`** — class ID enum, `OZ_IMPL_*` compile-time dispatch macros, `OZ_SEND()` generic macro, `OZ_PROTOCOL_SEND_*` polymorphic fallback macros
+- **`oz_dispatch.c`** — `const` vtable arrays (`OZ_PROTOCOL_RESOLVE_*`) in `.rodata`, class introspection tables
 
 ## Using in Your Project
 
@@ -510,33 +512,33 @@ just test-bench                            # Run all via twister (hardware map)
 
 ### Dispatch
 
-Transpiler uses compile-time vtable arrays indexed by `class_id`. No hash lookups, no cache — a single array dereference per dispatch:
+Transpiler uses `const` vtable arrays in `.rodata` indexed by `class_id`. When the receiver type is known at transpile time, protocol calls are resolved to direct function calls at zero cost. For truly polymorphic calls (`id`-typed receivers), a single `const` array dereference — no hash lookups, no cache, zero RAM:
 
 | Operation                         | Cycles |   ns |
 | --------------------------------- | -----: | ---: |
 | C function pointer (baseline)     |      8 |  125 |
-| Static dispatch (direct call)     |      6 |   93 |
+| Static dispatch (direct call)     |      9 |  140 |
 | Class method (static function)    |      5 |   78 |
-| Vtable dispatch (depth=0)         |     10 |  156 |
-| Vtable dispatch (depth=1)         |     10 |  156 |
-| Vtable dispatch (depth=2)         |     12 |  187 |
+| Const vtable dispatch (depth=0)   |     19 |  296 |
+| Const vtable dispatch (depth=1)   |     19 |  296 |
+| Const vtable dispatch (depth=2)   |     19 |  296 |
 
-> **Key result:** Vtable dispatch (10–12 cycles) is **2x faster** than C++ virtual calls (20 cycles) on real hardware. Inheritance depth has negligible effect. Static dispatch (6 cycles) and class methods (5 cycles) approach direct function calls.
+> **Key result:** With compile-time dispatch, most protocol calls resolve to direct function calls (5–9 cycles) when the receiver type is known at transpile time — same cost as static dispatch. Const vtable dispatch (19 cycles, depth-independent) is the polymorphic fallback for `id`-typed receivers. Vtable arrays are in `.rodata` (FLASH) — zero RAM overhead. C++ virtual calls (20 cycles) use vptr indirection from RAM.
 
 ### Object Lifecycle
 
 | Operation                     | Cycles |    ns |
 | ----------------------------- | -----: | ----: |
-| slab alloc + init + release   |    246 | 3,843 |
+| slab alloc + init + release   |    228 | 3,562 |
 
-> Slab-based allocation (246 cycles) is **4x faster** than C++ `new`/`delete` (995 cycles) and **4.4x faster** than `unique_ptr` create/destroy (1,072 cycles). No heap metadata overhead — `alloc`/`free` are direct slab operations.
+> Slab-based allocation (228 cycles) is **4.4x faster** than C++ `new`/`delete` (995 cycles) and **4.7x faster** than `unique_ptr` create/destroy (1,072 cycles). No heap metadata overhead — `alloc`/`free` are direct slab operations.
 
 ### Reference Counting
 
 | Operation                       | Cycles |  ns |
 | ------------------------------- | -----: | --: |
 | `OZObject_retain` (atomic inc)  |     17 | 265 |
-| retain + release pair           |     42 | 656 |
+| retain + release pair           |     44 | 687 |
 
 > `OZObject_retain` (17 cycles) is close to raw `atomic_fetch_add` (14 cycles in C++) — only 3 cycles overhead for null check. Both are inline operations with no function call overhead.
 
@@ -546,15 +548,15 @@ Comparison of `printk`, Zephyr `LOG_INF` (minimal mode), and `OZLog` (50 iterati
 
 | Operation                    |  Cycles |        ns |
 | ---------------------------- | ------: | --------: |
-| `printk` (simple string)     |  94,463 | 1,475,984 |
-| `LOG_INF` (simple string)    | 111,137 | 1,736,515 |
-| `OZLog` (simple string)      |  94,459 | 1,475,921 |
-| `printk` (integer format)    |  61,103 |   954,734 |
-| `LOG_INF` (integer format)   |  77,776 | 1,215,250 |
-| `OZLog` (integer format)     |  61,094 |   954,593 |
-| `printk` (string format)     |  66,667 | 1,041,671 |
-| `LOG_INF` (string format)    |  83,339 | 1,302,171 |
-| `OZLog` (string format)      |  66,661 | 1,041,578 |
+| `printk` (simple string)     |  94,462 | 1,475,968 |
+| `LOG_INF` (simple string)    | 111,138 | 1,736,531 |
+| `OZLog` (simple string)      |  94,456 | 1,475,875 |
+| `printk` (integer format)    |  61,100 |   954,687 |
+| `LOG_INF` (integer format)   |  77,777 | 1,215,265 |
+| `OZLog` (integer format)     |  61,104 |   954,750 |
+| `printk` (string format)     |  66,664 | 1,041,625 |
+| `LOG_INF` (string format)    |  83,343 | 1,302,234 |
+| `OZLog` (string format)      |  66,662 | 1,041,593 |
 
 > On real hardware with UART output, logging is dominated by serial I/O (~1 ms per line). `OZLog` matches `printk` exactly — both use the same `printk` backend. `LOG_INF` adds ~17% overhead from the logging subsystem.
 
@@ -569,8 +571,9 @@ Comparison of `printk`, Zephyr `LOG_INF` (minimal mode), and `OZLog` (50 iterati
 
 **Key takeaways:**
 
-- **Vtable dispatch is 2x faster than C++** (10 vs 20 cycles) — single array dereference vs vptr indirection.
-- **Slab allocation is 4x faster** than C++ `new`/`delete` (246 vs 995 cycles). Per-class `k_mem_slab` pools have zero allocator overhead.
+- **Compile-time dispatch eliminates vtable lookups** — most protocol calls resolve to direct function calls (5–9 cycles) at transpile time, same cost as static dispatch.
+- **Const vtable dispatch matches C++** (19 vs 20 cycles) — only used for truly polymorphic `id`-typed receivers. Vtable arrays in `.rodata` (zero RAM).
+- **Slab allocation is 4.4x faster** than C++ `new`/`delete` (228 vs 995 cycles). Per-class `k_mem_slab` pools have zero allocator overhead.
 - **Inline ARC** adds only 3 cycles over raw atomics (17 vs 14 cycles).
 - **OZLog matches printk** — zero overhead over the underlying `printk` backend on real UART.
 
@@ -699,29 +702,30 @@ Side-by-side C++ vs Objective-Z on **nRF52833 DK** (ARM Cortex-M4F @ 64 MHz). Al
 | Operation                          | C++ | ObjC (transpiler) |
 | ---------------------------------- | --: | ----------------: |
 | C function pointer (baseline)      |   8 |                 8 |
-| Direct / static / class method     |   2 |               5–6 |
-| Virtual / vtable dispatch (depth=0)|  20 |                10 |
-| Virtual / vtable dispatch (depth=1)|  21 |                10 |
-| Virtual / vtable dispatch (depth=2)|  20 |                12 |
+| Direct / static / class method     |   2 |               5–9 |
+| Compile-time protocol dispatch     |  — |               5–9 |
+| Virtual / const vtable (depth=0)   |  20 |                19 |
+| Virtual / const vtable (depth=1)   |  21 |                19 |
+| Virtual / const vtable (depth=2)   |  20 |                19 |
 
-> Transpiler vtable dispatch (10–12 cycles) is **2x faster** than C++ virtual calls (20–21 cycles). C++ uses vptr indirection; the transpiler uses a direct vtable array indexed by `class_id`.
+> With compile-time dispatch, most protocol calls resolve to direct function calls (5–9 cycles) — same cost as static dispatch. Const vtable dispatch (19 cycles, depth-independent) matches C++ virtual calls (20–21 cycles) and is only used for truly polymorphic `id`-typed receivers. Vtable arrays are `const` in `.rodata` — zero RAM overhead.
 
 #### Object Lifecycle
 
 | Operation                              |   C++ | ObjC (transpiler) |
 | -------------------------------------- | ----: | ----------------: |
-| Slab / heap alloc+dealloc              |   995 |               246 |
+| Slab / heap alloc+dealloc              |   995 |               228 |
 | Placement new + dtor + slab free       |   130 |                 — |
 | `unique_ptr` create/destroy            | 1,072 |                 — |
 
-> Transpiler slab alloc+init+release (246 cycles) is **4x faster** than C++ `new`/`delete` (995 cycles). Both C++ placement new (130 cycles) and ObjC slab (246 cycles) use `k_mem_slab` — the extra ObjC cycles cover `init` vtable call + ARC release.
+> Transpiler slab alloc+init+release (228 cycles) is **4.4x faster** than C++ `new`/`delete` (995 cycles). Both C++ placement new (130 cycles) and ObjC slab (228 cycles) use `k_mem_slab` — the extra ObjC cycles cover `init` vtable call + ARC release.
 
 #### Reference Counting
 
 | Operation                     |   C++ | ObjC (transpiler) |
 | ----------------------------- | ----: | ----------------: |
 | Atomic increment              |    14 |                17 |
-| Atomic inc + dec pair         |    24 |                42 |
+| Atomic inc + dec pair         |    24 |                44 |
 | `shared_ptr` copy             | 1,140 |                 — |
 | `shared_ptr` copy + reset     | 1,182 |                 — |
 
