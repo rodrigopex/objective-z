@@ -23,6 +23,9 @@ struct {{ name }} {
 {% if is_root %}
 	enum oz_class_id oz_class_id;
 	oz_atomic_t _refcount;
+{% if has_atomic_props %}
+	oz_spinlock_t _oz_prop_lock;
+{% endif %}
 {% else %}
 	struct {{ superclass }} base;
 {% endif %}

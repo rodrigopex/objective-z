@@ -237,7 +237,7 @@ def _build_impl_context(
         buf = StringIO()
         buf.write(f"{_method_prototype(cls, m)}\n")
         if m.synthesized_property:
-            _emit_synthesized_accessor(cls, m, buf, root_class)
+            _emit_synthesized_accessor(cls, m, buf, root_class, module)
         elif m.body_ast:
             _emit_compound_stmt(m.body_ast, buf, ctx, indent=0,
                                 param_retains=_object_params(m))
@@ -273,7 +273,7 @@ def _build_impl_context(
         buf = StringIO()
         buf.write(f"{_method_prototype(cls, m)}\n")
         if m.synthesized_property:
-            _emit_synthesized_accessor(cls, m, buf, root_class)
+            _emit_synthesized_accessor(cls, m, buf, root_class, module)
         elif m.body_ast:
             _emit_compound_stmt(m.body_ast, buf, ctx, indent=0,
                                 param_retains=_object_params(m))

@@ -173,6 +173,37 @@ class TestClassHeader:
             assert "oz_class_id" in content
             assert "_refcount" in content
 
+    def test_root_struct_no_atomic_props(self):
+        """Root struct omits _oz_prop_lock when no atomic properties exist."""
+        m = _simple_module()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            content = open(os.path.join(tmpdir, "Foundation", "OZObject_ozh.h")).read()
+            assert "_oz_prop_lock" not in content
+
+    def test_root_struct_with_atomic_props(self):
+        """Root struct includes _oz_prop_lock when atomic properties exist."""
+        m = OZModule()
+        m.classes["OZObject"] = OZClass("OZObject")
+        m.classes["Car"] = OZClass(
+            "Car", superclass="OZObject",
+            properties=[OZProperty("speed", OZType("int"),
+                                   ivar_name="_speed", is_nonatomic=False)],
+            ivars=[OZIvar("_speed", OZType("int"))],
+            methods=[
+                OZMethod("speed", OZType("int"),
+                         synthesized_property=OZProperty(
+                             "speed", OZType("int"),
+                             ivar_name="_speed", is_nonatomic=False,
+                             ownership="assign")),
+            ],
+        )
+        resolve(m)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            content = open(os.path.join(tmpdir, "Foundation", "OZObject_ozh.h")).read()
+            assert "oz_spinlock_t _oz_prop_lock;" in content
+
 
 class TestClassSource:
     def test_method_body(self):
@@ -2055,10 +2086,17 @@ class TestStaticVarEmission:
 class TestSynthesizedPropertyEmission:
     """Test _emit_synthesized_accessor generates correct C code."""
 
-    def _emit(self, cls, method, root_class="OZObject"):
+    def _emit(self, cls, method, root_class="OZObject", module=None):
         from io import StringIO
+        if module is None:
+            root = OZClass(root_class)
+            module = OZModule()
+            module.classes[root_class] = root
+            if cls.name != root_class:
+                cls.superclass = root_class
+                module.classes[cls.name] = cls
         buf = StringIO()
-        _emit_synthesized_accessor(cls, method, buf, root_class)
+        _emit_synthesized_accessor(cls, method, buf, root_class, module)
         return buf.getvalue()
 
     def test_nonatomic_getter(self):
@@ -2080,8 +2118,8 @@ class TestSynthesizedPropertyEmission:
         m = OZMethod("model", OZType("OZString *"),
                      synthesized_property=prop)
         code = self._emit(cls, m)
-        assert "oz_spinlock_t lck;" in code
-        assert "OZ_SPINLOCK(&lck)" in code
+        assert "oz_spinlock_t" not in code
+        assert "OZ_SPINLOCK(&self->base._oz_prop_lock)" in code
         assert "val = self->_model;" in code
         assert "return val;" in code
 
@@ -2108,8 +2146,8 @@ class TestSynthesizedPropertyEmission:
                      params=[OZParam("model", OZType("OZString *"))],
                      synthesized_property=prop)
         code = self._emit(cls, m, root_class="OZObject")
-        assert "oz_spinlock_t lck;" in code
-        assert "OZ_SPINLOCK(&lck)" in code
+        assert "oz_spinlock_t" not in code
+        assert "OZ_SPINLOCK(&self->base._oz_prop_lock)" in code
         assert "OZObject_retain(" in code
         assert "OZObject_release(" in code
 
@@ -2136,8 +2174,8 @@ class TestSynthesizedPropertyEmission:
                      params=[OZParam("speed", OZType("int"))],
                      synthesized_property=prop)
         code = self._emit(cls, m)
-        assert "oz_spinlock_t lck;" in code
-        assert "OZ_SPINLOCK(&lck)" in code
+        assert "oz_spinlock_t" not in code
+        assert "OZ_SPINLOCK(&self->base._oz_prop_lock)" in code
         assert "self->_speed = speed;" in code
         assert "retain" not in code
         assert "release" not in code
@@ -2154,6 +2192,23 @@ class TestSynthesizedPropertyEmission:
         assert "self->_delegate = delegate;" in code
         assert "retain" not in code
         assert "release" not in code
+
+    def test_atomic_getter_child_class(self):
+        """Grandchild class uses base.base. chain to reach root lock."""
+        prop = OZProperty("temp", OZType("int"),
+                          ivar_name="_temp", is_nonatomic=False,
+                          ownership="assign")
+        root = OZClass("OZObject")
+        mid = OZClass("Vehicle", superclass="OZObject")
+        child = OZClass("Car", superclass="Vehicle")
+        module = OZModule()
+        module.classes["OZObject"] = root
+        module.classes["Vehicle"] = mid
+        module.classes["Car"] = child
+        m = OZMethod("temp", OZType("int"), synthesized_property=prop)
+        code = self._emit(child, m, module=module)
+        assert "OZ_SPINLOCK(&self->base.base._oz_prop_lock)" in code
+        assert "oz_spinlock_t" not in code
 
 
 class TestSynchronized:

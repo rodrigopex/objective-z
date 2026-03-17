@@ -449,6 +449,19 @@ def _class_header_ctx(ctx: _EmitCtx, stem: str | None = None,
          "field": "u16"},
     ]
 
+    # Check if any class in the module uses atomic properties — the lock
+    # field lives in the root class so it must be emitted when any class
+    # in the hierarchy needs it.
+    has_atomic_props = False
+    if is_root:
+        for c in module.classes.values():
+            for p in c.properties:
+                if not p.is_nonatomic:
+                    has_atomic_props = True
+                    break
+            if has_atomic_props:
+                break
+
     return {
         "name": cls.name,
         "stem": stem or _header_stem(cls),
@@ -467,6 +480,7 @@ def _class_header_ctx(ctx: _EmitCtx, stem: str | None = None,
         "number_inits": number_inits,
         "item_pool_count": item_pool_count,
         "user_includes": cls.user_includes,
+        "has_atomic_props": has_atomic_props,
     }
 
 
@@ -474,9 +488,20 @@ def _class_header_ctx(ctx: _EmitCtx, stem: str | None = None,
 # Synthesized property accessors
 # ---------------------------------------------------------------------------
 
+def _self_lock_chain(cls: OZClass, module: OZModule) -> str:
+    """Build 'self->base.base..._oz_prop_lock' for reaching the root lock field."""
+    parts = []
+    cur = cls
+    while cur.superclass and cur.superclass in module.classes:
+        parts.append("base.")
+        cur = module.classes[cur.superclass]
+    return "self->" + "".join(parts) + "_oz_prop_lock"
+
+
 def _emit_synthesized_accessor(cls: OZClass, m: OZMethod,
                                 out: StringIO,
-                                root_class: str = "OZObject") -> None:
+                                root_class: str = "OZObject",
+                                module: OZModule | None = None) -> None:
     """Emit a synthesized getter or setter for a property."""
     prop = m.synthesized_property
     ivar = prop.ivar_name
@@ -486,12 +511,13 @@ def _emit_synthesized_accessor(cls: OZClass, m: OZMethod,
     is_strong_obj = prop.oz_type.is_object and prop.ownership == "strong"
     root = root_class
 
+    lock_expr = _self_lock_chain(cls, module) if (is_atomic and module) else None
+
     if is_getter:
         if is_atomic:
             out.write("{\n")
-            out.write("\toz_spinlock_t lck;\n")
             out.write(f"\t{c_type} val;\n")
-            out.write("\tOZ_SPINLOCK(&lck) {\n")
+            out.write(f"\tOZ_SPINLOCK(&{lock_expr}) {{\n")
             out.write(f"\t\tval = self->{ivar};\n")
             out.write("\t}\n")
             out.write("\treturn val;\n")
@@ -505,10 +531,9 @@ def _emit_synthesized_accessor(cls: OZClass, m: OZMethod,
         if is_strong_obj:
             if is_atomic:
                 out.write("{\n")
-                out.write("\toz_spinlock_t lck;\n")
                 out.write(f"\t{c_type} old;\n")
                 out.write(f"\t{root}_retain((struct {root} *){param_name});\n")
-                out.write("\tOZ_SPINLOCK(&lck) {\n")
+                out.write(f"\tOZ_SPINLOCK(&{lock_expr}) {{\n")
                 out.write(f"\t\told = self->{ivar};\n")
                 out.write(f"\t\tself->{ivar} = {param_name};\n")
                 out.write("\t}\n")
@@ -524,8 +549,7 @@ def _emit_synthesized_accessor(cls: OZClass, m: OZMethod,
         else:
             if is_atomic:
                 out.write("{\n")
-                out.write("\toz_spinlock_t lck;\n")
-                out.write("\tOZ_SPINLOCK(&lck) {\n")
+                out.write(f"\tOZ_SPINLOCK(&{lock_expr}) {{\n")
                 out.write(f"\t\tself->{ivar} = {param_name};\n")
                 out.write("\t}\n")
                 out.write("}\n")
@@ -595,7 +619,7 @@ def _class_source_ctx(ctx: _EmitCtx, stem: str | None = None,
         buf = StringIO()
         buf.write(f"{_method_prototype(cls, m)}\n")
         if m.synthesized_property:
-            _emit_synthesized_accessor(cls, m, buf, root_class)
+            _emit_synthesized_accessor(cls, m, buf, root_class, ctx.module)
         elif m.body_ast:
             _emit_compound_stmt(m.body_ast, buf, ctx, indent=0,
                                 param_retains=_object_params(m))
