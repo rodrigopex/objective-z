@@ -46,75 +46,81 @@ const uint8_t oz_superclass_id[OZ_CLASS_COUNT] = {
 	[OZ_CLASS_Widget] = OZ_CLASS_OZObject,
 };
 
-OZ_fn_cDescription_maxLength_ OZ_vtable_cDescription_maxLength_[OZ_CLASS_COUNT];
-OZ_fn_dealloc OZ_vtable_dealloc[OZ_CLASS_COUNT];
-OZ_fn_depth OZ_vtable_depth[OZ_CLASS_COUNT];
-OZ_fn_init OZ_vtable_init[OZ_CLASS_COUNT];
-OZ_fn_isEqual_ OZ_vtable_isEqual_[OZ_CLASS_COUNT];
-OZ_fn_toggle OZ_vtable_toggle[OZ_CLASS_COUNT];
+const OZ_fn_cDescription_maxLength_ OZ_PROTOCOL_RESOLVE_cDescription_maxLength_[OZ_CLASS_COUNT] = {
+	[OZ_CLASS_OZObject] = (OZ_fn_cDescription_maxLength_)OZObject_cDescription_maxLength_,
+	[OZ_CLASS_Base] = (OZ_fn_cDescription_maxLength_)OZObject_cDescription_maxLength_,
+	[OZ_CLASS_BoxedTest] = (OZ_fn_cDescription_maxLength_)OZObject_cDescription_maxLength_,
+	[OZ_CLASS_Child] = (OZ_fn_cDescription_maxLength_)OZObject_cDescription_maxLength_,
+	[OZ_CLASS_Fan] = (OZ_fn_cDescription_maxLength_)OZObject_cDescription_maxLength_,
+	[OZ_CLASS_Level1] = (OZ_fn_cDescription_maxLength_)OZObject_cDescription_maxLength_,
+	[OZ_CLASS_Level2] = (OZ_fn_cDescription_maxLength_)OZObject_cDescription_maxLength_,
+	[OZ_CLASS_Level3] = (OZ_fn_cDescription_maxLength_)OZObject_cDescription_maxLength_,
+	[OZ_CLASS_Level4] = (OZ_fn_cDescription_maxLength_)OZObject_cDescription_maxLength_,
+	[OZ_CLASS_LightSwitch] = (OZ_fn_cDescription_maxLength_)OZObject_cDescription_maxLength_,
+	[OZ_CLASS_Node] = (OZ_fn_cDescription_maxLength_)OZObject_cDescription_maxLength_,
+	[OZ_CLASS_OZNumber] = (OZ_fn_cDescription_maxLength_)OZObject_cDescription_maxLength_,
+	[OZ_CLASS_Widget] = (OZ_fn_cDescription_maxLength_)OZObject_cDescription_maxLength_,
+};
 
-__attribute__((constructor))
-static void oz_register_vtables(void)
-{
-	OZ_vtable_cDescription_maxLength_[OZ_CLASS_OZObject] = (OZ_fn_cDescription_maxLength_)OZObject_cDescription_maxLength_;
-	OZ_vtable_cDescription_maxLength_[OZ_CLASS_Base] = (OZ_fn_cDescription_maxLength_)OZObject_cDescription_maxLength_;
-	OZ_vtable_cDescription_maxLength_[OZ_CLASS_BoxedTest] = (OZ_fn_cDescription_maxLength_)OZObject_cDescription_maxLength_;
-	OZ_vtable_cDescription_maxLength_[OZ_CLASS_Child] = (OZ_fn_cDescription_maxLength_)OZObject_cDescription_maxLength_;
-	OZ_vtable_cDescription_maxLength_[OZ_CLASS_Fan] = (OZ_fn_cDescription_maxLength_)OZObject_cDescription_maxLength_;
-	OZ_vtable_cDescription_maxLength_[OZ_CLASS_Level1] = (OZ_fn_cDescription_maxLength_)OZObject_cDescription_maxLength_;
-	OZ_vtable_cDescription_maxLength_[OZ_CLASS_Level2] = (OZ_fn_cDescription_maxLength_)OZObject_cDescription_maxLength_;
-	OZ_vtable_cDescription_maxLength_[OZ_CLASS_Level3] = (OZ_fn_cDescription_maxLength_)OZObject_cDescription_maxLength_;
-	OZ_vtable_cDescription_maxLength_[OZ_CLASS_Level4] = (OZ_fn_cDescription_maxLength_)OZObject_cDescription_maxLength_;
-	OZ_vtable_cDescription_maxLength_[OZ_CLASS_LightSwitch] = (OZ_fn_cDescription_maxLength_)OZObject_cDescription_maxLength_;
-	OZ_vtable_cDescription_maxLength_[OZ_CLASS_Node] = (OZ_fn_cDescription_maxLength_)OZObject_cDescription_maxLength_;
-	OZ_vtable_cDescription_maxLength_[OZ_CLASS_OZNumber] = (OZ_fn_cDescription_maxLength_)OZObject_cDescription_maxLength_;
-	OZ_vtable_cDescription_maxLength_[OZ_CLASS_Widget] = (OZ_fn_cDescription_maxLength_)OZObject_cDescription_maxLength_;
-	OZ_vtable_dealloc[OZ_CLASS_OZObject] = (OZ_fn_dealloc)OZObject_dealloc;
-	OZ_vtable_dealloc[OZ_CLASS_Base] = (OZ_fn_dealloc)Base_dealloc;
-	OZ_vtable_dealloc[OZ_CLASS_BoxedTest] = (OZ_fn_dealloc)BoxedTest_dealloc;
-	OZ_vtable_dealloc[OZ_CLASS_Child] = (OZ_fn_dealloc)Child_dealloc;
-	OZ_vtable_dealloc[OZ_CLASS_Fan] = (OZ_fn_dealloc)Fan_dealloc;
-	OZ_vtable_dealloc[OZ_CLASS_Level1] = (OZ_fn_dealloc)Level1_dealloc;
-	OZ_vtable_dealloc[OZ_CLASS_Level2] = (OZ_fn_dealloc)Level2_dealloc;
-	OZ_vtable_dealloc[OZ_CLASS_Level3] = (OZ_fn_dealloc)Level3_dealloc;
-	OZ_vtable_dealloc[OZ_CLASS_Level4] = (OZ_fn_dealloc)Level4_dealloc;
-	OZ_vtable_dealloc[OZ_CLASS_LightSwitch] = (OZ_fn_dealloc)LightSwitch_dealloc;
-	OZ_vtable_dealloc[OZ_CLASS_Node] = (OZ_fn_dealloc)Node_dealloc;
-	OZ_vtable_dealloc[OZ_CLASS_OZNumber] = (OZ_fn_dealloc)OZNumber_dealloc;
-	OZ_vtable_dealloc[OZ_CLASS_Widget] = (OZ_fn_dealloc)Widget_dealloc;
-	OZ_vtable_depth[OZ_CLASS_Level1] = (OZ_fn_depth)Level1_depth;
-	OZ_vtable_depth[OZ_CLASS_Level2] = (OZ_fn_depth)Level2_depth;
-	OZ_vtable_depth[OZ_CLASS_Level3] = (OZ_fn_depth)Level3_depth;
-	OZ_vtable_depth[OZ_CLASS_Level4] = (OZ_fn_depth)Level4_depth;
-	OZ_vtable_init[OZ_CLASS_OZObject] = (OZ_fn_init)OZObject_init;
-	OZ_vtable_init[OZ_CLASS_Base] = (OZ_fn_init)Base_init;
-	OZ_vtable_init[OZ_CLASS_BoxedTest] = (OZ_fn_init)OZObject_init;
-	OZ_vtable_init[OZ_CLASS_Child] = (OZ_fn_init)Child_init;
-	OZ_vtable_init[OZ_CLASS_Fan] = (OZ_fn_init)OZObject_init;
-	OZ_vtable_init[OZ_CLASS_Level1] = (OZ_fn_init)OZObject_init;
-	OZ_vtable_init[OZ_CLASS_Level2] = (OZ_fn_init)OZObject_init;
-	OZ_vtable_init[OZ_CLASS_Level3] = (OZ_fn_init)OZObject_init;
-	OZ_vtable_init[OZ_CLASS_Level4] = (OZ_fn_init)OZObject_init;
-	OZ_vtable_init[OZ_CLASS_LightSwitch] = (OZ_fn_init)OZObject_init;
-	OZ_vtable_init[OZ_CLASS_Node] = (OZ_fn_init)OZObject_init;
-	OZ_vtable_init[OZ_CLASS_OZNumber] = (OZ_fn_init)OZObject_init;
-	OZ_vtable_init[OZ_CLASS_Widget] = (OZ_fn_init)OZObject_init;
-	OZ_vtable_isEqual_[OZ_CLASS_OZObject] = (OZ_fn_isEqual_)OZObject_isEqual_;
-	OZ_vtable_isEqual_[OZ_CLASS_Base] = (OZ_fn_isEqual_)OZObject_isEqual_;
-	OZ_vtable_isEqual_[OZ_CLASS_BoxedTest] = (OZ_fn_isEqual_)OZObject_isEqual_;
-	OZ_vtable_isEqual_[OZ_CLASS_Child] = (OZ_fn_isEqual_)OZObject_isEqual_;
-	OZ_vtable_isEqual_[OZ_CLASS_Fan] = (OZ_fn_isEqual_)OZObject_isEqual_;
-	OZ_vtable_isEqual_[OZ_CLASS_Level1] = (OZ_fn_isEqual_)OZObject_isEqual_;
-	OZ_vtable_isEqual_[OZ_CLASS_Level2] = (OZ_fn_isEqual_)OZObject_isEqual_;
-	OZ_vtable_isEqual_[OZ_CLASS_Level3] = (OZ_fn_isEqual_)OZObject_isEqual_;
-	OZ_vtable_isEqual_[OZ_CLASS_Level4] = (OZ_fn_isEqual_)OZObject_isEqual_;
-	OZ_vtable_isEqual_[OZ_CLASS_LightSwitch] = (OZ_fn_isEqual_)OZObject_isEqual_;
-	OZ_vtable_isEqual_[OZ_CLASS_Node] = (OZ_fn_isEqual_)OZObject_isEqual_;
-	OZ_vtable_isEqual_[OZ_CLASS_OZNumber] = (OZ_fn_isEqual_)OZObject_isEqual_;
-	OZ_vtable_isEqual_[OZ_CLASS_Widget] = (OZ_fn_isEqual_)OZObject_isEqual_;
-	OZ_vtable_toggle[OZ_CLASS_Fan] = (OZ_fn_toggle)Fan_toggle;
-	OZ_vtable_toggle[OZ_CLASS_LightSwitch] = (OZ_fn_toggle)LightSwitch_toggle;
-}
+const OZ_fn_dealloc OZ_PROTOCOL_RESOLVE_dealloc[OZ_CLASS_COUNT] = {
+	[OZ_CLASS_OZObject] = (OZ_fn_dealloc)OZObject_dealloc,
+	[OZ_CLASS_Base] = (OZ_fn_dealloc)Base_dealloc,
+	[OZ_CLASS_BoxedTest] = (OZ_fn_dealloc)BoxedTest_dealloc,
+	[OZ_CLASS_Child] = (OZ_fn_dealloc)Child_dealloc,
+	[OZ_CLASS_Fan] = (OZ_fn_dealloc)Fan_dealloc,
+	[OZ_CLASS_Level1] = (OZ_fn_dealloc)Level1_dealloc,
+	[OZ_CLASS_Level2] = (OZ_fn_dealloc)Level2_dealloc,
+	[OZ_CLASS_Level3] = (OZ_fn_dealloc)Level3_dealloc,
+	[OZ_CLASS_Level4] = (OZ_fn_dealloc)Level4_dealloc,
+	[OZ_CLASS_LightSwitch] = (OZ_fn_dealloc)LightSwitch_dealloc,
+	[OZ_CLASS_Node] = (OZ_fn_dealloc)Node_dealloc,
+	[OZ_CLASS_OZNumber] = (OZ_fn_dealloc)OZNumber_dealloc,
+	[OZ_CLASS_Widget] = (OZ_fn_dealloc)Widget_dealloc,
+};
+
+const OZ_fn_depth OZ_PROTOCOL_RESOLVE_depth[OZ_CLASS_COUNT] = {
+	[OZ_CLASS_Level1] = (OZ_fn_depth)Level1_depth,
+	[OZ_CLASS_Level2] = (OZ_fn_depth)Level2_depth,
+	[OZ_CLASS_Level3] = (OZ_fn_depth)Level3_depth,
+	[OZ_CLASS_Level4] = (OZ_fn_depth)Level4_depth,
+};
+
+const OZ_fn_init OZ_PROTOCOL_RESOLVE_init[OZ_CLASS_COUNT] = {
+	[OZ_CLASS_OZObject] = (OZ_fn_init)OZObject_init,
+	[OZ_CLASS_Base] = (OZ_fn_init)Base_init,
+	[OZ_CLASS_BoxedTest] = (OZ_fn_init)OZObject_init,
+	[OZ_CLASS_Child] = (OZ_fn_init)Child_init,
+	[OZ_CLASS_Fan] = (OZ_fn_init)OZObject_init,
+	[OZ_CLASS_Level1] = (OZ_fn_init)OZObject_init,
+	[OZ_CLASS_Level2] = (OZ_fn_init)OZObject_init,
+	[OZ_CLASS_Level3] = (OZ_fn_init)OZObject_init,
+	[OZ_CLASS_Level4] = (OZ_fn_init)OZObject_init,
+	[OZ_CLASS_LightSwitch] = (OZ_fn_init)OZObject_init,
+	[OZ_CLASS_Node] = (OZ_fn_init)OZObject_init,
+	[OZ_CLASS_OZNumber] = (OZ_fn_init)OZObject_init,
+	[OZ_CLASS_Widget] = (OZ_fn_init)OZObject_init,
+};
+
+const OZ_fn_isEqual_ OZ_PROTOCOL_RESOLVE_isEqual_[OZ_CLASS_COUNT] = {
+	[OZ_CLASS_OZObject] = (OZ_fn_isEqual_)OZObject_isEqual_,
+	[OZ_CLASS_Base] = (OZ_fn_isEqual_)OZObject_isEqual_,
+	[OZ_CLASS_BoxedTest] = (OZ_fn_isEqual_)OZObject_isEqual_,
+	[OZ_CLASS_Child] = (OZ_fn_isEqual_)OZObject_isEqual_,
+	[OZ_CLASS_Fan] = (OZ_fn_isEqual_)OZObject_isEqual_,
+	[OZ_CLASS_Level1] = (OZ_fn_isEqual_)OZObject_isEqual_,
+	[OZ_CLASS_Level2] = (OZ_fn_isEqual_)OZObject_isEqual_,
+	[OZ_CLASS_Level3] = (OZ_fn_isEqual_)OZObject_isEqual_,
+	[OZ_CLASS_Level4] = (OZ_fn_isEqual_)OZObject_isEqual_,
+	[OZ_CLASS_LightSwitch] = (OZ_fn_isEqual_)OZObject_isEqual_,
+	[OZ_CLASS_Node] = (OZ_fn_isEqual_)OZObject_isEqual_,
+	[OZ_CLASS_OZNumber] = (OZ_fn_isEqual_)OZObject_isEqual_,
+	[OZ_CLASS_Widget] = (OZ_fn_isEqual_)OZObject_isEqual_,
+};
+
+const OZ_fn_toggle OZ_PROTOCOL_RESOLVE_toggle[OZ_CLASS_COUNT] = {
+	[OZ_CLASS_Fan] = (OZ_fn_toggle)Fan_toggle,
+	[OZ_CLASS_LightSwitch] = (OZ_fn_toggle)LightSwitch_toggle,
+};
 
 void OZObject_dispatch_free(struct OZObject *obj)
 {

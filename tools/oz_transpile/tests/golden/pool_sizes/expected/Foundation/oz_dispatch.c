@@ -13,19 +13,19 @@ const uint8_t oz_superclass_id[OZ_CLASS_COUNT] = {
 	[OZ_CLASS_OZLed] = OZ_CLASS_OZObject,
 };
 
-OZ_fn_dealloc OZ_vtable_dealloc[OZ_CLASS_COUNT];
-OZ_fn_init OZ_vtable_init[OZ_CLASS_COUNT];
-OZ_fn_toggle OZ_vtable_toggle[OZ_CLASS_COUNT];
+const OZ_fn_dealloc OZ_PROTOCOL_RESOLVE_dealloc[OZ_CLASS_COUNT] = {
+	[OZ_CLASS_OZObject] = (OZ_fn_dealloc)OZObject_dealloc,
+	[OZ_CLASS_OZLed] = (OZ_fn_dealloc)OZLed_dealloc,
+};
 
-__attribute__((constructor))
-static void oz_register_vtables(void)
-{
-	OZ_vtable_dealloc[OZ_CLASS_OZObject] = (OZ_fn_dealloc)OZObject_dealloc;
-	OZ_vtable_dealloc[OZ_CLASS_OZLed] = (OZ_fn_dealloc)OZLed_dealloc;
-	OZ_vtable_init[OZ_CLASS_OZObject] = (OZ_fn_init)OZObject_init;
-	OZ_vtable_init[OZ_CLASS_OZLed] = (OZ_fn_init)OZLed_init;
-	OZ_vtable_toggle[OZ_CLASS_OZLed] = (OZ_fn_toggle)OZLed_toggle;
-}
+const OZ_fn_init OZ_PROTOCOL_RESOLVE_init[OZ_CLASS_COUNT] = {
+	[OZ_CLASS_OZObject] = (OZ_fn_init)OZObject_init,
+	[OZ_CLASS_OZLed] = (OZ_fn_init)OZLed_init,
+};
+
+const OZ_fn_toggle OZ_PROTOCOL_RESOLVE_toggle[OZ_CLASS_COUNT] = {
+	[OZ_CLASS_OZLed] = (OZ_fn_toggle)OZLed_toggle,
+};
 
 void OZObject_dispatch_free(struct OZObject *obj)
 {

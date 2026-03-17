@@ -271,6 +271,19 @@ def _dispatch_header_ctx(module: OZModule, root_class: str = "OZObject",
             "call_args": call_args, "macro_params": macro_params,
         })
 
+    # Build impl_map: for each class x selector pair, the implementing class
+    impl_map = []
+    for sel_name in sorted(proto_sels_map.keys()):
+        c_sel = _selector_to_c(sel_name)
+        for cls in classes:
+            impl_cls = _find_implementing_class(cls, sel_name, module)
+            if impl_cls:
+                impl_map.append({
+                    "cls_name": cls.name,
+                    "c_sel": c_sel,
+                    "impl_name": impl_cls.name,
+                })
+
     # Collect user includes needed by protocol dispatch param types
     dispatch_includes = []
     for cls in module.classes.values():
@@ -282,6 +295,7 @@ def _dispatch_header_ctx(module: OZModule, root_class: str = "OZObject",
         "classes": classes,
         "class_count": len(module.classes),
         "proto_sels": proto_sels,
+        "impl_map": impl_map,
         "root_class": root_class,
         "item_pool_count": item_pool_count,
         "dispatch_includes": dispatch_includes,
@@ -310,26 +324,23 @@ def _dispatch_source_ctx(module: OZModule, root_class: str = "OZObject",
                     and m.selector not in proto_sels_map):
                 proto_sels_map[m.selector] = m
 
-    proto_sels = [{"c_sel": _selector_to_c(sel)}
-                  for sel in sorted(proto_sels_map.keys())]
-
-    # Build vtable entries
-    vtable_entries = []
+    # Build vtable selectors grouped by selector for const array emission
+    vtable_sels = []
     for sel_name in sorted(proto_sels_map.keys()):
         c_sel = _selector_to_c(sel_name)
+        entries = []
         for cls in sorted_classes:
             impl_cls = _find_implementing_class(cls, sel_name, module)
             if impl_cls:
-                vtable_entries.append({
-                    "c_sel": c_sel,
+                entries.append({
                     "cls_name": cls.name,
                     "impl_name": impl_cls.name,
                 })
+        vtable_sels.append({"c_sel": c_sel, "entries": entries})
 
     return {
         "classes": classes,
-        "proto_sels": proto_sels,
-        "vtable_entries": vtable_entries,
+        "vtable_sels": vtable_sels,
         "root_class": root_class,
         "item_pool_count": item_pool_count,
     }
@@ -706,7 +717,7 @@ def _emit_root_retain_release(cls: OZClass, module: OZModule,
     out.write("\t\treturn;\n")
     out.write("\t}\n")
     out.write(f"\tif (oz_atomic_dec_and_test(&self->_refcount)) {{\n")
-    out.write(f"\t\tOZ_SEND_dealloc((struct {cls.name} *)self);\n")
+    out.write(f"\t\tOZ_PROTOCOL_SEND_dealloc((struct {cls.name} *)self);\n")
     out.write("\t}\n")
     out.write("}\n\n")
 
@@ -1123,10 +1134,10 @@ def _emit_forin_stmt(node: dict, out: StringIO, ctx: _EmitCtx,
     for (id obj in [sensor samples]) { body }
     =>
     {
-        struct OZObject *_oz_iterN = (struct OZObject *)OZ_SEND_iter(collection);
+        struct OZObject *_oz_iterN = (struct OZObject *)OZ_PROTOCOL_SEND_iter(collection);
         struct OZObject *_oz_recvN = _oz_iterN;
-        for (struct OZObject *obj = OZ_SEND_next(_oz_recvN); obj != NULL;
-             obj = OZ_SEND_next(_oz_recvN)) { body }
+        for (struct OZObject *obj = OZ_PROTOCOL_SEND_next(_oz_recvN); obj != NULL;
+             obj = OZ_PROTOCOL_SEND_next(_oz_recvN)) { body }
     }
     """
     tabs = "\t" * indent
@@ -1155,10 +1166,10 @@ def _emit_forin_stmt(node: dict, out: StringIO, ctx: _EmitCtx,
     itabs = "\t" * (indent + 1)
     out.write(f"{tabs}{{\n")
     out.write(f"{itabs}struct OZObject *{iter_tmp} = "
-              f"(struct OZObject *)OZ_SEND_iter("
+              f"(struct OZObject *)OZ_PROTOCOL_SEND_iter("
               f"(struct OZObject *){coll_buf.getvalue()});\n")
     out.write(f"{itabs}struct OZObject *{next_recv} = {iter_tmp};\n")
-    next_call = f"OZ_SEND_next({next_recv})"
+    next_call = f"OZ_PROTOCOL_SEND_next({next_recv})"
     if c_type != "struct OZObject *":
         next_call = f"({c_type}){next_call}"
     out.write(f"{itabs}for ({c_type} {var_name} = {next_call}; "
@@ -1759,33 +1770,54 @@ def _emit_msg_expr(node: dict, out: StringIO, ctx: _EmitCtx) -> None:
 
     dispatch = _find_dispatch_kind(selector, module)
     if dispatch == DispatchKind.PROTOCOL:
-        # Protocol vtable returns root class pointer; cast to the declared
-        # return type if it is a more specific object type
-        ret_qt = node.get("type", {}).get("qualType", "void")
-        ret_oz = OZType(ret_qt)
-        ret_c = ret_oz.c_type
-        needs_cast = ret_oz.is_object and ret_c != f"struct {root_class} *"
-        if needs_cast:
-            out.write(f"({ret_c})")
-        # Emit receiver into a temp var to avoid double evaluation
-        # in the OZ_SEND macro
-        if receiver:
-            recv_buf = StringIO()
-            _emit_expr(receiver, recv_buf, ctx)
-            recv_str = recv_buf.getvalue()
-            tmp = f"_oz_recv{ctx._tmp_counter}"
-            ctx._tmp_counter += 1
-            ctx.pre_stmts.append(
-                f"struct {root_class} *{tmp} = "
-                f"(struct {root_class} *){recv_str};\n"
-            )
-            out.write(f"OZ_SEND_{c_sel}({tmp}")
+        # Try compile-time dispatch when concrete receiver type is known
+        concrete = _try_infer_concrete_class(receiver, module) if receiver else None
+        if concrete:
+            # Compile-time dispatch: direct function call
+            defining = _find_defining_class(concrete, selector, module)
+            ret_qt = node.get("type", {}).get("qualType", "void")
+            ret_oz = OZType(ret_qt)
+            ret_c = ret_oz.c_type
+            needs_ret_cast = ret_oz.is_object and ret_c != f"struct {defining} *"
+            if needs_ret_cast:
+                out.write(f"({ret_c})")
+            out.write(f"{defining}_{c_sel}(")
+            if receiver:
+                needs_arg_cast = defining != concrete
+                if needs_arg_cast:
+                    out.write(f"(struct {defining} *)")
+                _emit_expr(receiver, out, ctx)
+            for arg in args_exprs:
+                out.write(", ")
+                _emit_expr(arg, out, ctx)
+            out.write(")")
         else:
-            out.write(f"OZ_SEND_{c_sel}(")
-        for arg in args_exprs:
-            out.write(", ")
-            _emit_expr(arg, out, ctx)
-        out.write(")")
+            # Polymorphic fallback via const vtable
+            ret_qt = node.get("type", {}).get("qualType", "void")
+            ret_oz = OZType(ret_qt)
+            ret_c = ret_oz.c_type
+            needs_cast = ret_oz.is_object and ret_c != f"struct {root_class} *"
+            if needs_cast:
+                out.write(f"({ret_c})")
+            # Emit receiver into a temp var to avoid double evaluation
+            # in the OZ_PROTOCOL_SEND macro
+            if receiver:
+                recv_buf = StringIO()
+                _emit_expr(receiver, recv_buf, ctx)
+                recv_str = recv_buf.getvalue()
+                tmp = f"_oz_recv{ctx._tmp_counter}"
+                ctx._tmp_counter += 1
+                ctx.pre_stmts.append(
+                    f"struct {root_class} *{tmp} = "
+                    f"(struct {root_class} *){recv_str};\n"
+                )
+                out.write(f"OZ_PROTOCOL_SEND_{c_sel}({tmp}")
+            else:
+                out.write(f"OZ_PROTOCOL_SEND_{c_sel}(")
+            for arg in args_exprs:
+                out.write(", ")
+                _emit_expr(arg, out, ctx)
+            out.write(")")
     else:
         inferred_class = _infer_receiver_class(receiver, cls, module) if receiver else cls.name
         # Walk up hierarchy to find class that actually defines the selector
@@ -1879,6 +1911,29 @@ def _infer_receiver_class(node: dict, cls: OZClass, module: OZModule | None = No
     return cls.name
 
 
+def _try_infer_concrete_class(node: dict | None, module: OZModule) -> str | None:
+    """Try to infer a concrete class from AST type info. Returns None if unknown."""
+    if not node:
+        return None
+    qt = node.get("type", {}).get("qualType", "")
+    oz = OZType(qt)
+    if oz.is_object:
+        name = oz._strip_qualifiers().rstrip(" *")
+        if name and name not in ("id", "instancetype") and name in module.classes:
+            return name
+    # Unwrap casts to check inner expression
+    unwrapped = node
+    while unwrapped.get("kind") in ("ImplicitCastExpr", "ParenExpr"):
+        inner = unwrapped.get("inner", [])
+        if inner:
+            unwrapped = inner[0]
+        else:
+            break
+    if unwrapped.get("kind") == "ObjCMessageExpr":
+        ct = unwrapped.get("classType", {}).get("qualType", "")
+        if ct and ct in module.classes:
+            return ct
+    return None
 
 
 # ---------------------------------------------------------------------------

@@ -13,17 +13,15 @@ const uint8_t oz_superclass_id[OZ_CLASS_COUNT] = {
 	[OZ_CLASS_Color] = OZ_CLASS_OZObject,
 };
 
-OZ_fn_dealloc OZ_vtable_dealloc[OZ_CLASS_COUNT];
-OZ_fn_init OZ_vtable_init[OZ_CLASS_COUNT];
+const OZ_fn_dealloc OZ_PROTOCOL_RESOLVE_dealloc[OZ_CLASS_COUNT] = {
+	[OZ_CLASS_OZObject] = (OZ_fn_dealloc)OZObject_dealloc,
+	[OZ_CLASS_Color] = (OZ_fn_dealloc)Color_dealloc,
+};
 
-__attribute__((constructor))
-static void oz_register_vtables(void)
-{
-	OZ_vtable_dealloc[OZ_CLASS_OZObject] = (OZ_fn_dealloc)OZObject_dealloc;
-	OZ_vtable_dealloc[OZ_CLASS_Color] = (OZ_fn_dealloc)Color_dealloc;
-	OZ_vtable_init[OZ_CLASS_OZObject] = (OZ_fn_init)OZObject_init;
-	OZ_vtable_init[OZ_CLASS_Color] = (OZ_fn_init)OZObject_init;
-}
+const OZ_fn_init OZ_PROTOCOL_RESOLVE_init[OZ_CLASS_COUNT] = {
+	[OZ_CLASS_OZObject] = (OZ_fn_init)OZObject_init,
+	[OZ_CLASS_Color] = (OZ_fn_init)OZObject_init,
+};
 
 void OZObject_dispatch_free(struct OZObject *obj)
 {

@@ -14,7 +14,7 @@ ZTEST_SUITE(dispatch, NULL, NULL, NULL, NULL, NULL);
 ZTEST(dispatch, test_super_calls_parent_init)
 {
 	struct Child *c = Child_alloc();
-	OZ_SEND_init((struct OZObject *)c);
+	OZ_PROTOCOL_SEND_init((struct OZObject *)c);
 
 	/* Parent init sets baseVal=10, child init sets childVal=20 */
 	zassert_equal(10, Base_baseVal((struct Base *)c),
@@ -39,8 +39,8 @@ ZTEST(dispatch, test_deep_inheritance_depth)
 ZTEST(dispatch, test_protocol_dispatch_depth)
 {
 	struct Level3 *l3 = Level3_alloc();
-	/* OZ_SEND_depth dispatches via vtable */
-	zassert_equal(3, OZ_SEND_depth((struct OZObject *)l3),
+	/* OZ_PROTOCOL_SEND_depth dispatches via const vtable */
+	zassert_equal(3, OZ_PROTOCOL_SEND_depth((struct OZObject *)l3),
 		      "Protocol dispatch: Level3 depth should be 3");
 	OZObject_release((struct OZObject *)l3);
 }

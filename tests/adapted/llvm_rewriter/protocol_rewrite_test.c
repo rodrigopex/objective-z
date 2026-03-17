@@ -11,9 +11,9 @@
 void test_protocol_dispatch_circle(void)
 {
 	struct Circle *c = Circle_alloc();
-	OZ_SEND_init((struct OZObject *)c);
+	OZ_PROTOCOL_SEND_init((struct OZObject *)c);
 
-	int result = OZ_SEND_draw((struct OZObject *)c);
+	int result = OZ_PROTOCOL_SEND_draw((struct OZObject *)c);
 	TEST_ASSERT_EQUAL_INT(0, result);
 
 	OZObject_release((struct OZObject *)c);
@@ -22,10 +22,10 @@ void test_protocol_dispatch_circle(void)
 void test_protocol_dispatch_square(void)
 {
 	struct Square *s = Square_alloc();
-	OZ_SEND_init((struct OZObject *)s);
+	OZ_PROTOCOL_SEND_init((struct OZObject *)s);
 	Square_setSide_(s, 5);
 
-	int result = OZ_SEND_draw((struct OZObject *)s);
+	int result = OZ_PROTOCOL_SEND_draw((struct OZObject *)s);
 	TEST_ASSERT_EQUAL_INT(20, result);
 
 	OZObject_release((struct OZObject *)s);

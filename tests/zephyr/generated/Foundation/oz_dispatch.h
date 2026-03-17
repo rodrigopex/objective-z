@@ -75,21 +75,84 @@ typedef struct OZObject * (*OZ_fn_init)(struct OZObject *);
 typedef BOOL (*OZ_fn_isEqual_)(struct OZObject *, struct OZObject *);
 typedef int (*OZ_fn_toggle)(struct OZObject *);
 
-/* Protocol dispatch tables (indexed by oz_class_id) */
-extern OZ_fn_cDescription_maxLength_ OZ_vtable_cDescription_maxLength_[OZ_CLASS_COUNT];
-extern OZ_fn_dealloc OZ_vtable_dealloc[OZ_CLASS_COUNT];
-extern OZ_fn_depth OZ_vtable_depth[OZ_CLASS_COUNT];
-extern OZ_fn_init OZ_vtable_init[OZ_CLASS_COUNT];
-extern OZ_fn_isEqual_ OZ_vtable_isEqual_[OZ_CLASS_COUNT];
-extern OZ_fn_toggle OZ_vtable_toggle[OZ_CLASS_COUNT];
+/* Compile-time dispatch: OZ_IMPL macros map class x selector -> direct function */
+#define OZ_IMPL_OZObject_cDescription_maxLength_(self, ...)	OZObject_cDescription_maxLength_((struct OZObject *)(self), ##__VA_ARGS__)
+#define OZ_IMPL_Base_cDescription_maxLength_(self, ...)	OZObject_cDescription_maxLength_((struct OZObject *)(self), ##__VA_ARGS__)
+#define OZ_IMPL_BoxedTest_cDescription_maxLength_(self, ...)	OZObject_cDescription_maxLength_((struct OZObject *)(self), ##__VA_ARGS__)
+#define OZ_IMPL_Child_cDescription_maxLength_(self, ...)	OZObject_cDescription_maxLength_((struct OZObject *)(self), ##__VA_ARGS__)
+#define OZ_IMPL_Fan_cDescription_maxLength_(self, ...)	OZObject_cDescription_maxLength_((struct OZObject *)(self), ##__VA_ARGS__)
+#define OZ_IMPL_Level1_cDescription_maxLength_(self, ...)	OZObject_cDescription_maxLength_((struct OZObject *)(self), ##__VA_ARGS__)
+#define OZ_IMPL_Level2_cDescription_maxLength_(self, ...)	OZObject_cDescription_maxLength_((struct OZObject *)(self), ##__VA_ARGS__)
+#define OZ_IMPL_Level3_cDescription_maxLength_(self, ...)	OZObject_cDescription_maxLength_((struct OZObject *)(self), ##__VA_ARGS__)
+#define OZ_IMPL_Level4_cDescription_maxLength_(self, ...)	OZObject_cDescription_maxLength_((struct OZObject *)(self), ##__VA_ARGS__)
+#define OZ_IMPL_LightSwitch_cDescription_maxLength_(self, ...)	OZObject_cDescription_maxLength_((struct OZObject *)(self), ##__VA_ARGS__)
+#define OZ_IMPL_Node_cDescription_maxLength_(self, ...)	OZObject_cDescription_maxLength_((struct OZObject *)(self), ##__VA_ARGS__)
+#define OZ_IMPL_OZNumber_cDescription_maxLength_(self, ...)	OZObject_cDescription_maxLength_((struct OZObject *)(self), ##__VA_ARGS__)
+#define OZ_IMPL_Widget_cDescription_maxLength_(self, ...)	OZObject_cDescription_maxLength_((struct OZObject *)(self), ##__VA_ARGS__)
+#define OZ_IMPL_OZObject_dealloc(self, ...)	OZObject_dealloc((struct OZObject *)(self), ##__VA_ARGS__)
+#define OZ_IMPL_Base_dealloc(self, ...)	Base_dealloc((struct Base *)(self), ##__VA_ARGS__)
+#define OZ_IMPL_BoxedTest_dealloc(self, ...)	BoxedTest_dealloc((struct BoxedTest *)(self), ##__VA_ARGS__)
+#define OZ_IMPL_Child_dealloc(self, ...)	Child_dealloc((struct Child *)(self), ##__VA_ARGS__)
+#define OZ_IMPL_Fan_dealloc(self, ...)	Fan_dealloc((struct Fan *)(self), ##__VA_ARGS__)
+#define OZ_IMPL_Level1_dealloc(self, ...)	Level1_dealloc((struct Level1 *)(self), ##__VA_ARGS__)
+#define OZ_IMPL_Level2_dealloc(self, ...)	Level2_dealloc((struct Level2 *)(self), ##__VA_ARGS__)
+#define OZ_IMPL_Level3_dealloc(self, ...)	Level3_dealloc((struct Level3 *)(self), ##__VA_ARGS__)
+#define OZ_IMPL_Level4_dealloc(self, ...)	Level4_dealloc((struct Level4 *)(self), ##__VA_ARGS__)
+#define OZ_IMPL_LightSwitch_dealloc(self, ...)	LightSwitch_dealloc((struct LightSwitch *)(self), ##__VA_ARGS__)
+#define OZ_IMPL_Node_dealloc(self, ...)	Node_dealloc((struct Node *)(self), ##__VA_ARGS__)
+#define OZ_IMPL_OZNumber_dealloc(self, ...)	OZNumber_dealloc((struct OZNumber *)(self), ##__VA_ARGS__)
+#define OZ_IMPL_Widget_dealloc(self, ...)	Widget_dealloc((struct Widget *)(self), ##__VA_ARGS__)
+#define OZ_IMPL_Level1_depth(self, ...)	Level1_depth((struct Level1 *)(self), ##__VA_ARGS__)
+#define OZ_IMPL_Level2_depth(self, ...)	Level2_depth((struct Level2 *)(self), ##__VA_ARGS__)
+#define OZ_IMPL_Level3_depth(self, ...)	Level3_depth((struct Level3 *)(self), ##__VA_ARGS__)
+#define OZ_IMPL_Level4_depth(self, ...)	Level4_depth((struct Level4 *)(self), ##__VA_ARGS__)
+#define OZ_IMPL_OZObject_init(self, ...)	OZObject_init((struct OZObject *)(self), ##__VA_ARGS__)
+#define OZ_IMPL_Base_init(self, ...)	Base_init((struct Base *)(self), ##__VA_ARGS__)
+#define OZ_IMPL_BoxedTest_init(self, ...)	OZObject_init((struct OZObject *)(self), ##__VA_ARGS__)
+#define OZ_IMPL_Child_init(self, ...)	Child_init((struct Child *)(self), ##__VA_ARGS__)
+#define OZ_IMPL_Fan_init(self, ...)	OZObject_init((struct OZObject *)(self), ##__VA_ARGS__)
+#define OZ_IMPL_Level1_init(self, ...)	OZObject_init((struct OZObject *)(self), ##__VA_ARGS__)
+#define OZ_IMPL_Level2_init(self, ...)	OZObject_init((struct OZObject *)(self), ##__VA_ARGS__)
+#define OZ_IMPL_Level3_init(self, ...)	OZObject_init((struct OZObject *)(self), ##__VA_ARGS__)
+#define OZ_IMPL_Level4_init(self, ...)	OZObject_init((struct OZObject *)(self), ##__VA_ARGS__)
+#define OZ_IMPL_LightSwitch_init(self, ...)	OZObject_init((struct OZObject *)(self), ##__VA_ARGS__)
+#define OZ_IMPL_Node_init(self, ...)	OZObject_init((struct OZObject *)(self), ##__VA_ARGS__)
+#define OZ_IMPL_OZNumber_init(self, ...)	OZObject_init((struct OZObject *)(self), ##__VA_ARGS__)
+#define OZ_IMPL_Widget_init(self, ...)	OZObject_init((struct OZObject *)(self), ##__VA_ARGS__)
+#define OZ_IMPL_OZObject_isEqual_(self, ...)	OZObject_isEqual_((struct OZObject *)(self), ##__VA_ARGS__)
+#define OZ_IMPL_Base_isEqual_(self, ...)	OZObject_isEqual_((struct OZObject *)(self), ##__VA_ARGS__)
+#define OZ_IMPL_BoxedTest_isEqual_(self, ...)	OZObject_isEqual_((struct OZObject *)(self), ##__VA_ARGS__)
+#define OZ_IMPL_Child_isEqual_(self, ...)	OZObject_isEqual_((struct OZObject *)(self), ##__VA_ARGS__)
+#define OZ_IMPL_Fan_isEqual_(self, ...)	OZObject_isEqual_((struct OZObject *)(self), ##__VA_ARGS__)
+#define OZ_IMPL_Level1_isEqual_(self, ...)	OZObject_isEqual_((struct OZObject *)(self), ##__VA_ARGS__)
+#define OZ_IMPL_Level2_isEqual_(self, ...)	OZObject_isEqual_((struct OZObject *)(self), ##__VA_ARGS__)
+#define OZ_IMPL_Level3_isEqual_(self, ...)	OZObject_isEqual_((struct OZObject *)(self), ##__VA_ARGS__)
+#define OZ_IMPL_Level4_isEqual_(self, ...)	OZObject_isEqual_((struct OZObject *)(self), ##__VA_ARGS__)
+#define OZ_IMPL_LightSwitch_isEqual_(self, ...)	OZObject_isEqual_((struct OZObject *)(self), ##__VA_ARGS__)
+#define OZ_IMPL_Node_isEqual_(self, ...)	OZObject_isEqual_((struct OZObject *)(self), ##__VA_ARGS__)
+#define OZ_IMPL_OZNumber_isEqual_(self, ...)	OZObject_isEqual_((struct OZObject *)(self), ##__VA_ARGS__)
+#define OZ_IMPL_Widget_isEqual_(self, ...)	OZObject_isEqual_((struct OZObject *)(self), ##__VA_ARGS__)
+#define OZ_IMPL_Fan_toggle(self, ...)	Fan_toggle((struct Fan *)(self), ##__VA_ARGS__)
+#define OZ_IMPL_LightSwitch_toggle(self, ...)	LightSwitch_toggle((struct LightSwitch *)(self), ##__VA_ARGS__)
 
-/* OZ_SEND macros — caller must ensure obj has no side effects */
-#define OZ_SEND_cDescription_maxLength_(obj, buf, maxLen) OZ_vtable_cDescription_maxLength_[((struct OZObject *)(obj))->oz_class_id]((struct OZObject *)(obj), (buf), (maxLen))
-#define OZ_SEND_dealloc(obj) OZ_vtable_dealloc[((struct OZObject *)(obj))->oz_class_id]((struct OZObject *)(obj))
-#define OZ_SEND_depth(obj) OZ_vtable_depth[((struct OZObject *)(obj))->oz_class_id]((struct OZObject *)(obj))
-#define OZ_SEND_init(obj) OZ_vtable_init[((struct OZObject *)(obj))->oz_class_id]((struct OZObject *)(obj))
-#define OZ_SEND_isEqual_(obj, anObject) OZ_vtable_isEqual_[((struct OZObject *)(obj))->oz_class_id]((struct OZObject *)(obj), (anObject))
-#define OZ_SEND_toggle(obj) OZ_vtable_toggle[((struct OZObject *)(obj))->oz_class_id]((struct OZObject *)(obj))
+/* Static dispatch: token concatenation resolves at compile time */
+#define OZ_SEND(cls, sel, self, ...) OZ_IMPL_##cls##_##sel((self), ##__VA_ARGS__)
+
+/* Const protocol dispatch tables (indexed by oz_class_id) */
+extern const OZ_fn_cDescription_maxLength_ OZ_PROTOCOL_RESOLVE_cDescription_maxLength_[OZ_CLASS_COUNT];
+extern const OZ_fn_dealloc OZ_PROTOCOL_RESOLVE_dealloc[OZ_CLASS_COUNT];
+extern const OZ_fn_depth OZ_PROTOCOL_RESOLVE_depth[OZ_CLASS_COUNT];
+extern const OZ_fn_init OZ_PROTOCOL_RESOLVE_init[OZ_CLASS_COUNT];
+extern const OZ_fn_isEqual_ OZ_PROTOCOL_RESOLVE_isEqual_[OZ_CLASS_COUNT];
+extern const OZ_fn_toggle OZ_PROTOCOL_RESOLVE_toggle[OZ_CLASS_COUNT];
+
+/* OZ_PROTOCOL_SEND macros — polymorphic fallback, caller must ensure obj has no side effects */
+#define OZ_PROTOCOL_SEND_cDescription_maxLength_(obj, buf, maxLen) OZ_PROTOCOL_RESOLVE_cDescription_maxLength_[((struct OZObject *)(obj))->oz_class_id]((struct OZObject *)(obj), (buf), (maxLen))
+#define OZ_PROTOCOL_SEND_dealloc(obj) OZ_PROTOCOL_RESOLVE_dealloc[((struct OZObject *)(obj))->oz_class_id]((struct OZObject *)(obj))
+#define OZ_PROTOCOL_SEND_depth(obj) OZ_PROTOCOL_RESOLVE_depth[((struct OZObject *)(obj))->oz_class_id]((struct OZObject *)(obj))
+#define OZ_PROTOCOL_SEND_init(obj) OZ_PROTOCOL_RESOLVE_init[((struct OZObject *)(obj))->oz_class_id]((struct OZObject *)(obj))
+#define OZ_PROTOCOL_SEND_isEqual_(obj, anObject) OZ_PROTOCOL_RESOLVE_isEqual_[((struct OZObject *)(obj))->oz_class_id]((struct OZObject *)(obj), (anObject))
+#define OZ_PROTOCOL_SEND_toggle(obj) OZ_PROTOCOL_RESOLVE_toggle[((struct OZObject *)(obj))->oz_class_id]((struct OZObject *)(obj))
 
 
 void OZObject_dispatch_free(struct OZObject *obj);

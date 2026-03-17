@@ -12,9 +12,9 @@
 void test_base_class_method(void)
 {
 	struct Animal *a = Animal_alloc();
-	OZ_SEND_init((struct OZObject *)a);
+	OZ_PROTOCOL_SEND_init((struct OZObject *)a);
 
-	TEST_ASSERT_EQUAL_INT(0, OZ_SEND_sound((struct OZObject *)a));
+	TEST_ASSERT_EQUAL_INT(0, OZ_PROTOCOL_SEND_sound((struct OZObject *)a));
 
 	OZObject_release((struct OZObject *)a);
 }
@@ -22,9 +22,9 @@ void test_base_class_method(void)
 void test_override_in_child(void)
 {
 	struct Dog *d = Dog_alloc();
-	OZ_SEND_init((struct OZObject *)d);
+	OZ_PROTOCOL_SEND_init((struct OZObject *)d);
 
-	TEST_ASSERT_EQUAL_INT(1, OZ_SEND_sound((struct OZObject *)d));
+	TEST_ASSERT_EQUAL_INT(1, OZ_PROTOCOL_SEND_sound((struct OZObject *)d));
 
 	OZObject_release((struct OZObject *)d);
 }
@@ -32,9 +32,9 @@ void test_override_in_child(void)
 void test_override_in_grandchild(void)
 {
 	struct Puppy *p = Puppy_alloc();
-	OZ_SEND_init((struct OZObject *)p);
+	OZ_PROTOCOL_SEND_init((struct OZObject *)p);
 
-	TEST_ASSERT_EQUAL_INT(2, OZ_SEND_sound((struct OZObject *)p));
+	TEST_ASSERT_EQUAL_INT(2, OZ_PROTOCOL_SEND_sound((struct OZObject *)p));
 
 	OZObject_release((struct OZObject *)p);
 }
@@ -42,7 +42,7 @@ void test_override_in_grandchild(void)
 void test_inherited_method_from_base(void)
 {
 	struct Dog *d = Dog_alloc();
-	OZ_SEND_init((struct OZObject *)d);
+	OZ_PROTOCOL_SEND_init((struct OZObject *)d);
 
 	TEST_ASSERT_EQUAL_INT(0, Animal_legs((struct Animal *)d));
 

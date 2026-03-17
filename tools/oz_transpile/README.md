@@ -60,7 +60,7 @@ See [LIMITATIONS.md](../../docs/LIMITATIONS.md) for unsupported features.
 ## Dispatch Strategy
 
 - **STATIC**: selector has single implementation -> direct `ClassName_sel()` call
-- **PROTOCOL**: selector in a protocol or overridden by multiple classes -> `OZ_SEND_sel()` macro (vtable dispatch indexed by `oz_class_id`)
+- **PROTOCOL**: selector in a protocol or overridden by multiple classes -> direct call when receiver type known, `OZ_PROTOCOL_SEND_sel()` macro (const vtable dispatch) otherwise
 
 ## Tests
 

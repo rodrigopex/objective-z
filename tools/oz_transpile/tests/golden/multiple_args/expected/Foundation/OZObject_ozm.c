@@ -18,7 +18,7 @@ void OZObject_release(struct OZObject *self)
 		return;
 	}
 	if (oz_atomic_dec_and_test(&self->_refcount)) {
-		OZ_SEND_dealloc((struct OZObject *)self);
+		OZ_PROTOCOL_SEND_dealloc((struct OZObject *)self);
 	}
 }
 

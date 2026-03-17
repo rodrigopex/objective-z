@@ -9,7 +9,7 @@
 void test_message_send_and_return(void)
 {
 	struct Counter *c = Counter_alloc();
-	OZ_SEND_init((struct OZObject *)c);
+	OZ_PROTOCOL_SEND_init((struct OZObject *)c);
 
 	TEST_ASSERT_EQUAL_INT(0, Counter_count(c));
 	Counter_increment(c);
