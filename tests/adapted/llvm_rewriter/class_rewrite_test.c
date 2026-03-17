@@ -18,14 +18,14 @@ void test_alloc_and_init(void)
 {
 	struct Vehicle *v = Vehicle_alloc();
 	TEST_ASSERT_NOT_NULL(v);
-	OZ_SEND_init((struct OZObject *)v);
+	OZ_PROTOCOL_SEND_init((struct OZObject *)v);
 	OZObject_release((struct OZObject *)v);
 }
 
 void test_ivar_access_via_methods(void)
 {
 	struct Vehicle *v = Vehicle_alloc();
-	OZ_SEND_init((struct OZObject *)v);
+	OZ_PROTOCOL_SEND_init((struct OZObject *)v);
 
 	Vehicle_setSpeed_(v, 120);
 	TEST_ASSERT_EQUAL_INT(120, Vehicle_speed(v));

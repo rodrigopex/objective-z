@@ -14,7 +14,7 @@ void test_atomic_assign_set_get(void)
 void test_atomic_strong_retains(void)
 {
 	struct Counter *c = Counter_alloc();
-	OZ_SEND_init((struct OZObject *)c);
+	OZ_PROTOCOL_SEND_init((struct OZObject *)c);
 	TEST_ASSERT_EQUAL_INT(1, OZObject_retainCount((struct OZObject *)c));
 
 	struct Container *ct = Container_alloc();
@@ -32,9 +32,9 @@ void test_atomic_strong_retains(void)
 void test_atomic_strong_releases_old(void)
 {
 	struct Counter *a = Counter_alloc();
-	OZ_SEND_init((struct OZObject *)a);
+	OZ_PROTOCOL_SEND_init((struct OZObject *)a);
 	struct Counter *b = Counter_alloc();
-	OZ_SEND_init((struct OZObject *)b);
+	OZ_PROTOCOL_SEND_init((struct OZObject *)b);
 
 	struct Container *ct = Container_alloc();
 	Container_setCounter_(ct, a);

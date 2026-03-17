@@ -32,12 +32,15 @@ class TestCLI:
         with tempfile.TemporaryDirectory() as tmpdir:
             main(["--input", ast_file, "--outdir", tmpdir])
             content = open(os.path.join(tmpdir, "Foundation", "oz_dispatch.h")).read()
-            # toggle is in protocol -> should have vtable
-            assert "OZ_SEND_toggle" in content
+            # toggle is in protocol -> should have const vtable
+            assert "OZ_PROTOCOL_SEND_toggle" in content
             # init is overridden -> protocol dispatch
-            assert "OZ_SEND_init" in content
+            assert "OZ_PROTOCOL_SEND_init" in content
+            # compile-time dispatch macros
+            assert "OZ_IMPL_" in content
+            assert "OZ_SEND(cls, sel, self, ...)" in content
             # turnOn is unique -> no vtable entry
-            assert "OZ_SEND_turnOn" not in content
+            assert "OZ_PROTOCOL_SEND_turnOn" not in content
 
     def test_class_struct_hierarchy(self):
         ast_file = os.path.join(FIXTURE_DIR, "simple_led.ast.json")

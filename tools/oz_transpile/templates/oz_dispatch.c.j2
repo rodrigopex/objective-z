@@ -19,20 +19,14 @@ const uint8_t oz_superclass_id[OZ_CLASS_COUNT] = {
 	[OZ_CLASS_{{ cls.name }}] = {{ cls.super_id_expr }},
 {% endfor %}
 };
+{% for sel in vtable_sels %}
 
-{% for sel in proto_sels %}
-OZ_fn_{{ sel.c_sel }} OZ_vtable_{{ sel.c_sel }}[OZ_CLASS_COUNT];
+const OZ_fn_{{ sel.c_sel }} OZ_PROTOCOL_RESOLVE_{{ sel.c_sel }}[OZ_CLASS_COUNT] = {
+{% for entry in sel.entries %}
+	[OZ_CLASS_{{ entry.cls_name }}] = (OZ_fn_{{ sel.c_sel }}){{ entry.impl_name }}_{{ sel.c_sel }},
 {% endfor %}
-{% if vtable_entries %}
-
-__attribute__((constructor))
-static void oz_register_vtables(void)
-{
-{% for entry in vtable_entries %}
-	OZ_vtable_{{ entry.c_sel }}[OZ_CLASS_{{ entry.cls_name }}] = (OZ_fn_{{ entry.c_sel }}){{ entry.impl_name }}_{{ entry.c_sel }};
+};
 {% endfor %}
-}
-{% endif %}
 
 void {{ root_class }}_dispatch_free(struct {{ root_class }} *obj)
 {

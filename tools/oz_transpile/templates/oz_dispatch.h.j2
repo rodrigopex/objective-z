@@ -59,14 +59,24 @@ static inline bool oz_isKindOfClass(uint8_t class_id, uint8_t target_class_id)
 typedef {{ sel.ret }} (*OZ_fn_{{ sel.c_sel }})({{ sel.param_types }});
 {% endfor %}
 
-/* Protocol dispatch tables (indexed by oz_class_id) */
-{% for sel in proto_sels %}
-extern OZ_fn_{{ sel.c_sel }} OZ_vtable_{{ sel.c_sel }}[OZ_CLASS_COUNT];
+/* Compile-time dispatch: OZ_IMPL macros map class x selector -> direct function */
+{% for entry in impl_map %}
+{% if entry.impl_name %}
+#define OZ_IMPL_{{ entry.cls_name }}_{{ entry.c_sel }}(self, ...)	{{ entry.impl_name }}_{{ entry.c_sel }}((struct {{ entry.impl_name }} *)(self), ##__VA_ARGS__)
+{% endif %}
 {% endfor %}
 
-/* OZ_SEND macros — caller must ensure obj has no side effects */
+/* Static dispatch: token concatenation resolves at compile time */
+#define OZ_SEND(cls, sel, self, ...) OZ_IMPL_##cls##_##sel((self), ##__VA_ARGS__)
+
+/* Const protocol dispatch tables (indexed by oz_class_id) */
 {% for sel in proto_sels %}
-#define OZ_SEND_{{ sel.c_sel }}({{ sel.macro_params }}) OZ_vtable_{{ sel.c_sel }}[((struct OZObject *)(obj))->oz_class_id]({{ sel.call_args }})
+extern const OZ_fn_{{ sel.c_sel }} OZ_PROTOCOL_RESOLVE_{{ sel.c_sel }}[OZ_CLASS_COUNT];
+{% endfor %}
+
+/* OZ_PROTOCOL_SEND macros — polymorphic fallback, caller must ensure obj has no side effects */
+{% for sel in proto_sels %}
+#define OZ_PROTOCOL_SEND_{{ sel.c_sel }}({{ sel.macro_params }}) OZ_PROTOCOL_RESOLVE_{{ sel.c_sel }}[((struct OZObject *)(obj))->oz_class_id]({{ sel.call_args }})
 {% endfor %}
 
 {% endif %}

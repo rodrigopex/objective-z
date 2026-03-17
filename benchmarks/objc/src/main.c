@@ -97,11 +97,11 @@ static void bench_dispatch(void)
 	printk("\n--- Dispatch ---\n");
 
 	struct BenchBase *base = BenchBase_alloc();
-	OZ_SEND_init((struct OZObject *)base);
+	OZ_PROTOCOL_SEND_init((struct OZObject *)base);
 	struct BenchChild *child = BenchChild_alloc();
-	OZ_SEND_init((struct OZObject *)child);
+	OZ_PROTOCOL_SEND_init((struct OZObject *)child);
 	struct BenchGrandChild *gchild = BenchGrandChild_alloc();
-	OZ_SEND_init((struct OZObject *)gchild);
+	OZ_PROTOCOL_SEND_init((struct OZObject *)gchild);
 
 	/* C function pointer call baseline (prevents inlining) */
 	void (*volatile fn_ptr)(struct OZObject *) = c_nop;
@@ -114,11 +114,11 @@ static void bench_dispatch(void)
 	BENCH_LOOP("Class method (static function)", BenchBase_cls_classNop());
 
 	/* Vtable dispatch via OZ_SEND_* at various inheritance depths */
-	BENCH_LOOP("Vtable dispatch (depth=0)", OZ_SEND_nop((struct OZObject *)base));
+	BENCH_LOOP("Vtable dispatch (depth=0)", OZ_PROTOCOL_SEND_nop((struct OZObject *)base));
 
-	BENCH_LOOP("Vtable dispatch (depth=1)", OZ_SEND_nop((struct OZObject *)child));
+	BENCH_LOOP("Vtable dispatch (depth=1)", OZ_PROTOCOL_SEND_nop((struct OZObject *)child));
 
-	BENCH_LOOP("Vtable dispatch (depth=2)", OZ_SEND_nop((struct OZObject *)gchild));
+	BENCH_LOOP("Vtable dispatch (depth=2)", OZ_PROTOCOL_SEND_nop((struct OZObject *)gchild));
 
 	OZObject_release((struct OZObject *)base);
 	OZObject_release((struct OZObject *)child);
@@ -133,7 +133,7 @@ static void bench_object_lifecycle(void)
 
 	BENCH_LOOP("slab alloc + init + release", {
 		struct BenchBase *obj = BenchBase_alloc();
-		OZ_SEND_init((struct OZObject *)obj);
+		OZ_PROTOCOL_SEND_init((struct OZObject *)obj);
 		OZObject_release((struct OZObject *)obj);
 	});
 }
@@ -145,7 +145,7 @@ static void bench_refcount(void)
 	printk("\n--- Reference Counting ---\n");
 
 	struct BenchBase *base = BenchBase_alloc();
-	OZ_SEND_init((struct OZObject *)base);
+	OZ_PROTOCOL_SEND_init((struct OZObject *)base);
 	struct OZObject *obj = (struct OZObject *)base;
 
 	BENCH_LOOP("OZObject_retain (atomic inc)", OZObject_retain(obj));

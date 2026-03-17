@@ -136,8 +136,8 @@ class TestDispatchHeader:
             emit(m, tmpdir)
             content = open(os.path.join(tmpdir, "Foundation", "oz_dispatch.h")).read()
             # init is overridden -> PROTOCOL dispatch
-            assert "OZ_vtable_init" in content
-            assert "OZ_SEND_init" in content
+            assert "OZ_PROTOCOL_RESOLVE_init" in content
+            assert "OZ_PROTOCOL_SEND_init" in content
 
     def test_class_method_excluded_from_vtable(self):
         m = _simple_module()
@@ -191,7 +191,7 @@ class TestClassSource:
             assert "OZObject_retain" in content
             assert "OZObject_release" in content
             assert "oz_atomic_dec_and_test" in content
-            assert "OZ_SEND_dealloc" in content
+            assert "OZ_PROTOCOL_SEND_dealloc" in content
 
 
 class TestBodyEmission:
@@ -1359,8 +1359,8 @@ class TestIntrospection:
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
             content = open(os.path.join(tmpdir, "Foundation", "oz_dispatch.h")).read()
-            assert "OZ_SEND_isEqual_" in content
-            assert "OZ_vtable_isEqual_" in content
+            assert "OZ_PROTOCOL_SEND_isEqual_" in content
+            assert "OZ_PROTOCOL_RESOLVE_isEqual_" in content
 
     def test_cDescription_protocol_dispatched(self):
         m = _simple_module()
@@ -1374,7 +1374,7 @@ class TestIntrospection:
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
             content = open(os.path.join(tmpdir, "Foundation", "oz_dispatch.h")).read()
-            assert "OZ_SEND_cDescription_maxLength_" in content
+            assert "OZ_PROTOCOL_SEND_cDescription_maxLength_" in content
 
     def test_root_source_includes_header(self):
         m = _simple_module()
@@ -2905,14 +2905,14 @@ class TestProtocolDispatchReturnCast:
             content = open(os.path.join(tmpdir, "App_ozm.c")).read()
             assert "__patched__" not in content
             assert "(struct OZString *)" in content
-            assert "OZ_SEND_name" in content
+            assert "OZ_PROTOCOL_SEND_name" in content
 
 
 class TestReturnProtocolDispatch:
     """OZ-005: protocol dispatch in return statement must declare receiver var."""
 
-    def test_return_protocol_dispatch_emits_receiver_var(self):
-        """return [_sensors count]; must declare _oz_recv before the return."""
+    def test_return_protocol_dispatch_with_concrete_type(self):
+        """return [_sensors count]; with concrete OZArray * uses OZ_SEND."""
         m = OZModule()
         m.classes["OZObject"] = OZClass("OZObject")
         m.classes["OZArray"] = OZClass("OZArray", superclass="OZObject",
@@ -2947,8 +2947,47 @@ class TestReturnProtocolDispatch:
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
             content = open(os.path.join(tmpdir, "Registry_ozm.c")).read()
+            # Concrete receiver type → compile-time dispatch (direct call), no temp var
+            assert "OZArray_count(" in content
+
+    def test_return_protocol_dispatch_emits_receiver_var(self):
+        """return [obj count]; with id receiver uses OZ_PROTOCOL_SEND + temp var."""
+        m = OZModule()
+        m.classes["OZObject"] = OZClass("OZObject")
+        m.classes["OZArray"] = OZClass("OZArray", superclass="OZObject",
+            methods=[OZMethod("count", OZType("unsigned int"), body_ast={
+                "kind": "CompoundStmt", "inner": []})])
+        m.protocols["IteratorProtocol"] = OZProtocol(
+            "IteratorProtocol",
+            methods=[OZMethod("count", OZType("unsigned int"))])
+        m.classes["Registry"] = OZClass("Registry", superclass="OZObject",
+            ivars=[OZIvar("_sensors", OZType("OZArray *"))],
+            methods=[OZMethod("sensorCount", OZType("int"), body_ast={
+                "kind": "CompoundStmt",
+                "inner": [{
+                    "kind": "ReturnStmt",
+                    "inner": [{
+                        "kind": "ObjCMessageExpr",
+                        "selector": "count",
+                        "type": {"qualType": "unsigned int"},
+                        "inner": [{
+                            "kind": "ImplicitCastExpr",
+                            "type": {"qualType": "id"},
+                            "inner": [{
+                                "kind": "ObjCIvarRefExpr",
+                                "decl": {"name": "_sensors"},
+                                "type": {"qualType": "id"},
+                            }],
+                        }],
+                    }],
+                }],
+            })])
+        resolve(m)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            content = open(os.path.join(tmpdir, "Registry_ozm.c")).read()
             assert "_oz_recv" in content
-            assert "OZ_SEND_count" in content
+            assert "OZ_PROTOCOL_SEND_count" in content
             # The receiver var must appear BEFORE the return statement
             recv_pos = content.index("_oz_recv")
             ret_pos = content.index("return")
@@ -3113,8 +3152,8 @@ class TestProtocolDispatchEdgeCases:
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
             content = open(os.path.join(tmpdir, "App_ozm.c")).read()
-            assert "OZ_SEND_reset" in content
-            assert "(struct" not in content.split("OZ_SEND_reset")[0].split("\n")[-1]
+            assert "OZ_PROTOCOL_SEND_reset" in content
+            assert "(struct" not in content.split("OZ_PROTOCOL_SEND_reset")[0].split("\n")[-1]
 
     def test_int_return_no_struct_cast(self):
         """int-returning protocol method should NOT cast to struct."""
@@ -3138,8 +3177,8 @@ class TestProtocolDispatchEdgeCases:
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
             content = open(os.path.join(tmpdir, "App_ozm.c")).read()
-            assert "OZ_SEND_count" in content
-            assert "(struct OZObject *)OZ_SEND_count" not in content
+            assert "OZ_PROTOCOL_SEND_count" in content
+            assert "(struct OZObject *)OZ_PROTOCOL_SEND_count" not in content
 
 
 class TestSwitchCaseEdgeCases:
@@ -3837,8 +3876,8 @@ class TestEmitEdgeCases:
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
             src = open(os.path.join(tmpdir, "Foo_ozm.c")).read()
-            assert "OZ_SEND_iter" in src
-            assert "OZ_SEND_next" in src
+            assert "OZ_PROTOCOL_SEND_iter" in src
+            assert "OZ_PROTOCOL_SEND_next" in src
             assert "item" in src
 
     def test_string_dedup_unique_across_methods(self):

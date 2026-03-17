@@ -8,7 +8,7 @@
 void test_origin_methods(void)
 {
 	struct Geometry *g = Geometry_alloc();
-	OZ_SEND_init((struct OZObject *)g);
+	OZ_PROTOCOL_SEND_init((struct OZObject *)g);
 
 	Geometry_setOriginX_y_(g, 10, 20);
 	TEST_ASSERT_EQUAL_INT(10, Geometry_originX(g));
@@ -20,7 +20,7 @@ void test_origin_methods(void)
 void test_dimension_methods(void)
 {
 	struct Geometry *g = Geometry_alloc();
-	OZ_SEND_init((struct OZObject *)g);
+	OZ_PROTOCOL_SEND_init((struct OZObject *)g);
 
 	Geometry_setWidth_height_(g, 100, 200);
 	TEST_ASSERT_EQUAL_INT(100, Geometry_width(g));
@@ -32,7 +32,7 @@ void test_dimension_methods(void)
 void test_computed_values(void)
 {
 	struct Geometry *g = Geometry_alloc();
-	OZ_SEND_init((struct OZObject *)g);
+	OZ_PROTOCOL_SEND_init((struct OZObject *)g);
 
 	Geometry_setWidth_height_(g, 5, 10);
 	TEST_ASSERT_EQUAL_INT(50, Geometry_area(g));

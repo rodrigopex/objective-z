@@ -14,7 +14,7 @@ void test_assign_stores_value(void)
 void test_strong_retains_on_set(void)
 {
 	struct Item *it = Item_alloc();
-	OZ_SEND_init((struct OZObject *)it);
+	OZ_PROTOCOL_SEND_init((struct OZObject *)it);
 	/* rc=1 after alloc */
 	TEST_ASSERT_EQUAL_INT(1, OZObject_retainCount((struct OZObject *)it));
 
@@ -33,9 +33,9 @@ void test_strong_retains_on_set(void)
 void test_strong_releases_old_on_overwrite(void)
 {
 	struct Item *a = Item_alloc();
-	OZ_SEND_init((struct OZObject *)a);
+	OZ_PROTOCOL_SEND_init((struct OZObject *)a);
 	struct Item *b = Item_alloc();
-	OZ_SEND_init((struct OZObject *)b);
+	OZ_PROTOCOL_SEND_init((struct OZObject *)b);
 
 	struct Holder *h = Holder_alloc();
 	Holder_setItem_(h, a);

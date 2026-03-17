@@ -9,7 +9,7 @@
 void test_property_default_zero(void)
 {
 	struct Config *c = Config_alloc();
-	OZ_SEND_init((struct OZObject *)c);
+	OZ_PROTOCOL_SEND_init((struct OZObject *)c);
 
 	TEST_ASSERT_EQUAL_INT(0, Config_level(c));
 	TEST_ASSERT_EQUAL_INT(0, Config_mode(c));
@@ -20,7 +20,7 @@ void test_property_default_zero(void)
 void test_property_set_and_get(void)
 {
 	struct Config *c = Config_alloc();
-	OZ_SEND_init((struct OZObject *)c);
+	OZ_PROTOCOL_SEND_init((struct OZObject *)c);
 
 	Config_setLevel_(c, 5);
 	Config_setMode_(c, 3);

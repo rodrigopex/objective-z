@@ -9,7 +9,7 @@
 void test_category_method_callable(void)
 {
 	struct Printer *p = Printer_alloc();
-	OZ_SEND_init((struct OZObject *)p);
+	OZ_PROTOCOL_SEND_init((struct OZObject *)p);
 
 	Printer_addPages_(p, 10);
 	TEST_ASSERT_EQUAL_INT(10, Printer_pages(p));
@@ -21,7 +21,7 @@ void test_category_method_callable(void)
 void test_category_does_not_break_original(void)
 {
 	struct Printer *p = Printer_alloc();
-	OZ_SEND_init((struct OZObject *)p);
+	OZ_PROTOCOL_SEND_init((struct OZObject *)p);
 
 	TEST_ASSERT_EQUAL_INT(0, Printer_pages(p));
 	Printer_addPages_(p, 5);

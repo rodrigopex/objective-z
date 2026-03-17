@@ -9,7 +9,7 @@
 void test_two_arg_selector(void)
 {
 	struct Calc *c = Calc_alloc();
-	OZ_SEND_init((struct OZObject *)c);
+	OZ_PROTOCOL_SEND_init((struct OZObject *)c);
 
 	int result = Calc_add_to_(c, 3, 7);
 	TEST_ASSERT_EQUAL_INT(10, result);
@@ -20,7 +20,7 @@ void test_two_arg_selector(void)
 void test_three_arg_selector(void)
 {
 	struct Calc *c = Calc_alloc();
-	OZ_SEND_init((struct OZObject *)c);
+	OZ_PROTOCOL_SEND_init((struct OZObject *)c);
 
 	int result = Calc_multiply_by_offset_(c, 4, 5, 3);
 	TEST_ASSERT_EQUAL_INT(23, result);

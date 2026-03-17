@@ -5,7 +5,7 @@
 void test_super_calls_parent(void)
 {
 	struct Child *c = Child_alloc();
-	OZ_SEND_init((struct OZObject *)c);
+	OZ_PROTOCOL_SEND_init((struct OZObject *)c);
 
 	/* Parent init sets baseVal=10, child init sets childVal=20 */
 	TEST_ASSERT_EQUAL_INT(10, Base_baseVal((struct Base *)c));

@@ -10,10 +10,10 @@
 void test_object_ivar_lifetime(void)
 {
 	struct Manager *m = Manager_alloc();
-	OZ_SEND_init((struct OZObject *)m);
+	OZ_PROTOCOL_SEND_init((struct OZObject *)m);
 
 	struct Resource *r = Resource_alloc();
-	OZ_SEND_init((struct OZObject *)r);
+	OZ_PROTOCOL_SEND_init((struct OZObject *)r);
 	Resource_setValue_(r, 42);
 
 	Manager_setResource_(m, r);
@@ -27,7 +27,7 @@ void test_object_ivar_lifetime(void)
 void test_scope_cleanup(void)
 {
 	struct Resource *r = Resource_alloc();
-	OZ_SEND_init((struct OZObject *)r);
+	OZ_PROTOCOL_SEND_init((struct OZObject *)r);
 
 	uint32_t rc = OZObject_retainCount((struct OZObject *)r);
 	TEST_ASSERT_EQUAL_UINT32(1, rc);
