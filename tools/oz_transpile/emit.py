@@ -299,6 +299,7 @@ def _dispatch_header_ctx(module: OZModule, root_class: str = "OZObject",
         "root_class": root_class,
         "item_pool_count": item_pool_count,
         "dispatch_includes": dispatch_includes,
+        "initialize_classes": module.initialize_classes,
     }
 
 
@@ -343,6 +344,7 @@ def _dispatch_source_ctx(module: OZModule, root_class: str = "OZObject",
         "vtable_sels": vtable_sels,
         "root_class": root_class,
         "item_pool_count": item_pool_count,
+        "initialize_classes": module.initialize_classes,
     }
 
 
@@ -1796,6 +1798,11 @@ def _emit_msg_expr(node: dict, out: StringIO, ctx: _EmitCtx) -> None:
     # [ClassName sel] -> ClassName_sel() or ClassName_cls_sel() for class methods
     if receiver_kind == "class":
         class_type = node.get("classType", {}).get("qualType", "")
+        if selector == "initialize":
+            module.errors.append(
+                f"explicit call [{ class_type } initialize] is not allowed; "
+                f"+initialize is automatically called before main()")
+            return
         prefix = ""
         cls_obj = module.classes.get(class_type)
         if cls_obj:

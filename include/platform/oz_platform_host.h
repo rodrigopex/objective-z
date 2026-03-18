@@ -145,4 +145,12 @@ static inline void oz_spin_unlock(oz_spinlock_t *lck, oz_spinlock_key_t key)
 #define oz_platform_print(fmt, ...) printf(fmt, ##__VA_ARGS__)
 #define oz_platform_snprint(buf, len, fmt, ...) snprintf(buf, len, fmt, ##__VA_ARGS__)
 
+/* ------------------------------------------------------------------ */
+/* Auto-initialization — constructor attribute for +initialize methods */
+/* ------------------------------------------------------------------ */
+
+#define OZ_AUTO_INIT(fn_name, init_fn)                                           \
+        __attribute__((constructor))                                              \
+        static void fn_name(void) { init_fn(); }
+
 #endif /* OZ_PLATFORM_HOST_H */

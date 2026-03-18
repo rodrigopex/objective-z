@@ -99,4 +99,14 @@ static inline void oz_spin_unlock(oz_spinlock_t *lck, oz_spinlock_key_t key)
 #define oz_platform_print(fmt, ...) printk(fmt, ##__VA_ARGS__)
 #define oz_platform_snprint(buf, len, fmt, ...) snprintk(buf, len, fmt, ##__VA_ARGS__)
 
+/* ------------------------------------------------------------------ */
+/* Auto-initialization — SYS_INIT for +initialize methods              */
+/* ------------------------------------------------------------------ */
+
+#include <zephyr/init.h>
+
+#define OZ_AUTO_INIT(fn_name, init_fn)                                           \
+        static int fn_name(void) { init_fn(); return 0; }                        \
+        SYS_INIT(fn_name, APPLICATION, 90)
+
 #endif /* OZ_PLATFORM_ZEPHYR_H */

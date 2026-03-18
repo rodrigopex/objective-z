@@ -201,6 +201,7 @@ class OZModule:
     type_defs: dict[str, str] = field(default_factory=dict)
     diagnostics: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    initialize_classes: list[str] = field(default_factory=list)
     source_stem: str = ""
     source_path: Path | None = None
     source_paths: dict[str, Path] = field(default_factory=dict)

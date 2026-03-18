@@ -41,3 +41,10 @@ void {{ root_class }}_dispatch_free(struct {{ root_class }} *obj)
 
 OZ_MEM_BLOCKS_DEFINE(oz_item_pool, sizeof(struct {{ root_class }} *), {{ item_pool_count }}, 4);
 {% endif %}
+{% if initialize_classes %}
+
+/* +initialize — auto-called before main() */
+{% for cls in initialize_classes %}
+OZ_AUTO_INIT({{ cls }}_oz_auto_init, {{ cls }}_cls_initialize);
+{% endfor %}
+{% endif %}

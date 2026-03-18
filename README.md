@@ -75,7 +75,7 @@ All benchmarks on **nRF52833 DK** (ARM Cortex-M4F @ 64 MHz), DWT cycle counter, 
 - **Collection literals** — `@[a, b, c]`, `@{key: value}`
 - **Subscript syntax** — `array[0]`, `dict[@"key"]`
 - **Lightweight generics** — typed collections
-- **`+initialize`** — called once on first class message (singleton pattern)
+- **`+initialize`** — auto-called before `main()` via `SYS_INIT` (singleton pattern)
 - **Per-class slab pools** — auto-generated from AST analysis, zero heap overhead
 - **Platform Abstraction Layer** — zero-cost `static inline` with Zephyr and host backends
 - **clangd IDE support** — auto-generated `compile_commands.json`

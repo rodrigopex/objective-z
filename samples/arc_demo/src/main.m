@@ -47,7 +47,7 @@ static Sensor *createSensor(int v)
 	return s;
 }
 
-/* Singleton via +initialize — called once on first class message */
+/* Singleton via +initialize — auto-called before main() */
 @interface AppConfig: OZObject {
 	int _refreshRate;
 }
@@ -107,8 +107,7 @@ int main(void)
 {
 	OZLog("=== ARC Memory Management Demo ===");
 
-	/* Singleton test: +initialize creates instance on first access */
-	[AppConfig initialize];
+	/* Singleton test: +initialize already ran via SYS_INIT */
 	AppConfig *c1 = [AppConfig shared];
 	AppConfig *c2 = [AppConfig shared];
 	OZLog("singleton refreshRate=%d same=%s", [c1 refreshRate],
