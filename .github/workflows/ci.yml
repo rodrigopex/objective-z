@@ -145,8 +145,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ninja-build gperf device-tree-compiler
 
-      - name: Install west and Python deps
-        run: pip install west jsonschema pyyaml packaging
+      - name: Install west
+        run: pip install west
 
       - name: Cache Zephyr SDK
         uses: actions/cache@v4
@@ -166,6 +166,11 @@ jobs:
         run: |
           west init -l .
           west update --narrow --fetch-opt=--depth=1
+
+      - name: Install Zephyr Python deps
+        run: |
+          pip install -r zephyr/scripts/requirements-base.txt
+          pip install natsort tabulate
 
       - name: Build and run tests on native_sim
         run: west twister -T tests/zephyr/ -p native_sim --inline-logs
