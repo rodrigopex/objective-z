@@ -246,8 +246,43 @@ _OZ_NS_ALIASES: dict[str, str] = {
 }
 
 
+def _enrich_model_generics(module: OZModule) -> None:
+    """Enrich OZType.raw_qual_type on model objects from source generics."""
+    gt = module.generic_types
+    if not gt:
+        return
+    for cls in module.classes.values():
+        for ivar in cls.ivars:
+            enriched = gt.get(ivar.name)
+            if enriched and not ivar.oz_type.generic_params:
+                ivar.oz_type.raw_qual_type = enriched
+        for prop in cls.properties:
+            enriched = gt.get(prop.name)
+            if enriched and not prop.oz_type.generic_params:
+                prop.oz_type.raw_qual_type = enriched
+        for method in cls.methods:
+            ret_key = f"__return:{method.selector}"
+            enriched = gt.get(ret_key)
+            if enriched and not method.return_type.generic_params:
+                method.return_type.raw_qual_type = enriched
+            for param in method.params:
+                enriched = gt.get(param.name)
+                if enriched and not param.oz_type.generic_params:
+                    param.oz_type.raw_qual_type = enriched
+    for func in module.functions:
+        ret_key = f"__return:{func.name}"
+        enriched = gt.get(ret_key)
+        if enriched and not func.return_type.generic_params:
+            func.return_type.raw_qual_type = enriched
+        for param in func.params:
+            enriched = gt.get(param.name)
+            if enriched and not param.oz_type.generic_params:
+                param.oz_type.raw_qual_type = enriched
+
+
 def _validate_generic_types(module: OZModule) -> None:
     """Validate generic type parameters in declarations and assignments."""
+    _enrich_model_generics(module)
     for cls in module.classes.values():
         for method in cls.methods:
             if not method.body_ast:
@@ -275,6 +310,10 @@ def _walk_generic_validation(node: dict, module: OZModule,
         qt = node.get("type", {}).get("qualType", "")
         params = OZType(qt).generic_params
         name = node.get("name", "")
+        # Clang strips generics from qualType; fall back to source extraction
+        if not params and name and name in module.generic_types:
+            qt = module.generic_types[name]
+            params = OZType(qt).generic_params
         if params and name:
             generic_vars[name] = params
             for child in node.get("inner", []):
