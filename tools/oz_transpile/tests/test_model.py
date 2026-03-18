@@ -87,6 +87,28 @@ class TestOZType:
         assert t.is_object
         assert t.c_type == "struct OZObject *"
 
+    def test_unsafe_unretained_id(self):
+        t = OZType("__unsafe_unretained id")
+        assert t.is_object
+        assert t.is_unretained
+        assert t.c_type == "struct OZObject *"
+
+    def test_unsafe_unretained_class_pointer(self):
+        t = OZType("__unsafe_unretained OZObject *")
+        assert t.is_object
+        assert t.is_unretained
+        assert t.c_type == "struct OZObject *"
+
+    def test_strong_id_not_unretained(self):
+        t = OZType("id")
+        assert t.is_object
+        assert not t.is_unretained
+
+    def test_strong_qualified_not_unretained(self):
+        t = OZType("__strong OZLed *")
+        assert t.is_object
+        assert not t.is_unretained
+
 
 class TestOZParam:
     def test_construction(self):

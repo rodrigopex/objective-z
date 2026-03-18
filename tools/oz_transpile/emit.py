@@ -125,7 +125,7 @@ def _associate_module_items(module: OZModule) -> None:
 
 """Known foundation class names auto-tagged when --sources is not provided."""
 _FOUNDATION_NAMES = frozenset({
-    "OZObject", "OZString", "OZArray", "OZDictionary", "OZNumber",
+    "OZObject", "OZString", "OZArray", "OZDictionary", "OZNumber", "OZDefer",
 })
 
 
@@ -350,7 +350,8 @@ def _dispatch_source_ctx(module: OZModule, root_class: str = "OZObject",
 def _has_auto_dealloc(cls: OZClass, module: OZModule) -> bool:
     """Check if a class will get an auto-generated dealloc method."""
     is_root = not cls.superclass or cls.superclass not in module.classes
-    obj_ivars = [iv for iv in cls.ivars if iv.oz_type.is_object]
+    obj_ivars = [iv for iv in cls.ivars
+                 if iv.oz_type.is_object and not iv.oz_type.is_unretained]
     return bool(obj_ivars) or not is_root
 
 
@@ -388,7 +389,11 @@ def _class_header_ctx(ctx: _EmitCtx, stem: str | None = None,
     for ivar in cls.ivars:
         if is_root and ivar.name in _root_builtins:
             continue
-        user_ivars.append({"c_type": ivar.oz_type.c_type, "name": ivar.name})
+        user_ivars.append({
+            "c_type": ivar.oz_type.c_type,
+            "name": ivar.name,
+            "decl": ivar.oz_type.c_param_decl(ivar.name),
+        })
 
     _root_skip_sels = {"retain", "release", "retainCount",
                        "isEqual:", "cDescription:maxLength:"}
@@ -403,7 +408,8 @@ def _class_header_ctx(ctx: _EmitCtx, stem: str | None = None,
 
     auto_dealloc_proto = False
     if not has_dealloc:
-        obj_ivars = [iv for iv in cls.ivars if iv.oz_type.is_object]
+        obj_ivars = [iv for iv in cls.ivars
+                     if iv.oz_type.is_object and not iv.oz_type.is_unretained]
         if obj_ivars or not is_root:
             auto_dealloc_proto = True
 
@@ -2098,7 +2104,8 @@ def _is_object_ivar_assign(lhs_node: dict, ctx: _EmitCtx) -> bool:
         return False
     ivar_name = unwrapped.get("decl", {}).get("name", "")
     for ivar in ctx.cls.ivars:
-        if ivar.name == ivar_name and ivar.oz_type.is_object:
+        if (ivar.name == ivar_name and ivar.oz_type.is_object
+                and not ivar.oz_type.is_unretained):
             return True
     return False
 
@@ -2238,7 +2245,8 @@ def _emit_user_dealloc(ctx: _EmitCtx, m: OZMethod, out: StringIO) -> None:
     module = ctx.module
     root_class = ctx.root_class
     is_root = not cls.superclass or cls.superclass not in module.classes
-    obj_ivars = [iv for iv in cls.ivars if iv.oz_type.is_object]
+    obj_ivars = [iv for iv in cls.ivars
+                 if iv.oz_type.is_object and not iv.oz_type.is_unretained]
 
     out.write(f"{_method_prototype(cls, m)}\n")
     out.write("{\n")
@@ -2293,8 +2301,9 @@ def _emit_auto_dealloc(ctx: _EmitCtx, out: StringIO) -> None:
             _emit_collection_dealloc_dict(cls, root_class, is_root, out)
             return
 
-    # Collect object ivars
-    obj_ivars = [iv for iv in cls.ivars if iv.oz_type.is_object]
+    # Collect object ivars (skip __unsafe_unretained)
+    obj_ivars = [iv for iv in cls.ivars
+                 if iv.oz_type.is_object and not iv.oz_type.is_unretained]
 
     # Only generate if there are object ivars or a parent dealloc to call
     if not obj_ivars and is_root:
