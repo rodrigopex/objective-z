@@ -137,7 +137,6 @@ jobs:
     runs-on: ubuntu-latest
     env:
       ZEPHYR_SDK_INSTALL_DIR: /home/runner/zephyr-sdk-1.0.0
-      PIP_BREAK_SYSTEM_PACKAGES: 1
     steps:
       - uses: actions/checkout@v4
 
@@ -173,7 +172,7 @@ jobs:
           west update --narrow --fetch-opt=--depth=1
 
       - name: Install Zephyr Python deps
-        run: west packages pip --install
+        run: pip install -r zephyr/scripts/requirements-base.txt natsort tabulate
 
       - name: Build and run tests on native_sim
         run: west twister -T tests/zephyr/ -p native_sim --inline-logs
