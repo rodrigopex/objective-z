@@ -80,6 +80,7 @@ def merge_modules(modules: list[OZModule]) -> OZModule:
         merged.errors.extend(m.errors)
         merged.orphan_sources.extend(m.orphan_sources)
         merged.source_paths.update(m.source_paths)
+        merged.generic_types.update(m.generic_types)
     return merged
 
 
@@ -800,3 +801,143 @@ def _has_field_list(node) -> bool:
         if child.type == "field_declaration_list":
             return True
     return False
+
+
+# ---------------------------------------------------------------------------
+# Source-level generic type extraction (OZ-058)
+# ---------------------------------------------------------------------------
+
+def extract_source_generics(source_path: Path) -> dict[str, str]:
+    """Parse a .m source with tree-sitter and extract generic type annotations.
+
+    Returns a map of identifier_name -> enriched qualType string for every
+    declaration that uses ObjC generics.  Clang erases generics from qualType
+    in the JSON AST, so this source-level extraction is the only way to recover
+    them.
+    """
+    if not source_path.is_file():
+        return {}
+    source = source_path.read_bytes()
+    parser = Parser(_TS_LANG)
+    tree = parser.parse(source)
+    result: dict[str, str] = {}
+    _walk_source_generics(tree.root_node, source, result)
+    return result
+
+
+def _walk_source_generics(node, source: bytes,
+                           result: dict[str, str]) -> None:
+    """Recursively find generic_specifier nodes and extract name -> type."""
+    if node.type == "generic_specifier":
+        _extract_generic_decl(node, source, result)
+        return  # children already processed
+    for child in node.children:
+        _walk_source_generics(child, source, result)
+
+
+def _extract_generic_decl(gs_node, source: bytes,
+                           result: dict[str, str]) -> None:
+    """Given a generic_specifier node, find the declared identifier and build
+    the enriched qualType string."""
+    generic_text = source[gs_node.start_byte:gs_node.end_byte].decode()
+    parent = gs_node.parent
+    if not parent:
+        return
+    ptype = parent.type
+
+    if ptype == "declaration":
+        # Local variable: OZArray<id<Proto>> *arr = ...
+        name = _ts_find_identifier(parent)
+        if name:
+            result[name] = f"{generic_text} *"
+
+    elif ptype == "struct_declaration":
+        # Ivar or property inside @interface { ... }
+        gp = parent.parent
+        if gp and gp.type in ("property_declaration", "instance_variable"):
+            name = _ts_find_identifier(parent)
+            if name:
+                result[name] = f"{generic_text} *"
+
+    elif ptype == "type_name":
+        # Method return type or method parameter type
+        gp = parent.parent  # method_type
+        if not gp:
+            return
+        ggp = gp.parent
+        if not ggp:
+            return
+        if ggp.type == "method_parameter":
+            name = _ts_find_identifier(ggp)
+            if name:
+                result[name] = f"{generic_text} *"
+        elif ggp.type in ("method_declaration", "method_definition"):
+            sel = _ts_extract_selector(ggp, source)
+            if sel:
+                result[f"__return:{sel}"] = f"{generic_text} *"
+
+    elif ptype == "function_definition":
+        # Function return type
+        name = _ts_find_func_name(parent)
+        if name:
+            result[f"__return:{name}"] = f"{generic_text} *"
+
+    elif ptype == "parameter_declaration":
+        # Function parameter
+        name = _ts_find_identifier(parent)
+        if name:
+            result[name] = f"{generic_text} *"
+
+
+def _ts_find_identifier(node) -> str | None:
+    """Find the first identifier in a declaration subtree."""
+    for child in node.children:
+        if child.type == "identifier":
+            return child.text.decode()
+        if child.type in ("init_declarator", "pointer_declarator",
+                          "struct_declarator"):
+            found = _ts_find_identifier(child)
+            if found:
+                return found
+    return None
+
+
+def _ts_find_func_name(node) -> str | None:
+    """Find the function name in a function_definition node."""
+    for child in node.children:
+        if child.type == "pointer_declarator":
+            for gc in child.children:
+                if gc.type == "function_declarator":
+                    return _ts_find_identifier(gc)
+        if child.type == "function_declarator":
+            return _ts_find_identifier(child)
+    return None
+
+
+def _ts_extract_selector(method_node, source: bytes) -> str | None:
+    """Extract the ObjC method selector from a method_declaration/definition."""
+    parts = []
+    for child in method_node.children:
+        if child.type == "selector":
+            return child.text.decode()
+        if child.type == "keyword_selector":
+            for kw in child.children:
+                if kw.type == "keyword_declarator":
+                    for kwc in kw.children:
+                        if kwc.type == "keyword":
+                            parts.append(kwc.text.decode() + ":")
+            return "".join(parts) if parts else None
+    # Fallback: split selector — "identifier" followed by "method_parameter"
+    # e.g. - (RetType)lookup:(ParamType)keys  →  selector = "lookup:"
+    has_param = False
+    sel_name = None
+    for child in method_node.children:
+        if child.type == "identifier" and sel_name is None:
+            sel_name = child.text.decode()
+        if child.type == "method_parameter":
+            has_param = True
+    if sel_name and has_param:
+        return sel_name + ":"
+    if sel_name:
+        return sel_name
+    return None

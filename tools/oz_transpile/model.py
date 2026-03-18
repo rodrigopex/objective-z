@@ -237,6 +237,7 @@ class OZModule:
     diagnostics: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     initialize_classes: list[str] = field(default_factory=list)
+    generic_types: dict[str, str] = field(default_factory=dict)
     source_stem: str = ""
     source_path: Path | None = None
     source_paths: dict[str, Path] = field(default_factory=dict)

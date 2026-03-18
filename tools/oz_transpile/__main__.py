@@ -10,7 +10,7 @@ import os
 import sys
 from pathlib import Path
 
-from .collect import collect, is_stub_source, merge_modules
+from .collect import collect, extract_source_generics, is_stub_source, merge_modules
 from .emit import emit
 from .model import OrphanSource
 from .resolve import resolve
@@ -144,10 +144,15 @@ def main(argv: list[str] | None = None) -> int:
             stub = is_stub_source(src_path)
             if not stub:
                 src_file = Path(src_path)
-                if m.source_path is None and src_file.is_file():
+                if src_file.is_file():
                     m.source_path = src_file
                 if m.source_path:
                     m.source_paths[m.source_stem] = m.source_path
+            else:
+                # Even for stubs, track source path for generic extraction
+                src_file = Path(src_path)
+                if src_file.is_file():
+                    m.source_paths[m.source_stem] = src_file
             for cls in m.classes.values():
                 if stub:
                     cls.is_foundation = True
@@ -160,6 +165,10 @@ def main(argv: list[str] | None = None) -> int:
         _associate_module_items_with_class(m)
 
     module = merge_modules(modules) if len(modules) > 1 else modules[0]
+
+    # Extract generic type annotations from source (Clang strips them from AST)
+    for src_path in module.source_paths.values():
+        module.generic_types.update(extract_source_generics(src_path))
 
     try:
         resolve(module)
