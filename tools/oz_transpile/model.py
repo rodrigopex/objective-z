@@ -37,6 +37,10 @@ class OZType:
         return False
 
     @property
+    def is_unretained(self) -> bool:
+        return "__unsafe_unretained" in self.raw_qual_type
+
+    @property
     def is_void(self) -> bool:
         return self._strip_qualifiers() == "void"
 
