@@ -8,9 +8,11 @@
 #import <Foundation/OZNumber.h>
 #import <Foundation/OZArray.h>
 #import <Foundation/OZDictionary.h>
+#import <Foundation/OZDefer.h>
 
 #import "OZObject.m"
 #import "OZString.m"
 #import "OZNumber.m"
 #import "OZArray.m"
 #import "OZDictionary.m"
+#import "OZDefer.m"
