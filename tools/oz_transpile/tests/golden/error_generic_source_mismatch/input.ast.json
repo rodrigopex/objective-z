@@ -7,34 +7,6 @@
       "inner": []
     },
     {
-      "kind": "ObjCImplementationDecl",
-      "name": "OZObject",
-      "inner": [
-        {
-          "kind": "ObjCMethodDecl",
-          "name": "init",
-          "returnType": {"qualType": "instancetype"},
-          "inner": [
-            {
-              "kind": "CompoundStmt",
-              "inner": [
-                {
-                  "kind": "ReturnStmt",
-                  "inner": [
-                    {
-                      "kind": "DeclRefExpr",
-                      "referencedDecl": {"name": "self"},
-                      "type": {"qualType": "OZObject *"}
-                    }
-                  ]
-                }
-              ]
-            }
-          ]
-        }
-      ]
-    },
-    {
       "kind": "ObjCProtocolDecl",
       "name": "DataProto",
       "inner": [
@@ -64,35 +36,6 @@
       "super": {"name": "OZObject"},
       "protocols": [{"name": "SensorProto"}],
       "inner": []
-    },
-    {
-      "kind": "ObjCImplementationDecl",
-      "name": "Sensor",
-      "super": {"name": "OZObject"},
-      "inner": [
-        {
-          "kind": "ObjCMethodDecl",
-          "name": "readValue",
-          "returnType": {"qualType": "int"},
-          "inner": [
-            {
-              "kind": "CompoundStmt",
-              "inner": [
-                {
-                  "kind": "ReturnStmt",
-                  "inner": [
-                    {
-                      "kind": "IntegerLiteral",
-                      "type": {"qualType": "int"},
-                      "value": "42"
-                    }
-                  ]
-                }
-              ]
-            }
-          ]
-        }
-      ]
     },
     {
       "kind": "FunctionDecl",
