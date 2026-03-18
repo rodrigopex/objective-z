@@ -45,6 +45,12 @@ def test_golden(golden_case):
     with tempfile.TemporaryDirectory() as tmpdir:
         argv = ["--input", ast_file, "--outdir", tmpdir] + extra_flags
 
+        # Support sources config for source-level generic extraction
+        sources = cfg.get("sources", [])
+        if sources:
+            src_paths = [os.path.join(test_dir, s) for s in sources]
+            argv.extend(["--sources"] + src_paths)
+
         captured_stderr = io.StringIO()
         import sys
         old_stderr = sys.stderr

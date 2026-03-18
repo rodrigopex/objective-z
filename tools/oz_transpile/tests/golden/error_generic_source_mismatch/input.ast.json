@@ -1,0 +1,151 @@
+{
+  "kind": "TranslationUnitDecl",
+  "inner": [
+    {
+      "kind": "ObjCInterfaceDecl",
+      "name": "OZObject",
+      "inner": []
+    },
+    {
+      "kind": "ObjCImplementationDecl",
+      "name": "OZObject",
+      "inner": [
+        {
+          "kind": "ObjCMethodDecl",
+          "name": "init",
+          "returnType": {"qualType": "instancetype"},
+          "inner": [
+            {
+              "kind": "CompoundStmt",
+              "inner": [
+                {
+                  "kind": "ReturnStmt",
+                  "inner": [
+                    {
+                      "kind": "DeclRefExpr",
+                      "referencedDecl": {"name": "self"},
+                      "type": {"qualType": "OZObject *"}
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "kind": "ObjCProtocolDecl",
+      "name": "DataProto",
+      "inner": [
+        {
+          "kind": "ObjCMethodDecl",
+          "name": "processValue:",
+          "returnType": {"qualType": "int"},
+          "inner": []
+        }
+      ]
+    },
+    {
+      "kind": "ObjCProtocolDecl",
+      "name": "SensorProto",
+      "inner": [
+        {
+          "kind": "ObjCMethodDecl",
+          "name": "readValue",
+          "returnType": {"qualType": "int"},
+          "inner": []
+        }
+      ]
+    },
+    {
+      "kind": "ObjCInterfaceDecl",
+      "name": "Sensor",
+      "super": {"name": "OZObject"},
+      "protocols": [{"name": "SensorProto"}],
+      "inner": []
+    },
+    {
+      "kind": "ObjCImplementationDecl",
+      "name": "Sensor",
+      "super": {"name": "OZObject"},
+      "inner": [
+        {
+          "kind": "ObjCMethodDecl",
+          "name": "readValue",
+          "returnType": {"qualType": "int"},
+          "inner": [
+            {
+              "kind": "CompoundStmt",
+              "inner": [
+                {
+                  "kind": "ReturnStmt",
+                  "inner": [
+                    {
+                      "kind": "IntegerLiteral",
+                      "type": {"qualType": "int"},
+                      "value": "42"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "kind": "FunctionDecl",
+      "name": "main",
+      "type": {"qualType": "int ()"},
+      "loc": {"file": "source.m", "line": 21, "col": 1},
+      "inner": [
+        {
+          "kind": "CompoundStmt",
+          "inner": [
+            {
+              "kind": "DeclStmt",
+              "inner": [
+                {
+                  "kind": "VarDecl",
+                  "name": "s",
+                  "type": {"qualType": "Sensor *"},
+                  "inner": []
+                }
+              ]
+            },
+            {
+              "kind": "DeclStmt",
+              "inner": [
+                {
+                  "kind": "VarDecl",
+                  "name": "arr",
+                  "type": {"qualType": "OZArray *"},
+                  "inner": [
+                    {
+                      "kind": "ObjCArrayLiteral",
+                      "type": {"qualType": "OZArray *"},
+                      "inner": [
+                        {
+                          "kind": "ImplicitCastExpr",
+                          "type": {"qualType": "id"},
+                          "inner": [
+                            {
+                              "kind": "DeclRefExpr",
+                              "type": {"qualType": "Sensor *"},
+                              "referencedDecl": {"name": "s"}
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
