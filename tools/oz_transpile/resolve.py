@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+import re
+
 from .model import DispatchKind, OZMethod, OZModule, OZParam, OZType
 
 
@@ -16,6 +18,7 @@ def resolve(module: OZModule) -> None:
     _compute_base_depths(module)
     _classify_dispatch(module)
     _check_protocol_conformance(module)
+    _validate_generic_types(module)
     _collect_initialize_classes(module)
 
 
@@ -230,3 +233,232 @@ def _check_protocol_conformance(module: OZModule) -> None:
                         f"class '{cls.name}' conforms to protocol "
                         f"'{proto_name}' but does not implement "
                         f"required method '{pm.selector}'")
+
+
+# ---------------------------------------------------------------------------
+# Generic type validation
+# ---------------------------------------------------------------------------
+
+_OZ_NS_ALIASES: dict[str, str] = {
+    "NSArray": "OZArray", "NSDictionary": "OZDictionary",
+    "NSString": "OZString", "NSNumber": "OZNumber",
+    "NSObject": "OZObject",
+}
+
+
+def _validate_generic_types(module: OZModule) -> None:
+    """Validate generic type parameters in declarations and assignments."""
+    for cls in module.classes.values():
+        for method in cls.methods:
+            if not method.body_ast:
+                continue
+            generic_vars: dict[str, list[str]] = {}
+            _walk_generic_validation(method.body_ast, module, generic_vars)
+        for func in cls.functions:
+            if not func.body_ast:
+                continue
+            generic_vars: dict[str, list[str]] = {}
+            _walk_generic_validation(func.body_ast, module, generic_vars)
+    for func in module.functions:
+        if not func.body_ast:
+            continue
+        generic_vars: dict[str, list[str]] = {}
+        _walk_generic_validation(func.body_ast, module, generic_vars)
+
+
+def _walk_generic_validation(node: dict, module: OZModule,
+                              generic_vars: dict[str, list[str]]) -> None:
+    """Walk AST looking for generic type violations."""
+    kind = node.get("kind", "")
+
+    if kind == "VarDecl":
+        qt = node.get("type", {}).get("qualType", "")
+        params = OZType(qt).generic_params
+        name = node.get("name", "")
+        if params and name:
+            generic_vars[name] = params
+            for child in node.get("inner", []):
+                init = _unwrap_implicit_cast(child)
+                ikind = init.get("kind", "")
+                if ikind == "ObjCArrayLiteral":
+                    _validate_array_generics(init, params, qt, module)
+                elif ikind == "ObjCDictionaryLiteral":
+                    _validate_dict_generics(init, params, qt, module)
+        # Still recurse into VarDecl inner for nested expressions
+        for child in node.get("inner", []):
+            _walk_generic_validation(child, module, generic_vars)
+        return
+
+    if kind == "BinaryOperator" and node.get("opcode") == "=":
+        inner = node.get("inner", [])
+        if len(inner) >= 2:
+            lhs = _unwrap_implicit_cast(inner[0])
+            rhs = _unwrap_implicit_cast(inner[1])
+            params = _generic_params_from_expr(lhs, generic_vars)
+            if params:
+                lhs_qt = lhs.get("type", {}).get("qualType", "")
+                rkind = rhs.get("kind", "")
+                if rkind == "ObjCArrayLiteral":
+                    _validate_array_generics(rhs, params, lhs_qt, module)
+                elif rkind == "ObjCDictionaryLiteral":
+                    _validate_dict_generics(rhs, params, lhs_qt, module)
+
+    for child in node.get("inner", []):
+        _walk_generic_validation(child, module, generic_vars)
+
+
+def _validate_array_generics(node: dict, params: list[str],
+                              var_qt: str, module: OZModule) -> None:
+    """Validate each element of an array literal against the generic constraint."""
+    if not params:
+        return
+    constraint = params[0]
+    if constraint == "id":
+        return
+    container = _extract_class_name(var_qt) or var_qt
+    for elem in node.get("inner", []):
+        elem_type = _original_type(elem)
+        if not elem_type or elem_type == "id":
+            continue
+        if not _satisfies_constraint(elem_type, constraint, module):
+            elem_name = _extract_class_name(elem_type) or elem_type
+            module.errors.append(
+                f"generic type mismatch: '{elem_name}' does not satisfy "
+                f"constraint '{constraint}' "
+                f"(required by '{container}<{constraint}>')")
+
+
+def _validate_dict_generics(node: dict, params: list[str],
+                             var_qt: str, module: OZModule) -> None:
+    """Validate key/value pairs of a dictionary literal against generic constraints."""
+    if len(params) < 2:
+        return
+    key_constraint = params[0]
+    val_constraint = params[1]
+    container = _extract_class_name(var_qt) or var_qt
+    inner = node.get("inner", [])
+    for i in range(0, len(inner), 2):
+        if key_constraint != "id":
+            key_type = _original_type(inner[i])
+            if key_type and key_type != "id":
+                if not _satisfies_constraint(key_type, key_constraint, module):
+                    key_name = _extract_class_name(key_type) or key_type
+                    module.errors.append(
+                        f"generic type mismatch: key '{key_name}' does not "
+                        f"satisfy constraint '{key_constraint}' "
+                        f"(required by '{container}<{key_constraint}, "
+                        f"{val_constraint}>')")
+        if i + 1 < len(inner) and val_constraint != "id":
+            val_type = _original_type(inner[i + 1])
+            if val_type and val_type != "id":
+                if not _satisfies_constraint(val_type, val_constraint, module):
+                    val_name = _extract_class_name(val_type) or val_type
+                    module.errors.append(
+                        f"generic type mismatch: value '{val_name}' does not "
+                        f"satisfy constraint '{val_constraint}' "
+                        f"(required by '{container}<{key_constraint}, "
+                        f"{val_constraint}>')")
+
+
+def _satisfies_constraint(elem_type: str, constraint: str,
+                           module: OZModule) -> bool:
+    """Check if an element type satisfies a generic constraint."""
+    proto_match = re.match(r"id<(\w+)>", constraint)
+    if proto_match:
+        required_proto = proto_match.group(1)
+        # Element is id<Proto> — check protocol match
+        elem_proto = re.match(r"id<(\w+)>", elem_type)
+        if elem_proto:
+            return elem_proto.group(1) == required_proto
+        # Element is a class — check protocol conformance
+        elem_class = _extract_class_name(elem_type)
+        if not elem_class:
+            return True
+        return _class_conforms_to(elem_class, required_proto, module)
+
+    # Class constraint (e.g. "OZString *")
+    constraint_class = constraint.rstrip(" *").strip()
+    elem_class = _extract_class_name(elem_type)
+    if not elem_class:
+        return True
+    return _is_same_or_subclass(elem_class, constraint_class, module)
+
+
+def _class_conforms_to(class_name: str, protocol: str,
+                        module: OZModule) -> bool:
+    """Check if a class conforms to a protocol (including inherited protocols)."""
+    name = _normalize_class(class_name)
+    visited: set[str] = set()
+    while name and name not in visited:
+        visited.add(name)
+        cls = module.classes.get(name)
+        if not cls:
+            return False
+        if protocol in cls.protocols:
+            return True
+        name = cls.superclass
+    return False
+
+
+def _is_same_or_subclass(class_name: str, target: str,
+                          module: OZModule) -> bool:
+    """Check if class_name is target or a subclass of target."""
+    name = _normalize_class(class_name)
+    target = _normalize_class(target)
+    visited: set[str] = set()
+    while name and name not in visited:
+        if name == target:
+            return True
+        visited.add(name)
+        cls = module.classes.get(name)
+        if not cls:
+            return False
+        name = cls.superclass
+    return False
+
+
+def _normalize_class(name: str) -> str:
+    """Normalize NS* aliases to OZ* names."""
+    return _OZ_NS_ALIASES.get(name, name)
+
+
+def _extract_class_name(qt: str) -> str | None:
+    """Extract class name from a qualType like 'PXFoo *'."""
+    qt = qt.strip()
+    if qt.startswith("id"):
+        return None
+    m = re.match(r"([A-Za-z_]\w*)", qt)
+    return m.group(1) if m else None
+
+
+def _original_type(node: dict) -> str:
+    """Get the pre-cast type of an expression (unwrap ImplicitCastExpr)."""
+    while node.get("kind") == "ImplicitCastExpr":
+        inner = node.get("inner", [])
+        if not inner:
+            break
+        node = inner[0]
+    return node.get("type", {}).get("qualType", "")
+
+
+def _unwrap_implicit_cast(node: dict) -> dict:
+    """Unwrap ImplicitCastExpr nodes to get the underlying expression."""
+    while node.get("kind") == "ImplicitCastExpr":
+        inner = node.get("inner", [])
+        if not inner:
+            break
+        node = inner[0]
+    return node
+
+
+def _generic_params_from_expr(node: dict,
+                               generic_vars: dict[str, list[str]]) -> list[str]:
+    """Get generic params from an expression (LHS of assignment)."""
+    if node.get("kind") == "DeclRefExpr":
+        qt = node.get("type", {}).get("qualType", "")
+        params = OZType(qt).generic_params
+        if params:
+            return params
+        name = node.get("referencedDecl", {}).get("name", "")
+        return generic_vars.get(name, [])
+    return []

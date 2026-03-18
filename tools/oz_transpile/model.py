@@ -90,6 +90,41 @@ class OZType:
             return ct.replace("(*)", f"(*{name})", 1)
         return f"{ct} {name}"
 
+    @property
+    def generic_params(self) -> list[str]:
+        """Extract generic type parameters from raw_qual_type.
+
+        "OZArray<id<PXDataProcessor>> *" -> ["id<PXDataProcessor>"]
+        "OZDictionary<OZString *, id<Foo>> *" -> ["OZString *", "id<Foo>"]
+        "int" -> []
+        """
+        import re
+        qt = self.raw_qual_type
+        for qual in ("__strong", "__weak", "__unsafe_unretained",
+                      "__autoreleasing", "_Nonnull", "_Nullable",
+                      "__kindof"):
+            qt = qt.replace(qual, "")
+        qt = qt.strip()
+        # Find the outermost < ... > after the class name
+        m = re.match(r"[A-Za-z_]\w*\s*<(.+)>\s*\*?$", qt)
+        if not m:
+            return []
+        inner = m.group(1).strip()
+        # Split on top-level commas (not inside nested < >)
+        params: list[str] = []
+        depth = 0
+        start = 0
+        for i, ch in enumerate(inner):
+            if ch == "<":
+                depth += 1
+            elif ch == ">":
+                depth -= 1
+            elif ch == "," and depth == 0:
+                params.append(inner[start:i].strip())
+                start = i + 1
+        params.append(inner[start:].strip())
+        return params
+
     def _strip_qualifiers(self) -> str:
         import re
         qt = self.raw_qual_type
