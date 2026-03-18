@@ -10,6 +10,7 @@ from oz_transpile.__main__ import main
 
 FIXTURE_DIR = os.path.join(os.path.dirname(__file__), "fixtures")
 PAL_INCLUDE_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "include")
+OZ_SDK_DIR = os.path.join(PAL_INCLUDE_DIR, "oz_sdk")
 
 
 class TestCLI:
@@ -564,3 +565,116 @@ class TestCLIErrors:
                 json.dump(ast, f)
             rc = main(["--input", ast_file, "--outdir", tmpdir])
             assert rc == 1
+
+
+def _clang_available() -> bool:
+    try:
+        return subprocess.run(
+            ["clang", "--version"], capture_output=True).returncode == 0
+    except FileNotFoundError:
+        return False
+
+
+@pytest.mark.skipif(not _clang_available(), reason="clang not available")
+class TestGenericValidationE2E:
+    """OZ-057/OZ-058: end-to-end generic type validation.
+
+    .m source -> Clang AST dump -> oz_transpile -> error.
+    """
+
+    _MISMATCH_SOURCE = """\
+#import <Foundation/Foundation.h>
+
+@protocol DataProto
+- (int)processValue:(int)value;
+@end
+
+@protocol SensorProto
+- (int)readValue;
+@end
+
+@interface Sensor : OZObject <SensorProto>
+- (int)readValue;
+@end
+
+@implementation Sensor
+- (int)readValue { return 42; }
+@end
+
+int main(void) {
+    Sensor *s = [[Sensor alloc] init];
+    OZArray<id<DataProto>> *arr = @[ s ];
+    return 0;
+}
+"""
+
+    _VALID_SOURCE = """\
+#import <Foundation/Foundation.h>
+
+@protocol DataProto
+- (int)processValue:(int)value;
+@end
+
+@interface Filter : OZObject <DataProto>
+- (int)processValue:(int)value;
+@end
+
+@implementation Filter
+- (int)processValue:(int)value { return value; }
+@end
+
+int main(void) {
+    Filter *f = [[Filter alloc] init];
+    OZArray<id<DataProto>> *arr = @[ f ];
+    return 0;
+}
+"""
+
+    def _clang_ast_dump(self, src_file, ast_file):
+        result = subprocess.run(
+            ["clang", "-Xclang", "-ast-dump=json", "-fsyntax-only",
+             "-I", OZ_SDK_DIR, src_file],
+            capture_output=True,
+        )
+        with open(ast_file, "wb") as f:
+            f.write(result.stdout)
+
+    def test_generic_mismatch_rejected(self):
+        """Sensor does not conform to DataProto — transpiler must error."""
+        import io
+        import contextlib
+        with tempfile.TemporaryDirectory() as tmpdir:
+            src = os.path.join(tmpdir, "mismatch.m")
+            ast = os.path.join(tmpdir, "mismatch.ast.json")
+            with open(src, "w") as f:
+                f.write(self._MISMATCH_SOURCE)
+            self._clang_ast_dump(src, ast)
+
+            stderr_buf = io.StringIO()
+            with contextlib.redirect_stderr(stderr_buf):
+                rc = main(["--input", ast, "--outdir", tmpdir,
+                           "--sources", src])
+            assert rc == 1, (
+                f"expected transpiler to reject generic mismatch, "
+                f"stderr: {stderr_buf.getvalue()}")
+            assert "generic type mismatch" in stderr_buf.getvalue()
+            assert "Sensor" in stderr_buf.getvalue()
+            assert "DataProto" in stderr_buf.getvalue()
+
+    def test_generic_correct_accepted(self):
+        """Filter conforms to DataProto — no generic mismatch error."""
+        import io
+        import contextlib
+        with tempfile.TemporaryDirectory() as tmpdir:
+            src = os.path.join(tmpdir, "valid.m")
+            ast = os.path.join(tmpdir, "valid.ast.json")
+            with open(src, "w") as f:
+                f.write(self._VALID_SOURCE)
+            self._clang_ast_dump(src, ast)
+
+            stderr_buf = io.StringIO()
+            with contextlib.redirect_stderr(stderr_buf):
+                main(["--input", ast, "--outdir", tmpdir,
+                      "--sources", src])
+            assert "generic type mismatch" not in stderr_buf.getvalue(), (
+                f"unexpected generic error: {stderr_buf.getvalue()}")
