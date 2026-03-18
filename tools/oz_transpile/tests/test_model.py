@@ -109,6 +109,39 @@ class TestOZType:
         assert t.is_object
         assert not t.is_unretained
 
+    def test_generic_params_empty_for_plain_type(self):
+        assert OZType("int").generic_params == []
+        assert OZType("OZObject *").generic_params == []
+        assert OZType("id").generic_params == []
+
+    def test_generic_params_single(self):
+        t = OZType("OZArray<OZNumber *> *")
+        assert t.generic_params == ["OZNumber *"]
+
+    def test_generic_params_protocol_qualified(self):
+        t = OZType("OZArray<id<PXDataProcessor>> *")
+        assert t.generic_params == ["id<PXDataProcessor>"]
+
+    def test_generic_params_two_params(self):
+        t = OZType("OZDictionary<OZString *, OZNumber *> *")
+        assert t.generic_params == ["OZString *", "OZNumber *"]
+
+    def test_generic_params_dict_with_protocol(self):
+        t = OZType("OZDictionary<OZString *, id<Foo>> *")
+        assert t.generic_params == ["OZString *", "id<Foo>"]
+
+    def test_generic_params_plain_id(self):
+        t = OZType("OZArray<id> *")
+        assert t.generic_params == ["id"]
+
+    def test_generic_params_nested(self):
+        t = OZType("OZArray<OZArray<OZNumber *> *> *")
+        assert t.generic_params == ["OZArray<OZNumber *> *"]
+
+    def test_generic_params_strips_qualifiers(self):
+        t = OZType("__strong OZArray<OZString *> *")
+        assert t.generic_params == ["OZString *"]
+
 
 class TestOZParam:
     def test_construction(self):
