@@ -175,8 +175,38 @@ def _collect_initialize_classes(module: OZModule) -> None:
     for cls in sorted_classes:
         for m in cls.methods:
             if m.is_class_method and m.selector == "initialize":
+                _check_initialize_guard(cls.name, m, module)
                 module.initialize_classes.append(cls.name)
                 break
+
+
+def _check_initialize_guard(class_name: str, method: OZMethod,
+                            module: OZModule) -> None:
+    """Detect Apple-style +initialize guard and emit diagnostic.
+
+    The pattern ``if (self == [ClassName class])`` is unnecessary in
+    Objective-Z because +initialize is called exactly once per class
+    via SYS_INIT.
+    """
+    if not method.body_ast:
+        return
+    if _ast_has_class_message(method.body_ast):
+        module.diagnostics.append(
+            f"warning: +initialize guard '[{class_name} class]' is "
+            f"unnecessary; Objective-Z calls +initialize exactly once "
+            f"per class via SYS_INIT")
+
+
+def _ast_has_class_message(node: dict) -> bool:
+    """Recursively check if an AST node contains [ClassName class]."""
+    if (node.get("kind") == "ObjCMessageExpr"
+            and node.get("selector") == "class"
+            and node.get("receiverKind") == "class"):
+        return True
+    for child in node.get("inner", []):
+        if _ast_has_class_message(child):
+            return True
+    return False
 
 
 def _check_protocol_conformance(module: OZModule) -> None:
