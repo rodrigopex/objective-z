@@ -147,7 +147,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y ninja-build gperf device-tree-compiler
+          sudo apt-get install -y ninja-build gperf device-tree-compiler gcc-multilib g++-multilib
 
       - name: Install west
         run: pip install west
