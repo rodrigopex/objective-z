@@ -1,0 +1,5 @@
+{
+  "expect_error": true,
+  "expected_stderr": "generic type mismatch: 'Sensor' does not satisfy constraint 'id<DataProto>'",
+  "sources": ["source.m"]
+}
