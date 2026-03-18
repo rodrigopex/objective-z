@@ -398,3 +398,271 @@ class TestProtocolConformance:
             protocols=["Proto"])
         resolve(m)
         assert not any("doWork" in e for e in m.errors)
+
+
+# ---------------------------------------------------------------------------
+# OZ-057: Generic type validation
+# ---------------------------------------------------------------------------
+
+def _arr_literal(*elem_types):
+    """Build an ObjCArrayLiteral AST with elements of given qualTypes."""
+    inner = []
+    for qt in elem_types:
+        inner.append({
+            "kind": "ImplicitCastExpr",
+            "type": {"qualType": "id"},
+            "inner": [{
+                "kind": "DeclRefExpr",
+                "type": {"qualType": qt},
+                "referencedDecl": {"name": "_tmp"},
+            }],
+        })
+    return {"kind": "ObjCArrayLiteral",
+            "type": {"qualType": "NSArray *"}, "inner": inner}
+
+
+def _dict_literal(pairs):
+    """Build an ObjCDictionaryLiteral AST with (key_qt, val_qt) pairs."""
+    inner = []
+    for kqt, vqt in pairs:
+        inner.append({
+            "kind": "ImplicitCastExpr",
+            "type": {"qualType": "id"},
+            "inner": [{"kind": "DeclRefExpr",
+                        "type": {"qualType": kqt},
+                        "referencedDecl": {"name": "_k"}}],
+        })
+        inner.append({
+            "kind": "ImplicitCastExpr",
+            "type": {"qualType": "id"},
+            "inner": [{"kind": "DeclRefExpr",
+                        "type": {"qualType": vqt},
+                        "referencedDecl": {"name": "_v"}}],
+        })
+    return {"kind": "ObjCDictionaryLiteral",
+            "type": {"qualType": "NSDictionary *"}, "inner": inner}
+
+
+def _var_decl(name, qual_type, init_expr):
+    """Build a VarDecl AST node."""
+    return {"kind": "VarDecl", "name": name,
+            "type": {"qualType": qual_type}, "inner": [init_expr]}
+
+
+def _assign(lhs_name, lhs_qt, rhs_expr):
+    """Build a BinaryOperator = AST node."""
+    return {"kind": "BinaryOperator", "opcode": "=", "inner": [
+        {"kind": "DeclRefExpr", "type": {"qualType": lhs_qt},
+         "referencedDecl": {"name": lhs_name}},
+        rhs_expr,
+    ]}
+
+
+def _body(*stmts):
+    """Wrap statements in a CompoundStmt with DeclStmts."""
+    inner = []
+    for s in stmts:
+        if s.get("kind") == "VarDecl":
+            inner.append({"kind": "DeclStmt", "inner": [s]})
+        else:
+            inner.append(s)
+    return {"kind": "CompoundStmt", "inner": inner}
+
+
+def _generic_module():
+    """Module with OZObject, DataProto protocol, Sensor (conforms),
+    and Filter (conforms to DataProto)."""
+    m = OZModule()
+    m.classes["OZObject"] = OZClass("OZObject")
+    m.protocols["DataProto"] = OZProtocol("DataProto", methods=[
+        OZMethod("processValue:", OZType("int")),
+    ])
+    m.classes["Sensor"] = OZClass("Sensor", superclass="OZObject",
+        protocols=["SensorProto"])
+    m.classes["Filter"] = OZClass("Filter", superclass="OZObject",
+        protocols=["DataProto"])
+    m.protocols["SensorProto"] = OZProtocol("SensorProto", methods=[
+        OZMethod("readValue", OZType("int")),
+    ])
+    return m
+
+
+class TestGenericValidation:
+    """OZ-057: generic type parameter validation."""
+
+    def test_array_wrong_protocol_errors(self):
+        m = _generic_module()
+        body = _body(
+            _var_decl("arr", "OZArray<id<DataProto>> *",
+                      _arr_literal("Sensor *")))
+        m.classes["App"] = OZClass("App", superclass="OZObject",
+            methods=[OZMethod("run", OZType("void"), body_ast=body)])
+        resolve(m)
+        assert any("generic type mismatch" in e for e in m.errors)
+        assert any("Sensor" in e for e in m.errors)
+        assert any("DataProto" in e for e in m.errors)
+
+    def test_array_correct_protocol_no_error(self):
+        m = _generic_module()
+        body = _body(
+            _var_decl("arr", "OZArray<id<DataProto>> *",
+                      _arr_literal("Filter *")))
+        m.classes["App"] = OZClass("App", superclass="OZObject",
+            methods=[OZMethod("run", OZType("void"), body_ast=body)])
+        resolve(m)
+        generic_errors = [e for e in m.errors if "generic type mismatch" in e]
+        assert generic_errors == []
+
+    def test_array_plain_id_no_validation(self):
+        m = _generic_module()
+        body = _body(
+            _var_decl("arr", "OZArray<id> *",
+                      _arr_literal("Sensor *")))
+        m.classes["App"] = OZClass("App", superclass="OZObject",
+            methods=[OZMethod("run", OZType("void"), body_ast=body)])
+        resolve(m)
+        generic_errors = [e for e in m.errors if "generic type mismatch" in e]
+        assert generic_errors == []
+
+    def test_array_class_constraint_match(self):
+        m = _generic_module()
+        m.classes["OZString"] = OZClass("OZString", superclass="OZObject")
+        body = _body(
+            _var_decl("arr", "OZArray<OZString *> *",
+                      _arr_literal("OZString *")))
+        m.classes["App"] = OZClass("App", superclass="OZObject",
+            methods=[OZMethod("run", OZType("void"), body_ast=body)])
+        resolve(m)
+        generic_errors = [e for e in m.errors if "generic type mismatch" in e]
+        assert generic_errors == []
+
+    def test_array_class_constraint_mismatch(self):
+        m = _generic_module()
+        m.classes["OZString"] = OZClass("OZString", superclass="OZObject")
+        m.classes["OZNumber"] = OZClass("OZNumber", superclass="OZObject")
+        body = _body(
+            _var_decl("arr", "OZArray<OZString *> *",
+                      _arr_literal("OZNumber *")))
+        m.classes["App"] = OZClass("App", superclass="OZObject",
+            methods=[OZMethod("run", OZType("void"), body_ast=body)])
+        resolve(m)
+        assert any("generic type mismatch" in e for e in m.errors)
+        assert any("OZNumber" in e for e in m.errors)
+
+    def test_array_subclass_satisfies_constraint(self):
+        m = _generic_module()
+        m.classes["OZString"] = OZClass("OZString", superclass="OZObject")
+        m.classes["MyString"] = OZClass("MyString", superclass="OZString")
+        body = _body(
+            _var_decl("arr", "OZArray<OZString *> *",
+                      _arr_literal("MyString *")))
+        m.classes["App"] = OZClass("App", superclass="OZObject",
+            methods=[OZMethod("run", OZType("void"), body_ast=body)])
+        resolve(m)
+        generic_errors = [e for e in m.errors if "generic type mismatch" in e]
+        assert generic_errors == []
+
+    def test_assignment_to_generic_var_errors(self):
+        m = _generic_module()
+        decl = _var_decl("arr", "OZArray<id<DataProto>> *",
+                         {"kind": "ImplicitCastExpr",
+                          "type": {"qualType": "id"},
+                          "inner": [{"kind": "IntegerLiteral",
+                                     "type": {"qualType": "int"},
+                                     "value": "0"}]})
+        assign = _assign("arr", "OZArray<id<DataProto>> *",
+                         _arr_literal("Sensor *"))
+        body = _body(decl, assign)
+        m.classes["App"] = OZClass("App", superclass="OZObject",
+            methods=[OZMethod("run", OZType("void"), body_ast=body)])
+        resolve(m)
+        assert any("generic type mismatch" in e for e in m.errors)
+
+    def test_assignment_correct_no_error(self):
+        m = _generic_module()
+        decl = _var_decl("arr", "OZArray<id<DataProto>> *",
+                         {"kind": "ImplicitCastExpr",
+                          "type": {"qualType": "id"},
+                          "inner": [{"kind": "IntegerLiteral",
+                                     "type": {"qualType": "int"},
+                                     "value": "0"}]})
+        assign = _assign("arr", "OZArray<id<DataProto>> *",
+                         _arr_literal("Filter *"))
+        body = _body(decl, assign)
+        m.classes["App"] = OZClass("App", superclass="OZObject",
+            methods=[OZMethod("run", OZType("void"), body_ast=body)])
+        resolve(m)
+        generic_errors = [e for e in m.errors if "generic type mismatch" in e]
+        assert generic_errors == []
+
+    def test_dict_wrong_value_type_errors(self):
+        m = _generic_module()
+        m.classes["OZString"] = OZClass("OZString", superclass="OZObject")
+        body = _body(
+            _var_decl("d", "OZDictionary<OZString *, id<DataProto>> *",
+                      _dict_literal([("OZString *", "Sensor *")])))
+        m.classes["App"] = OZClass("App", superclass="OZObject",
+            methods=[OZMethod("run", OZType("void"), body_ast=body)])
+        resolve(m)
+        assert any("generic type mismatch" in e for e in m.errors)
+        assert any("Sensor" in e for e in m.errors)
+
+    def test_dict_correct_types_no_error(self):
+        m = _generic_module()
+        m.classes["OZString"] = OZClass("OZString", superclass="OZObject")
+        body = _body(
+            _var_decl("d", "OZDictionary<OZString *, id<DataProto>> *",
+                      _dict_literal([("OZString *", "Filter *")])))
+        m.classes["App"] = OZClass("App", superclass="OZObject",
+            methods=[OZMethod("run", OZType("void"), body_ast=body)])
+        resolve(m)
+        generic_errors = [e for e in m.errors if "generic type mismatch" in e]
+        assert generic_errors == []
+
+    def test_ns_alias_matches_oz_class(self):
+        m = _generic_module()
+        m.classes["OZString"] = OZClass("OZString", superclass="OZObject")
+        body = _body(
+            _var_decl("arr", "OZArray<OZString *> *",
+                      _arr_literal("NSString *")))
+        m.classes["App"] = OZClass("App", superclass="OZObject",
+            methods=[OZMethod("run", OZType("void"), body_ast=body)])
+        resolve(m)
+        generic_errors = [e for e in m.errors if "generic type mismatch" in e]
+        assert generic_errors == []
+
+    def test_inherited_protocol_conformance(self):
+        m = _generic_module()
+        m.classes["AdvFilter"] = OZClass("AdvFilter", superclass="Filter",
+            protocols=[])
+        body = _body(
+            _var_decl("arr", "OZArray<id<DataProto>> *",
+                      _arr_literal("AdvFilter *")))
+        m.classes["App"] = OZClass("App", superclass="OZObject",
+            methods=[OZMethod("run", OZType("void"), body_ast=body)])
+        resolve(m)
+        generic_errors = [e for e in m.errors if "generic type mismatch" in e]
+        assert generic_errors == []
+
+    def test_function_body_validated(self):
+        m = _generic_module()
+        from oz_transpile.model import OZFunction
+        func_body = _body(
+            _var_decl("arr", "OZArray<id<DataProto>> *",
+                      _arr_literal("Sensor *")))
+        m.functions.append(OZFunction("main", OZType("int"),
+                                       body_ast=func_body))
+        resolve(m)
+        assert any("generic type mismatch" in e for e in m.errors)
+
+    def test_element_id_type_skipped(self):
+        """Plain id element should not trigger validation."""
+        m = _generic_module()
+        body = _body(
+            _var_decl("arr", "OZArray<id<DataProto>> *",
+                      _arr_literal("id")))
+        m.classes["App"] = OZClass("App", superclass="OZObject",
+            methods=[OZMethod("run", OZType("void"), body_ast=body)])
+        resolve(m)
+        generic_errors = [e for e in m.errors if "generic type mismatch" in e]
+        assert generic_errors == []
