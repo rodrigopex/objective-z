@@ -231,6 +231,44 @@ class TestSynthesizeProperties:
         assert props["name"].ivar_name == "_name"
 
 
+class TestInitializeClasses:
+    def test_class_with_initialize_is_collected(self):
+        m = OZModule()
+        m.classes["OZObject"] = OZClass("OZObject")
+        m.classes["AppConfig"] = OZClass("AppConfig", superclass="OZObject",
+            methods=[OZMethod("initialize", OZType("void"),
+                              is_class_method=True)])
+        resolve(m)
+        assert m.initialize_classes == ["AppConfig"]
+
+    def test_class_without_initialize_not_collected(self):
+        m = OZModule()
+        m.classes["OZObject"] = OZClass("OZObject")
+        m.classes["OZLed"] = OZClass("OZLed", superclass="OZObject",
+            methods=[OZMethod("turnOn", OZType("void"))])
+        resolve(m)
+        assert m.initialize_classes == []
+
+    def test_topological_order_superclass_first(self):
+        m = OZModule()
+        m.classes["OZObject"] = OZClass("OZObject", methods=[
+            OZMethod("initialize", OZType("void"), is_class_method=True)])
+        m.classes["AppConfig"] = OZClass("AppConfig", superclass="OZObject",
+            methods=[OZMethod("initialize", OZType("void"),
+                              is_class_method=True)])
+        resolve(m)
+        assert m.initialize_classes == ["OZObject", "AppConfig"]
+
+    def test_instance_method_named_initialize_not_collected(self):
+        m = OZModule()
+        m.classes["OZObject"] = OZClass("OZObject")
+        m.classes["Foo"] = OZClass("Foo", superclass="OZObject",
+            methods=[OZMethod("initialize", OZType("void"),
+                              is_class_method=False)])
+        resolve(m)
+        assert m.initialize_classes == []
+
+
 class TestProtocolConformance:
     """OZ-033: missing protocol method must produce an error."""
 

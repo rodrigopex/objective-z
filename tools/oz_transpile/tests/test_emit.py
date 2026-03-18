@@ -1453,6 +1453,41 @@ class TestIntrospection:
             assert "[OZ_CLASS_OZObject] = OZ_CLASS_COUNT" in content
             assert "[OZ_CLASS_OZLed] = OZ_CLASS_OZObject" in content
 
+    def test_dispatch_auto_init_emitted(self):
+        """OZ-056: classes with +initialize get OZ_AUTO_INIT in oz_dispatch.c."""
+        m = _simple_module()
+        m.classes["AppConfig"] = OZClass("AppConfig", superclass="OZObject",
+            methods=[OZMethod("initialize", OZType("void"),
+                              is_class_method=True,
+                              body_ast={"kind": "CompoundStmt", "inner": []})])
+        resolve(m)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            content = open(os.path.join(tmpdir, "Foundation", "oz_dispatch.c")).read()
+            assert "OZ_AUTO_INIT(AppConfig_oz_auto_init, AppConfig_cls_initialize)" in content
+
+    def test_dispatch_auto_init_not_emitted_without_initialize(self):
+        """OZ-056: no OZ_AUTO_INIT when no class defines +initialize."""
+        m = _simple_module()
+        resolve(m)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            content = open(os.path.join(tmpdir, "Foundation", "oz_dispatch.c")).read()
+            assert "OZ_AUTO_INIT" not in content
+
+    def test_dispatch_header_includes_platform_for_auto_init(self):
+        """OZ-056: oz_dispatch.h includes platform header when +initialize exists."""
+        m = _simple_module()
+        m.classes["AppConfig"] = OZClass("AppConfig", superclass="OZObject",
+            methods=[OZMethod("initialize", OZType("void"),
+                              is_class_method=True,
+                              body_ast={"kind": "CompoundStmt", "inner": []})])
+        resolve(m)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            content = open(os.path.join(tmpdir, "Foundation", "oz_dispatch.h")).read()
+            assert '#include "platform/oz_platform.h"' in content
+
     def test_root_class_isEqual(self):
         m = _simple_module()
         with tempfile.TemporaryDirectory() as tmpdir:
