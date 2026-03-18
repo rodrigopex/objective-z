@@ -299,6 +299,12 @@ def _validate_generic_types(module: OZModule) -> None:
             continue
         generic_vars: dict[str, list[str]] = {}
         _walk_generic_validation(func.body_ast, module, generic_vars)
+    for orphan in module.orphan_sources:
+        for func in orphan.functions:
+            if not func.body_ast:
+                continue
+            generic_vars: dict[str, list[str]] = {}
+            _walk_generic_validation(func.body_ast, module, generic_vars)
 
 
 def _walk_generic_validation(node: dict, module: OZModule,
