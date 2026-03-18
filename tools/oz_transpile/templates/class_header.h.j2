@@ -30,7 +30,7 @@ struct {{ name }} {
 	struct {{ superclass }} base;
 {% endif %}
 {% for ivar in user_ivars %}
-	{{ ivar.c_type }} {{ ivar.name }};
+	{{ ivar.decl }};
 {% endfor %}
 };
 {% endif %}
