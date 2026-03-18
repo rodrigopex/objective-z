@@ -181,6 +181,68 @@ class TestClassHeader:
             content = open(os.path.join(tmpdir, "Foundation", "OZObject_ozh.h")).read()
             assert "_oz_prop_lock" not in content
 
+    def test_block_ivar_uses_fptr_decl_syntax(self):
+        """Block-typed ivar must embed name inside (*name) — not (*) name."""
+        m = OZModule()
+        m.classes["OZObject"] = OZClass("OZObject")
+        m.classes["Defer"] = OZClass(
+            "Defer", superclass="OZObject",
+            ivars=[OZIvar("_block", OZType("void (^)(id)"))],
+        )
+        resolve(m)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            content = open(os.path.join(tmpdir, "Defer_ozh.h")).read()
+            assert "void (*_block)(struct OZObject *)" in content
+            assert "void (*)(struct OZObject *) _block" not in content
+
+    def test_block_function_emitted_in_correct_class_source(self):
+        """Block in child method must land in child source, not OZObject."""
+        m = OZModule()
+        m.classes["OZObject"] = OZClass("OZObject", methods=[
+            OZMethod("dealloc", OZType("void"), body_ast={
+                "kind": "CompoundStmt", "inner": [],
+            }),
+        ])
+        m.classes["Handler"] = OZClass(
+            "Handler", superclass="OZObject",
+            ivars=[OZIvar("_callback", OZType("void (^)(id)"))],
+            methods=[OZMethod("setup", OZType("void"), body_ast={
+                "kind": "CompoundStmt",
+                "inner": [{
+                    "kind": "BinaryOperator",
+                    "opcode": "=",
+                    "inner": [
+                        {"kind": "ObjCIvarRefExpr",
+                         "decl": {"name": "_callback"},
+                         "isFreeIvar": True},
+                        {"kind": "ExprWithCleanups", "inner": [{
+                            "kind": "BlockExpr",
+                            "type": {"qualType": "void (^)(id)"},
+                            "loc": {"line": 10, "col": 5},
+                            "inner": [{
+                                "kind": "BlockDecl",
+                                "inner": [
+                                    {"kind": "ParmVarDecl", "name": "owner",
+                                     "type": {"qualType": "id"}},
+                                    {"kind": "CompoundStmt", "inner": []},
+                                ],
+                            }],
+                        }]},
+                    ],
+                }],
+            })],
+        )
+        resolve(m)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            handler_src = open(os.path.join(
+                tmpdir, "Handler_ozm.c")).read()
+            root_src = open(os.path.join(
+                tmpdir, "Foundation", "OZObject_ozm.c")).read()
+            assert "_oz_block_L10_C5" in handler_src
+            assert "_oz_block_" not in root_src
+
     def test_root_struct_with_atomic_props(self):
         """Root struct includes _oz_prop_lock when atomic properties exist."""
         m = OZModule()
@@ -666,6 +728,39 @@ class TestARCAutoDealloc:
             assert "OZObject_dealloc((struct OZObject *)self)" in content
             # User code should still be present
             assert "42" in content
+
+
+    def test_unsafe_unretained_ivar_skipped_in_dealloc(self):
+        """__unsafe_unretained id ivar must NOT be released in dealloc."""
+        m = OZModule()
+        m.classes["OZObject"] = OZClass("OZObject", methods=[
+            OZMethod("init", OZType("instancetype"), body_ast={
+                "kind": "CompoundStmt",
+                "inner": [{"kind": "ReturnStmt", "inner": [
+                    {"kind": "DeclRefExpr", "referencedDecl": {"name": "self"},
+                     "type": {"qualType": "OZObject *"}},
+                ]}],
+            }),
+            OZMethod("dealloc", OZType("void"), body_ast={
+                "kind": "CompoundStmt", "inner": [],
+            }),
+        ])
+        m.classes["Watcher"] = OZClass(
+            "Watcher", superclass="OZObject",
+            ivars=[
+                OZIvar("_delegate", OZType("__unsafe_unretained id")),
+                OZIvar("_name", OZType("OZString *")),
+            ],
+        )
+        resolve(m)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            content = open(os.path.join(tmpdir, "Watcher_ozm.c")).read()
+            assert "Watcher_dealloc" in content
+            # Strong ivar _name must be released
+            assert "OZObject_release((struct OZObject *)self->_name)" in content
+            # Unretained ivar _delegate must NOT be released
+            assert "_delegate" not in content
 
 
 class TestARCBreakContinueCleanup:
