@@ -273,6 +273,7 @@ function(_objz_write_compile_db)
     endif()
 
     get_property(_mod GLOBAL PROPERTY _OBJZ_MODULE_DIR)
+    get_filename_component(_mod "${_mod}" REALPATH)
 
     # Scan all .m files in the project and add compile_commands entries
     # for any not already collected.  clangd strips -f flags during
@@ -289,6 +290,7 @@ function(_objz_write_compile_db)
     set(_template_args "${CMAKE_MATCH_1}")
     if(_template_args AND _all_m_files)
         foreach(_m_file ${_all_m_files})
+            get_filename_component(_m_file "${_m_file}" REALPATH)
             list(FIND _collected_files "${_m_file}" _idx)
             if(_idx EQUAL -1)
                 # Build a synthetic entry reusing the template args but
@@ -331,6 +333,13 @@ CompileFlags:\n\
   Remove:\n\
     - --target=*\n\
     - -fobjc-runtime=*\n\
+    - -mcpu=*\n\
+    - -mthumb\n\
+    - -mfpu=*\n\
+    - -mfloat-abi=*\n\
+    - -march=*\n\
+    - -mabi=*\n\
+    - -mno-relax\n\
     - -specs=*\n\
     - -mfp16-format=*\n\
     - -mtp=*\n\
