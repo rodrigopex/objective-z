@@ -268,6 +268,92 @@ class TestInitializeClasses:
         resolve(m)
         assert m.initialize_classes == []
 
+    def test_deep_hierarchy_topological_order(self):
+        """Three-level hierarchy: grandchild order is root, child, grandchild."""
+        m = OZModule()
+        m.classes["OZObject"] = OZClass("OZObject", methods=[
+            OZMethod("initialize", OZType("void"), is_class_method=True)])
+        m.classes["Base"] = OZClass("Base", superclass="OZObject", methods=[
+            OZMethod("initialize", OZType("void"), is_class_method=True)])
+        m.classes["Derived"] = OZClass("Derived", superclass="Base", methods=[
+            OZMethod("initialize", OZType("void"), is_class_method=True)])
+        resolve(m)
+        assert m.initialize_classes == ["OZObject", "Base", "Derived"]
+
+    def test_multiple_independent_classes(self):
+        """Two unrelated classes both define +initialize."""
+        m = OZModule()
+        m.classes["OZObject"] = OZClass("OZObject")
+        m.classes["Alpha"] = OZClass("Alpha", superclass="OZObject", methods=[
+            OZMethod("initialize", OZType("void"), is_class_method=True)])
+        m.classes["Beta"] = OZClass("Beta", superclass="OZObject", methods=[
+            OZMethod("initialize", OZType("void"), is_class_method=True)])
+        resolve(m)
+        assert "Alpha" in m.initialize_classes
+        assert "Beta" in m.initialize_classes
+        assert len(m.initialize_classes) == 2
+
+    def test_sibling_classes_with_initialize(self):
+        """Two siblings (same parent) both define +initialize."""
+        m = OZModule()
+        m.classes["OZObject"] = OZClass("OZObject")
+        m.classes["SibA"] = OZClass("SibA", superclass="OZObject", methods=[
+            OZMethod("initialize", OZType("void"), is_class_method=True)])
+        m.classes["SibB"] = OZClass("SibB", superclass="OZObject", methods=[
+            OZMethod("initialize", OZType("void"), is_class_method=True)])
+        resolve(m)
+        assert "SibA" in m.initialize_classes
+        assert "SibB" in m.initialize_classes
+        assert "OZObject" not in m.initialize_classes
+
+    def test_only_subclass_defines_initialize(self):
+        """Parent has no +initialize, only subclass does."""
+        m = OZModule()
+        m.classes["OZObject"] = OZClass("OZObject")
+        m.classes["Child"] = OZClass("Child", superclass="OZObject", methods=[
+            OZMethod("initialize", OZType("void"), is_class_method=True)])
+        resolve(m)
+        assert m.initialize_classes == ["Child"]
+
+    def test_apple_guard_pattern_emits_diagnostic(self):
+        """if (self == [MyClass class]) guard emits a warning diagnostic."""
+        body_ast = {"kind": "CompoundStmt", "inner": [{
+            "kind": "IfStmt", "inner": [
+                {"kind": "BinaryOperator", "opcode": "==", "inner": [
+                    {"kind": "DeclRefExpr",
+                     "referencedDecl": {"name": "self"}},
+                    {"kind": "ObjCMessageExpr", "selector": "class",
+                     "receiverKind": "class",
+                     "classType": {"qualType": "AppConfig"}},
+                ]},
+                {"kind": "CompoundStmt", "inner": []},
+            ],
+        }]}
+        m = OZModule()
+        m.classes["OZObject"] = OZClass("OZObject")
+        m.classes["AppConfig"] = OZClass("AppConfig", superclass="OZObject",
+            methods=[OZMethod("initialize", OZType("void"),
+                              is_class_method=True, body_ast=body_ast)])
+        resolve(m)
+        assert any("+initialize guard" in d for d in m.diagnostics)
+        assert any("exactly once per class" in d for d in m.diagnostics)
+
+    def test_no_guard_diagnostic_without_class_message(self):
+        """Normal +initialize body does not trigger guard diagnostic."""
+        body_ast = {"kind": "CompoundStmt", "inner": [{
+            "kind": "ObjCMessageExpr", "selector": "alloc",
+            "receiverKind": "class",
+            "classType": {"qualType": "AppConfig"},
+            "inner": [],
+        }]}
+        m = OZModule()
+        m.classes["OZObject"] = OZClass("OZObject")
+        m.classes["AppConfig"] = OZClass("AppConfig", superclass="OZObject",
+            methods=[OZMethod("initialize", OZType("void"),
+                              is_class_method=True, body_ast=body_ast)])
+        resolve(m)
+        assert not any("+initialize guard" in d for d in m.diagnostics)
+
 
 class TestProtocolConformance:
     """OZ-033: missing protocol method must produce an error."""

@@ -1488,6 +1488,48 @@ class TestIntrospection:
             content = open(os.path.join(tmpdir, "Foundation", "oz_dispatch.h")).read()
             assert '#include "platform/oz_platform.h"' in content
 
+    def test_dispatch_auto_init_multiple_classes_in_order(self):
+        """OZ-056: multiple +initialize classes emit OZ_AUTO_INIT in topological order."""
+        m = _simple_module()
+        m.classes["OZObject"].methods.append(
+            OZMethod("initialize", OZType("void"),
+                     is_class_method=True,
+                     body_ast={"kind": "CompoundStmt", "inner": []}))
+        m.classes["AppConfig"] = OZClass("AppConfig", superclass="OZObject",
+            methods=[OZMethod("initialize", OZType("void"),
+                              is_class_method=True,
+                              body_ast={"kind": "CompoundStmt", "inner": []})])
+        resolve(m)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            content = open(os.path.join(tmpdir, "Foundation", "oz_dispatch.c")).read()
+            pos_root = content.index("OZ_AUTO_INIT(OZObject_oz_auto_init")
+            pos_child = content.index("OZ_AUTO_INIT(AppConfig_oz_auto_init")
+            assert pos_root < pos_child
+
+    def test_dispatch_auto_init_explicit_call_from_class_method(self):
+        """OZ-056: explicit [Class initialize] from a class method is also an error."""
+        m = _simple_module()
+        call_init_body = {"kind": "CompoundStmt", "inner": [{
+            "kind": "ObjCMessageExpr", "selector": "initialize",
+            "receiverKind": "class",
+            "classType": {"qualType": "AppConfig"},
+            "type": {"qualType": "void"}, "inner": [],
+        }]}
+        m.classes["AppConfig"] = OZClass("AppConfig", superclass="OZObject",
+            methods=[
+                OZMethod("initialize", OZType("void"),
+                         is_class_method=True,
+                         body_ast={"kind": "CompoundStmt", "inner": []}),
+                OZMethod("reset", OZType("void"),
+                         is_class_method=True,
+                         body_ast=call_init_body),
+            ])
+        resolve(m)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(m, tmpdir)
+            assert any("explicit call" in e for e in m.errors)
+
     def test_root_class_isEqual(self):
         m = _simple_module()
         with tempfile.TemporaryDirectory() as tmpdir:
