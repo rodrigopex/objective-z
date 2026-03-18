@@ -16,6 +16,7 @@ def resolve(module: OZModule) -> None:
     _compute_base_depths(module)
     _classify_dispatch(module)
     _check_protocol_conformance(module)
+    _collect_initialize_classes(module)
 
 
 def _validate_hierarchy(module: OZModule) -> None:
@@ -166,6 +167,16 @@ def _classify_dispatch(module: OZModule) -> None:
                 m.dispatch = DispatchKind.PROTOCOL
             elif len(selector_classes.get(m.selector, set())) > 1:
                 m.dispatch = DispatchKind.PROTOCOL
+
+
+def _collect_initialize_classes(module: OZModule) -> None:
+    """Collect classes that define +initialize, in topological order."""
+    sorted_classes = sorted(module.classes.values(), key=lambda c: c.class_id)
+    for cls in sorted_classes:
+        for m in cls.methods:
+            if m.is_class_method and m.selector == "initialize":
+                module.initialize_classes.append(cls.name)
+                break
 
 
 def _check_protocol_conformance(module: OZModule) -> None:

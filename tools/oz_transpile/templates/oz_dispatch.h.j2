@@ -3,7 +3,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
-{% if item_pool_count > 0 %}
+{% if item_pool_count > 0 or initialize_classes %}
 #include "platform/oz_platform.h"
 {% endif %}
 
