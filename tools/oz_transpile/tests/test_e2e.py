@@ -290,9 +290,31 @@ class TestMultiFileTranspilation:
             _gcc_syntax_check(tmpdir)
 
 
+def _compile_and_run(source, extra_flags=None):
+    """Compile ObjC source via Clang and run through the transpiler CLI."""
+    from .conftest import clang_collect
+    import json
+    with tempfile.TemporaryDirectory() as tmpdir:
+        src_path = os.path.join(tmpdir, "source.m")
+        ast_path = os.path.join(tmpdir, "source.ast.json")
+        with open(src_path, "w") as f:
+            f.write(source)
+        result = subprocess.run(
+            ["clang", "-Xclang", "-ast-dump=json", "-fsyntax-only",
+             "-I", OZ_SDK_DIR, src_path],
+            capture_output=True,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"clang failed:\n{result.stderr.decode()}")
+        with open(ast_path, "wb") as f:
+            f.write(result.stdout)
+        argv = ["--input", ast_path, "--outdir", tmpdir] + (extra_flags or [])
+        return main(argv)
+
+
 class TestCLIErrors:
     def test_resolve_error_returns_exit_1(self):
-        """Inheritance cycle should cause resolve error and exit code 1."""
+        """Inheritance cycle — corner case: Clang rejects this."""
         import json
         cycle_ast = {
             "kind": "TranslationUnitDecl",
@@ -315,7 +337,8 @@ class TestCLIErrors:
             assert rc == 1
 
     def test_strict_with_diagnostics_returns_exit_1(self):
-        """--strict should fail when diagnostics are present."""
+        """--strict should fail when diagnostics are present.
+        Corner case: unsupported static initializer pattern."""
         import json
         ast = {
             "kind": "TranslationUnitDecl",
@@ -339,10 +362,35 @@ class TestCLIErrors:
 
     def test_manifest_written(self):
         """--manifest should write generated file paths."""
-        ast_file = os.path.join(FIXTURE_DIR, "simple_led.ast.json")
         with tempfile.TemporaryDirectory() as tmpdir:
+            src_path = os.path.join(tmpdir, "led.m")
+            ast_path = os.path.join(tmpdir, "led.ast.json")
+            with open(src_path, "w") as f:
+                f.write("""\
+#import <Foundation/OZObject.h>
+@protocol OZToggleable
+- (void)toggle;
+@end
+@interface OZLed : OZObject <OZToggleable> {
+        int _pin;
+        BOOL _state;
+}
+- (void)toggle;
+@end
+@implementation OZLed
+- (void)toggle { _state = !_state; }
+@end
+""")
+            result = subprocess.run(
+                ["clang", "-Xclang", "-ast-dump=json", "-fsyntax-only",
+                 "-I", OZ_SDK_DIR, src_path],
+                capture_output=True,
+            )
+            assert result.returncode == 0
+            with open(ast_path, "wb") as f:
+                f.write(result.stdout)
             manifest = os.path.join(tmpdir, "manifest.txt")
-            rc = main(["--input", ast_file, "--outdir", tmpdir,
+            rc = main(["--input", ast_path, "--outdir", tmpdir,
                         "--manifest", manifest])
             assert rc == 0
             content = open(manifest).read()
@@ -351,87 +399,39 @@ class TestCLIErrors:
 
     def test_missing_protocol_method_error(self):
         """OZ-033: missing protocol method should cause exit code 1."""
-        import json
-        ast = {
-            "kind": "TranslationUnitDecl",
-            "inner": [
-                {"kind": "ObjCInterfaceDecl", "name": "OZObject", "inner": []},
-                {"kind": "ObjCImplementationDecl", "name": "OZObject",
-                 "inner": []},
-                {"kind": "ObjCProtocolDecl", "name": "SensorProto",
-                 "inner": [
-                     {"kind": "ObjCMethodDecl", "name": "readValue",
-                      "returnType": {"qualType": "int"}, "inner": []},
-                 ]},
-                {"kind": "ObjCInterfaceDecl", "name": "Sensor",
-                 "super": {"name": "OZObject"},
-                 "protocols": [{"name": "SensorProto"}],
-                 "inner": []},
-                {"kind": "ObjCImplementationDecl", "name": "Sensor",
-                 "super": {"name": "OZObject"},
-                 "inner": [
-                     {"kind": "ObjCMethodDecl", "name": "name",
-                      "returnType": {"qualType": "void"},
-                      "inner": [{"kind": "CompoundStmt", "inner": []}]},
-                 ]},
-            ],
-        }
-        with tempfile.TemporaryDirectory() as tmpdir:
-            ast_file = os.path.join(tmpdir, "proto.ast.json")
-            with open(ast_file, "w") as f:
-                json.dump(ast, f)
-            rc = main(["--input", ast_file, "--outdir", tmpdir])
-            assert rc == 1
+        rc = _compile_and_run("""\
+#import <Foundation/OZObject.h>
+@protocol SensorProto
+- (int)readValue;
+@end
+@interface Sensor : OZObject <SensorProto>
+- (void)name;
+@end
+@implementation Sensor
+- (void)name {}
+@end
+""")
+        assert rc == 1
 
     def test_protocol_conformance_passes_when_complete(self):
         """OZ-033: class implementing all protocol methods should succeed."""
-        import json
-        ast = {
-            "kind": "TranslationUnitDecl",
-            "inner": [
-                {"kind": "ObjCInterfaceDecl", "name": "OZObject", "inner": []},
-                {"kind": "ObjCImplementationDecl", "name": "OZObject",
-                 "inner": [
-                     {"kind": "ObjCMethodDecl", "name": "init",
-                      "returnType": {"qualType": "instancetype"},
-                      "inner": [{"kind": "CompoundStmt", "inner": [
-                          {"kind": "ReturnStmt", "inner": [
-                              {"kind": "DeclRefExpr",
-                               "referencedDecl": {"name": "self"},
-                               "type": {"qualType": "OZObject *"}}]}]}]},
-                     {"kind": "ObjCMethodDecl", "name": "dealloc",
-                      "returnType": {"qualType": "void"},
-                      "inner": [{"kind": "CompoundStmt", "inner": []}]},
-                 ]},
-                {"kind": "ObjCProtocolDecl", "name": "SensorProto",
-                 "inner": [
-                     {"kind": "ObjCMethodDecl", "name": "readValue",
-                      "returnType": {"qualType": "int"}, "inner": []},
-                 ]},
-                {"kind": "ObjCInterfaceDecl", "name": "Sensor",
-                 "super": {"name": "OZObject"},
-                 "protocols": [{"name": "SensorProto"}],
-                 "inner": []},
-                {"kind": "ObjCImplementationDecl", "name": "Sensor",
-                 "super": {"name": "OZObject"},
-                 "inner": [
-                     {"kind": "ObjCMethodDecl", "name": "readValue",
-                      "returnType": {"qualType": "int"},
-                      "inner": [{"kind": "CompoundStmt", "inner": [
-                          {"kind": "ReturnStmt", "inner": [
-                              {"kind": "IntegerLiteral", "value": "42"}]}]}]},
-                 ]},
-            ],
-        }
-        with tempfile.TemporaryDirectory() as tmpdir:
-            ast_file = os.path.join(tmpdir, "proto_ok.ast.json")
-            with open(ast_file, "w") as f:
-                json.dump(ast, f)
-            rc = main(["--input", ast_file, "--outdir", tmpdir])
-            assert rc == 0
+        rc = _compile_and_run("""\
+#import <Foundation/OZObject.h>
+@protocol SensorProto
+- (int)readValue;
+@end
+@interface Sensor : OZObject <SensorProto>
+- (int)readValue;
+@end
+@implementation Sensor
+- (int)readValue { return 42; }
+@end
+""")
+        assert rc == 0
 
     def test_external_protected_ivar_access_error(self):
-        """OZ-043: external access to protected ivar should fail."""
+        """OZ-043: external access to protected ivar should fail.
+        Corner case: Clang rejects protected ivar access at parse time."""
         import json
         ast = {
             "kind": "TranslationUnitDecl",
@@ -487,84 +487,35 @@ class TestCLIErrors:
 
     def test_external_public_ivar_access_succeeds(self):
         """OZ-043: external access to public ivar should succeed."""
-        import json
-        ast = {
-            "kind": "TranslationUnitDecl",
-            "inner": [
-                {"kind": "ObjCInterfaceDecl", "name": "OZObject", "inner": []},
-                {"kind": "ObjCImplementationDecl", "name": "OZObject",
-                 "inner": [
-                     {"kind": "ObjCMethodDecl", "name": "init",
-                      "returnType": {"qualType": "instancetype"},
-                      "inner": [{"kind": "CompoundStmt", "inner": [
-                          {"kind": "ReturnStmt", "inner": [
-                              {"kind": "DeclRefExpr",
-                               "referencedDecl": {"name": "self"},
-                               "type": {"qualType": "OZObject *"}}]}]}]},
-                     {"kind": "ObjCMethodDecl", "name": "dealloc",
-                      "returnType": {"qualType": "void"},
-                      "inner": [{"kind": "CompoundStmt", "inner": []}]},
-                 ]},
-                {"kind": "ObjCInterfaceDecl", "name": "Car",
-                 "super": {"name": "OZObject"},
-                 "inner": [
-                     {"kind": "ObjCIvarDecl", "name": "_color",
-                      "type": {"qualType": "int"},
-                      "access": "public"},
-                 ]},
-                {"kind": "ObjCImplementationDecl", "name": "Car",
-                 "super": {"name": "OZObject"}, "inner": []},
-                {"kind": "FunctionDecl", "name": "main",
-                 "type": {"qualType": "int ()"},
-                 "inner": [{"kind": "CompoundStmt", "inner": [{
-                     "kind": "ObjCIvarRefExpr",
-                     "decl": {"name": "_color"},
-                     "isFreeIvar": False,
-                     "inner": [{
-                         "kind": "ImplicitCastExpr",
-                         "castKind": "LValueToRValue",
-                         "inner": [{
-                             "kind": "DeclRefExpr",
-                             "referencedDecl": {"name": "myCar"},
-                             "type": {"qualType": "Car *"},
-                         }],
-                     }],
-                 }]}],
-                },
-            ],
-        }
-        with tempfile.TemporaryDirectory() as tmpdir:
-            ast_file = os.path.join(tmpdir, "public.ast.json")
-            with open(ast_file, "w") as f:
-                json.dump(ast, f)
-            rc = main(["--input", ast_file, "--outdir", tmpdir])
-            assert rc == 0
+        rc = _compile_and_run("""\
+#import <Foundation/OZObject.h>
+@interface Car : OZObject {
+@public
+        int _color;
+}
+@end
+@implementation Car
+@end
+int main(void) {
+        Car *myCar = [[Car alloc] init];
+        int c = myCar->_color;
+        return c;
+}
+""")
+        assert rc == 0
 
     def test_unsupported_method_selector_error(self):
         """Methods with unsupported selectors should produce errors."""
-        import json
-        ast = {
-            "kind": "TranslationUnitDecl",
-            "inner": [
-                {"kind": "ObjCInterfaceDecl", "name": "OZObject", "inner": []},
-                {"kind": "ObjCImplementationDecl", "name": "OZObject",
-                 "inner": [
-                     {"kind": "ObjCMethodDecl",
-                      "name": "forwardInvocation:",
-                      "returnType": {"qualType": "void"},
-                      "inner": [
-                          {"kind": "ParmVarDecl", "name": "inv",
-                           "type": {"qualType": "id"}},
-                      ]},
-                 ]},
-            ],
-        }
-        with tempfile.TemporaryDirectory() as tmpdir:
-            ast_file = os.path.join(tmpdir, "unsupported.ast.json")
-            with open(ast_file, "w") as f:
-                json.dump(ast, f)
-            rc = main(["--input", ast_file, "--outdir", tmpdir])
-            assert rc == 1
+        rc = _compile_and_run("""\
+#import <Foundation/OZObject.h>
+@interface Proxy : OZObject
+- (void)forwardInvocation:(id)inv;
+@end
+@implementation Proxy
+- (void)forwardInvocation:(id)inv {}
+@end
+""")
+        assert rc == 1
 
 
 def _clang_available() -> bool:
