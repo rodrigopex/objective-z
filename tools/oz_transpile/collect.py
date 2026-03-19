@@ -154,16 +154,21 @@ def _is_user_struct(node: dict, last_file: str = "") -> bool:
 
 
 def _is_user_enum(node: dict, last_file: str = "") -> bool:
-    """Check if an EnumDecl is a user-defined enum (main file or user header)."""
+    """Check if an EnumDecl is a user-defined enum (main file or user header).
+
+    Accepts enums from user headers (non-system, non-SDK) so that enum
+    definitions imported via #import "MyEnums.h" are collected.
+    """
     name = node.get("name", "")
     if not name:
         return False
     if not node.get("inner"):
         return False
     loc = node.get("loc", {})
-    if "includedFrom" in loc:
-        return False
     file_path = loc.get("file", "") or last_file
+    if not file_path:
+        included = loc.get("includedFrom", {})
+        file_path = included.get("file", "")
     if not file_path:
         return False
     if any(p in file_path for p in _SYSTEM_PATH_SEGMENTS):
