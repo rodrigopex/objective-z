@@ -4,6 +4,9 @@
 #
 # Provides Clang-based helpers that compile real .m sources through the
 # full pipeline: .m -> Clang JSON AST -> collect() -> resolve().
+#
+# Uses -fobjc-runtime=macosx to avoid SIGSEGV in Clang's ObjC method
+# name mangler on Linux (affects both Clang 18 and 20).
 
 import json
 import os
@@ -43,6 +46,7 @@ def clang_collect(source, *, extra_files=None):
         result = subprocess.run(
             [
                 "clang", "-Xclang", "-ast-dump=json", "-fsyntax-only",
+                "-fobjc-runtime=macosx",
                 "-I", OZ_SDK_DIR, "-I", tmpdir, src_path,
             ],
             capture_output=True,
