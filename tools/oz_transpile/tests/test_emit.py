@@ -2484,6 +2484,84 @@ enum PXDeviceState {
         assert "PXDeviceStateRunning" in header
 
 
+class TestEnumMethodParamEmission:
+    """OZ-061: enum used as method param must have its definition emitted."""
+
+    def test_enum_method_param_emitted_in_header(self):
+        """Enum used only as method param must appear in generated header."""
+        _, out = clang_emit("""\
+#import <Foundation/OZObject.h>
+enum Color {
+    ColorRed = 0,
+    ColorGreen = 1,
+    ColorBlue = 2,
+};
+@interface Painter : OZObject
+- (void)paintWithColor:(enum Color)c;
+@end
+@implementation Painter
+- (void)paintWithColor:(enum Color)c {
+    if (c == ColorRed) {
+    }
+}
+@end
+""")
+        header = out["Painter_ozh.h"]
+        assert "ColorRed" in header
+        assert "ColorGreen" in header
+        assert "ColorBlue" in header
+
+    def test_enum_return_type_emitted_in_header(self):
+        """Enum used only as return type must appear in generated header."""
+        _, out = clang_emit("""\
+#import <Foundation/OZObject.h>
+enum Status {
+    StatusOK = 0,
+    StatusError = 1,
+};
+@interface Checker : OZObject
+- (enum Status)check;
+@end
+@implementation Checker
+- (enum Status)check {
+    return StatusOK;
+}
+@end
+""")
+        header = out["Checker_ozh.h"]
+        assert "StatusOK" in header
+        assert "StatusError" in header
+
+    def test_enum_from_user_header_emitted(self):
+        """Enum defined in user .h and used as ivar must appear in header."""
+        _, out = clang_emit("""\
+#import <Foundation/OZObject.h>
+#import "MyEnums.h"
+@interface Worker : OZObject {
+    enum TaskState _state;
+}
+- (void)run;
+@end
+@implementation Worker
+- (void)run {
+    _state = TaskRunning;
+}
+@end
+""", extra_files={
+            "MyEnums.h": """\
+enum TaskState {
+    TaskIdle = 0,
+    TaskRunning = 1,
+    TaskDone = 2,
+};
+"""
+        })
+        header = out["Worker_ozh.h"]
+        assert "TaskIdle" in header
+        assert "TaskRunning" in header
+        assert "TaskDone" in header
+
+
 class TestSwitchCaseEmission:
     """OZ-012: switch/case statement emission."""
 
