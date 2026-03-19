@@ -83,7 +83,7 @@ All benchmarks on **nRF52833 DK** (ARM Cortex-M4F @ 64 MHz), DWT cycle counter, 
 ## Prerequisites
 
 - Zephyr SDK + west (see [Zephyr Getting Started](https://docs.zephyrproject.org/latest/develop/getting_started/index.html))
-- Clang (for AST analysis — Apple Clang works for ARM, Homebrew LLVM for RISC-V)
+- Clang 20+ (for AST analysis — Apple Clang works for ARM, Homebrew LLVM for RISC-V; older versions may crash on ObjC JSON AST dump)
 - Python 3
 - [just](https://github.com/casey/just) (build automation)
 
