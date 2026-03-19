@@ -111,7 +111,8 @@ def build_source_context(
             if func and func.body_ast:
                 buf = StringIO()
                 _emit_transpiled_function(func, module, buf, root_class,
-                                          has_item_pool)
+                                          has_item_pool,
+                                          source_bytes=source)
                 context[key] = buf.getvalue()
             else:
                 context[key] = text
@@ -168,7 +169,7 @@ def _build_impl_context(
         return
 
     ctx = _EmitCtx(cls=cls, module=module, root_class=root_class,
-                   has_item_pool=has_item_pool)
+                   has_item_pool=has_item_pool, source_bytes=source)
     is_root = cls.name == root_class
     _root_skip_sels = {"retain", "release", "retainCount",
                        "isEqual:", "cDescription:maxLength:"}
