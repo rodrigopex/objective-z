@@ -381,7 +381,7 @@ class TestCLIErrors:
 """)
             result = subprocess.run(
                 ["clang", "-Xclang", "-ast-dump=json", "-fsyntax-only",
-                 "-I", OZ_SDK_DIR, src_path],
+                 "-fobjc-runtime=macosx", "-I", OZ_SDK_DIR, src_path],
                 capture_output=True,
             )
             assert result.returncode == 0
@@ -583,7 +583,7 @@ int main(void) {
         import json
         result = subprocess.run(
             ["clang", "-Xclang", "-ast-dump=json", "-fsyntax-only",
-             "-I", OZ_SDK_DIR, src_file],
+             "-fobjc-runtime=macosx", "-I", OZ_SDK_DIR, src_file],
             capture_output=True,
         )
         # Verify the AST is valid JSON — some Clang versions produce
