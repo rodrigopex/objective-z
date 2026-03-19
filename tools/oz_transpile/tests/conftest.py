@@ -14,6 +14,7 @@ import subprocess
 import tempfile
 
 from oz_transpile.collect import collect
+from oz_transpile.emit import emit
 from oz_transpile.resolve import resolve
 
 OZ_SDK_DIR = os.path.join(
@@ -68,3 +69,20 @@ def clang_collect_resolve(source, **kwargs):
     mod = clang_collect(source, **kwargs)
     resolve(mod)
     return mod
+
+
+def clang_emit(source, **kwargs):
+    """Compile ObjC source, collect, resolve, and emit C files.
+
+    Returns:
+        Tuple of (OZModule, dict mapping relative paths to file contents).
+    """
+    mod = clang_collect_resolve(source, **kwargs)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        files = emit(mod, tmpdir)
+        contents = {}
+        for f in files:
+            rel = os.path.relpath(f, tmpdir)
+            with open(f) as fh:
+                contents[rel] = fh.read()
+    return mod, contents
