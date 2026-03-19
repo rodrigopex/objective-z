@@ -415,16 +415,27 @@ def _class_header_ctx(ctx: _EmitCtx, stem: str | None = None,
         if obj_ivars or not is_root:
             auto_dealloc_proto = True
 
-    # Collect type definitions needed by ivars (enum/union/struct from stubs/user)
-    ivar_type_defs = []
-    for ivar in cls.ivars:
-        qt = ivar.oz_type.raw_qual_type
-        # Try exact match first, then strip pointer/const for struct types
-        key = qt
+    # Collect type definitions needed by ivars, methods, and functions
+    # (enum/union/struct from stubs/user)
+    type_defs = []
+
+    def _add_type_def(qual_type: str) -> None:
+        key = qual_type
         if key not in module.type_defs:
-            key = qt.rstrip(" *").removeprefix("const ")
-        if key in module.type_defs and module.type_defs[key] not in ivar_type_defs:
-            ivar_type_defs.append(module.type_defs[key])
+            key = qual_type.rstrip(" *").removeprefix("const ")
+        if key in module.type_defs and module.type_defs[key] not in type_defs:
+            type_defs.append(module.type_defs[key])
+
+    for ivar in cls.ivars:
+        _add_type_def(ivar.oz_type.raw_qual_type)
+    for m in cls.methods:
+        _add_type_def(m.return_type.raw_qual_type)
+        for p in m.params:
+            _add_type_def(p.oz_type.raw_qual_type)
+    for func in cls.functions:
+        _add_type_def(func.return_type.raw_qual_type)
+        for p in func.params:
+            _add_type_def(p.oz_type.raw_qual_type)
 
     function_protos = []
     for func in cls.functions:
@@ -477,7 +488,7 @@ def _class_header_ctx(ctx: _EmitCtx, stem: str | None = None,
         "superclass": cls.superclass,
         "superclass_header": superclass_stem,
         "user_ivars": user_ivars,
-        "ivar_type_defs": ivar_type_defs,
+        "ivar_type_defs": type_defs,
         "method_prototypes": method_prototypes,
         "auto_dealloc_proto": auto_dealloc_proto,
         "has_any_methods": bool(cls.methods) or is_root,
