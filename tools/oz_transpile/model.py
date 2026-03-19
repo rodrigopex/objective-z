@@ -84,10 +84,14 @@ class OZType:
         return f"{ret_c} (*)({params_c})"
 
     def c_param_decl(self, name: str) -> str:
-        """Format a C parameter declaration, handling function pointers."""
+        """Format a C parameter declaration, handling function pointers and arrays."""
         ct = self.c_type
         if self.is_block and "(*)" in ct:
             return ct.replace("(*)", f"(*{name})", 1)
+        import re
+        m = re.match(r'^(.*?)(\[.+)$', ct)
+        if m:
+            return f"{m.group(1).rstrip()} {name}{m.group(2)}"
         return f"{ct} {name}"
 
     @property

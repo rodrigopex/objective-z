@@ -33,6 +33,7 @@ class _EmitCtx:
     string_constants: list[str] = field(default_factory=list)
     block_functions: list[str] = field(default_factory=list)
     has_item_pool: bool = False
+    source_bytes: bytes | None = None
     _tmp_counter: int = 0
     _sync_counter: int = 0
     _string_dedup: dict[str, str] = field(default_factory=dict)
@@ -1423,6 +1424,7 @@ def _emit_block_expr(node: dict, out: StringIO, ctx: _EmitCtx) -> None:
             string_constants=ctx.string_constants,
             block_functions=ctx.block_functions,
             has_item_pool=ctx.has_item_pool,
+            source_bytes=ctx.source_bytes,
             _tmp_counter=ctx._tmp_counter,
             _string_dedup=ctx._string_dedup,
         )
@@ -1437,8 +1439,112 @@ def _emit_block_expr(node: dict, out: StringIO, ctx: _EmitCtx) -> None:
     out.write(func_name)
 
 
+_OBJC_NODE_KINDS = frozenset({
+    "ObjCMessageExpr", "ObjCIvarRefExpr", "ObjCStringLiteral",
+    "ObjCArrayLiteral", "ObjCDictionaryLiteral", "ObjCBoxedExpr",
+    "ObjCSelectorExpr", "ObjCProtocolExpr", "PseudoObjectExpr",
+})
+
+
+def _extract_macro_text(source: bytes, offset: int, tok_len: int) -> str:
+    """Extract full macro invocation from source via paren matching.
+
+    Given the offset/tokLen of the macro name, finds the matching closing
+    parenthesis (if any) to capture the complete invocation.
+    """
+    end = offset + tok_len
+    rest = source[end:]
+    i = 0
+    while i < len(rest) and rest[i:i + 1] in (b' ', b'\t', b'\n', b'\r'):
+        i += 1
+    if i < len(rest) and rest[i:i + 1] == b'(':
+        depth = 1
+        j = i + 1
+        while j < len(rest) and depth > 0:
+            if rest[j:j + 1] == b'(':
+                depth += 1
+            elif rest[j:j + 1] == b')':
+                depth -= 1
+            j += 1
+        return source[offset:end + j].decode()
+    return source[offset:end].decode()
+
+
+def _collect_objc_patches(node: dict, macro_start: int,
+                          source: bytes, ctx: _EmitCtx,
+                          seen: set | None = None) -> list[tuple[int, int, str]]:
+    """Walk macro-expanded AST subtree, find ObjC nodes, return patches.
+
+    Returns list of (rel_start, rel_end, transpiled_text) sorted by offset
+    descending for back-to-front application.  Deduplicates by source range.
+    """
+    if seen is None:
+        seen = set()
+    patches = []
+    kind = node.get("kind", "")
+    rng = node.get("range", {})
+    begin_spell = rng.get("begin", {}).get("spellingLoc", {})
+    end_spell = rng.get("end", {}).get("spellingLoc", {})
+
+    if kind in _OBJC_NODE_KINDS and begin_spell.get("offset") is not None:
+        soff = begin_spell["offset"]
+        eoff = end_spell.get("offset", soff) + end_spell.get("tokLen", 1)
+        key = (soff, eoff)
+        if key not in seen:
+            seen.add(key)
+            buf = StringIO()
+            _emit_expr(node, buf, ctx)
+            patches.append((soff - macro_start, eoff - macro_start,
+                            buf.getvalue()))
+            return patches
+
+    for child in node.get("inner", []):
+        patches.extend(
+            _collect_objc_patches(child, macro_start, source, ctx, seen))
+    return patches
+
+
+def _try_macro_passthrough(node: dict, out: StringIO,
+                           ctx: _EmitCtx) -> bool:
+    """Attempt macro source passthrough.  Returns True if handled."""
+    source = ctx.source_bytes
+    if source is None:
+        return False
+    rng = node.get("range", {})
+    begin = rng.get("begin", {})
+    exp = begin.get("expansionLoc", {})
+    if not exp or exp.get("isMacroArgExpansion"):
+        return False
+    # Skip system/SDK macros (nil, YES, BOOL, etc.) — their spellingLoc
+    # points to an included header, not the user's source file.
+    spelling = begin.get("spellingLoc", {})
+    if spelling.get("includedFrom"):
+        return False
+    offset = exp.get("offset")
+    tok_len = exp.get("tokLen")
+    if offset is None or tok_len is None:
+        return False
+
+    macro_text = _extract_macro_text(source, offset, tok_len)
+    patches = _collect_objc_patches(node, offset, source, ctx)
+
+    if not patches:
+        out.write(macro_text)
+        return True
+
+    result = bytearray(macro_text.encode())
+    for rel_start, rel_end, transpiled in sorted(patches, reverse=True):
+        if 0 <= rel_start < rel_end <= len(result):
+            result[rel_start:rel_end] = transpiled.encode()
+    out.write(result.decode())
+    return True
+
+
 def _emit_expr(node: dict, out: StringIO, ctx: _EmitCtx) -> None:
     kind = node.get("kind", "")
+
+    if _try_macro_passthrough(node, out, ctx):
+        return
 
     if kind == "ExprWithCleanups":
         inner = node.get("inner", [])
@@ -1759,6 +1865,21 @@ def _emit_expr(node: dict, out: StringIO, ctx: _EmitCtx) -> None:
                 out.write(", ")
             _emit_expr(child, out, ctx)
         out.write("}")
+        return
+
+    if kind == "UnaryExprOrTypeTraitExpr":
+        op_name = node.get("name", "sizeof")
+        arg_type = node.get("argType", {}).get("qualType")
+        if arg_type:
+            out.write(f"{op_name}({arg_type})")
+        else:
+            inner = node.get("inner", [])
+            if inner:
+                out.write(f"{op_name}(")
+                _emit_expr(inner[0], out, ctx)
+                out.write(")")
+            else:
+                out.write(f"{op_name}(/* unknown */)")
         return
 
     # Fallback: try inner children or emit placeholder
@@ -2754,11 +2875,12 @@ def _extract_func_name(node) -> str | None:
 def _emit_transpiled_function(func: OZFunction, module: OZModule,
                                out: StringIO,
                                root_class: str,
-                               has_item_pool: bool) -> None:
+                               has_item_pool: bool,
+                               source_bytes: bytes | None = None) -> None:
     """Emit a transpiled C function (replacing one that contained ObjC)."""
     dummy_cls = OZClass(name="__patched__")
     ctx = _EmitCtx(cls=dummy_cls, module=module, root_class=root_class,
-                   has_item_pool=has_item_pool)
+                   has_item_pool=has_item_pool, source_bytes=source_bytes)
     ctx.method = None
     ctx.scope_vars = []
     ctx.consumed_vars = set()
