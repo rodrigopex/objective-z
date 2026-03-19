@@ -266,15 +266,15 @@ enum PXPriority {
         assert "PXMedium = 5," in defn
         assert "PXHigh = 100," in defn
 
-    def test_user_enum_in_header_not_collected(self):
-        """Enum in included .h file must NOT be collected."""
+    def test_user_enum_in_header_collected(self):
+        """Enum in included user .h file should be collected (OZ-061)."""
         mod = clang_collect(
             '#import "MyHeader.h"\n',
             extra_files={
                 "MyHeader.h": "enum HeaderEnum { HE_A };\n",
             },
         )
-        assert "enum HeaderEnum" not in mod.type_defs
+        assert "enum HeaderEnum" in mod.type_defs
 
     def test_user_anonymous_enum_not_collected(self):
         mod = clang_collect("""\
