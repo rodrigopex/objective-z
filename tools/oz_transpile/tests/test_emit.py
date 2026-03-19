@@ -3,7 +3,7 @@
 import os
 import tempfile
 
-from .conftest import clang_collect_resolve, clang_emit
+from .conftest import clang_collect_resolve, clang_emit, clang_emit_patched
 from oz_transpile.emit import (
     emit, _selector_to_c, _base_chain, _method_prototype,
     _emit_synthesized_accessor, _emit_patched_source, _EmitCtx,
@@ -3458,3 +3458,185 @@ class TestIvarAccessControl:
         content = out["SportsCar_ozm.c"]
         assert "other->_color" in content
         assert not mod.errors
+
+
+# ---------------------------------------------------------------------------
+# OZ-062: C array declarations, sizeof, and macro passthrough
+# ---------------------------------------------------------------------------
+
+class TestArrayDimensionDecl:
+    """OZ-062: C array dimensions must be preserved in variable declarations."""
+
+    def test_array_decl_dimensions(self):
+        """int arr[10] must emit with dimensions after name."""
+        _, out = clang_emit("""\
+#import <Foundation/OZObject.h>
+@interface Foo : OZObject
+@end
+@implementation Foo
+- (void)test {
+    int arr[10];
+}
+@end
+""")
+        content = out["Foo_ozm.c"]
+        assert "int arr[10]" in content
+
+    def test_struct_array_decl(self):
+        """const struct bt_data ad[2] must preserve dimensions."""
+        _, out = clang_emit("""\
+#import <Foundation/OZObject.h>
+struct bt_data { unsigned char type; };
+@interface Foo : OZObject
+@end
+@implementation Foo
+- (void)test {
+    struct bt_data ad[2];
+}
+@end
+""")
+        content = out["Foo_ozm.c"]
+        assert "struct bt_data ad[2]" in content
+
+    def test_char_buffer_decl(self):
+        """char buf[32] must preserve dimensions."""
+        _, out = clang_emit("""\
+#import <Foundation/OZObject.h>
+@interface Foo : OZObject
+@end
+@implementation Foo
+- (void)test {
+    char buf[32];
+}
+@end
+""")
+        content = out["Foo_ozm.c"]
+        assert "char buf[32]" in content
+
+
+class TestSizeofEmission:
+    """OZ-062: sizeof operator must be emitted correctly."""
+
+    def test_sizeof_expr(self):
+        """sizeof(variable) must be emitted."""
+        _, out = clang_emit("""\
+#import <Foundation/OZObject.h>
+@interface Foo : OZObject
+@end
+@implementation Foo
+- (void)test {
+    int arr[10];
+    int sz = sizeof(arr);
+}
+@end
+""")
+        content = out["Foo_ozm.c"]
+        assert "sizeof(" in content
+        assert "arr" in content
+
+    def test_sizeof_type(self):
+        """sizeof(int) must be emitted."""
+        _, out = clang_emit("""\
+#import <Foundation/OZObject.h>
+@interface Foo : OZObject
+@end
+@implementation Foo
+- (void)test {
+    int sz = sizeof(int);
+}
+@end
+""")
+        content = out["Foo_ozm.c"]
+        assert "sizeof(int)" in content
+
+
+class TestMacroPassthrough:
+    """OZ-062: macro invocations must be preserved via source passthrough."""
+
+    def test_simple_constant_macro(self):
+        """Simple constant macro must pass through verbatim."""
+        _, out = clang_emit_patched("""\
+#import <Foundation/OZObject.h>
+#define MY_CONSTANT 42
+@interface Foo : OZObject
+@end
+@implementation Foo
+- (void)test {
+    int x = MY_CONSTANT;
+}
+@end
+""", stem="Foo")
+        content = out["Foo_ozm.c"]
+        assert "MY_CONSTANT" in content
+
+    def test_macro_with_args(self):
+        """ARRAY_SIZE(arr) macro must pass through verbatim."""
+        _, out = clang_emit_patched("""\
+#import <Foundation/OZObject.h>
+#define ARRAY_SIZE(x) (sizeof(x) / sizeof((x)[0]))
+@interface Foo : OZObject
+@end
+@implementation Foo
+- (void)test {
+    int arr[10];
+    int count = ARRAY_SIZE(arr);
+}
+@end
+""", stem="Foo")
+        content = out["Foo_ozm.c"]
+        assert "ARRAY_SIZE(arr)" in content
+
+    def test_nested_macros(self):
+        """Nested macro invocations must be preserved."""
+        _, out = clang_emit_patched("""\
+#import <Foundation/OZObject.h>
+#define INNER(x) ((x) * 2)
+#define OUTER(a, b) ((a) + INNER(b))
+@interface Foo : OZObject
+@end
+@implementation Foo
+- (void)test {
+    int x = OUTER(1, 3);
+}
+@end
+""", stem="Foo")
+        content = out["Foo_ozm.c"]
+        assert "OUTER(1, 3)" in content
+
+    def test_macro_with_objc_arg(self):
+        """Macro with ObjC message send arg must transpile ObjC in-place."""
+        _, out = clang_emit_patched("""\
+#import <Foundation/OZObject.h>
+#define MY_ADD(a, b) ((a) + (b))
+@interface Foo : OZObject
+- (int)value;
+@end
+@implementation Foo
+- (int)value { return 10; }
+- (void)test {
+    int x = MY_ADD([self value], 5);
+}
+@end
+""", stem="Foo")
+        content = out["Foo_ozm.c"]
+        assert "MY_ADD(" in content
+        assert "Foo_value" in content
+
+    def test_macro_with_ivar_arg(self):
+        """Macro with ObjC ivar arg must transpile ivar to self->."""
+        _, out = clang_emit_patched("""\
+#import <Foundation/OZObject.h>
+#define DOUBLE(x) ((x) * 2)
+@interface Foo : OZObject {
+    int _count;
+}
+@end
+@implementation Foo
+- (void)test {
+    int x = DOUBLE(_count);
+}
+@end
+""", stem="Foo")
+        content = out["Foo_ozm.c"]
+        assert "DOUBLE(" in content
+        assert "self->_count" in content
