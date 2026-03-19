@@ -611,6 +611,8 @@ def _extract_init_value(node: dict) -> str | None:
             inner_val = _extract_init_value(child)
             if inner_val is not None:
                 return f"-{inner_val}"
+        if kind == "ParenExpr":
+            return _extract_init_value(child)
         if kind == "GNUNullExpr":
             return "NULL"
         if kind == "CStyleCastExpr":
