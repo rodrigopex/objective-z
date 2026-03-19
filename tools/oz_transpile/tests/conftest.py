@@ -37,7 +37,6 @@ def clang_collect(source, *, extra_files=None):
                     f.write(content)
 
         src_path = os.path.join(tmpdir, "source.m")
-        ast_path = os.path.join(tmpdir, "source.ast.json")
         with open(src_path, "w") as f:
             f.write(source)
 
