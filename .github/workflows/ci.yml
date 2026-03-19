@@ -24,7 +24,7 @@ jobs:
           echo "deb http://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-20 main" | sudo tee /etc/apt/sources.list.d/llvm-20.list
           sudo apt-get update
           sudo apt-get install -y clang-20
-          sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-20 100
+          sudo ln -sf /usr/bin/clang-20 /usr/local/bin/clang
 
       - name: Install dependencies
         run: pip install pytest pytest-cov jinja2 tree-sitter tree-sitter-objc
