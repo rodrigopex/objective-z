@@ -12,6 +12,7 @@ import json
 import os
 import subprocess
 import tempfile
+from pathlib import Path
 
 from oz_transpile.collect import collect
 from oz_transpile.emit import emit
@@ -86,3 +87,55 @@ def clang_emit(source, **kwargs):
             with open(f) as fh:
                 contents[rel] = fh.read()
     return mod, contents
+
+
+def clang_emit_patched(source, stem, **kwargs):
+    """Compile ObjC source through the patched-source emission path.
+
+    Writes the source to a real .m file so the patched-source path
+    (extract -> context -> Jinja2 template) is triggered, enabling
+    macro passthrough via source_bytes.
+
+    Returns:
+        Tuple of (OZModule, dict mapping relative paths to file contents).
+    """
+    extra_files = kwargs.get("extra_files")
+    with tempfile.TemporaryDirectory() as tmpdir:
+        if extra_files:
+            for name, content in extra_files.items():
+                path = os.path.join(tmpdir, name)
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                with open(path, "w") as f:
+                    f.write(content)
+
+        src_path = os.path.join(tmpdir, f"{stem}.m")
+        with open(src_path, "w") as f:
+            f.write(source)
+
+        result = subprocess.run(
+            [
+                "clang", "-Xclang", "-ast-dump=json", "-fsyntax-only",
+                "-fobjc-runtime=macosx", "-fblocks",
+                "-I", OZ_SDK_DIR, "-I", tmpdir, src_path,
+            ],
+            capture_output=True,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"clang failed:\n{result.stderr.decode()}")
+        ast = json.loads(result.stdout)
+        mod = collect(ast)
+        resolve(mod)
+
+        mod.source_stem = stem
+        mod.source_paths[stem] = Path(src_path)
+
+        outdir = os.path.join(tmpdir, "out")
+        os.makedirs(outdir)
+        files = emit(mod, outdir)
+        contents = {}
+        for f in files:
+            rel = os.path.relpath(f, outdir)
+            with open(f) as fh:
+                contents[rel] = fh.read()
+        return mod, contents
