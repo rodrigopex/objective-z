@@ -22,6 +22,7 @@ def clang_ast_dump(src_file, ast_file):
             "-Xclang",
             "-ast-dump=json",
             "-fsyntax-only",
+            "-fobjc-runtime=macosx",
             "-I",
             OZ_SDK_DIR,
             src_file,

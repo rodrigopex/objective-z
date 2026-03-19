@@ -292,8 +292,6 @@ class TestMultiFileTranspilation:
 
 def _compile_and_run(source, extra_flags=None):
     """Compile ObjC source via Clang and run through the transpiler CLI."""
-    from .conftest import clang_collect
-    import json
     with tempfile.TemporaryDirectory() as tmpdir:
         src_path = os.path.join(tmpdir, "source.m")
         ast_path = os.path.join(tmpdir, "source.ast.json")
@@ -301,7 +299,7 @@ def _compile_and_run(source, extra_flags=None):
             f.write(source)
         result = subprocess.run(
             ["clang", "-Xclang", "-ast-dump=json", "-fsyntax-only",
-             "-I", OZ_SDK_DIR, src_path],
+             "-fobjc-runtime=macosx", "-I", OZ_SDK_DIR, src_path],
             capture_output=True,
         )
         if result.returncode != 0:
