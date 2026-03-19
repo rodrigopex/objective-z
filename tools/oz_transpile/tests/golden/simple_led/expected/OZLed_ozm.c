@@ -6,7 +6,7 @@ OZ_SLAB_DEFINE(oz_slab_OZLed, sizeof(struct OZLed), 1, 4);
 
 struct OZLed * OZLed_initWithPin_(struct OZLed *self, int pin)
 {
-	OZObject_init((struct OZObject *)self);
+	(struct OZLed *)OZObject_init((struct OZObject *)self);
 	self->_pin = pin;
 	return self;
 }

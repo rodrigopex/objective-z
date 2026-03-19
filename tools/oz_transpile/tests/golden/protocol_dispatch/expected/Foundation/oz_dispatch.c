@@ -21,21 +21,9 @@ const OZ_fn_color OZ_PROTOCOL_RESOLVE_color[OZ_CLASS_COUNT] = {
 	[OZ_CLASS_Square] = (OZ_fn_color)Square_color,
 };
 
-const OZ_fn_dealloc OZ_PROTOCOL_RESOLVE_dealloc[OZ_CLASS_COUNT] = {
-	[OZ_CLASS_OZObject] = (OZ_fn_dealloc)OZObject_dealloc,
-	[OZ_CLASS_Circle] = (OZ_fn_dealloc)Circle_dealloc,
-	[OZ_CLASS_Square] = (OZ_fn_dealloc)Square_dealloc,
-};
-
 const OZ_fn_draw OZ_PROTOCOL_RESOLVE_draw[OZ_CLASS_COUNT] = {
 	[OZ_CLASS_Circle] = (OZ_fn_draw)Circle_draw,
 	[OZ_CLASS_Square] = (OZ_fn_draw)Square_draw,
-};
-
-const OZ_fn_init OZ_PROTOCOL_RESOLVE_init[OZ_CLASS_COUNT] = {
-	[OZ_CLASS_OZObject] = (OZ_fn_init)OZObject_init,
-	[OZ_CLASS_Circle] = (OZ_fn_init)OZObject_init,
-	[OZ_CLASS_Square] = (OZ_fn_init)OZObject_init,
 };
 
 void OZObject_dispatch_free(struct OZObject *obj)

@@ -18,8 +18,6 @@ int OZObject_cDescription_maxLength_(struct OZObject *self, char *buf, int maxLe
 
 /* Refcount introspection — mirrors runtime __objc_refcount_get() */
 #define __objc_refcount_get(obj) ((unsigned int)oz_atomic_get(&((struct OZObject *)(obj))->_refcount))
-struct OZObject * OZObject_init(struct OZObject *self);
-void OZObject_dealloc(struct OZObject *self);
 
 extern oz_slab_t oz_slab_OZObject;
 

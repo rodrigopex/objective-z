@@ -13,13 +13,7 @@ const uint8_t oz_superclass_id[OZ_CLASS_COUNT] = {
 	[OZ_CLASS_OZLed] = OZ_CLASS_OZObject,
 };
 
-const OZ_fn_dealloc OZ_PROTOCOL_RESOLVE_dealloc[OZ_CLASS_COUNT] = {
-	[OZ_CLASS_OZObject] = (OZ_fn_dealloc)OZObject_dealloc,
-	[OZ_CLASS_OZLed] = (OZ_fn_dealloc)OZLed_dealloc,
-};
-
 const OZ_fn_init OZ_PROTOCOL_RESOLVE_init[OZ_CLASS_COUNT] = {
-	[OZ_CLASS_OZObject] = (OZ_fn_init)OZObject_init,
 	[OZ_CLASS_OZLed] = (OZ_fn_init)OZLed_init,
 };
 
