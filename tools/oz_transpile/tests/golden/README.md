@@ -1,15 +1,15 @@
 # Golden-File Tests
 
 Snapshot tests for the oz_transpile transpiler. Each subdirectory is a test
-case with an input AST and expected C output files.
+case with an ObjC source (or handcrafted AST) and expected C output files.
 
 ## Structure
 
 ```
 golden/
   test_name/
-    input.ast.json   # Hand-crafted Clang JSON AST (required)
-    source.m         # Human-readable ObjC equivalent (optional, documentation only)
+    source.m         # ObjC source — compiled via Clang at test time (primary)
+    input.ast.json   # Handcrafted Clang JSON AST (fallback for edge cases)
     config.json      # Extra CLI flags or error expectations (optional)
     expected/        # Expected transpiler output files
       OZObject.h
@@ -18,20 +18,20 @@ golden/
       ...
 ```
 
+When `source.m` exists and `input.ast.json` does not, the test runner
+compiles `source.m` through Clang (`-ast-dump=json`) at test time.
+When only `input.ast.json` exists, it is used directly — this covers
+edge cases that Clang cannot represent (circular inheritance, duplicate
+methods).
+
 ## Adding a new golden test
 
 1. Create a directory under `golden/` with a descriptive name
-2. Write `input.ast.json` (hand-crafted simplified Clang AST)
-3. Optionally add `source.m` for documentation
+2. Write `source.m` with the ObjC code to transpile
+3. Import only the SDK headers you need (`#import <Foundation/OZObject.h>`)
 4. Run `just update-golden` to generate `expected/`
 5. Review the generated files — they become the test's ground truth
 6. Commit the entire directory
-
-To generate an AST from a `.m` file for reference:
-```bash
-just ast-dump path/to/file.m
-```
-Then strip noise fields (`loc`, `range`, `id`) to create a minimal `input.ast.json`.
 
 ## Updating golden files
 
@@ -48,7 +48,7 @@ Add `config.json` to the test directory:
 ```json
 {
   "expect_error": true,
-  "flags": ["--strict"]
+  "expected_stderr": "error message substring"
 }
 ```
 The runner checks the transpiler returns a nonzero exit code.
@@ -58,11 +58,17 @@ The runner checks the transpiler returns a nonzero exit code.
 ```json
 {
   "flags": ["--pool-sizes", "OZLed=8"],
-  "expect_error": false
+  "expect_error": false,
+  "expected_stderr": "substring",
+  "sources": ["source.m"],
+  "needs_sources": true
 }
 ```
 - `flags`: extra CLI arguments passed to the transpiler
 - `expect_error`: if true, transpiler must fail (nonzero exit code)
+- `expected_stderr`: substring that must appear in stderr (error tests)
+- `sources`: source files passed via `--sources` for generic extraction
+- `needs_sources`: auto-pass `source.m` via `--sources` (generic tests)
 
 ## Relationship to behavior tests
 

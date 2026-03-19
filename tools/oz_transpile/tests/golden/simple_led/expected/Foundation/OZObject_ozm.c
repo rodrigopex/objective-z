@@ -39,11 +39,3 @@ int OZObject_cDescription_maxLength_(struct OZObject *self, char *buf, int maxLe
 	return oz_platform_snprint(buf, (size_t)maxLen, "<%s: %p>",
 		oz_class_names[self->oz_class_id], (void *)self);
 }
-struct OZObject * OZObject_init(struct OZObject *self)
-{
-	return self;
-}
-void OZObject_dealloc(struct OZObject *self)
-{
-	OZObject_dispatch_free((struct OZObject *)self);
-}

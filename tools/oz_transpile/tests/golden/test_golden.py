@@ -2,18 +2,22 @@
 #
 # test_golden.py - Golden-file snapshot tests for oz_transpile.
 #
-# Each subdirectory of golden/ with an input.ast.json is a test case.
-# The runner transpiles the input, then diffs every file in expected/
-# against actual output. Mismatch produces a unified diff.
+# Each subdirectory of golden/ with a source.m (or input.ast.json for
+# handcrafted-only cases) is a test case.  When source.m is present the
+# runner compiles it through Clang to get a real AST; otherwise it falls
+# back to the pre-built input.ast.json.
 
 import difflib
 import io
 import os
+import sys
 import tempfile
 
 import pytest
 
 from oz_transpile.__main__ import main
+
+from .conftest import clang_ast_dump
 
 
 def _normalize(text):
@@ -35,7 +39,8 @@ def _collect_files(root):
 
 def test_golden(golden_case):
     name, test_dir, cfg = golden_case
-    ast_file = os.path.join(test_dir, "input.ast.json")
+    source_m = os.path.join(test_dir, "source.m")
+    fallback_ast = os.path.join(test_dir, "input.ast.json")
     expected_dir = os.path.join(test_dir, "expected")
 
     extra_flags = cfg.get("flags", [])
@@ -43,16 +48,24 @@ def test_golden(golden_case):
     expected_stderr = cfg.get("expected_stderr", None)
 
     with tempfile.TemporaryDirectory() as tmpdir:
+        # Determine AST source: compile source.m when no handcrafted AST exists
+        if os.path.isfile(source_m) and not os.path.isfile(fallback_ast):
+            ast_file = os.path.join(tmpdir, "input.ast.json")
+            clang_ast_dump(source_m, ast_file)
+        else:
+            ast_file = fallback_ast
+
         argv = ["--input", ast_file, "--outdir", tmpdir] + extra_flags
 
-        # Support sources config for source-level generic extraction
+        # Pass --sources when config requests source-level extraction
         sources = cfg.get("sources", [])
         if sources:
             src_paths = [os.path.join(test_dir, s) for s in sources]
             argv.extend(["--sources"] + src_paths)
+        elif cfg.get("needs_sources") and os.path.isfile(source_m):
+            argv.extend(["--sources", source_m])
 
         captured_stderr = io.StringIO()
-        import sys
         old_stderr = sys.stderr
         sys.stderr = captured_stderr
         try:

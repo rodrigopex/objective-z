@@ -4,18 +4,49 @@
 
 import json
 import os
+import subprocess
 
 import pytest
 
 GOLDEN_DIR = os.path.dirname(__file__)
+OZ_SDK_DIR = os.path.join(
+    os.path.dirname(__file__), "..", "..", "..", "..", "include", "oz_sdk"
+)
+
+
+def clang_ast_dump(src_file, ast_file):
+    """Compile an ObjC source to Clang JSON AST."""
+    result = subprocess.run(
+        [
+            "clang",
+            "-Xclang",
+            "-ast-dump=json",
+            "-fsyntax-only",
+            "-I",
+            OZ_SDK_DIR,
+            src_file,
+        ],
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"clang failed on {src_file}:\n{result.stderr.decode()}"
+        )
+    json.loads(result.stdout)  # validate JSON
+    with open(ast_file, "wb") as f:
+        f.write(result.stdout)
 
 
 def _discover_golden_dirs():
-    """Find all subdirs of golden/ that contain input.ast.json."""
+    """Find all subdirs of golden/ that contain source.m or input.ast.json."""
     dirs = []
     for entry in sorted(os.listdir(GOLDEN_DIR)):
         full = os.path.join(GOLDEN_DIR, entry)
-        if os.path.isdir(full) and os.path.isfile(os.path.join(full, "input.ast.json")):
+        if not os.path.isdir(full):
+            continue
+        has_src = os.path.isfile(os.path.join(full, "source.m"))
+        has_ast = os.path.isfile(os.path.join(full, "input.ast.json"))
+        if has_src or has_ast:
             dirs.append(entry)
     return dirs
 

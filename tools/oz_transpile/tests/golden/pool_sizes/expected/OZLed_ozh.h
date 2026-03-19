@@ -9,7 +9,7 @@
 struct OZLed {
 	struct OZObject base;
 	int _pin;
-	BOOL _state;
+	bool _state;
 };
 
 struct OZLed * OZLed_initWithPin_(struct OZLed *self, int pin);

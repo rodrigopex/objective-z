@@ -49,36 +49,24 @@ static inline bool oz_isKindOfClass(uint8_t class_id, uint8_t target_class_id)
 
 /* Protocol dispatch function pointer types */
 typedef int (*OZ_fn_color)(struct OZObject *);
-typedef void (*OZ_fn_dealloc)(struct OZObject *);
 typedef void (*OZ_fn_draw)(struct OZObject *);
-typedef struct OZObject * (*OZ_fn_init)(struct OZObject *);
 
 /* Compile-time dispatch: OZ_IMPL macros map class x selector -> direct function */
 #define OZ_IMPL_Circle_color(self, ...)	Circle_color((struct Circle *)(self), ##__VA_ARGS__)
 #define OZ_IMPL_Square_color(self, ...)	Square_color((struct Square *)(self), ##__VA_ARGS__)
-#define OZ_IMPL_OZObject_dealloc(self, ...)	OZObject_dealloc((struct OZObject *)(self), ##__VA_ARGS__)
-#define OZ_IMPL_Circle_dealloc(self, ...)	Circle_dealloc((struct Circle *)(self), ##__VA_ARGS__)
-#define OZ_IMPL_Square_dealloc(self, ...)	Square_dealloc((struct Square *)(self), ##__VA_ARGS__)
 #define OZ_IMPL_Circle_draw(self, ...)	Circle_draw((struct Circle *)(self), ##__VA_ARGS__)
 #define OZ_IMPL_Square_draw(self, ...)	Square_draw((struct Square *)(self), ##__VA_ARGS__)
-#define OZ_IMPL_OZObject_init(self, ...)	OZObject_init((struct OZObject *)(self), ##__VA_ARGS__)
-#define OZ_IMPL_Circle_init(self, ...)	OZObject_init((struct OZObject *)(self), ##__VA_ARGS__)
-#define OZ_IMPL_Square_init(self, ...)	OZObject_init((struct OZObject *)(self), ##__VA_ARGS__)
 
 /* Static dispatch: token concatenation resolves at compile time */
 #define OZ_SEND(cls, sel, self, ...) OZ_IMPL_##cls##_##sel((self), ##__VA_ARGS__)
 
 /* Const protocol dispatch tables (indexed by oz_class_id) */
 extern const OZ_fn_color OZ_PROTOCOL_RESOLVE_color[OZ_CLASS_COUNT];
-extern const OZ_fn_dealloc OZ_PROTOCOL_RESOLVE_dealloc[OZ_CLASS_COUNT];
 extern const OZ_fn_draw OZ_PROTOCOL_RESOLVE_draw[OZ_CLASS_COUNT];
-extern const OZ_fn_init OZ_PROTOCOL_RESOLVE_init[OZ_CLASS_COUNT];
 
 /* OZ_PROTOCOL_SEND macros — polymorphic fallback, caller must ensure obj has no side effects */
 #define OZ_PROTOCOL_SEND_color(obj) OZ_PROTOCOL_RESOLVE_color[((struct OZObject *)(obj))->oz_class_id]((struct OZObject *)(obj))
-#define OZ_PROTOCOL_SEND_dealloc(obj) OZ_PROTOCOL_RESOLVE_dealloc[((struct OZObject *)(obj))->oz_class_id]((struct OZObject *)(obj))
 #define OZ_PROTOCOL_SEND_draw(obj) OZ_PROTOCOL_RESOLVE_draw[((struct OZObject *)(obj))->oz_class_id]((struct OZObject *)(obj))
-#define OZ_PROTOCOL_SEND_init(obj) OZ_PROTOCOL_RESOLVE_init[((struct OZObject *)(obj))->oz_class_id]((struct OZObject *)(obj))
 
 
 void OZObject_dispatch_free(struct OZObject *obj);

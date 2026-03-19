@@ -46,14 +46,10 @@ static inline bool oz_isKindOfClass(uint8_t class_id, uint8_t target_class_id)
 }
 
 /* Protocol dispatch function pointer types */
-typedef void (*OZ_fn_dealloc)(struct OZObject *);
 typedef struct OZObject * (*OZ_fn_init)(struct OZObject *);
 typedef void (*OZ_fn_toggle)(struct OZObject *);
 
 /* Compile-time dispatch: OZ_IMPL macros map class x selector -> direct function */
-#define OZ_IMPL_OZObject_dealloc(self, ...)	OZObject_dealloc((struct OZObject *)(self), ##__VA_ARGS__)
-#define OZ_IMPL_OZLed_dealloc(self, ...)	OZLed_dealloc((struct OZLed *)(self), ##__VA_ARGS__)
-#define OZ_IMPL_OZObject_init(self, ...)	OZObject_init((struct OZObject *)(self), ##__VA_ARGS__)
 #define OZ_IMPL_OZLed_init(self, ...)	OZLed_init((struct OZLed *)(self), ##__VA_ARGS__)
 #define OZ_IMPL_OZLed_toggle(self, ...)	OZLed_toggle((struct OZLed *)(self), ##__VA_ARGS__)
 
@@ -61,12 +57,10 @@ typedef void (*OZ_fn_toggle)(struct OZObject *);
 #define OZ_SEND(cls, sel, self, ...) OZ_IMPL_##cls##_##sel((self), ##__VA_ARGS__)
 
 /* Const protocol dispatch tables (indexed by oz_class_id) */
-extern const OZ_fn_dealloc OZ_PROTOCOL_RESOLVE_dealloc[OZ_CLASS_COUNT];
 extern const OZ_fn_init OZ_PROTOCOL_RESOLVE_init[OZ_CLASS_COUNT];
 extern const OZ_fn_toggle OZ_PROTOCOL_RESOLVE_toggle[OZ_CLASS_COUNT];
 
 /* OZ_PROTOCOL_SEND macros — polymorphic fallback, caller must ensure obj has no side effects */
-#define OZ_PROTOCOL_SEND_dealloc(obj) OZ_PROTOCOL_RESOLVE_dealloc[((struct OZObject *)(obj))->oz_class_id]((struct OZObject *)(obj))
 #define OZ_PROTOCOL_SEND_init(obj) OZ_PROTOCOL_RESOLVE_init[((struct OZObject *)(obj))->oz_class_id]((struct OZObject *)(obj))
 #define OZ_PROTOCOL_SEND_toggle(obj) OZ_PROTOCOL_RESOLVE_toggle[((struct OZObject *)(obj))->oz_class_id]((struct OZObject *)(obj))
 

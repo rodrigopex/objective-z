@@ -6,7 +6,7 @@ OZ_SLAB_DEFINE(oz_slab_Color, sizeof(struct Color), 1, 4);
 
 struct Color * Color_initWithRed_green_blue_(struct Color *self, int r, int g, int b)
 {
-	OZObject_init((struct OZObject *)self);
+	(struct Color *)OZObject_init((struct OZObject *)self);
 	self->_red = r;
 	self->_green = g;
 	self->_blue = b;
