@@ -47,7 +47,7 @@ def clang_collect(source, *, extra_files=None):
         result = subprocess.run(
             [
                 "clang", "-Xclang", "-ast-dump=json", "-fsyntax-only",
-                "-fobjc-runtime=macosx",
+                "-fobjc-runtime=macosx", "-fblocks",
                 "-I", OZ_SDK_DIR, "-I", tmpdir, src_path,
             ],
             capture_output=True,

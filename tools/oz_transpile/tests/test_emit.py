@@ -2396,9 +2396,6 @@ class TestReturnProtocolDispatch:
         _, out = clang_emit("""\
 #import <Foundation/OZObject.h>
 #import <Foundation/OZArray.h>
-@protocol IteratorProtocol
-- (unsigned int)count;
-@end
 @interface Registry : OZObject {
     OZArray *_sensors;
 }
