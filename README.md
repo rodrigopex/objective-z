@@ -4,6 +4,17 @@ Objective-C transpiler for Zephyr RTOS.
 
 Converts `.m` sources to plain C via Clang AST analysis — no ObjC runtime needed. Packaged as a Zephyr module with a Platform Abstraction Layer (PAL) for zero-cost Zephyr integration.
 
+## Why Objective-Z transpiler?
+
+To begin with, Objective-C is a fully object-oriented language that has offered stable features since its initial appearance around 1984/1985.
+Additionally, it provides the speed of C++ with much less complexity—no dynamic features, no runtime, all static!
+Moreover, Objective-C is 100% compatible with C, requiring developers to learn only the object-oriented (OO) part of the language. The rest is familiar, making the transition incremental.
+Another key advantage is automatic object lifetime monitoring (similar to Rust) and automatic object deletion via Objective-C Automatic Reference Counting (ARC) at compile time (no runtime overhead). As a result, there are no manual memory management or leaks, and only a few scenarios require extra attention to ensure ARC operates correctly.
+Furthermore, the language includes Protocols (similar to Rust Traits), providing significant abstraction power at no additional cost.
+In addition, Categories further enhance object-oriented operations by enabling the addition of methods to classes after definition (compile time).
+Notably, the transpiled code is compiled using the same compiler as the rest of the system, ensuring there are no "alien" binaries.
+Finally, there is a growing set of Foundation classes that offer great Zephyr APIs usage and introduce interesting features like OZDefer, which is recognized as a strong feature of Zig. [Reference defer from Zig](https://ziglang.org/documentation/master/#defer).
+
 ## Motivation
 
 ### Why a transpiler?
@@ -24,13 +35,13 @@ Built on Zephyr primitives (`k_mem_slab`, `SYS_INIT`, `k_spinlock_t`, `atomic_t`
 
 ### Why not just C++?
 
-C++ virtual dispatch is 2x slower than Objective-Z vtable dispatch on real hardware (20 vs 10 cycles, nRF52833 @ 64 MHz). Objective-Z also offers:
+C++ virtual dispatch matches Objective-Z vtable dispatch on real hardware (~20 cycles, nRF52833 @ 64 MHz), but Objective-Z offers:
 
 - **Familiar ObjC syntax** — `[obj method]`, `@property`, `@autoreleasepool`, `@synchronized`
 - **Compile-time ARC** — automatic `retain`/`release` with scope-based cleanup, no manual `delete`
 - **Protocol-based polymorphism** — protocol vtables with zero-cost conformance checking
 - **Foundation classes** — `OZString`, `OZArray`, `OZDictionary`, `OZNumber` with fast enumeration
-- **Slab allocation** — 4x faster than C++ `new`/`delete` (246 vs 995 cycles)
+- **Slab allocation** — 4x faster than C++ `new`/`delete` (228 vs 995 cycles)
 
 ## How It Compares
 
@@ -344,9 +355,7 @@ just board=qemu_riscv32 rebuild   # RISC-V target
 
 See [docs/LIMITATIONS.md](docs/LIMITATIONS.md) for the full list. Key limitations:
 
-- **No `switch`/`case`** — use `if`/`else if` chains
 - **Non-capturing blocks only** — blocks that capture local variables produce a diagnostic error
-- **No boxed expressions** — `@(expr)` not supported; use explicit `OZNumber` initializers
 - **No `typedef`** — use explicit types
 - **No `@try`/`@catch`/`@throw`** — exception handling not supported
 - **No dynamic dispatch** for non-protocol methods — all resolved statically
