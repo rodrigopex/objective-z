@@ -15,3 +15,4 @@
 #import "OZHeap.h"
 #import "OZDefer.h"
 #import "OZLog.h"
+#import "Singleton+Protocol.h"
