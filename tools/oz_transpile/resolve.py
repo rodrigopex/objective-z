@@ -421,8 +421,11 @@ def _satisfies_constraint(elem_type: str, constraint: str,
             return True
         return _class_conforms_to(elem_class, required_proto, module)
 
-    # Class constraint (e.g. "OZString *")
-    constraint_class = constraint.rstrip(" *").strip()
+    # Class constraint (e.g. "OZString *", "OZArray<OZNumber *> *")
+    constraint_stripped = constraint.rstrip(" *").strip()
+    # Strip generic params — Clang erases them from the element qualType,
+    # so we compare base class names only (nested generics validated recursively)
+    constraint_class = re.sub(r"<.*>$", "", constraint_stripped)
     elem_class = _extract_class_name(elem_type)
     if not elem_class:
         return True
