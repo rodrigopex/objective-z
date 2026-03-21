@@ -1327,7 +1327,7 @@ void test_func(void) {
         for path, content in out.items():
             if "static struct OZString _oz_str_" in content:
                 assert '"hello"' in content
-                assert "2147483647" in content
+                assert ".immortal = 1" in content
                 found = True
                 break
         assert found
