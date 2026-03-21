@@ -770,6 +770,9 @@ def _emit_root_retain_release(cls: OZClass, module: OZModule,
     out.write("\tif (!self) {\n")
     out.write("\t\treturn;\n")
     out.write("\t}\n")
+    out.write("\tif (self->_meta.immortal) {\n")
+    out.write("\t\treturn;\n")
+    out.write("\t}\n")
     out.write(f"\tif (oz_atomic_dec_and_test(&self->_refcount)) {{\n")
     out.write("\t\tif (self->_meta.deallocating) {\n")
     out.write("\t\t\treturn;\n")
@@ -1741,7 +1744,7 @@ def _emit_expr(node: dict, out: StringIO, ctx: _EmitCtx) -> None:
             ctx._string_dedup[val] = name
             ctx.string_constants.append(
                 f"static struct OZString {name} = {{"
-                f"{{{{.class_id = OZ_CLASS_OZString}}, 2147483647}}, "
+                f"{{{{.class_id = OZ_CLASS_OZString, .immortal = 1}}, 1}}, "
                 f"{len(raw)}, 0, {val}}};"
             )
         out.write(f"(struct OZString *)&{name}")
