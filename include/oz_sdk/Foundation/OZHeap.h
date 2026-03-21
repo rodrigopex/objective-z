@@ -36,4 +36,5 @@ static inline void oz_heap_init(struct oz_heap_inner *inner,
 	struct oz_heap_inner _inner;
 }
 - (id)initWithBuffer:(void *)buf size:(int)size;
+- (int)usedBytes;
 @end
