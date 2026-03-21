@@ -9,9 +9,13 @@
 
 @implementation OZHeap
 
-+ (void)initHeap:(OZHeap *)heap buffer:(void *)buf size:(int)size
+- (id)initWithBuffer:(void *)buf size:(int)size
 {
-	oz_heap_init(&heap->_inner, buf, (size_t)size);
+	self = [super init];
+	if (self != nil) {
+		oz_heap_init(&self->_inner, buf, (size_t)size);
+	}
+	return self;
 }
 
 @end

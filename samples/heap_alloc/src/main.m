@@ -6,8 +6,9 @@
  */
 
 #import <Foundation/Foundation.h>
+#import "App.h"
 
-@interface Sensor : OZObject {
+@interface Sensor: OZObject {
 	int _value;
 }
 - (void)setValue:(int)v;
@@ -39,32 +40,24 @@
 
 @end
 
-static char heapBuffer[2048];
-static OZHeap *myHeap;
-
-@interface App : OZObject
-@end
-
-@implementation App
-
-+ (void)initialize
-{
-	myHeap = [OZHeap alloc];
-	[OZHeap initHeap:myHeap buffer:heapBuffer size:sizeof(heapBuffer)];
-	OZLog("Heap initialized (%d bytes)", (int)sizeof(heapBuffer));
-}
-
-@end
+static char sHeap_buffer[2048];
+static OZHeap *sHeap;
 
 int main(void)
 {
+	sHeap = [[OZHeap alloc] initWithBuffer:sHeap_buffer size:sizeof(sHeap_buffer)];
+	OZLog("Local heap initialized (%d bytes)", (int)sizeof(sHeap_buffer));
+
 	OZLog("=== Heap Allocation Demo ===");
 
 	/* Allocate from user-provided heap */
 	@autoreleasepool {
-		Sensor *s = [[Sensor allocWithHeap:myHeap] init];
+		Sensor *s = [[Sensor allocWithHeap:[App shared].heap] init];
 		[s setValue:42];
 		OZLog("Sensor allocated from user heap, value=%d", [s value]);
+		Sensor *s2 = [[Sensor allocWithHeap:sHeap] init];
+		[s2 setValue:84];
+		OZLog("Sensor allocated from user heap2, value=%d", [s2 value]);
 	}
 
 	/* Allocate from system heap (nil = k_malloc on Zephyr) */

@@ -4,7 +4,7 @@
  *
  * OZHeap wraps a sys_heap (Zephyr) or malloc pool (host) with
  * thread-safe locking.  Declare an OZHeap via slab, initialise
- * with +initHeap:buffer:size:, then pass to [Cls allocWithHeap:].
+ * with -initWithBuffer:size:, then pass to [Cls allocWithHeap:].
  */
 
 #pragma once
@@ -35,5 +35,5 @@ static inline void oz_heap_init(struct oz_heap_inner *inner,
 @interface OZHeap : OZObject {
 	struct oz_heap_inner _inner;
 }
-+ (void)initHeap:(OZHeap *)heap buffer:(void *)buf size:(int)size;
+- (id)initWithBuffer:(void *)buf size:(int)size;
 @end
