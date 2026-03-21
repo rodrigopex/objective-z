@@ -51,6 +51,10 @@ function(objz_transpile_sources target)
     list(PREPEND _ast_flags -I${_oz_inc_dir})
     list(PREPEND _sources ${_oz_number_src} ${_oz_dict_src} ${_oz_array_src}
                           ${_oz_string_src} ${_oz_root_src})
+    if(CONFIG_OBJZ_HEAP)
+        set(_oz_heap_src ${_mod}/src/OZHeap.m)
+        list(PREPEND _sources ${_oz_heap_src})
+    endif()
 
     # Add user-specified include dirs
     foreach(_dir ${OZT_INCLUDE_DIRS})
@@ -125,6 +129,11 @@ function(objz_transpile_sources target)
         set(_pool_flag "--pool-sizes=${OZT_POOL_SIZES}")
     endif()
 
+    set(_heap_flag "")
+    if(CONFIG_OBJZ_HEAP)
+        set(_heap_flag "--heap-support")
+    endif()
+
     file(MAKE_DIRECTORY ${_outdir})
     execute_process(
         COMMAND ${CMAKE_COMMAND} -E env PYTHONPATH=${_transpile_dir}
@@ -136,6 +145,7 @@ function(objz_transpile_sources target)
                 --manifest=${_manifest}
                 --verbose
                 ${_pool_flag}
+                ${_heap_flag}
         RESULT_VARIABLE _rc
     )
     if(NOT _rc EQUAL 0)
@@ -173,7 +183,8 @@ function(objz_transpile_sources target)
            --root-class=${OZT_ROOT_CLASS}
            --manifest=${_manifest}
            --verbose
-           ${_pool_flag})
+           ${_pool_flag}
+           ${_heap_flag})
     # Run transpiler; on failure dump Clang error logs for diagnosis
     string(JOIN " " _err_logs_str ${_err_logs})
     string(APPEND _script_lines
@@ -204,6 +215,9 @@ function(objz_transpile_sources target)
     # PAL: select Zephyr backend and provide include path
     target_include_directories(${target} PRIVATE ${_mod}/include)
     target_compile_definitions(${target} PRIVATE OZ_PLATFORM_ZEPHYR)
+    if(CONFIG_OBJZ_HEAP)
+        target_compile_definitions(${target} PRIVATE OZ_HEAP_SUPPORT)
+    endif()
 
     # Add OZLog support (pure C, uses generated oz_dispatch.h for %@)
     target_sources(${target} PRIVATE ${_mod}/src/OZLog.c)

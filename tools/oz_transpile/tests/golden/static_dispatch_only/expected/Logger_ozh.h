@@ -23,7 +23,7 @@ static inline struct Logger *Logger_alloc(void)
 		return (struct Logger *)0;
 	}
 	memset(obj, 0, sizeof(struct Logger));
-	obj->base.oz_class_id = OZ_CLASS_Logger;
+	obj->base._meta.class_id = OZ_CLASS_Logger;
 	oz_atomic_init(&obj->base._refcount, 1);
 	return obj;
 }

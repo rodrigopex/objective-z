@@ -6,7 +6,7 @@
 #include <string.h>
 
 struct OZObject {
-	enum oz_class_id oz_class_id;
+	struct oz_metadata _meta;
 	oz_atomic_t _refcount;
 };
 
@@ -32,7 +32,7 @@ static inline struct OZObject *OZObject_alloc(void)
 		return (struct OZObject *)0;
 	}
 	memset(obj, 0, sizeof(struct OZObject));
-	obj->oz_class_id = OZ_CLASS_OZObject;
+	obj->_meta.class_id = OZ_CLASS_OZObject;
 	oz_atomic_init(&obj->_refcount, 1);
 	return obj;
 }

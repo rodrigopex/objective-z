@@ -23,7 +23,7 @@ static inline struct Fan *Fan_alloc(void)
 		return (struct Fan *)0;
 	}
 	memset(obj, 0, sizeof(struct Fan));
-	obj->base.oz_class_id = OZ_CLASS_Fan;
+	obj->base._meta.class_id = OZ_CLASS_Fan;
 	oz_atomic_init(&obj->base._refcount, 1);
 	return obj;
 }

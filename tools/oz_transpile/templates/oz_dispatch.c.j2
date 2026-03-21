@@ -30,13 +30,35 @@ const OZ_fn_{{ sel.c_sel }} OZ_PROTOCOL_RESOLVE_{{ sel.c_sel }}[OZ_CLASS_COUNT] 
 
 void {{ root_class }}_dispatch_free(struct {{ root_class }} *obj)
 {
-	switch (obj->oz_class_id) {
+	switch (obj->_meta.class_id) {
 {% for cls in classes %}
 	case OZ_CLASS_{{ cls.name }}: {{ cls.name }}_free((struct {{ cls.name }} *)obj); break;
 {% endfor %}
 	default: break;
 	}
 }
+{% if heap_support %}
+#ifdef OZ_HEAP_SUPPORT
+void *oz_heap_obj_alloc(struct OZHeap *heap, size_t size)
+{
+	if (heap) {
+		return oz_heap_alloc_obj(&heap->_inner, heap, size);
+	}
+	return oz_sys_heap_alloc(size);
+}
+
+void oz_heap_obj_free(void *obj)
+{
+	struct oz_heap_hdr *hdr = (struct oz_heap_hdr *)
+		((char *)obj - offsetof(struct oz_heap_hdr, obj));
+	if (hdr->heap) {
+		oz_heap_free_obj(&hdr->heap->_inner, obj);
+	} else {
+		oz_sys_heap_free(obj);
+	}
+}
+#endif
+{% endif %}
 {% if item_pool_count > 0 %}
 
 OZ_MEM_BLOCKS_DEFINE(oz_item_pool, sizeof(struct {{ root_class }} *), {{ item_pool_count }}, 4);

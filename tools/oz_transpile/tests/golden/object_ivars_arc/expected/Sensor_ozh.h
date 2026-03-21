@@ -23,7 +23,7 @@ static inline struct Sensor *Sensor_alloc(void)
 		return (struct Sensor *)0;
 	}
 	memset(obj, 0, sizeof(struct Sensor));
-	obj->base.oz_class_id = OZ_CLASS_Sensor;
+	obj->base._meta.class_id = OZ_CLASS_Sensor;
 	oz_atomic_init(&obj->base._refcount, 1);
 	return obj;
 }

@@ -192,7 +192,7 @@ class TestClassHeader:
     def test_root_struct(self):
         _, out = clang_emit(_LED_SOURCE)
         content = out["Foundation/OZObject_ozh.h"]
-        assert "oz_class_id" in content
+        assert "struct oz_metadata _meta;" in content
         assert "_refcount" in content
 
     def test_root_struct_no_atomic_props(self):

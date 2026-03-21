@@ -23,7 +23,7 @@ const OZ_fn_toggle OZ_PROTOCOL_RESOLVE_toggle[OZ_CLASS_COUNT] = {
 
 void OZObject_dispatch_free(struct OZObject *obj)
 {
-	switch (obj->oz_class_id) {
+	switch (obj->_meta.class_id) {
 	case OZ_CLASS_OZObject: OZObject_free((struct OZObject *)obj); break;
 	case OZ_CLASS_OZLed: OZLed_free((struct OZLed *)obj); break;
 	default: break;

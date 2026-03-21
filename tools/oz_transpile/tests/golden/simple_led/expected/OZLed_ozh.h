@@ -28,7 +28,7 @@ static inline struct OZLed *OZLed_alloc(void)
 		return (struct OZLed *)0;
 	}
 	memset(obj, 0, sizeof(struct OZLed));
-	obj->base.oz_class_id = OZ_CLASS_OZLed;
+	obj->base._meta.class_id = OZ_CLASS_OZLed;
 	oz_atomic_init(&obj->base._refcount, 1);
 	return obj;
 }

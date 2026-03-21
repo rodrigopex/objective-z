@@ -24,7 +24,7 @@ static inline struct Child *Child_alloc(void)
 		return (struct Child *)0;
 	}
 	memset(obj, 0, sizeof(struct Child));
-	obj->base.base.oz_class_id = OZ_CLASS_Child;
+	obj->base.base._meta.class_id = OZ_CLASS_Child;
 	oz_atomic_init(&obj->base.base._refcount, 1);
 	return obj;
 }

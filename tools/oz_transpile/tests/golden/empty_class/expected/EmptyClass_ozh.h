@@ -21,7 +21,7 @@ static inline struct EmptyClass *EmptyClass_alloc(void)
 		return (struct EmptyClass *)0;
 	}
 	memset(obj, 0, sizeof(struct EmptyClass));
-	obj->base.oz_class_id = OZ_CLASS_EmptyClass;
+	obj->base._meta.class_id = OZ_CLASS_EmptyClass;
 	oz_atomic_init(&obj->base._refcount, 1);
 	return obj;
 }

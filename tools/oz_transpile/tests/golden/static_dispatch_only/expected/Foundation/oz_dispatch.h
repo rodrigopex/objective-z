@@ -14,7 +14,7 @@ struct Timer;
 
 typedef struct OZObject *id;
 
-enum oz_class_id {
+enum oz_class_id_enum {
 	OZ_CLASS_OZObject = 0,
 	OZ_CLASS_Logger = 1,
 	OZ_CLASS_Timer = 2,

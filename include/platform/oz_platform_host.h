@@ -146,6 +146,103 @@ static inline void oz_spin_unlock(oz_spinlock_t *lck, oz_spinlock_key_t key)
 #define oz_platform_snprint(buf, len, fmt, ...) snprintf(buf, len, fmt, ##__VA_ARGS__)
 
 /* ------------------------------------------------------------------ */
+/* Heap allocator — malloc-backed wrapper for allocWithHeap:           */
+/* ------------------------------------------------------------------ */
+
+#ifdef OZ_HEAP_SUPPORT
+#define OZ_HEAP_INNER_DEFINED
+
+/**
+ * @brief Platform-specific heap inner type (Host).
+ *
+ * On the host backend, all heap paths use malloc — the inner struct
+ * only exists for API compatibility with the Zephyr backend.
+ */
+struct oz_heap_inner {
+        void *buf;
+        size_t size;
+        size_t allocated;
+};
+
+struct OZHeap;
+
+struct oz_heap_hdr {
+        struct OZHeap *heap;
+        size_t alloc_size;
+        char obj[];
+};
+
+static inline void oz_heap_init(struct oz_heap_inner *inner,
+                                void *buf, size_t size)
+{
+        inner->buf = buf;
+        inner->size = size;
+        inner->allocated = 0;
+}
+
+static inline void *oz_heap_alloc_obj(struct oz_heap_inner *inner,
+                                      struct OZHeap *owner, size_t size)
+{
+        size_t total = sizeof(struct oz_heap_hdr) + size;
+        void *raw = malloc(total);
+        if (!raw) {
+                return NULL;
+        }
+        inner->allocated += total;
+        struct oz_heap_hdr *hdr = (struct oz_heap_hdr *)raw;
+        hdr->heap = owner;
+        hdr->alloc_size = total;
+        return hdr->obj;
+}
+
+static inline void oz_heap_free_obj(struct oz_heap_inner *inner, void *obj)
+{
+        struct oz_heap_hdr *hdr = (struct oz_heap_hdr *)
+                ((char *)obj - offsetof(struct oz_heap_hdr, obj));
+        if (inner->allocated >= hdr->alloc_size) {
+                inner->allocated -= hdr->alloc_size;
+        }
+        free(hdr);
+}
+
+static inline size_t oz_heap_used_bytes(struct oz_heap_inner *inner)
+{
+        return inner->allocated;
+}
+
+static inline void *oz_sys_heap_alloc(size_t size)
+{
+        size_t total = sizeof(struct oz_heap_hdr) + size;
+        void *raw = malloc(total);
+        if (!raw) {
+                return NULL;
+        }
+        struct oz_heap_hdr *hdr = (struct oz_heap_hdr *)raw;
+        hdr->heap = NULL;
+        hdr->alloc_size = total;
+        return hdr->obj;
+}
+
+static inline void oz_sys_heap_free(void *obj)
+{
+        struct oz_heap_hdr *hdr = (struct oz_heap_hdr *)
+                ((char *)obj - offsetof(struct oz_heap_hdr, obj));
+        free(hdr);
+}
+
+/**
+ * @brief Allocate from an OZHeap or system heap.
+ * @brief Free a heap-allocated object (resolves heap via CONTAINER_OF).
+ *
+ * Defined in the generated oz_dispatch.c — requires struct OZHeap
+ * to be complete.
+ */
+void *oz_heap_obj_alloc(struct OZHeap *heap, size_t size);
+void oz_heap_obj_free(void *obj);
+
+#endif /* OZ_HEAP_SUPPORT */
+
+/* ------------------------------------------------------------------ */
 /* Auto-initialization — constructor attribute for +initialize methods */
 /* ------------------------------------------------------------------ */
 

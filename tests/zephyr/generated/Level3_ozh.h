@@ -22,7 +22,7 @@ static inline struct Level3 *Level3_alloc(void)
 		return (struct Level3 *)0;
 	}
 	memset(obj, 0, sizeof(struct Level3));
-	obj->base.base.base.oz_class_id = OZ_CLASS_Level3;
+	obj->base.base.base._meta.class_id = OZ_CLASS_Level3;
 	oz_atomic_init(&obj->base.base.base._refcount, 1);
 	return obj;
 }
