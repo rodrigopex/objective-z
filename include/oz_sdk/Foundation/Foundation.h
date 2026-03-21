@@ -9,6 +9,7 @@
 
 #import "OZObject.h"
 #import "OZString.h"
+#import "OZMutableString.h"
 #import "OZNumber.h"
 #import "OZArray.h"
 #import "OZDictionary.h"

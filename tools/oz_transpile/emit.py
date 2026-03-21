@@ -126,8 +126,8 @@ def _associate_module_items(module: OZModule) -> None:
 
 """Known foundation class names auto-tagged when --sources is not provided."""
 _FOUNDATION_NAMES = frozenset({
-    "OZObject", "OZString", "OZArray", "OZDictionary", "OZNumber", "OZDefer",
-    "OZHeap", "OZSpinLock",
+    "OZObject", "OZString", "OZMutableString", "OZArray", "OZDictionary",
+    "OZNumber", "OZDefer", "OZHeap", "OZSpinLock",
 })
 
 
