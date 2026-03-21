@@ -3068,6 +3068,18 @@ def _emit_patched_source(source_path: Path, module: OZModule,
     out.write(f'#include "{stem}_ozh.h"\n')
     for dep_stem in dep_stems:
         out.write(f'#include "{dep_stem}_ozh.h"\n')
+
+    # OZ-069: emit enum type_defs needed by the source but not in headers.
+    const_map = _type_def_constant_map(module)
+    header_td: list[str] = []
+    for c in module.classes.values():
+        for td in _header_type_defs_for_class(c, module):
+            if td not in header_td:
+                header_td.append(td)
+    src_type_defs = _scan_source_type_defs([rendered], const_map, header_td)
+    for td in src_type_defs:
+        out.write(f"\n{td}\n")
+
     for cls in classes:
         pc = pool_count_fn(cls.name) if pool_count_fn else 1
         if not isinstance(pc, int) or pc < 1:
@@ -3154,6 +3166,18 @@ def _emit_patched_orphan_source(orphan: OrphanSource, module: OZModule,
     out.write('#include "oz_dispatch.h"\n')
     for dep_stem in dep_stems:
         out.write(f'#include "{dep_stem}_ozh.h"\n')
+
+    # OZ-069: emit enum type_defs needed by orphan source.
+    const_map = _type_def_constant_map(module)
+    header_td: list[str] = []
+    for c in module.classes.values():
+        for td in _header_type_defs_for_class(c, module):
+            if td not in header_td:
+                header_td.append(td)
+    src_type_defs = _scan_source_type_defs([rendered], const_map, header_td)
+    for td in src_type_defs:
+        out.write(f"\n{td}\n")
+
     # Emit orphan statics not already preserved in the roundtrip
     for sv in orphan.statics:
         if sv.name not in orphan_static_names:
