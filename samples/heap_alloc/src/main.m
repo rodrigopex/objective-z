@@ -54,10 +54,10 @@ int main(void)
 	@autoreleasepool {
 		Sensor *s = [[Sensor allocWithHeap:[App shared].heap] init];
 		[s setValue:42];
-		OZLog("Sensor allocated from user heap, value=%d", [s value]);
+		OZLog("Sensor allocated from app heap, value=%d", [s value]);
 		Sensor *s2 = [[Sensor allocWithHeap:sHeap] init];
 		[s2 setValue:84];
-		OZLog("Sensor allocated from user heap2, value=%d", [s2 value]);
+		OZLog("Sensor allocated from user sys heap, value=%d", [s2 value]);
 	}
 
 	/* Allocate from system heap (nil = k_malloc on Zephyr) */
