@@ -1,8 +1,9 @@
 #import "App.h"
 
+@implementation App
+
 static App *app;
 
-@implementation App
 @synthesize heap = _heap;
 
 + (void)initialize
@@ -20,8 +21,7 @@ static App *app;
 	self = [super init];
 	if (self != nil) {
 		static char appHeapBuffer[2048];
-		_heap = [[OZHeap alloc] initWithBuffer:appHeapBuffer
-		                                  size:sizeof(appHeapBuffer)];
+		_heap = [[OZHeap alloc] initWithBuffer:appHeapBuffer size:sizeof(appHeapBuffer)];
 		OZLog("App heap initialized (%d bytes)", (int)sizeof(appHeapBuffer));
 	}
 	return self;
