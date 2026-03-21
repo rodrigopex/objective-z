@@ -12,7 +12,7 @@ void test_alloc_returns_non_null(void)
 void test_class_id_set_correctly(void)
 {
 	struct EmptyClass *obj = EmptyClass_alloc();
-	TEST_ASSERT_EQUAL_INT(OZ_CLASS_EmptyClass, obj->base.oz_class_id);
+	TEST_ASSERT_EQUAL_INT(OZ_CLASS_EmptyClass, obj->base._meta.class_id);
 	OZObject_release((struct OZObject *)obj);
 }
 
