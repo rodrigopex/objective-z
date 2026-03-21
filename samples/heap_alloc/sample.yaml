@@ -12,11 +12,14 @@ common:
     type: multi_line
     ordered: true
     regex:
+      - "App heap initialized"
+      - "Local heap initialized"
       - "=== Heap Allocation Demo ==="
-      - "Heap initialized"
-      - "Sensor allocated from user heap, value=42"
-      - "Sensor allocated from system heap, value=99"
+      - "Sensor allocated from app heap, value=42"
+      - "Sensor allocated from user sys heap, value=84"
       - "Sensor dealloc.*42"
+      - "Sensor dealloc.*84"
+      - "Sensor allocated from system heap, value=99"
       - "Sensor dealloc.*99"
       - "Slab sensor value=7"
       - "Sensor dealloc.*7"
