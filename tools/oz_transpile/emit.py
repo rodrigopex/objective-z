@@ -383,6 +383,68 @@ def _find_implementing_class(cls: OZClass, selector: str,
 
 
 # ---------------------------------------------------------------------------
+# Type-definition scanning for source files (OZ-069)
+# ---------------------------------------------------------------------------
+
+_TYPEDEF_IDENT_RE = re.compile(r'^\t(\w+)', re.MULTILINE)
+
+
+def _type_def_constant_map(module: OZModule) -> dict[str, str]:
+    """Map each enum constant name to its full enum definition.
+
+    Only processes enum type_defs — struct/union field names are too
+    generic (e.g. 'x', 'i') and their definitions are already visible
+    through preserved user_includes (#include directives).
+    """
+    result: dict[str, str] = {}
+    for key, definition in module.type_defs.items():
+        if not key.startswith("enum "):
+            continue
+        for m in _TYPEDEF_IDENT_RE.finditer(definition):
+            ident = m.group(1)
+            result[ident] = definition
+    return result
+
+
+def _scan_source_type_defs(source_texts: list[str],
+                           const_map: dict[str, str],
+                           header_type_defs: list[str]) -> list[str]:
+    """Find type definitions needed by source but not already in header."""
+    needed: list[str] = []
+    for text in source_texts:
+        for ident, definition in const_map.items():
+            if (ident in text
+                    and definition not in needed
+                    and definition not in header_type_defs):
+                needed.append(definition)
+    return needed
+
+
+def _header_type_defs_for_class(cls: OZClass, module: OZModule) -> list[str]:
+    """Compute type_defs that are already emitted in the class header."""
+    type_defs: list[str] = []
+
+    def _add(qual_type: str) -> None:
+        key = qual_type
+        if key not in module.type_defs:
+            key = qual_type.rstrip(" *").removeprefix("const ")
+        if key in module.type_defs and module.type_defs[key] not in type_defs:
+            type_defs.append(module.type_defs[key])
+
+    for ivar in cls.ivars:
+        _add(ivar.oz_type.raw_qual_type)
+    for m in cls.methods:
+        _add(m.return_type.raw_qual_type)
+        for p in m.params:
+            _add(p.oz_type.raw_qual_type)
+    for func in cls.functions:
+        _add(func.return_type.raw_qual_type)
+        for p in func.params:
+            _add(p.oz_type.raw_qual_type)
+    return type_defs
+
+
+# ---------------------------------------------------------------------------
 # Per-class .h
 # ---------------------------------------------------------------------------
 
@@ -690,6 +752,19 @@ def _class_source_ctx(ctx: _EmitCtx, stem: str | None = None,
         init = f" = {sv.init_value}" if sv.init_value is not None else ""
         static_decls.append(f"static {decl_str}{init};")
 
+    # OZ-069: scan rendered source texts for type_def references not
+    # already emitted in any class header (all headers are included via
+    # dep_includes, so type_defs from any header are visible here).
+    header_td: list[str] = []
+    for c in ctx.module.classes.values():
+        for td in _header_type_defs_for_class(c, ctx.module):
+            if td not in header_td:
+                header_td.append(td)
+    const_map = _type_def_constant_map(ctx.module)
+    src_type_defs = _scan_source_type_defs(
+        method_bodies + function_bodies + static_decls + cls.verbatim_lines,
+        const_map, header_td)
+
     return {
         "name": cls.name,
         "stem": stem or _header_stem(cls),
@@ -706,6 +781,7 @@ def _class_source_ctx(ctx: _EmitCtx, stem: str | None = None,
         "verbatim_lines": cls.verbatim_lines,
         "pool_count": pool_count,
         "dep_includes": _dep_includes(cls, ctx.module, stem or _header_stem(cls)),
+        "src_type_defs": src_type_defs,
     }
 
 
@@ -742,12 +818,19 @@ def _orphan_source_ctx(orphan: OrphanSource, module: OZModule,
         init = f" = {sv.init_value}" if sv.init_value is not None else ""
         static_decls.append(f"static {decl_str}{init};")
 
+    # OZ-069: orphan sources have no header, so header_type_defs is empty.
+    const_map = _type_def_constant_map(module)
+    src_type_defs = _scan_source_type_defs(
+        function_bodies + static_decls + orphan.verbatim_lines,
+        const_map, [])
+
     return {
         "stem": orphan.stem,
         "function_bodies": function_bodies,
         "static_decls": static_decls,
         "user_includes": orphan.user_includes,
         "verbatim_lines": orphan.verbatim_lines,
+        "src_type_defs": src_type_defs,
     }
 
 
