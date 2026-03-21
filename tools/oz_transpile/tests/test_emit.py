@@ -3650,3 +3650,520 @@ class TestMacroPassthrough:
         content = out["Foo_ozm.c"]
         assert "DOUBLE(" in content
         assert "self->_count" in content
+
+
+# ===========================================================================
+# OZ-069: Type definitions from headers must be emitted in source files
+# ===========================================================================
+
+class TestTypeDefSourceEmission:
+    """OZ-069: enum/struct/union defined in user header must be emitted in
+    the generated .c when its constants are used in method bodies."""
+
+    # ------------------------------------------------------------------
+    # A. Enum definition in header × usage patterns in source
+    # ------------------------------------------------------------------
+
+    def test_enum_in_header_used_in_method_body(self):
+        """A1: return EnumConst in method body — enum def must be in .c."""
+        _, out = clang_emit("""\
+#import <Foundation/OZObject.h>
+#import "Sensors.h"
+@interface Baro : OZObject
+- (int)sensorType;
+@end
+@implementation Baro
+- (int)sensorType {
+    return SensorTypeBarometer;
+}
+@end
+""", extra_files={
+            "Sensors.h": """\
+enum SensorType {
+    SensorTypeBase = 0,
+    SensorTypeBarometer = 5,
+};
+"""
+        })
+        source = out["Baro_ozm.c"]
+        assert "SensorTypeBarometer" in source
+        assert "enum SensorType" in source
+
+    def test_enum_in_header_used_in_switch_case(self):
+        """A2: case EnumConst: in switch — enum def must be in .c."""
+        _, out = clang_emit("""\
+#import <Foundation/OZObject.h>
+#import "States.h"
+@interface Ctrl : OZObject {
+    int _state;
+}
+- (void)handle;
+@end
+@implementation Ctrl
+- (void)handle {
+    switch (_state) {
+        case StateIdle:
+            break;
+        case StateRunning:
+            break;
+        default:
+            break;
+    }
+}
+@end
+""", extra_files={
+            "States.h": """\
+enum State {
+    StateIdle = 0,
+    StateRunning = 1,
+    StateDone = 2,
+};
+"""
+        })
+        source = out["Ctrl_ozm.c"]
+        assert "StateIdle" in source
+        assert "enum State" in source
+
+    def test_enum_in_header_used_in_comparison(self):
+        """A3: if (x == EnumConst) — enum def must be in .c."""
+        _, out = clang_emit("""\
+#import <Foundation/OZObject.h>
+#import "Levels.h"
+@interface Logger : OZObject {
+    int _level;
+}
+- (BOOL)isDebug;
+@end
+@implementation Logger
+- (BOOL)isDebug {
+    if (_level == LevelDebug) {
+        return YES;
+    }
+    return NO;
+}
+@end
+""", extra_files={
+            "Levels.h": """\
+enum LogLevel {
+    LevelDebug = 0,
+    LevelInfo = 1,
+    LevelError = 2,
+};
+"""
+        })
+        source = out["Logger_ozm.c"]
+        assert "LevelDebug" in source
+        assert "enum LogLevel" in source
+
+    def test_enum_in_header_used_in_method_arg(self):
+        """A4: [self foo:EnumConst] — enum def must be in .c."""
+        _, out = clang_emit("""\
+#import <Foundation/OZObject.h>
+#import "Colors.h"
+@interface Canvas : OZObject
+- (void)setColor:(int)c;
+- (void)draw;
+@end
+@implementation Canvas
+- (void)setColor:(int)c {}
+- (void)draw {
+    [self setColor:ColorRed];
+}
+@end
+""", extra_files={
+            "Colors.h": """\
+enum Color {
+    ColorRed = 0,
+    ColorGreen = 1,
+    ColorBlue = 2,
+};
+"""
+        })
+        source = out["Canvas_ozm.c"]
+        assert "ColorRed" in source
+        assert "enum Color" in source
+
+    def test_enum_in_header_used_in_bitwise(self):
+        """A5: flags | FlagA — enum def must be in .c."""
+        _, out = clang_emit("""\
+#import <Foundation/OZObject.h>
+#import "Flags.h"
+@interface Config : OZObject {
+    int _flags;
+}
+- (void)enable;
+@end
+@implementation Config
+- (void)enable {
+    _flags = _flags | FlagRead | FlagWrite;
+}
+@end
+""", extra_files={
+            "Flags.h": """\
+enum Permission {
+    FlagRead = 1,
+    FlagWrite = 2,
+    FlagExec = 4,
+};
+"""
+        })
+        source = out["Config_ozm.c"]
+        assert "FlagRead" in source
+        assert "FlagWrite" in source
+        assert "enum Permission" in source
+
+    def test_enum_in_header_used_in_assignment(self):
+        """A6: variable = EnumConst in method body — enum def must be in .c."""
+        _, out = clang_emit("""\
+#import <Foundation/OZObject.h>
+#import "Defaults.h"
+@interface App : OZObject {
+    int _mode;
+}
+- (void)reset;
+@end
+@implementation App
+- (void)reset {
+    _mode = ModeNormal;
+}
+@end
+""", extra_files={
+            "Defaults.h": """\
+enum Mode {
+    ModeNormal = 0,
+    ModeSilent = 1,
+};
+"""
+        })
+        source = out["App_ozm.c"]
+        assert "ModeNormal" in source
+        assert "enum Mode" in source
+
+    def test_enum_in_header_used_in_array_subscript(self):
+        """A7: arr[EnumConst] — enum def must be in .c."""
+        _, out = clang_emit("""\
+#import <Foundation/OZObject.h>
+#import "Indices.h"
+@interface Table : OZObject
+- (int)first;
+@end
+@implementation Table
+- (int)first {
+    int data[3] = {10, 20, 30};
+    return data[IdxFirst];
+}
+@end
+""", extra_files={
+            "Indices.h": """\
+enum Idx {
+    IdxFirst = 0,
+    IdxSecond = 1,
+    IdxThird = 2,
+};
+"""
+        })
+        source = out["Table_ozm.c"]
+        assert "IdxFirst" in source
+        assert "enum Idx" in source
+
+    def test_enum_in_m_used_in_method_body(self):
+        """A8: enum defined in .m and used in body — regression guard."""
+        _, out = clang_emit("""\
+#import <Foundation/OZObject.h>
+enum Prio {
+    PrioLow = 0,
+    PrioHigh = 1,
+};
+@interface Task : OZObject
+- (int)priority;
+@end
+@implementation Task
+- (int)priority {
+    return PrioHigh;
+}
+@end
+""")
+        source = out["Task_ozm.c"]
+        assert "PrioHigh" in source
+        assert "enum Prio" in source
+
+    # ------------------------------------------------------------------
+    # B. Cross-file and multi-file patterns
+    # ------------------------------------------------------------------
+
+    def test_enum_header_used_in_two_classes(self):
+        """B1: same header enum used in two classes — both .c get def."""
+        _, out = clang_emit("""\
+#import <Foundation/OZObject.h>
+#import "Shared.h"
+@interface Alpha : OZObject
+- (int)val;
+@end
+@implementation Alpha
+- (int)val {
+    return SharedA;
+}
+@end
+@interface Beta : OZObject
+- (int)val;
+@end
+@implementation Beta
+- (int)val {
+    return SharedB;
+}
+@end
+""", extra_files={
+            "Shared.h": """\
+enum SharedEnum {
+    SharedA = 10,
+    SharedB = 20,
+};
+"""
+        })
+        src_alpha = out["Alpha_ozm.c"]
+        src_beta = out["Beta_ozm.c"]
+        assert "enum SharedEnum" in src_alpha
+        assert "enum SharedEnum" in src_beta
+
+    def test_enum_transitive_header(self):
+        """B2: A.h includes B.h which defines enum — must reach .c."""
+        _, out = clang_emit("""\
+#import <Foundation/OZObject.h>
+#import "Outer.h"
+@interface Dev : OZObject
+- (int)kind;
+@end
+@implementation Dev
+- (int)kind {
+    return DevKindSensor;
+}
+@end
+""", extra_files={
+            "Outer.h": '#import "Inner.h"\n',
+            "Inner.h": """\
+enum DevKind {
+    DevKindSensor = 0,
+    DevKindActuator = 1,
+};
+"""
+        })
+        source = out["Dev_ozm.c"]
+        assert "DevKindSensor" in source
+        assert "enum DevKind" in source
+
+    def test_multiple_enums_from_header(self):
+        """B3: two enums in header, both used in body — both defs in .c."""
+        _, out = clang_emit("""\
+#import <Foundation/OZObject.h>
+#import "Multi.h"
+@interface Mgr : OZObject
+- (int)run;
+@end
+@implementation Mgr
+- (int)run {
+    int s = StatusOK;
+    int p = PrioNormal;
+    return s + p;
+}
+@end
+""", extra_files={
+            "Multi.h": """\
+enum Status {
+    StatusOK = 0,
+    StatusFail = 1,
+};
+enum Prio {
+    PrioNormal = 0,
+    PrioCritical = 1,
+};
+"""
+        })
+        source = out["Mgr_ozm.c"]
+        assert "enum Status" in source
+        assert "enum Prio" in source
+        assert "StatusOK" in source
+        assert "PrioNormal" in source
+
+    # ------------------------------------------------------------------
+    # C. Deduplication — no double emission
+    # ------------------------------------------------------------------
+
+    def test_enum_in_ivar_and_body_no_duplicate(self):
+        """C1: enum in ivar type AND body — def in .h, NOT duplicated in .c."""
+        _, out = clang_emit("""\
+#import <Foundation/OZObject.h>
+#import "Dup.h"
+@interface Worker : OZObject {
+    enum DupState _state;
+}
+- (void)run;
+@end
+@implementation Worker
+- (void)run {
+    _state = DupRunning;
+}
+@end
+""", extra_files={
+            "Dup.h": """\
+enum DupState {
+    DupIdle = 0,
+    DupRunning = 1,
+};
+"""
+        })
+        header = out["Worker_ozh.h"]
+        source = out["Worker_ozm.c"]
+        assert "enum DupState" in header
+        assert "DupRunning" not in source or "enum DupState" not in source
+
+    def test_enum_in_param_and_body_no_duplicate(self):
+        """C2: enum in param type AND body — def in .h, NOT duplicated in .c."""
+        _, out = clang_emit("""\
+#import <Foundation/OZObject.h>
+#import "Dup2.h"
+@interface Handler : OZObject
+- (int)handle:(enum DupAction)a;
+@end
+@implementation Handler
+- (int)handle:(enum DupAction)a {
+    if (a == DupActionStop) {
+        return 0;
+    }
+    return 1;
+}
+@end
+""", extra_files={
+            "Dup2.h": """\
+enum DupAction {
+    DupActionStart = 0,
+    DupActionStop = 1,
+};
+"""
+        })
+        header = out["Handler_ozh.h"]
+        source = out["Handler_ozm.c"]
+        assert "enum DupAction {" in header
+        # Definition block must NOT be duplicated in .c (type name in
+        # method prototype is fine — only the definition block matters).
+        assert "enum DupAction {" not in source
+
+    # ------------------------------------------------------------------
+    # D. Struct/union from header (same bug pattern)
+    # ------------------------------------------------------------------
+
+    def test_struct_in_header_not_emitted_in_source(self):
+        """D1: struct from header — NOT emitted in .c (user_includes
+        preserves the #include, and struct field names are too generic
+        for safe constant scanning)."""
+        _, out = clang_emit("""\
+#import <Foundation/OZObject.h>
+#import "Point.h"
+@interface Geo : OZObject
+- (int)originX;
+@end
+@implementation Geo
+- (int)originX {
+    struct Point p;
+    p.x = 42;
+    return p.x;
+}
+@end
+""", extra_files={
+            "Point.h": """\
+struct Point {
+    int x;
+    int y;
+};
+"""
+        })
+        source = out["Geo_ozm.c"]
+        assert "struct Point {" not in source
+
+    def test_union_in_header_not_emitted_in_source(self):
+        """D2: union from header — NOT emitted in .c (same rationale
+        as D1: user_includes preserves the #include)."""
+        _, out = clang_emit("""\
+#import <Foundation/OZObject.h>
+#import "Val.h"
+@interface Conv : OZObject
+- (int)asInt;
+@end
+@implementation Conv
+- (int)asInt {
+    union Value v;
+    v.f = 3.14f;
+    return v.i;
+}
+@end
+""", extra_files={
+            "Val.h": """\
+union Value {
+    int i;
+    float f;
+};
+"""
+        })
+        source = out["Conv_ozm.c"]
+        assert "union Value {" not in source
+
+    # ------------------------------------------------------------------
+    # E. Orphan sources (no class, just functions)
+    # ------------------------------------------------------------------
+
+    def test_enum_in_header_used_in_two_methods(self):
+        """E1: enum from header used across multiple methods — single def."""
+        _, out = clang_emit("""\
+#import <Foundation/OZObject.h>
+#import "Codes.h"
+@interface Svc : OZObject
+- (int)defaultCode;
+- (int)errorCode;
+@end
+@implementation Svc
+- (int)defaultCode {
+    return CodeOK;
+}
+- (int)errorCode {
+    return CodeFail;
+}
+@end
+""", extra_files={
+            "Codes.h": """\
+enum Code {
+    CodeOK = 0,
+    CodeFail = 1,
+};
+"""
+        })
+        source = out["Svc_ozm.c"]
+        assert "CodeOK" in source
+        assert "CodeFail" in source
+        assert "enum Code {" in source
+        # Definition should appear exactly once
+        assert source.count("enum Code {") == 1
+
+    # ------------------------------------------------------------------
+    # F. Edge cases
+    # ------------------------------------------------------------------
+
+    def test_enum_constant_not_in_body_not_emitted(self):
+        """F1: enum in header, NOT used in any body — def NOT in .c."""
+        _, out = clang_emit("""\
+#import <Foundation/OZObject.h>
+#import "Unused.h"
+@interface Noop : OZObject
+- (void)run;
+@end
+@implementation Noop
+- (void)run {}
+@end
+""", extra_files={
+            "Unused.h": """\
+enum Unused {
+    UnusedA = 0,
+    UnusedB = 1,
+};
+"""
+        })
+        source = out["Noop_ozm.c"]
+        assert "enum Unused" not in source
