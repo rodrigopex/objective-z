@@ -135,7 +135,7 @@ Validate transpiled C on real Zephyr kernel via `native_sim` + `ztest` + `twiste
 ### Transpiler Features
 
 - [x] `@property` / `@synthesize` with atomic and strong semantics
-- [x] `@synchronized` via OZLock RAII class
+- [x] `@synchronized` via OZSpinLock RAII class
 - [x] Subscript syntax (`array[i]`, `dict[key]`)
 - [x] Dynamic allocation for OZArray, OZDictionary, OZNumber (literals can reference locals)
 - [x] Compile-time ARC (scope tracking, auto-dealloc, consumed locals, break/continue cleanup)

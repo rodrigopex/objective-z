@@ -72,7 +72,7 @@ Zero-cost abstraction for transpiler-generated C:
 - **`oz_platform_zephyr.h`** — Zephyr backend: k_mem_slab, Zephyr atomics, spinlock, printk
 - **`oz_platform_host.h`** — Host backend: malloc-backed slab, C11 stdatomic, printf
 - **`oz_platform_types.h`** — Shared type definitions
-- **`oz_lock.h`** — OZLock RAII spinlock wrapper for `@synchronized`
+- **`oz_lock.h`** — OZSpinLock RAII spinlock struct for `@synchronized`
 
 All PAL functions are `static inline` — vanish at -O1+.
 

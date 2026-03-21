@@ -60,16 +60,16 @@ def _render(env: Environment, template_name: str, context: dict,
     return path
 
 
-def _inject_oz_lock(module: OZModule, root_class: str) -> None:
-    """Add synthetic OZLock class if any @synchronized is used."""
+def _inject_oz_spinlock(module: OZModule, root_class: str) -> None:
+    """Add synthetic OZSpinLock class if any @synchronized is used."""
     counts = _count_alloc_calls(module)
-    if counts.get("OZLock", 0) == 0:
+    if counts.get("OZSpinLock", 0) == 0:
         return
-    if "OZLock" in module.classes:
+    if "OZSpinLock" in module.classes:
         return
     max_id = max((c.class_id for c in module.classes.values()), default=-1)
-    module.classes["OZLock"] = OZClass(
-        name="OZLock",
+    module.classes["OZSpinLock"] = OZClass(
+        name="OZSpinLock",
         superclass=root_class,
         ivars=[
             OZIvar("_lock", OZType("oz_spinlock_t")),
@@ -127,7 +127,7 @@ def _associate_module_items(module: OZModule) -> None:
 """Known foundation class names auto-tagged when --sources is not provided."""
 _FOUNDATION_NAMES = frozenset({
     "OZObject", "OZString", "OZArray", "OZDictionary", "OZNumber", "OZDefer",
-    "OZHeap",
+    "OZHeap", "OZSpinLock",
 })
 
 
@@ -152,7 +152,7 @@ def emit(module: OZModule, outdir: str, pool_sizes: dict[str, int] | None = None
     files = []
 
     _associate_module_items(module)
-    _inject_oz_lock(module, root_class)
+    _inject_oz_spinlock(module, root_class)
     _ensure_foundation_tags(module, root_class)
 
     # Compute pool sizes and item pool count early (needed by per-class templates)
@@ -657,7 +657,7 @@ def _class_source_ctx(ctx: _EmitCtx, stem: str | None = None,
             buf.write("{\n}\n")
         method_bodies.append(buf.getvalue().rstrip("\n"))
 
-    if not has_user_dealloc and cls.name != "OZLock":
+    if not has_user_dealloc and cls.name != "OZSpinLock":
         buf = StringIO()
         _emit_auto_dealloc(ctx, buf)
         val = buf.getvalue()
@@ -847,7 +847,7 @@ def _emit_compound_stmt(node: dict, out: StringIO, ctx: _EmitCtx,
 
 def _emit_synchronized_stmt(node: dict, out: StringIO, ctx: _EmitCtx,
                             indent: int) -> None:
-    """Emit @synchronized(obj) { ... } as OZLock RAII block."""
+    """Emit @synchronized(obj) { ... } as OZSpinLock RAII block."""
     inner = node.get("inner", [])
     if len(inner) < 2:
         return
@@ -868,9 +868,9 @@ def _emit_synchronized_stmt(node: dict, out: StringIO, ctx: _EmitCtx,
 
     ctx.scope_vars.append({})
 
-    out.write(f"{tabs1}struct OZLock *{sync_name} = OZLock_initWithObject("
-              f"OZLock_alloc(), (struct {ctx.root_class} *){obj_buf.getvalue()});\n")
-    ctx.scope_vars[-1][sync_name] = OZType("OZLock *")
+    out.write(f"{tabs1}struct OZSpinLock *{sync_name} = OZSpinLock_initWithObject("
+              f"OZSpinLock_alloc(), (struct {ctx.root_class} *){obj_buf.getvalue()});\n")
+    ctx.scope_vars[-1][sync_name] = OZType("OZSpinLock *")
 
     if body.get("kind") == "CompoundStmt":
         for child in body.get("inner", []):
@@ -2654,7 +2654,7 @@ def _count_alloc_calls(module: OZModule) -> dict[str, int]:
         elif kind == "ObjCBoxedExpr":
             counts["OZNumber"] = counts.get("OZNumber", 0) + 1
         elif kind == "ObjCAtSynchronizedStmt":
-            counts["OZLock"] = counts.get("OZLock", 0) + 1
+            counts["OZSpinLock"] = counts.get("OZSpinLock", 0) + 1
         for child in node.get("inner", []):
             walk(child)
 

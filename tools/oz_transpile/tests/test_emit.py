@@ -1718,7 +1718,7 @@ class TestSynthesizedPropertyEmission:
 # ===========================================================================
 
 class TestSynchronized:
-    """Tests for @synchronized -> OZLock RAII emission."""
+    """Tests for @synchronized -> OZSpinLock RAII emission."""
 
     def test_basic_synchronized(self):
         """@synchronized(self) { self->_count = 1; }"""
@@ -1738,13 +1738,13 @@ class TestSynchronized:
 @end
 """)
         content = out["Foo_ozm.c"]
-        assert "struct OZLock *_sync = OZLock_initWithObject(" in content
-        assert "OZLock_alloc()" in content
+        assert "struct OZSpinLock *_sync = OZSpinLock_initWithObject(" in content
+        assert "OZSpinLock_alloc()" in content
         assert "(struct OZObject *)self" in content
         assert "OZObject_release((struct OZObject *)_sync);" in content
 
-    def test_synchronized_oz_lock_slab(self):
-        """OZLock slab generated when @synchronized is used."""
+    def test_synchronized_oz_spinlock_slab(self):
+        """OZSpinLock slab generated when @synchronized is used."""
         _, out = clang_emit("""\
 #import <Foundation/OZObject.h>
 @interface Foo : OZObject
@@ -1757,7 +1757,7 @@ class TestSynchronized:
 @end
 """)
         dispatch_h = out["Foundation/oz_dispatch.h"]
-        assert "OZ_CLASS_OZLock" in dispatch_h
+        assert "OZ_CLASS_OZSpinLock" in dispatch_h
 
     def test_synchronized_early_return(self):
         """Early return inside @synchronized releases the lock."""
@@ -1795,11 +1795,11 @@ class TestSynchronized:
 @end
 """)
         content = out["Foo_ozm.c"]
-        assert "struct OZLock *_sync = " in content
-        assert "struct OZLock *_sync2 = " in content
+        assert "struct OZSpinLock *_sync = " in content
+        assert "struct OZSpinLock *_sync2 = " in content
 
-    def test_no_oz_lock_without_synchronized(self):
-        """OZLock not injected when no @synchronized used."""
+    def test_no_oz_spinlock_without_synchronized(self):
+        """OZSpinLock not injected when no @synchronized used."""
         _, out = clang_emit("""\
 #import <Foundation/OZObject.h>
 @interface Foo : OZObject
@@ -1810,7 +1810,7 @@ class TestSynchronized:
 @end
 """)
         dispatch_h = out["Foundation/oz_dispatch.h"]
-        assert "OZLock" not in dispatch_h
+        assert "OZSpinLock" not in dispatch_h
 
     def test_synchronized_with_ivar_obj(self):
         """@synchronized(_mutex) uses ivar expression."""
@@ -1909,11 +1909,11 @@ class TestSynchronized:
 @end
 """)
         content = out["Foo_ozm.c"]
-        assert "struct OZLock *_sync = " in content
-        assert "struct OZLock *_sync2 = " in content
+        assert "struct OZSpinLock *_sync = " in content
+        assert "struct OZSpinLock *_sync2 = " in content
 
-    def test_dispatch_free_includes_oz_lock(self):
-        """dispatch_free switch includes OZLock case."""
+    def test_dispatch_free_includes_oz_spinlock(self):
+        """dispatch_free switch includes OZSpinLock case."""
         _, out = clang_emit("""\
 #import <Foundation/OZObject.h>
 @interface Foo : OZObject
@@ -1926,7 +1926,7 @@ class TestSynchronized:
 @end
 """)
         dispatch_c = out["Foundation/oz_dispatch.c"]
-        assert "case OZ_CLASS_OZLock: OZLock_free(" in dispatch_c
+        assert "case OZ_CLASS_OZSpinLock: OZSpinLock_free(" in dispatch_c
 
     def test_synchronized_compiles_on_host(self):
         """Generated @synchronized code compiles with GCC on host."""

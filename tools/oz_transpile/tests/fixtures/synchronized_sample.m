@@ -1,4 +1,4 @@
-/* @synchronized sample - tests OZLock RAII transpilation */
+/* @synchronized sample - tests OZSpinLock RAII transpilation */
 
 #import <objc/objc.h>
 

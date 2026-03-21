@@ -102,11 +102,11 @@ class TestSynchronizedE2E:
             assert rc == 0
 
             counter_c = open(os.path.join(tmpdir, "Counter_ozm.c")).read()
-            assert "OZLock_initWithObject(OZLock_alloc()" in counter_c
+            assert "OZSpinLock_initWithObject(OZSpinLock_alloc()" in counter_c
             assert "OZObject_release((struct OZObject *)_sync)" in counter_c
 
             dispatch_h = open(os.path.join(tmpdir, "Foundation", "oz_dispatch.h")).read()
-            assert "OZ_CLASS_OZLock" in dispatch_h
+            assert "OZ_CLASS_OZSpinLock" in dispatch_h
 
     def test_synchronized_counter_resets_per_method(self):
         """Both increment and getCount should use _sync (not _sync2)."""
@@ -114,7 +114,7 @@ class TestSynchronizedE2E:
         with tempfile.TemporaryDirectory() as tmpdir:
             main(["--input", ast_file, "--outdir", tmpdir])
             counter_c = open(os.path.join(tmpdir, "Counter_ozm.c")).read()
-            assert counter_c.count("struct OZLock *_sync =") == 2
+            assert counter_c.count("struct OZSpinLock *_sync =") == 2
             assert "_sync2" not in counter_c
 
 
