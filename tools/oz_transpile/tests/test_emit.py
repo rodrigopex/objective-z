@@ -266,6 +266,16 @@ class TestClassSource:
         assert "oz_atomic_dec_and_test" in content
         assert "OZ_PROTOCOL_SEND_dealloc" in content
 
+    def test_release_immortal_guard(self):
+        """OZ-064: _release skips dealloc when _meta.immortal is set."""
+        _, out = clang_emit(_LED_SOURCE)
+        content = out["Foundation/OZObject_ozm.c"]
+        assert "self->_meta.immortal" in content
+        # immortal guard must appear before the atomic decrement
+        immortal_pos = content.index("self->_meta.immortal")
+        dec_pos = content.index("oz_atomic_dec_and_test")
+        assert immortal_pos < dec_pos
+
 
 # ===========================================================================
 # Body emission tests — migrated to real .m sources
