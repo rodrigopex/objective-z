@@ -1,11 +1,11 @@
-/* Constant string implementation for OZ transpiler samples. */
+/* Immutable string implementation for OZ transpiler. */
 
 #import <Foundation/OZString.h>
 #include <string.h>
 
 @implementation OZString
 
-- (const char *)cStr
+- (const char *)cString
 {
 	return _data;
 }
@@ -32,6 +32,37 @@
 		return NO;
 	}
 	return memcmp(_data, other->_data, _length) == 0;
+}
+
+- (BOOL)isEqualToString:(OZString *)aString
+{
+	if (self == (id)aString) {
+		return YES;
+	}
+	if (aString == nil) {
+		return NO;
+	}
+	if (_length != aString->_length) {
+		return NO;
+	}
+	return memcmp(_data, aString->_data, _length) == 0;
+}
+
+- (BOOL)hasPrefix:(OZString *)prefix
+{
+	if (prefix == nil || prefix->_length > _length) {
+		return NO;
+	}
+	return memcmp(_data, prefix->_data, prefix->_length) == 0;
+}
+
+- (BOOL)hasSuffix:(OZString *)suffix
+{
+	if (suffix == nil || suffix->_length > _length) {
+		return NO;
+	}
+	return memcmp(_data + _length - suffix->_length,
+		      suffix->_data, suffix->_length) == 0;
 }
 
 - (void)dealloc

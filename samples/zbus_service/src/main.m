@@ -36,7 +36,7 @@ int main(void)
 	while (1) {
 		OZString *str = @"Requesting temperature";
 
-		OZLog("%s:", str.cStr);
+		OZLog("%s:", str.cString);
 
 		ret = [[TemperatureService sharedInstance] requestTemperatureWithRef:&temp andTimeout:K_SECONDS(6)];
 
