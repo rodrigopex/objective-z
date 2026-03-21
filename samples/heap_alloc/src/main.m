@@ -51,23 +51,23 @@ int main(void)
 	OZLog("=== Heap Allocation Demo ===");
 
 	OZHeap *appHeap = [App shared].heap;
-	OZLog("app heap before: %d bytes used", [appHeap usedBytes]);
-	OZLog("local heap before: %d bytes used", [sHeap usedBytes]);
+	OZLog("app heap before: %zu bytes used", [appHeap usedBytes]);
+	OZLog("local heap before: %zu bytes used", [sHeap usedBytes]);
 
 	/* Allocate from user-provided heap */
 	@autoreleasepool {
 		Sensor *s = [[Sensor allocWithHeap:appHeap] init];
 		[s setValue:42];
 		OZLog("Sensor allocated from app heap, value=%d", [s value]);
-		OZLog("app heap after alloc: %d bytes used", [appHeap usedBytes]);
+		OZLog("app heap after alloc: %zu bytes used", [appHeap usedBytes]);
 		Sensor *s2 = [[Sensor allocWithHeap:sHeap] init];
 		[s2 setValue:84];
 		OZLog("Sensor allocated from local heap, value=%d", [s2 value]);
-		OZLog("local heap after alloc: %d bytes used", [sHeap usedBytes]);
+		OZLog("local heap after alloc: %zu bytes used", [sHeap usedBytes]);
 	}
 
-	OZLog("app heap after free: %d bytes used", [appHeap usedBytes]);
-	OZLog("local heap after free: %d bytes used", [sHeap usedBytes]);
+	OZLog("app heap after free: %zu bytes used", [appHeap usedBytes]);
+	OZLog("local heap after free: %zu bytes used", [sHeap usedBytes]);
 
 	/* Allocate from system heap (nil = k_malloc on Zephyr) */
 	@autoreleasepool {

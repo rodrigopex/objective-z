@@ -43,5 +43,5 @@ static inline size_t oz_heap_used_bytes(struct oz_heap_inner *inner)
 	struct oz_heap_inner _inner;
 }
 - (id)initWithBuffer:(void *)buf size:(int)size;
-- (int)usedBytes;
+- (size_t)usedBytes;
 @end
