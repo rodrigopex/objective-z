@@ -1,0 +1,26 @@
+sample:
+  description: Heap-based allocation with allocWithHeap
+  name: ObjZ Heap Alloc Demo
+common:
+  tags: objz
+  platform_allow:
+    - mps2/an385
+  integration_platforms:
+    - mps2/an385
+  harness: console
+  harness_config:
+    type: multi_line
+    ordered: true
+    regex:
+      - "=== Heap Allocation Demo ==="
+      - "Heap initialized"
+      - "Sensor allocated from user heap, value=42"
+      - "Sensor allocated from system heap, value=99"
+      - "Sensor dealloc.*42"
+      - "Sensor dealloc.*99"
+      - "Slab sensor value=7"
+      - "Sensor dealloc.*7"
+      - "=== Demo complete ==="
+tests:
+  sample.objz.heap_alloc:
+    tags: objz heap
