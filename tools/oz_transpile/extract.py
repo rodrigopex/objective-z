@@ -100,6 +100,8 @@ def _emit_impl_block(node, source: bytes, out: StringIO) -> None:
                 out.write("{{ " + _loc_key(inner) + " }}\n")
             elif inner and inner.type == "property_implementation":
                 pass  # handled by resolve phase
+            elif inner and inner.type == "declaration":
+                pass  # handled by preamble (static_decls)
             else:
                 out.write(source[child.start_byte:child.end_byte].decode())
                 out.write("\n")
