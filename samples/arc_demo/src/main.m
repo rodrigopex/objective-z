@@ -48,10 +48,10 @@ static Sensor *createSensor(int v)
 }
 
 /* Singleton via +initialize — auto-called before main() */
-@interface AppConfig: OZObject {
+@interface AppConfig: OZObject <SingletonProtocol> {
 	int _refreshRate;
 }
-+ (instancetype)shared;
++ (instancetype)sharedInstance;
 - (int)refreshRate;
 @end
 
@@ -62,7 +62,7 @@ static AppConfig *_sharedConfig;
 {
 	_sharedConfig = [[AppConfig alloc] init];
 }
-+ (instancetype)shared
++ (instancetype)sharedInstance
 {
 	return _sharedConfig;
 }
@@ -108,8 +108,8 @@ int main(void)
 	OZLog("=== ARC Memory Management Demo ===");
 
 	/* Singleton test: +initialize already ran via SYS_INIT */
-	AppConfig *c1 = [AppConfig shared];
-	AppConfig *c2 = [AppConfig shared];
+	AppConfig *c1 = [AppConfig sharedInstance];
+	AppConfig *c2 = [AppConfig sharedInstance];
 	OZLog("singleton refreshRate=%d same=%s", [c1 refreshRate],
 	      c1 == c2 ? "yes" : "no");
 

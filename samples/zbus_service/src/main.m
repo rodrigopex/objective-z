@@ -13,7 +13,7 @@ void print_temp_callback(const struct zbus_channel *chan)
 {
 	const struct msg_temperature_service_report *report = zbus_chan_const_msg(chan);
 
-	if (chan != [[TemperatureService shared] reportChannel]) {
+	if (chan != [[TemperatureService sharedInstance] reportChannel]) {
 		return;
 	}
 
@@ -38,7 +38,7 @@ int main(void)
 
 		OZLog("%s:", str.cStr);
 
-		ret = [[TemperatureService shared] requestTemperatureWithRef:&temp andTimeout:K_SECONDS(6)];
+		ret = [[TemperatureService sharedInstance] requestTemperatureWithRef:&temp andTimeout:K_SECONDS(6)];
 
 		if (ret < 0) {
 			OZLog(" + [main] Could not read the temperature");
@@ -46,7 +46,7 @@ int main(void)
 			OZLog(" + [main] Temperature: %d", temp);
 		}
 
-		[[TemperatureService shared] requestTemperatureWithBlock:^(int ret, int temp) {
+		[[TemperatureService sharedInstance] requestTemperatureWithBlock:^(int ret, int temp) {
 			if (ret < 0) {
 				OZLog(" + [block] Could not read the temperature");
 			} else {

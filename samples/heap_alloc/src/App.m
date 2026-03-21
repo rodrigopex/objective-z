@@ -11,7 +11,7 @@ static App *app;
 	app = [[App alloc] init];
 }
 
-+ (instancetype)shared
++ (instancetype)sharedInstance
 {
 	return app;
 }
