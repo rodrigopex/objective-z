@@ -28,6 +28,9 @@ void OZObject_release(struct OZObject *self)
 	if (!self) {
 		return;
 	}
+	if (self->_meta.immortal) {
+		return;
+	}
 	if (oz_atomic_dec_and_test(&self->_refcount)) {
 		if (self->_meta.deallocating) {
 			return;
