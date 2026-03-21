@@ -90,7 +90,7 @@ static TemperatureService *_shared;
     _shared = [[TemperatureService alloc] init];
 }
 
-+ (instancetype)shared
++ (instancetype)sharedInstance
 {
     return _shared;
 }

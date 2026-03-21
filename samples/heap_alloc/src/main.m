@@ -50,7 +50,7 @@ int main(void)
 
 	OZLog("=== Heap Allocation Demo ===");
 
-	OZHeap *appHeap = [App shared].heap;
+	OZHeap *appHeap = [App sharedInstance].heap;
 	OZLog("app heap before: %zu bytes used", [appHeap usedBytes]);
 	OZLog("local heap before: %zu bytes used", [sHeap usedBytes]);
 

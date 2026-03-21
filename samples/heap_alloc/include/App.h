@@ -1,6 +1,6 @@
 #import <Foundation/Foundation.h>
 
-@interface App : OZObject
+@interface App : OZObject <SingletonProtocol>
 @property(readonly, nonatomic) OZHeap *heap;
-+ (instancetype)shared;
++ (instancetype)sharedInstance;
 @end
