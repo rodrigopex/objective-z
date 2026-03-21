@@ -22,6 +22,7 @@ UNITY_DIR = REPO_ROOT / "tests" / "lib" / "unity"
 GEN_MAIN = REPO_ROOT / "tests" / "tools" / "gen_test_main.py"
 
 POOL_RE = re.compile(r"/\*\s*oz-pool:\s*(.+?)\s*\*/")
+HEAP_RE = re.compile(r"/\*\s*oz-heap\s*\*/")
 
 LLVM_SEARCH_PATHS = [
     Path("/opt/homebrew/opt/llvm/bin"),
@@ -55,6 +56,11 @@ def _parse_pool_sizes(m_path: Path) -> str:
     if match:
         return match.group(1).strip()
     return ""
+
+
+def _needs_heap_support(m_path: Path) -> bool:
+    """Check for /* oz-heap */ marker in .m file."""
+    return bool(HEAP_RE.search(m_path.read_text()))
 
 
 def _default_pool_sizes(m_path: Path) -> str:
@@ -135,12 +141,15 @@ def _run_pipeline_inner(m_path: Path, test_file: Path, tmpdir: Path,
 
     # Step 2: Transpile
     pool_sizes = _parse_pool_sizes(m_path) or _default_pool_sizes(m_path)
+    heap_support = _needs_heap_support(m_path)
     transpile_cmd = [
         sys.executable, "-m", "oz_transpile",
         "--input", str(ast_json),
         "--outdir", str(tmpdir)]
     if pool_sizes:
         transpile_cmd.extend(["--pool-sizes", pool_sizes])
+    if heap_support:
+        transpile_cmd.append("--heap-support")
 
     result = subprocess.run(
         transpile_cmd,
@@ -178,6 +187,8 @@ def _run_pipeline_inner(m_path: Path, test_file: Path, tmpdir: Path,
                 "-I", str(tmpdir / "Foundation"),
                 "-I", str(PAL_INC),
                 "-I", str(UNITY_DIR)]
+    if heap_support:
+        cc_flags.append("-DOZ_HEAP_SUPPORT")
     if sanitize:
         cc_flags.extend([f"-fsanitize={sanitize}",
                          "-fno-omit-frame-pointer"])

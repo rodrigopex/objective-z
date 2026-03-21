@@ -12,7 +12,7 @@ void test_alloc_returns_non_null(void)
 void test_alloc_sets_class_id(void)
 {
 	struct Widget *w = Widget_alloc();
-	TEST_ASSERT_EQUAL_INT(OZ_CLASS_Widget, w->base.oz_class_id);
+	TEST_ASSERT_EQUAL_INT(OZ_CLASS_Widget, w->base._meta.class_id);
 	OZObject_release((struct OZObject *)w);
 }
 

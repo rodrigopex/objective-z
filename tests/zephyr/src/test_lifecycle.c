@@ -17,9 +17,9 @@ ZTEST(lifecycle, test_alloc_returns_non_null)
 ZTEST(lifecycle, test_alloc_sets_class_id)
 {
 	struct Widget *w = Widget_alloc();
-	zassert_equal(OZ_CLASS_Widget, w->base.oz_class_id,
+	zassert_equal(OZ_CLASS_Widget, w->base._meta.class_id,
 		      "Expected class id %d, got %d",
-		      OZ_CLASS_Widget, w->base.oz_class_id);
+		      OZ_CLASS_Widget, w->base._meta.class_id);
 	OZObject_release((struct OZObject *)w);
 }
 

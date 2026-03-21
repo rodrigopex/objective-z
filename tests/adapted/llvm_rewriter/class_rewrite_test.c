@@ -10,7 +10,7 @@
 void test_struct_has_class_id_field(void)
 {
 	struct Vehicle v;
-	/* oz_class_id is the first field after base */
+	/* _meta.class_id is the first field after base */
 	TEST_ASSERT_TRUE(sizeof(v) > 0);
 }
 
