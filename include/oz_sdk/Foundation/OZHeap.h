@@ -30,6 +30,13 @@ static inline void oz_heap_init(struct oz_heap_inner *inner,
 	(void)buf;
 	(void)size;
 }
+
+/** @brief Stub for Clang AST analysis — real definition in PAL. */
+static inline size_t oz_heap_used_bytes(struct oz_heap_inner *inner)
+{
+	(void)inner;
+	return 0;
+}
 #endif
 
 @interface OZHeap : OZObject {
