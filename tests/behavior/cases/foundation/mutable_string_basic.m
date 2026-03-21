@@ -1,17 +1,22 @@
 /* oz-pool: OZObject=1 */
-/* oz-heap */
 #import "OZFoundationBase.h"
 
-@interface MutableStringTest : OZObject
-- (const char *)initFromCString;
-- (unsigned int)initFromCStringLength;
-- (const char *)initFromOZString;
-- (const char *)initWithCapacity;
-- (const char *)appendCString;
-- (const char *)appendString;
-- (const char *)appendGrow;
-- (const char *)setStringReplace;
-- (const char *)setStringNil;
+@interface MutableStringTest : OZObject {
+	OZMutableString *_ms;
+}
+/* setup methods — store result in _ms ivar */
+- (void)buildFromCString;
+- (void)buildFromOZString;
+- (void)buildWithCapacity;
+- (void)buildAndAppendCString;
+- (void)buildAndAppendString;
+- (void)buildAndAppendGrow;
+- (void)buildAndSetString;
+- (void)buildAndSetStringNil;
+/* query methods — read from _ms ivar */
+- (const char *)result;
+- (unsigned int)resultLength;
+/* OZString method tests (no ivar needed) */
 - (BOOL)hasPrefixTrue;
 - (BOOL)hasSuffixTrue;
 - (BOOL)isEqualToStringTrue;
@@ -19,69 +24,64 @@
 
 @implementation MutableStringTest
 
-- (const char *)initFromCString
+- (void)buildFromCString
 {
-	OZMutableString *s = [[OZMutableString alloc] initWithCString:"hello"];
-	return [s cString];
+	_ms = [[OZMutableString alloc] initWithCString:"hello"];
 }
 
-- (unsigned int)initFromCStringLength
-{
-	OZMutableString *s = [[OZMutableString alloc] initWithCString:"hello"];
-	return [s length];
-}
-
-- (const char *)initFromOZString
+- (void)buildFromOZString
 {
 	OZString *src = @"world";
-	OZMutableString *s = [[OZMutableString alloc] initWithString:src];
-	return [s cString];
+	_ms = [[OZMutableString alloc] initWithString:src];
 }
 
-- (const char *)initWithCapacity
+- (void)buildWithCapacity
 {
-	OZMutableString *s = [[OZMutableString alloc] initWithCapacity:64];
-	[s appendCString:"reserved"];
-	return [s cString];
+	_ms = [[OZMutableString alloc] initWithCapacity:64];
+	[_ms appendCString:"reserved"];
 }
 
-- (const char *)appendCString
+- (void)buildAndAppendCString
 {
-	OZMutableString *s = [[OZMutableString alloc] initWithCString:"hello"];
-	[s appendCString:", world"];
-	return [s cString];
+	_ms = [[OZMutableString alloc] initWithCString:"hello"];
+	[_ms appendCString:", world"];
 }
 
-- (const char *)appendString
+- (void)buildAndAppendString
 {
-	OZMutableString *s = [[OZMutableString alloc] initWithCString:"hello"];
+	_ms = [[OZMutableString alloc] initWithCString:"hello"];
 	OZString *suffix = @", world";
-	[s appendString:suffix];
-	return [s cString];
+	[_ms appendString:suffix];
 }
 
-- (const char *)appendGrow
+- (void)buildAndAppendGrow
 {
-	OZMutableString *s = [[OZMutableString alloc] initWithCString:"a"];
-	/* Append enough to trigger buffer growth (initial capacity is 16) */
-	[s appendCString:"bcdefghijklmnop"];
-	[s appendCString:"qrstuvwxyz"];
-	return [s cString];
+	_ms = [[OZMutableString alloc] initWithCString:"a"];
+	[_ms appendCString:"bcdefghijklmnop"];
+	[_ms appendCString:"qrstuvwxyz"];
 }
 
-- (const char *)setStringReplace
+- (void)buildAndSetString
 {
-	OZMutableString *s = [[OZMutableString alloc] initWithCString:"old content"];
+	_ms = [[OZMutableString alloc] initWithCString:"old content"];
 	OZString *replacement = @"new";
-	[s setString:replacement];
-	return [s cString];
+	[_ms setString:replacement];
 }
 
-- (const char *)setStringNil
+- (void)buildAndSetStringNil
 {
-	OZMutableString *s = [[OZMutableString alloc] initWithCString:"content"];
-	[s setString:nil];
-	return [s cString];
+	_ms = [[OZMutableString alloc] initWithCString:"content"];
+	[_ms setString:nil];
+}
+
+- (const char *)result
+{
+	return [_ms cString];
+}
+
+- (unsigned int)resultLength
+{
+	return [_ms length];
 }
 
 - (BOOL)hasPrefixTrue

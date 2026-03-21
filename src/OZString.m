@@ -5,6 +5,12 @@
 
 @implementation OZString
 
+- (id)init
+{
+	self = [super init];
+	return self;
+}
+
 - (const char *)cString
 {
 	return _data;
