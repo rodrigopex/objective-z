@@ -77,7 +77,7 @@ All benchmarks on **nRF52833 DK** (ARM Cortex-M4F @ 64 MHz), DWT cycle counter, 
 - **Compile-time ARC** — scope-based retain/release, auto-dealloc, break/continue cleanup
 - **Categories** — merged at AST collection time
 - **`@property` / `@synthesize`** — atomic and strong semantics
-- **`@synchronized`** — RAII spinlock via OZLock
+- **`@synchronized`** — RAII spinlock via OZSpinLock
 - **`@autoreleasepool`** — scoped memory management
 - **Blocks** — non-capturing blocks transpiled to static C functions
 - **`__block` variables** — promoted to file-scope static
@@ -206,7 +206,7 @@ Zero-cost `static inline` abstraction in `include/platform/`:
 | `oz_platform_zephyr.h`  | `k_mem_slab`, Zephyr atomics, `k_spinlock_t`, `printk` |
 | `oz_platform_host.h`    | malloc-backed slab, C11 `stdatomic`, `printf`  |
 | `oz_platform_types.h`   | Shared type definitions                        |
-| `oz_lock.h`             | OZLock RAII spinlock for `@synchronized`        |
+| `oz_lock.h`             | OZSpinLock RAII spinlock for `@synchronized`    |
 | `oz_assert.h`           | Assertion macros                               |
 
 All PAL functions vanish at `-O1+` — zero runtime overhead.

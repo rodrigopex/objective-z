@@ -47,7 +47,7 @@ PYTHONPATH=tools python3 -m oz_transpile --input source.ast.json --outdir genera
 
 - Class/instance methods, inheritance, protocols
 - `@property` / `@synthesize` (atomic, strong, custom getter/setter, ivar names)
-- `@synchronized` (RAII spinlock via OZLock)
+- `@synchronized` (RAII spinlock via OZSpinLock)
 - Subscript syntax (`array[i]`, `dict[key]`)
 - String, boxed, array, and dictionary literals (`@"..."`, `@42`, `@[...]`, `@{...}`)
 - Non-capturing blocks with `__block` file-scope promotion

@@ -49,7 +49,7 @@ Committed as `90b2670`.
 - Per-class `alloc/free` in `class_header.h.j2` + `OZ_SLAB_DEFINE` in `class_source.c.j2`
 - `dispatch_free` + `oz_item_pool` moved to `oz_dispatch.h/.c`
 - `oz_mem_slabs.h.j2` + `oz_mem_slabs.c.j2` deleted
-- OZLock special case: `#include "platform/oz_lock.h"` instead of struct generation
+- OZSpinLock special case: `#include "platform/oz_lock.h"` instead of struct generation
 - All golden files, tests, benchmarks updated
 
 ---

@@ -283,7 +283,7 @@ def _build_impl_context(
 
     # Auto-dealloc appended to last method's value
     dealloc_text = ""
-    if not has_user_dealloc and cls.name != "OZLock":
+    if not has_user_dealloc and cls.name != "OZSpinLock":
         buf = StringIO()
         _emit_auto_dealloc(ctx, buf)
         dealloc_text = buf.getvalue()

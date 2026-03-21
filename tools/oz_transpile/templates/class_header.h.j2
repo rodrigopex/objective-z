@@ -14,7 +14,7 @@
 
 {{ td }}
 {% endfor %}
-{% if name == "OZLock" %}
+{% if name == "OZSpinLock" %}
 
 #include "platform/oz_lock.h"
 {% else %}
@@ -48,7 +48,7 @@ int {{ name }}_cDescription_maxLength_(struct {{ name }} *self, char *buf, int m
 {% for proto in method_prototypes %}
 {{ proto }};
 {% endfor %}
-{% if auto_dealloc_proto and name != "OZLock" %}
+{% if auto_dealloc_proto and name != "OZSpinLock" %}
 void {{ name }}_dealloc(struct {{ name }} *self);
 {% endif %}
 {% for decl in extern_decls %}
@@ -118,9 +118,9 @@ static inline struct {{ name }} *{{ name }}_init{{ init.suffix }}({{ init.c_type
 
 {% endfor %}
 {% endif %}
-{% if name == "OZLock" %}
+{% if name == "OZSpinLock" %}
 
-static inline struct OZLock *OZLock_initWithObject(struct OZLock *self,
+static inline struct OZSpinLock *OZSpinLock_initWithObject(struct OZSpinLock *self,
 	struct {{ root_class }} *obj)
 {
 	{{ root_class }}_retain(obj);
@@ -129,11 +129,11 @@ static inline struct OZLock *OZLock_initWithObject(struct OZLock *self,
 	return self;
 }
 
-static inline void OZLock_dealloc(struct OZLock *self)
+static inline void OZSpinLock_dealloc(struct OZSpinLock *self)
 {
 	oz_spin_unlock(&self->_lock, self->_key);
 	{{ root_class }}_release((struct {{ root_class }} *)self->_obj);
-	OZLock_free(self);
+	OZSpinLock_free(self);
 }
 
 {% endif %}

@@ -1,11 +1,11 @@
-/* OZLock — RAII spinlock for @synchronized support */
+/* OZSpinLock — RAII spinlock for @synchronized support */
 #pragma once
 
 #include "oz_platform.h"
 
 struct OZObject;
 
-struct OZLock {
+struct OZSpinLock {
 	struct OZObject base;
 	oz_spinlock_t _lock;
 	oz_spinlock_key_t _key;
