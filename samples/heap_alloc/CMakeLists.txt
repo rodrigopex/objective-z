@@ -6,4 +6,6 @@ set(ZEPHYR_EXTRA_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/../../")
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(heap_alloc)
 
-objz_transpile_sources(app src/main.m)
+include_directories(include)
+
+objz_transpile_sources(app src/main.m src/App.m)

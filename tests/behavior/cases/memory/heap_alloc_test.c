@@ -12,7 +12,9 @@ void setUp(void)
 {
 	test_heap = OZHeap_alloc();
 	TEST_ASSERT_NOT_NULL(test_heap);
-	OZHeap_cls_initHeap_buffer_size_(test_heap, heap_buffer, (int)sizeof(heap_buffer));
+	test_heap = (struct OZHeap *)OZHeap_initWithBuffer_size_(
+		test_heap, heap_buffer, (int)sizeof(heap_buffer));
+	TEST_ASSERT_NOT_NULL(test_heap);
 }
 
 void tearDown(void)
