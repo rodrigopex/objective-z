@@ -112,6 +112,9 @@ def _emit_impl_block(node, source: bytes, out: StringIO) -> None:
             out.write(source[child.start_byte:child.end_byte].decode())
             out.write("\n")
 
+        elif child.type == "declaration":
+            pass  # handled by preamble (static_decls)
+
         else:
             text = source[child.start_byte:child.end_byte].decode().strip()
             if text:
