@@ -18,9 +18,9 @@
 	return self;
 }
 
-- (int)usedBytes
+- (size_t)usedBytes
 {
-	return (int)oz_heap_used_bytes(&self->_inner);
+	return oz_heap_used_bytes(&self->_inner);
 }
 
 @end
