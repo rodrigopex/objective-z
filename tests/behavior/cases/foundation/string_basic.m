@@ -10,7 +10,7 @@
 @implementation StringTest
 - (const char *)getHello {
 	OZString *s = @"hello";
-	return [s cStr];
+	return [s cString];
 }
 - (unsigned int)helloLength {
 	OZString *s = @"hello";
