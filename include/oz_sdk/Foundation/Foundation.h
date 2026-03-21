@@ -12,5 +12,6 @@
 #import "OZNumber.h"
 #import "OZArray.h"
 #import "OZDictionary.h"
+#import "OZHeap.h"
 #import "OZDefer.h"
 #import "OZLog.h"

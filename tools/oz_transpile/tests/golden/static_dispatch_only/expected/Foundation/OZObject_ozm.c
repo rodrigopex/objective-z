@@ -19,6 +19,10 @@ void OZObject_release(struct OZObject *self)
 		return;
 	}
 	if (oz_atomic_dec_and_test(&self->_refcount)) {
+		if (self->_meta.deallocating) {
+			return;
+		}
+		self->_meta.deallocating = 1;
 		OZ_PROTOCOL_SEND_dealloc((struct OZObject *)self);
 	}
 }
@@ -38,5 +42,5 @@ BOOL OZObject_isEqual_(struct OZObject *self, struct OZObject *anObject)
 int OZObject_cDescription_maxLength_(struct OZObject *self, char *buf, int maxLen)
 {
 	return oz_platform_snprint(buf, (size_t)maxLen, "<%s: %p>",
-		oz_class_names[self->oz_class_id], (void *)self);
+		oz_class_names[self->_meta.class_id], (void *)self);
 }

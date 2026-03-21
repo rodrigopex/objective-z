@@ -24,7 +24,7 @@ static inline struct Timer *Timer_alloc(void)
 		return (struct Timer *)0;
 	}
 	memset(obj, 0, sizeof(struct Timer));
-	obj->base.oz_class_id = OZ_CLASS_Timer;
+	obj->base._meta.class_id = OZ_CLASS_Timer;
 	oz_atomic_init(&obj->base._refcount, 1);
 	return obj;
 }

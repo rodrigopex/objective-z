@@ -26,7 +26,7 @@ static inline struct Color *Color_alloc(void)
 		return (struct Color *)0;
 	}
 	memset(obj, 0, sizeof(struct Color));
-	obj->base.oz_class_id = OZ_CLASS_Color;
+	obj->base._meta.class_id = OZ_CLASS_Color;
 	oz_atomic_init(&obj->base._refcount, 1);
 	return obj;
 }

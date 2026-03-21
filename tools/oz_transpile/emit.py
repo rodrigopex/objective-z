@@ -127,6 +127,7 @@ def _associate_module_items(module: OZModule) -> None:
 """Known foundation class names auto-tagged when --sources is not provided."""
 _FOUNDATION_NAMES = frozenset({
     "OZObject", "OZString", "OZArray", "OZDictionary", "OZNumber", "OZDefer",
+    "OZHeap",
 })
 
 
@@ -141,7 +142,8 @@ def _ensure_foundation_tags(module: OZModule, root_class: str) -> None:
 
 def emit(module: OZModule, outdir: str, pool_sizes: dict[str, int] | None = None,
          root_class: str = "OZObject",
-         item_pool_size: int | None = None) -> list[str]:
+         item_pool_size: int | None = None,
+         heap_support: bool = False) -> list[str]:
     """Generate C files from OZModule. Returns list of generated file paths."""
     os.makedirs(outdir, exist_ok=True)
     foundation_dir = os.path.join(outdir, "Foundation")
@@ -172,7 +174,8 @@ def emit(module: OZModule, outdir: str, pool_sizes: dict[str, int] | None = None
                          foundation_dir, "oz_dispatch.h"))
     files.append(_render(env, "oz_dispatch.c.j2",
                          _dispatch_source_ctx(module, root_class,
-                                              _item_pool_count),
+                                              _item_pool_count,
+                                              heap_support=heap_support),
                          foundation_dir, "oz_dispatch.c"))
 
     # Group classes by source stem for per-file emission
@@ -193,7 +196,8 @@ def emit(module: OZModule, outdir: str, pool_sizes: dict[str, int] | None = None
                            has_item_pool=_has_item_pool)
             header_parts.append(header_tmpl.render(
                 **_class_header_ctx(ctx, stem,
-                                    item_pool_count=_item_pool_count)))
+                                    item_pool_count=_item_pool_count,
+                                    heap_support=heap_support)))
         header_path = os.path.join(dest, f"{stem}_ozh.h")
         _write_file(header_path, "\n".join(header_parts))
         files.append(header_path)
@@ -305,7 +309,8 @@ def _dispatch_header_ctx(module: OZModule, root_class: str = "OZObject",
 
 
 def _dispatch_source_ctx(module: OZModule, root_class: str = "OZObject",
-                         item_pool_count: int = 0) -> dict:
+                         item_pool_count: int = 0,
+                         heap_support: bool = False) -> dict:
     """Build template context for oz_dispatch.c."""
     sorted_classes = sorted(module.classes.values(), key=lambda c: c.class_id)
 
@@ -346,6 +351,7 @@ def _dispatch_source_ctx(module: OZModule, root_class: str = "OZObject",
         "root_class": root_class,
         "item_pool_count": item_pool_count,
         "initialize_classes": module.initialize_classes,
+        "heap_support": heap_support,
     }
 
 
@@ -381,11 +387,12 @@ def _find_implementing_class(cls: OZClass, selector: str,
 # ---------------------------------------------------------------------------
 
 def _class_header_ctx(ctx: _EmitCtx, stem: str | None = None,
-                      item_pool_count: int = 0) -> dict:
+                      item_pool_count: int = 0,
+                      heap_support: bool = False) -> dict:
     """Build template context for a class header file."""
     cls = ctx.cls
     module = ctx.module
-    _root_builtins = {"_refcount", "oz_class_id"}
+    _root_builtins = {"_refcount", "oz_class_id", "_meta"}
     is_root = not cls.superclass or cls.superclass not in module.classes
 
     user_ivars = []
@@ -404,6 +411,8 @@ def _class_header_ctx(ctx: _EmitCtx, stem: str | None = None,
     has_dealloc = False
     for m in cls.methods:
         if is_root and m.selector in _root_skip_sels:
+            continue
+        if m.selector == "allocWithHeap:" and heap_support:
             continue
         if m.selector == "dealloc":
             has_dealloc = True
@@ -501,6 +510,7 @@ def _class_header_ctx(ctx: _EmitCtx, stem: str | None = None,
         "item_pool_count": item_pool_count,
         "user_includes": cls.user_includes,
         "has_atomic_props": has_atomic_props,
+        "heap_support": heap_support,
     }
 
 
@@ -761,6 +771,10 @@ def _emit_root_retain_release(cls: OZClass, module: OZModule,
     out.write("\t\treturn;\n")
     out.write("\t}\n")
     out.write(f"\tif (oz_atomic_dec_and_test(&self->_refcount)) {{\n")
+    out.write("\t\tif (self->_meta.deallocating) {\n")
+    out.write("\t\t\treturn;\n")
+    out.write("\t\t}\n")
+    out.write("\t\tself->_meta.deallocating = 1;\n")
     out.write(f"\t\tOZ_PROTOCOL_SEND_dealloc((struct {cls.name} *)self);\n")
     out.write("\t}\n")
     out.write("}\n\n")
@@ -786,7 +800,7 @@ def _emit_root_introspection(cls: OZClass, out: StringIO) -> None:
               f"struct {cls.name} *self, char *buf, int maxLen)\n")
     out.write("{\n")
     out.write("\treturn oz_platform_snprint(buf, (size_t)maxLen, \"<%s: %p>\",\n")
-    out.write("\t\toz_class_names[self->oz_class_id], (void *)self);\n")
+    out.write("\t\toz_class_names[self->_meta.class_id], (void *)self);\n")
     out.write("}\n\n")
 
 
@@ -1727,7 +1741,7 @@ def _emit_expr(node: dict, out: StringIO, ctx: _EmitCtx) -> None:
             ctx._string_dedup[val] = name
             ctx.string_constants.append(
                 f"static struct OZString {name} = {{"
-                f"{{OZ_CLASS_OZString, 2147483647}}, "
+                f"{{{{.class_id = OZ_CLASS_OZString}}, 2147483647}}, "
                 f"{len(raw)}, 0, {val}}};"
             )
         out.write(f"(struct OZString *)&{name}")

@@ -13,4 +13,11 @@
 #error "Define OZ_PLATFORM_ZEPHYR or OZ_PLATFORM_HOST"
 #endif
 
+/* Fallback stub for struct oz_heap_inner when heap is not enabled */
+#ifndef OZ_HEAP_INNER_DEFINED
+struct oz_heap_inner {
+        int _opaque;
+};
+#endif
+
 #endif /* OZ_PLATFORM_H */

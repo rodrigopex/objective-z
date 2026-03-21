@@ -24,7 +24,7 @@ static inline struct Base *Base_alloc(void)
 		return (struct Base *)0;
 	}
 	memset(obj, 0, sizeof(struct Base));
-	obj->base.oz_class_id = OZ_CLASS_Base;
+	obj->base._meta.class_id = OZ_CLASS_Base;
 	oz_atomic_init(&obj->base._refcount, 1);
 	return obj;
 }

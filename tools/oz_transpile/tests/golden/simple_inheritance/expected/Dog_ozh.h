@@ -23,7 +23,7 @@ static inline struct Dog *Dog_alloc(void)
 		return (struct Dog *)0;
 	}
 	memset(obj, 0, sizeof(struct Dog));
-	obj->base.base.oz_class_id = OZ_CLASS_Dog;
+	obj->base.base._meta.class_id = OZ_CLASS_Dog;
 	oz_atomic_init(&obj->base.base._refcount, 1);
 	return obj;
 }

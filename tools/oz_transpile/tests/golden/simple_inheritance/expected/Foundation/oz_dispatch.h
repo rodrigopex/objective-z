@@ -14,7 +14,7 @@ struct Dog;
 
 typedef struct OZObject *id;
 
-enum oz_class_id {
+enum oz_class_id_enum {
 	OZ_CLASS_OZObject = 0,
 	OZ_CLASS_Animal = 1,
 	OZ_CLASS_Dog = 2,

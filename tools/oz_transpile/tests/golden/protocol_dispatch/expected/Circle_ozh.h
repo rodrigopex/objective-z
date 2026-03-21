@@ -24,7 +24,7 @@ static inline struct Circle *Circle_alloc(void)
 		return (struct Circle *)0;
 	}
 	memset(obj, 0, sizeof(struct Circle));
-	obj->base.oz_class_id = OZ_CLASS_Circle;
+	obj->base._meta.class_id = OZ_CLASS_Circle;
 	oz_atomic_init(&obj->base._refcount, 1);
 	return obj;
 }

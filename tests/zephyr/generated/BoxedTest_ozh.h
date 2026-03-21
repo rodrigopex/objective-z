@@ -32,7 +32,7 @@ static inline struct BoxedTest *BoxedTest_alloc(void)
 		return (struct BoxedTest *)0;
 	}
 	memset(obj, 0, sizeof(struct BoxedTest));
-	obj->base.oz_class_id = OZ_CLASS_BoxedTest;
+	obj->base._meta.class_id = OZ_CLASS_BoxedTest;
 	oz_atomic_init(&obj->base._refcount, 1);
 	return obj;
 }

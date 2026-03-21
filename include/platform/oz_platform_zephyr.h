@@ -100,6 +100,117 @@ static inline void oz_spin_unlock(oz_spinlock_t *lck, oz_spinlock_key_t key)
 #define oz_platform_snprint(buf, len, fmt, ...) snprintk(buf, len, fmt, ##__VA_ARGS__)
 
 /* ------------------------------------------------------------------ */
+/* Heap allocator — sys_heap + spinlock wrapper for allocWithHeap:     */
+/* ------------------------------------------------------------------ */
+
+#ifdef OZ_HEAP_SUPPORT
+#include <zephyr/sys/sys_heap.h>
+#include <zephyr/sys/mem_stats.h>
+#define OZ_HEAP_INNER_DEFINED
+
+/**
+ * @brief Platform-specific heap inner type (Zephyr).
+ *
+ * Wraps sys_heap + spinlock for thread-safe heap allocation.
+ */
+struct oz_heap_inner {
+        struct sys_heap heap;
+        struct k_spinlock lock;
+};
+
+/**
+ * @brief Heap allocation header — placed before heap-allocated objects.
+ *
+ * Use CONTAINER_OF(obj, struct oz_heap_hdr, obj) to recover the header
+ * and find which heap the object belongs to.
+ */
+struct OZHeap;
+
+struct oz_heap_hdr {
+        struct OZHeap *heap;
+        size_t alloc_size;
+        char obj[];
+};
+
+static inline void oz_heap_init(struct oz_heap_inner *inner,
+                                void *buf, size_t size)
+{
+        sys_heap_init(&inner->heap, buf, size);
+}
+
+static inline void *oz_heap_alloc_obj(struct oz_heap_inner *inner,
+                                      struct OZHeap *owner, size_t size)
+{
+        size_t total = sizeof(struct oz_heap_hdr) + size;
+        k_spinlock_key_t key = k_spin_lock(&inner->lock);
+        void *raw = sys_heap_alloc(&inner->heap, total);
+        k_spin_unlock(&inner->lock, key);
+        if (!raw) {
+                return NULL;
+        }
+        struct oz_heap_hdr *hdr = (struct oz_heap_hdr *)raw;
+        hdr->heap = owner;
+        hdr->alloc_size = total;
+        return hdr->obj;
+}
+
+static inline void oz_heap_free_obj(struct oz_heap_inner *inner, void *obj)
+{
+        struct oz_heap_hdr *hdr = (struct oz_heap_hdr *)
+                ((char *)obj - offsetof(struct oz_heap_hdr, obj));
+        k_spinlock_key_t key = k_spin_lock(&inner->lock);
+        sys_heap_free(&inner->heap, hdr);
+        k_spin_unlock(&inner->lock, key);
+}
+
+static inline void *oz_sys_heap_alloc(size_t size)
+{
+        size_t total = sizeof(struct oz_heap_hdr) + size;
+        void *raw = k_malloc(total);
+        if (!raw) {
+                return NULL;
+        }
+        struct oz_heap_hdr *hdr = (struct oz_heap_hdr *)raw;
+        hdr->heap = NULL;
+        hdr->alloc_size = total;
+        return hdr->obj;
+}
+
+static inline void oz_sys_heap_free(void *obj)
+{
+        struct oz_heap_hdr *hdr = (struct oz_heap_hdr *)
+                ((char *)obj - offsetof(struct oz_heap_hdr, obj));
+        k_free(hdr);
+}
+
+/**
+ * @brief Query user heap allocated bytes via sys_heap_runtime_stats.
+ *
+ * Requires CONFIG_SYS_HEAP_RUNTIME_STATS=y (auto-selected by CONFIG_OBJZ_HEAP).
+ */
+static inline size_t oz_heap_used_bytes(struct oz_heap_inner *inner)
+{
+        struct sys_memory_stats stats;
+        if (sys_heap_runtime_stats_get(&inner->heap, &stats) == 0) {
+                return stats.allocated_bytes;
+        }
+        return 0;
+}
+
+/**
+ * @brief Allocate from an OZHeap or system heap.
+ * @brief Free a heap-allocated object (resolves heap via CONTAINER_OF).
+ *
+ * Defined in the generated oz_dispatch.c — requires struct OZHeap
+ * to be complete, which is only guaranteed after all class headers
+ * have been included.
+ */
+void *oz_heap_obj_alloc(struct OZHeap *heap, size_t size);
+void oz_heap_obj_free(void *obj);
+
+#endif /* OZ_HEAP_SUPPORT */
+
+/* ------------------------------------------------------------------ */
 /* Auto-initialization — SYS_INIT for +initialize methods              */
 /* ------------------------------------------------------------------ */
 

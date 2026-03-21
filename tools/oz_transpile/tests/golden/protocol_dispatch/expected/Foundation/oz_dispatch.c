@@ -28,7 +28,7 @@ const OZ_fn_draw OZ_PROTOCOL_RESOLVE_draw[OZ_CLASS_COUNT] = {
 
 void OZObject_dispatch_free(struct OZObject *obj)
 {
-	switch (obj->oz_class_id) {
+	switch (obj->_meta.class_id) {
 	case OZ_CLASS_OZObject: OZObject_free((struct OZObject *)obj); break;
 	case OZ_CLASS_Circle: Circle_free((struct Circle *)obj); break;
 	case OZ_CLASS_Square: Square_free((struct Square *)obj); break;

@@ -22,7 +22,7 @@ static inline struct Level1 *Level1_alloc(void)
 		return (struct Level1 *)0;
 	}
 	memset(obj, 0, sizeof(struct Level1));
-	obj->base.oz_class_id = OZ_CLASS_Level1;
+	obj->base._meta.class_id = OZ_CLASS_Level1;
 	oz_atomic_init(&obj->base._refcount, 1);
 	return obj;
 }

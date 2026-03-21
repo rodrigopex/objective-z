@@ -21,7 +21,7 @@
 
 struct {{ name }} {
 {% if is_root %}
-	enum oz_class_id oz_class_id;
+	struct oz_metadata _meta;
 	oz_atomic_t _refcount;
 {% if has_atomic_props %}
 	oz_spinlock_t _oz_prop_lock;
@@ -67,13 +67,39 @@ static inline struct {{ name }} *{{ name }}_alloc(void)
 		return (struct {{ name }} *)0;
 	}
 	memset(obj, 0, sizeof(struct {{ name }}));
-	{{ base_chain }}oz_class_id = OZ_CLASS_{{ name }};
+	{{ base_chain }}_meta.class_id = OZ_CLASS_{{ name }};
 	oz_atomic_init(&{{ base_chain }}_refcount, 1);
 	return obj;
 }
+{% if heap_support %}
+
+#ifdef OZ_HEAP_SUPPORT
+static inline struct {{ name }} *{{ name }}_allocWithHeap_(struct OZObject *heap_obj)
+{
+	struct {{ name }} *obj = (struct {{ name }} *)oz_heap_obj_alloc(
+		(struct OZHeap *)heap_obj, sizeof(struct {{ name }}));
+	if (!obj) {
+		return (struct {{ name }} *)0;
+	}
+	memset(obj, 0, sizeof(struct {{ name }}));
+	{{ base_chain }}_meta.class_id = OZ_CLASS_{{ name }};
+	{{ base_chain }}_meta.heap_allocated = 1;
+	oz_atomic_init(&{{ base_chain }}_refcount, 1);
+	return obj;
+}
+#endif
+{% endif %}
 
 static inline void {{ name }}_free(struct {{ name }} *obj)
 {
+{% if heap_support %}
+#ifdef OZ_HEAP_SUPPORT
+	if ({{ base_chain }}_meta.heap_allocated) {
+		oz_heap_obj_free((void *)obj);
+		return;
+	}
+#endif
+{% endif %}
 	oz_slab_free(&oz_slab_{{ name }}, (void *)obj);
 }
 {% if name == "OZNumber" %}

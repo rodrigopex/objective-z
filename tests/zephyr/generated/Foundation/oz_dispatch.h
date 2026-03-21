@@ -24,7 +24,7 @@ struct Widget;
 
 typedef struct OZObject *id;
 
-enum oz_class_id {
+enum oz_class_id_enum {
 	OZ_CLASS_OZObject = 0,
 	OZ_CLASS_Base = 1,
 	OZ_CLASS_BoxedTest = 2,
@@ -138,7 +138,7 @@ typedef int (*OZ_fn_toggle)(struct OZObject *);
 /* Static dispatch: token concatenation resolves at compile time */
 #define OZ_SEND(cls, sel, self, ...) OZ_IMPL_##cls##_##sel((self), ##__VA_ARGS__)
 
-/* Const protocol dispatch tables (indexed by oz_class_id) */
+/* Const protocol dispatch tables (indexed by _meta.class_id) */
 extern const OZ_fn_cDescription_maxLength_ OZ_PROTOCOL_RESOLVE_cDescription_maxLength_[OZ_CLASS_COUNT];
 extern const OZ_fn_dealloc OZ_PROTOCOL_RESOLVE_dealloc[OZ_CLASS_COUNT];
 extern const OZ_fn_depth OZ_PROTOCOL_RESOLVE_depth[OZ_CLASS_COUNT];
@@ -147,12 +147,12 @@ extern const OZ_fn_isEqual_ OZ_PROTOCOL_RESOLVE_isEqual_[OZ_CLASS_COUNT];
 extern const OZ_fn_toggle OZ_PROTOCOL_RESOLVE_toggle[OZ_CLASS_COUNT];
 
 /* OZ_PROTOCOL_SEND macros — polymorphic fallback, caller must ensure obj has no side effects */
-#define OZ_PROTOCOL_SEND_cDescription_maxLength_(obj, buf, maxLen) OZ_PROTOCOL_RESOLVE_cDescription_maxLength_[((struct OZObject *)(obj))->oz_class_id]((struct OZObject *)(obj), (buf), (maxLen))
-#define OZ_PROTOCOL_SEND_dealloc(obj) OZ_PROTOCOL_RESOLVE_dealloc[((struct OZObject *)(obj))->oz_class_id]((struct OZObject *)(obj))
-#define OZ_PROTOCOL_SEND_depth(obj) OZ_PROTOCOL_RESOLVE_depth[((struct OZObject *)(obj))->oz_class_id]((struct OZObject *)(obj))
-#define OZ_PROTOCOL_SEND_init(obj) OZ_PROTOCOL_RESOLVE_init[((struct OZObject *)(obj))->oz_class_id]((struct OZObject *)(obj))
-#define OZ_PROTOCOL_SEND_isEqual_(obj, anObject) OZ_PROTOCOL_RESOLVE_isEqual_[((struct OZObject *)(obj))->oz_class_id]((struct OZObject *)(obj), (anObject))
-#define OZ_PROTOCOL_SEND_toggle(obj) OZ_PROTOCOL_RESOLVE_toggle[((struct OZObject *)(obj))->oz_class_id]((struct OZObject *)(obj))
+#define OZ_PROTOCOL_SEND_cDescription_maxLength_(obj, buf, maxLen) OZ_PROTOCOL_RESOLVE_cDescription_maxLength_[((struct OZObject *)(obj))->_meta.class_id]((struct OZObject *)(obj), (buf), (maxLen))
+#define OZ_PROTOCOL_SEND_dealloc(obj) OZ_PROTOCOL_RESOLVE_dealloc[((struct OZObject *)(obj))->_meta.class_id]((struct OZObject *)(obj))
+#define OZ_PROTOCOL_SEND_depth(obj) OZ_PROTOCOL_RESOLVE_depth[((struct OZObject *)(obj))->_meta.class_id]((struct OZObject *)(obj))
+#define OZ_PROTOCOL_SEND_init(obj) OZ_PROTOCOL_RESOLVE_init[((struct OZObject *)(obj))->_meta.class_id]((struct OZObject *)(obj))
+#define OZ_PROTOCOL_SEND_isEqual_(obj, anObject) OZ_PROTOCOL_RESOLVE_isEqual_[((struct OZObject *)(obj))->_meta.class_id]((struct OZObject *)(obj), (anObject))
+#define OZ_PROTOCOL_SEND_toggle(obj) OZ_PROTOCOL_RESOLVE_toggle[((struct OZObject *)(obj))->_meta.class_id]((struct OZObject *)(obj))
 
 
 void OZObject_dispatch_free(struct OZObject *obj);

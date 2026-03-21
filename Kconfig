@@ -8,4 +8,15 @@ menuconfig OBJZ
 	  (.m) sources to plain C at build time via Clang AST analysis.
 
 if OBJZ
+
+config OBJZ_HEAP
+	bool "Enable heap-based allocation (allocWithHeap:)"
+	depends on HEAP_MEM_POOL_SIZE > 0
+	select SYS_HEAP_RUNTIME_STATS
+	help
+	  Allow objects to be allocated from an OZHeap instead of
+	  k_mem_slab.  Adds +allocWithHeap: class method and
+	  heap-aware free path using CONTAINER_OF.
+	  Enables SYS_HEAP_RUNTIME_STATS for heap usage queries.
+
 endif # OBJZ

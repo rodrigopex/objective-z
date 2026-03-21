@@ -13,7 +13,7 @@ struct Color;
 
 typedef struct OZObject *id;
 
-enum oz_class_id {
+enum oz_class_id_enum {
 	OZ_CLASS_OZObject = 0,
 	OZ_CLASS_Color = 1,
 	OZ_CLASS_COUNT = 2

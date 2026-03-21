@@ -38,6 +38,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                         "array/dict item slots")
     p.add_argument("--verbose", action="store_true",
                    help="Print diagnostic messages")
+    p.add_argument("--heap-support", action="store_true",
+                   help="Enable allocWithHeap: and heap-aware free")
     p.add_argument("--strict", action="store_true",
                    help="Treat diagnostics as errors")
     return p.parse_args(argv)
@@ -194,7 +196,8 @@ def main(argv: list[str] | None = None) -> int:
     pre_emit_diag_count = len(module.diagnostics)
     files = emit(module, args.outdir, pool_sizes=pool_sizes,
                  root_class=args.root_class,
-                 item_pool_size=args.item_pool_size)
+                 item_pool_size=args.item_pool_size,
+                 heap_support=args.heap_support)
 
     # Check for errors added during emit (e.g., unsupported boxed expr, capturing block)
     if module.errors:

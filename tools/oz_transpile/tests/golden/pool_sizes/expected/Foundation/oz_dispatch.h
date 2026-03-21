@@ -13,7 +13,7 @@ struct OZLed;
 
 typedef struct OZObject *id;
 
-enum oz_class_id {
+enum oz_class_id_enum {
 	OZ_CLASS_OZObject = 0,
 	OZ_CLASS_OZLed = 1,
 	OZ_CLASS_COUNT = 2
@@ -56,13 +56,13 @@ typedef void (*OZ_fn_toggle)(struct OZObject *);
 /* Static dispatch: token concatenation resolves at compile time */
 #define OZ_SEND(cls, sel, self, ...) OZ_IMPL_##cls##_##sel((self), ##__VA_ARGS__)
 
-/* Const protocol dispatch tables (indexed by oz_class_id) */
+/* Const protocol dispatch tables (indexed by _meta.class_id) */
 extern const OZ_fn_init OZ_PROTOCOL_RESOLVE_init[OZ_CLASS_COUNT];
 extern const OZ_fn_toggle OZ_PROTOCOL_RESOLVE_toggle[OZ_CLASS_COUNT];
 
 /* OZ_PROTOCOL_SEND macros — polymorphic fallback, caller must ensure obj has no side effects */
-#define OZ_PROTOCOL_SEND_init(obj) OZ_PROTOCOL_RESOLVE_init[((struct OZObject *)(obj))->oz_class_id]((struct OZObject *)(obj))
-#define OZ_PROTOCOL_SEND_toggle(obj) OZ_PROTOCOL_RESOLVE_toggle[((struct OZObject *)(obj))->oz_class_id]((struct OZObject *)(obj))
+#define OZ_PROTOCOL_SEND_init(obj) OZ_PROTOCOL_RESOLVE_init[((struct OZObject *)(obj))->_meta.class_id]((struct OZObject *)(obj))
+#define OZ_PROTOCOL_SEND_toggle(obj) OZ_PROTOCOL_RESOLVE_toggle[((struct OZObject *)(obj))->_meta.class_id]((struct OZObject *)(obj))
 
 
 void OZObject_dispatch_free(struct OZObject *obj);

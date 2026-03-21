@@ -24,7 +24,7 @@ static inline struct Widget *Widget_alloc(void)
 		return (struct Widget *)0;
 	}
 	memset(obj, 0, sizeof(struct Widget));
-	obj->base.oz_class_id = OZ_CLASS_Widget;
+	obj->base._meta.class_id = OZ_CLASS_Widget;
 	oz_atomic_init(&obj->base._refcount, 1);
 	return obj;
 }

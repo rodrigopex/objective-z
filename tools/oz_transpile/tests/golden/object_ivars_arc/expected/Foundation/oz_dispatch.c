@@ -18,7 +18,7 @@ const uint8_t oz_superclass_id[OZ_CLASS_COUNT] = {
 
 void OZObject_dispatch_free(struct OZObject *obj)
 {
-	switch (obj->oz_class_id) {
+	switch (obj->_meta.class_id) {
 	case OZ_CLASS_OZObject: OZObject_free((struct OZObject *)obj); break;
 	case OZ_CLASS_Controller: Controller_free((struct Controller *)obj); break;
 	case OZ_CLASS_Sensor: Sensor_free((struct Sensor *)obj); break;
