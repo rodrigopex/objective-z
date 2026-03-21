@@ -4,15 +4,19 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifndef NULL
+#define NULL ((void *)0)
+#endif
+
 @implementation OZMutableString
 
 - (id)initWithCString:(const char *)str
 {
 	self = [super init];
-	if (str == nil) {
+	if (str == NULL) {
 		unsigned int cap = 16;
 		char *buf = (char *)malloc(cap);
-		if (buf == nil) {
+		if (buf == NULL) {
 			return nil;
 		}
 		buf[0] = '\0';
@@ -23,7 +27,7 @@
 		unsigned int len = (unsigned int)strlen(str);
 		unsigned int cap = len < 16 ? 16 : len * 2;
 		char *buf = (char *)malloc(cap);
-		if (buf == nil) {
+		if (buf == NULL) {
 			return nil;
 		}
 		memcpy(buf, str, len + 1);
@@ -37,7 +41,7 @@
 - (id)initWithString:(OZString *)aString
 {
 	if (aString == nil) {
-		return [self initWithCString:nil];
+		return [self initWithCString:NULL];
 	}
 	return [self initWithCString:[aString cString]];
 }
@@ -47,7 +51,7 @@
 	self = [super init];
 	unsigned int cap = capacity < 16 ? 16 : capacity;
 	char *buf = (char *)malloc(cap);
-	if (buf == nil) {
+	if (buf == NULL) {
 		return nil;
 	}
 	buf[0] = '\0';
@@ -59,7 +63,7 @@
 
 - (void)appendCString:(const char *)str
 {
-	if (str == nil) {
+	if (str == NULL) {
 		return;
 	}
 	unsigned int addLen = (unsigned int)strlen(str);
@@ -73,7 +77,7 @@
 			newCap = newCap * 2;
 		}
 		char *newBuf = (char *)malloc(newCap);
-		if (newBuf == nil) {
+		if (newBuf == NULL) {
 			return;
 		}
 		memcpy(newBuf, _data, _length);
@@ -108,7 +112,7 @@
 			newCap = newCap * 2;
 		}
 		char *newBuf = (char *)malloc(newCap);
-		if (newBuf == nil) {
+		if (newBuf == NULL) {
 			return;
 		}
 		free((void *)_data);
