@@ -4,24 +4,41 @@ Objective-C transpiler for Zephyr RTOS.
 
 Converts `.m` sources to plain C via Clang AST analysis — no ObjC runtime needed. Packaged as a Zephyr module with a Platform Abstraction Layer (PAL) for zero-cost Zephyr integration.
 
-## Why Objective-Z transpiler?
+## Why Objective-Z?
 
-To begin with, Objective-C is a fully object-oriented language that has offered stable features since its initial appearance around 1984/1985.
-Additionally, it provides the speed of C++ with much less complexity—no dynamic features, no runtime, all static!
-Moreover, Objective-C is 100% compatible with C, requiring developers to learn only the object-oriented (OO) part of the language. The rest is familiar, making the transition incremental.
-Another key advantage is automatic object lifetime monitoring (similar to Rust) and automatic object deletion via Objective-C Automatic Reference Counting (ARC) at compile time (no runtime overhead). As a result, there are no manual memory management or leaks, and only a few scenarios require extra attention to ensure ARC operates correctly.
-Furthermore, the language includes Protocols (similar to Rust Traits), providing significant abstraction power at no additional cost.
-In addition, Categories further enhance object-oriented operations by enabling the addition of methods to classes after definition (compile time).
-Notably, the transpiled code is compiled using the same compiler as the rest of the system, ensuring there are no "alien" binaries.
-Finally, there is a growing set of Foundation classes that offer great Zephyr APIs usage and introduce interesting features like OZDefer, which is recognized as a strong feature of Zig. [Reference defer from Zig](https://ziglang.org/documentation/master/#defer).
+If the goal is structured abstractions on Zephyr RTOS, why not reach for Rust, C++, or Zig? Each is a capable language — but each asks the embedded C team to leave C. Objective-Z doesn't.
 
-## Motivation
+### Why not Rust?
 
-### Why a transpiler?
+Rust is an amazing language, but adopting it is emigrating — you don't just add it to your toolbox, you move to a new country. The borrow checker and ownership model aren't incremental learning; they're a wholesale paradigm shift that rewires how developers reason about resource lifetimes. For a team already fluent in `k_mem_slab` and manual lifetime reasoning, that's a long journey away from productive C instincts.
 
-Existing Objective-C runtimes — Apple libobjc, GNUstep libobjc2, ObjFW, mulle-objc — assume a general-purpose heap. All dispatch tables, class tables, selector tables, and object instances are `malloc`'d at runtime. This is fine for desktop/mobile but incompatible with deterministic embedded firmware on MCUs with 64–512 KB RAM and no MMU.
+The toolchain compounds the problem. `rustc` is a separate compiler from the one building Zephyr. Two ABIs, two linker worlds, two debug-info formats that must agree. Every Zephyr kernel API needs FFI bindings — manual or `bindgen`-generated — that break on upstream updates. Kernel-level development (drivers, scheduler extensions, syscall handlers) is effectively off-limits. The resulting binaries are harder to audit for WCET. Rust's tooling on Zephyr exists, but it remains alien to the ecosystem.
+
+### Why not C++?
+
+C++ *looks* like the natural step up from C, but that compatibility is a mirage in Zephyr's world.
+
+The pain point is macros. Zephyr's kernel API is macro-heavy — `K_THREAD_DEFINE`, `K_SEM_DEFINE`, `DEVICE_DT_DEFINE`, `STRUCT_SECTION_ITERABLE` — and these are deeply C-flavored preprocessor constructs. Compiling with `g++` doesn't just add features; it changes the language under the macros. Name mangling, different linkage defaults, stricter type rules — suddenly macros that worked fine in C produce cryptic errors or silent behavioral changes. The whole codebase stops being C.
+
+Beyond macros, C++ itself is the problem. The language has grown so aggressively that it's fractured into eras. A developer comfortable with C++03 faces a nearly foreign language in C++17/20/23: concepts, structured bindings, fold expressions, coroutines, modules. Senior C++ developers — including this project's author — routinely find that "modern" C++ feels like a different language from the one they learned. C++ keeps trying to become something it isn't, moving further from C with every standard revision. For a team whose foundation is embedded C, C++ doesn't meet them where they are — it asks them to chase a moving target.
+
+### Why not Zig?
+
+Zig is the most sympathetic alternative. It's explicitly designed as a "better C": no hidden control flow, no hidden allocations, `comptime` instead of macros, seamless C interop. But it shares Rust's fundamental toolchain problem — it's a separate compiler with its own build integration, its own debug story, and its own binary analysis path. In Zephyr, that means the same two-compiler friction.
+
+The deeper issue is that Zig deliberately does not support OOP. There are no classes, no inheritance, no method dispatch. You can approximate interfaces with `comptime` generics and tagged unions, but it's acrobatics — patterns the language doesn't enforce or assist with. Zig is a genuine improvement over raw C for many use cases, but for a project whose value proposition is bringing structured OOP patterns to embedded developers, it offers the wrong abstraction vocabulary.
+
+### The Objective-Z answer
+
+Objective-Z takes a different path. The developer writes Objective-C — a strict superset of C with familiar syntax for classes, protocols, and message passing. The transpiler converts it to plain, auditable C. The compiler only ever sees C. The linker only ever sees C. `objdump` shows C patterns. WCET analysis works on C. Zephyr macros work because they *are* running in C.
+
+The team gains structured abstractions — classes, protocols, ARC-based RAII, deterministic dispatch — without leaving the world they already understand. No new compiler. No FFI bindings. No moving target. Just C, with better organization.
+
+## Design
 
 ### Static-first design
+
+Existing Objective-C runtimes — Apple libobjc, GNUstep libobjc2, ObjFW, mulle-objc — assume a general-purpose heap. All dispatch tables, class tables, selector tables, and object instances are `malloc`'d at runtime. This is fine for desktop/mobile but incompatible with deterministic embedded firmware on MCUs with 64-512 KB RAM and no MMU.
 
 Objective-Z inverts this: the transpiler converts `.m` files to plain C at build time via Clang JSON AST analysis. Dispatch tables are `const` vtable arrays in `.rodata` (FLASH), indexed by `class_id` — zero RAM overhead. When the receiver type is known at transpile time, protocol calls are resolved to direct function calls via compile-time dispatch (`OZ_SEND` macro with token concatenation). Object instances are served from per-class `k_mem_slab` pools (BSS), auto-generated from AST analysis. No heap allocation needed.
 
@@ -33,15 +50,41 @@ Features that require unbounded runtime allocation — KVO, method swizzling, dy
 
 Built on Zephyr primitives (`k_mem_slab`, `SYS_INIT`, `k_spinlock_t`, `atomic_t`), not POSIX. No libc `malloc` dependency.
 
-### Why not just C++?
+## Features
 
-C++ virtual dispatch matches Objective-Z vtable dispatch on real hardware (~20 cycles, nRF52833 @ 64 MHz), but Objective-Z offers:
+### Dispatch
 
-- **Familiar ObjC syntax** — `[obj method]`, `@property`, `@autoreleasepool`, `@synchronized`
-- **Compile-time ARC** — automatic `retain`/`release` with scope-based cleanup, no manual `delete`
-- **Protocol-based polymorphism** — protocol vtables with zero-cost conformance checking
+- **Static dispatch** — direct C function calls for non-protocol methods (5-9 cycles)
+- **Compile-time dispatch** — protocol calls resolved to direct calls when receiver type is known at transpile time (5-9 cycles)
+- **Protocol vtable dispatch** — `const` vtable arrays in `.rodata` (zero RAM), 19 cycles polymorphic fallback for `id`-typed receivers
+- **Class methods** — static function calls
+
+### Memory Management
+
+- **Compile-time ARC** — scope-based retain/release, auto-dealloc, break/continue cleanup
+- **Per-class slab pools** — auto-generated from AST analysis, zero heap overhead
+- **`@autoreleasepool`** — scoped memory management
 - **Foundation classes** — `OZString`, `OZArray`, `OZDictionary`, `OZNumber` with fast enumeration
-- **Slab allocation** — 4x faster than C++ `new`/`delete` (228 vs 995 cycles)
+
+### Language Features
+
+- **Categories** — merged at AST collection time
+- **`@property` / `@synthesize`** — atomic and strong semantics
+- **`@synchronized`** — RAII spinlock via OZSpinLock
+- **Blocks** — non-capturing blocks transpiled to static C functions
+- **`__block` variables** — promoted to file-scope static
+- **Fast enumeration** — `for (id obj in collection)` via IteratorProtocol
+- **Boxed literals** — `@42`, `@3.14f`, `@YES`
+- **Collection literals** — `@[a, b, c]`, `@{key: value}`
+- **Subscript syntax** — `array[0]`, `dict[@"key"]`
+- **Lightweight generics** — typed collections
+- **`+initialize`** — auto-called before `main()` via `SYS_INIT` (singleton pattern)
+
+### Tooling
+
+- **Three-pass transpiler** — Clang JSON AST -> collect -> resolve -> emit -> pure C
+- **Platform Abstraction Layer** — zero-cost `static inline` with Zephyr and host backends
+- **clangd IDE support** — auto-generated `compile_commands.json`
 
 ## How It Compares
 
@@ -51,8 +94,8 @@ All benchmarks on **nRF52833 DK** (ARM Cortex-M4F @ 64 MHz), DWT cycle counter, 
 
 | Operation                      |  C++ | ObjC (transpiler) |
 | ------------------------------ | ---: | ----------------: |
-| Static / direct call           |    2 |               5–9 |
-| Compile-time protocol dispatch |   — |               5–9 |
+| Static / direct call           |    2 |               5-9 |
+| Compile-time protocol dispatch |   -- |               5-9 |
 | Const vtable dispatch (polymorphic) |   20 |                19 |
 | Slab / heap alloc+dealloc      |  995 |               228 |
 | Atomic increment (refcount)    |   14 |                17 |
@@ -67,36 +110,6 @@ All benchmarks on **nRF52833 DK** (ARM Cortex-M4F @ 64 MHz), DWT cycle counter, 
 | `OZDictionary` | Immutable dictionaries — count, objectForKey, for-in enumeration |
 | `OZNumber`     | Tagged union — int8/16/32 (signed/unsigned), float, BOOL |
 | `OZLog`        | printf-style logging with `%@` object specifier |
-
-## Features
-
-- **Three-pass transpiler** — Clang JSON AST → collect → resolve → emit → pure C
-- **Static dispatch** — direct C function calls for non-protocol methods (5–9 cycles)
-- **Compile-time dispatch** — protocol calls resolved to direct calls when receiver type known at transpile time (5–9 cycles)
-- **Protocol vtable dispatch** — `const` vtable arrays in `.rodata` (zero RAM), 19 cycles polymorphic fallback for `id`-typed receivers
-- **Compile-time ARC** — scope-based retain/release, auto-dealloc, break/continue cleanup
-- **Categories** — merged at AST collection time
-- **`@property` / `@synthesize`** — atomic and strong semantics
-- **`@synchronized`** — RAII spinlock via OZSpinLock
-- **`@autoreleasepool`** — scoped memory management
-- **Blocks** — non-capturing blocks transpiled to static C functions
-- **`__block` variables** — promoted to file-scope static
-- **Fast enumeration** — `for (id obj in collection)` via IteratorProtocol
-- **Boxed literals** — `@42`, `@3.14f`, `@YES`
-- **Collection literals** — `@[a, b, c]`, `@{key: value}`
-- **Subscript syntax** — `array[0]`, `dict[@"key"]`
-- **Lightweight generics** — typed collections
-- **`+initialize`** — auto-called before `main()` via `SYS_INIT` (singleton pattern)
-- **Per-class slab pools** — auto-generated from AST analysis, zero heap overhead
-- **Platform Abstraction Layer** — zero-cost `static inline` with Zephyr and host backends
-- **clangd IDE support** — auto-generated `compile_commands.json`
-
-## Prerequisites
-
-- Zephyr SDK + west (see [Zephyr Getting Started](https://docs.zephyrproject.org/latest/develop/getting_started/index.html))
-- Clang 20+ (for AST analysis — Apple Clang works for ARM, Homebrew LLVM for RISC-V; older versions may crash on ObjC JSON AST dump)
-- Python 3
-- [just](https://github.com/casey/just) (build automation)
 
 ## Quick Start
 
@@ -185,7 +198,7 @@ The transpiler converts this to plain C: `MyFirstObject_greet(self)` for instanc
 ## Architecture
 
 ```
-.m sources → Clang JSON AST → oz_transpile (Python) → .h + .c → GCC → binary
+.m sources -> Clang JSON AST -> oz_transpile (Python) -> .h + .c -> GCC -> binary
 ```
 
 ### Transpiler Pipeline
@@ -222,24 +235,50 @@ For each class, the transpiler emits:
 
 ## Using in Your Project
 
-### 1. Directory layout
+### 1. Add Objective-Z to your west manifest
+
+In your application's `west.yml`, add objective-z as a project:
+
+```yaml
+manifest:
+  remotes:
+    - name: zephyrproject-rtos
+      url-base: https://github.com/zephyrproject-rtos
+
+  projects:
+    - name: zephyr
+      remote: zephyrproject-rtos
+      revision: main
+      import:
+        name-allowlist:
+          - cmsis
+
+    - name: objective-z
+      url: https://github.com/rodrigopex/objective-z/
+      revision: main
+      path: objective-z
+
+  self:
+    path: my_app
+```
+
+Then run `west update` to fetch the module.
+
+### 2. Directory layout
 
 ```
 my_app/
+├── west.yml
 ├── CMakeLists.txt
 ├── prj.conf
-├── src/
-│   └── main.m
-└── ../objective-z/   # Objective-Z module
+└── src/
+    └── main.m
 ```
 
-### 2. CMakeLists.txt
+### 3. CMakeLists.txt
 
 ```cmake
 cmake_minimum_required(VERSION 3.20.0)
-
-# Register Objective-Z as an extra module
-set(ZEPHYR_EXTRA_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/../objective-z/")
 
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(my_app)
@@ -248,15 +287,15 @@ project(my_app)
 objz_transpile_sources(app src/main.m)
 ```
 
-### 3. prj.conf
+### 4. prj.conf
 
 ```ini
 CONFIG_OBJZ=y
 ```
 
-That's it. The transpiler automatically includes Foundation classes (OZObject, OZString, OZArray, OZDictionary, OZNumber) and generates slab pools for all classes found in the AST.
+The transpiler automatically includes Foundation classes (OZObject, OZString, OZArray, OZDictionary, OZNumber) and generates slab pools for all classes found in the AST.
 
-### 4. Write your .m file
+### 5. Write your .m file
 
 ```objc
 #import <Foundation/Foundation.h>
@@ -283,12 +322,12 @@ int main(void)
     Sensor *s = [[Sensor alloc] init];
     [s setValue:42];
     OZLog("value=%d", [s value]);
-    /* ARC releases s here → dealloc fires */
+    /* ARC releases s here -> dealloc fires */
     return 0;
 }
 ```
 
-### 5. Build
+### 6. Build
 
 ```sh
 west build -p -b mps2/an385 .
@@ -308,7 +347,14 @@ objz_transpile_sources(<target> <source1.m> [source2.m ...]
 | -------------- | ---------- | ---------------------------------------- |
 | `ROOT_CLASS`   | `OZObject` | Root class name for hierarchy resolution |
 | `POOL_SIZES`   | auto       | Override slab pool sizes per class       |
-| `INCLUDE_DIRS` | —          | Additional include directories for AST   |
+| `INCLUDE_DIRS` | --         | Additional include directories for AST   |
+
+## Prerequisites
+
+- Zephyr SDK + west (see [Zephyr Getting Started](https://docs.zephyrproject.org/latest/develop/getting_started/index.html))
+- Clang 20+ (for AST analysis — Apple Clang works for ARM, Homebrew LLVM for RISC-V; older versions may crash on ObjC JSON AST dump)
+- Python 3
+- [just](https://github.com/casey/just) (build automation)
 
 ## Configuration
 
@@ -360,6 +406,9 @@ See [docs/LIMITATIONS.md](docs/LIMITATIONS.md) for the full list. Key limitation
 - **No `@try`/`@catch`/`@throw`** — exception handling not supported
 - **No dynamic dispatch** for non-protocol methods — all resolved statically
 - **OZNumber**: 8/16/32-bit integers and float only (no int64/double)
+
+<details>
+<summary><strong>ARC Guide</strong></summary>
 
 ## ARC Guide
 
@@ -421,7 +470,7 @@ void demo(void)
 {
     Driver *d = [[Driver alloc] init];
     d.sensor = [[Sensor alloc] init];
-    /* ARC releases d → .cxx_destruct releases sensor → both dealloc */
+    /* ARC releases d -> .cxx_destruct releases sensor -> both dealloc */
 }
 ```
 
@@ -463,7 +512,7 @@ Use `@autoreleasepool` when:
 ARC has no weak references (`__weak` panics at runtime). If two objects hold `strong` references to each other, neither can be deallocated:
 
 ```objc
-/* PROBLEM: direct cycle — Parent ↔ Child */
+/* PROBLEM: direct cycle — Parent <-> Child */
 @interface Parent: OZObject
 @property (nonatomic) Child *child;   /* strong by default */
 @end
@@ -494,7 +543,7 @@ void no_leak(void)
     b.next = a;
 
     b.next = nil; /* break cycle before scope exit */
-    /* ARC releases a → releases b → both dealloc */
+    /* ARC releases a -> releases b -> both dealloc */
 }
 ```
 
@@ -507,6 +556,11 @@ void no_leak(void)
 | Use `@autoreleasepool` in loops/threads | Create strong reference cycles                  |
 | Use `strong` properties for ownership   | Assume temporaries are released immediately     |
 | Break cycles manually before scope exit | Use `__weak` (not supported, panics at runtime) |
+
+</details>
+
+<details>
+<summary><strong>Benchmark</strong></summary>
 
 ## Benchmark
 
@@ -532,7 +586,7 @@ Transpiler uses `const` vtable arrays in `.rodata` indexed by `class_id`. When t
 | Const vtable dispatch (depth=1)   |     19 |  296 |
 | Const vtable dispatch (depth=2)   |     19 |  296 |
 
-> **Key result:** With compile-time dispatch, most protocol calls resolve to direct function calls (5–9 cycles) when the receiver type is known at transpile time — same cost as static dispatch. Const vtable dispatch (19 cycles, depth-independent) is the polymorphic fallback for `id`-typed receivers. Vtable arrays are in `.rodata` (FLASH) — zero RAM overhead. C++ virtual calls (20 cycles) use vptr indirection from RAM.
+> **Key result:** With compile-time dispatch, most protocol calls resolve to direct function calls (5-9 cycles) when the receiver type is known at transpile time — same cost as static dispatch. Const vtable dispatch (19 cycles, depth-independent) is the polymorphic fallback for `id`-typed receivers. Vtable arrays are in `.rodata` (FLASH) — zero RAM overhead. C++ virtual calls (20 cycles) use vptr indirection from RAM.
 
 ### Object Lifecycle
 
@@ -580,16 +634,14 @@ Comparison of `printk`, Zephyr `LOG_INF` (minimal mode), and `OZLog` (50 iterati
 
 **Key takeaways:**
 
-- **Compile-time dispatch eliminates vtable lookups** — most protocol calls resolve to direct function calls (5–9 cycles) at transpile time, same cost as static dispatch.
+- **Compile-time dispatch eliminates vtable lookups** — most protocol calls resolve to direct function calls (5-9 cycles) at transpile time, same cost as static dispatch.
 - **Const vtable dispatch matches C++** (19 vs 20 cycles) — only used for truly polymorphic `id`-typed receivers. Vtable arrays in `.rodata` (zero RAM).
 - **Slab allocation is 4.4x faster** than C++ `new`/`delete` (228 vs 995 cycles). Per-class `k_mem_slab` pools have zero allocator overhead.
 - **Inline ARC** adds only 3 cycles over raw atomics (17 vs 14 cycles).
 - **OZLog matches printk** — zero overhead over the underlying `printk` backend on real UART.
 
-### Legacy Runtime Reference
-
 <details>
-<summary>Legacy runtime benchmark data (retained for comparison)</summary>
+<summary>Legacy Runtime Reference</summary>
 
 The following data is from the retired legacy ObjC runtime (`objc_msgSend`, heap allocation, ARC runtime). These benchmarks no longer build — the legacy runtime compilation path has been retired in favor of the transpiler.
 
@@ -683,7 +735,7 @@ Without flat dispatch (`CONFIG_OBJZ_FLAT_DISPATCH=n`):
 
 | Configuration         |    FLASH |      RAM | FLASH delta | RAM delta |
 | --------------------- | -------: | -------: | ----------: | --------: |
-| Bare Zephyr (no ObjC) | 12,104 B |  6,120 B |           — |         — |
+| Bare Zephyr (no ObjC) | 12,104 B |  6,120 B |           - |         - |
 | All features enabled  | 39,568 B | 26,020 B |   +27,464 B | +19,900 B |
 
 Flat dispatch table cost:
@@ -711,21 +763,21 @@ Side-by-side C++ vs Objective-Z on **nRF52833 DK** (ARM Cortex-M4F @ 64 MHz). Al
 | Operation                          | C++ | ObjC (transpiler) |
 | ---------------------------------- | --: | ----------------: |
 | C function pointer (baseline)      |   8 |                 8 |
-| Direct / static / class method     |   2 |               5–9 |
-| Compile-time protocol dispatch     |  — |               5–9 |
+| Direct / static / class method     |   2 |               5-9 |
+| Compile-time protocol dispatch     |  -- |               5-9 |
 | Virtual / const vtable (depth=0)   |  20 |                19 |
 | Virtual / const vtable (depth=1)   |  21 |                19 |
 | Virtual / const vtable (depth=2)   |  20 |                19 |
 
-> With compile-time dispatch, most protocol calls resolve to direct function calls (5–9 cycles) — same cost as static dispatch. Const vtable dispatch (19 cycles, depth-independent) matches C++ virtual calls (20–21 cycles) and is only used for truly polymorphic `id`-typed receivers. Vtable arrays are `const` in `.rodata` — zero RAM overhead.
+> With compile-time dispatch, most protocol calls resolve to direct function calls (5-9 cycles) — same cost as static dispatch. Const vtable dispatch (19 cycles, depth-independent) matches C++ virtual calls (20-21 cycles) and is only used for truly polymorphic `id`-typed receivers. Vtable arrays are `const` in `.rodata` — zero RAM overhead.
 
 #### Object Lifecycle
 
 | Operation                              |   C++ | ObjC (transpiler) |
 | -------------------------------------- | ----: | ----------------: |
 | Slab / heap alloc+dealloc              |   995 |               228 |
-| Placement new + dtor + slab free       |   130 |                 — |
-| `unique_ptr` create/destroy            | 1,072 |                 — |
+| Placement new + dtor + slab free       |   130 |                -- |
+| `unique_ptr` create/destroy            | 1,072 |                -- |
 
 > Transpiler slab alloc+init+release (228 cycles) is **4.4x faster** than C++ `new`/`delete` (995 cycles). Both C++ placement new (130 cycles) and ObjC slab (228 cycles) use `k_mem_slab` — the extra ObjC cycles cover `init` vtable call + ARC release.
 
@@ -735,8 +787,8 @@ Side-by-side C++ vs Objective-Z on **nRF52833 DK** (ARM Cortex-M4F @ 64 MHz). Al
 | ----------------------------- | ----: | ----------------: |
 | Atomic increment              |    14 |                17 |
 | Atomic inc + dec pair         |    24 |                44 |
-| `shared_ptr` copy             | 1,140 |                 — |
-| `shared_ptr` copy + reset     | 1,182 |                 — |
+| `shared_ptr` copy             | 1,140 |                -- |
+| `shared_ptr` copy + reset     | 1,182 |                -- |
 
 > `OZObject_retain` (17 cycles) is close to raw `atomic_fetch_add` (14 cycles) — 3 cycles for null check. C++ `shared_ptr` operations (1,140+ cycles) are 67x slower due to control block allocation and atomic operations on the control block.
 
@@ -781,7 +833,7 @@ Per-object memory cost across C, C++, and Objective-Z on **nRF52833 DK**. C/C++ 
 | Child         | 16 B  | 16 B  |              12 B |
 | GrandChild    | 24 B  | 24 B  |              16 B |
 
-> Transpiler slab allocation has **zero overhead** — block size equals `sizeof(struct)`. C/C++ `sys_heap` adds 4–8 B per allocation (chunk header).
+> Transpiler slab allocation has **zero overhead** — block size equals `sizeof(struct)`. C/C++ `sys_heap` adds 4-8 B per allocation (chunk header).
 
 #### Bulk Allocation (20 objects)
 
@@ -797,14 +849,16 @@ Per-object memory cost across C, C++, and Objective-Z on **nRF52833 DK**. C/C++ 
 
 | Metric                          |               C++ |          ObjC |
 | ------------------------------- | ----------------: | ------------: |
-| `sizeof(unique_ptr)`            |               4 B |             — |
-| `sizeof(shared_ptr)`            |               8 B |             — |
-| `make_unique` heap cost         |              16 B |             — |
-| `make_shared` heap cost         |    24 B (+ ctrl)  |             — |
-| `shared_ptr(new T)` heap cost   | 40 B (2 allocs)   |             — |
+| `sizeof(unique_ptr)`            |               4 B |             - |
+| `sizeof(shared_ptr)`            |               8 B |             - |
+| `make_unique` heap cost         |              16 B |             - |
+| `make_shared` heap cost         |    24 B (+ ctrl)  |             - |
+| `shared_ptr(new T)` heap cost   | 40 B (2 allocs)   |             - |
 | Manual `atomic<int>` refcount   |     4 B (inline)  |  4 B (inline) |
 
 > ObjC stores the refcount inline (0 extra heap cost). C++ `make_shared` adds a ~16 B control block; `shared_ptr(new T)` does two allocations totaling 40 B.
+
+</details>
 
 ## License
 
