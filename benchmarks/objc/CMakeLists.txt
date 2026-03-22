@@ -7,6 +7,5 @@ set(ZEPHYR_EXTRA_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/../../")
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(benchmark)
 
-target_sources(app PRIVATE src/main.c)
-
-objz_transpile_sources(app src/bench_helpers.m)
+objz_transpile_sources(app src/main.m
+    POOL_SIZES "BenchBase=8,BenchChild=4,BenchGrandChild=4,OZNumber=16,OZArray=4,OZDictionary=4,OZString=8,OZSpinLock=4")
