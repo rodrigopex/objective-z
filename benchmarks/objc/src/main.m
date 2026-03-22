@@ -501,6 +501,22 @@ static void bench_foundation(void)
 	}
 	bench_report("OZArray for-in iteration (10 items)", total, ITERATIONS);
 
+	/* OZArray raw loop via objectAtIndex: (10 items) */
+	unsigned int arr_count = [arr count];
+
+	total = 0;
+	for (int i = 0; i < ITERATIONS; i++) {
+		s = timing_counter_get();
+		volatile int32_t sum = 0;
+		for (unsigned int j = 0; j < arr_count; j++) {
+			OZNumber *n = [arr objectAtIndex:j];
+			sum += [n int32Value];
+		}
+		e = timing_counter_get();
+		total += timing_cycles_get(&s, &e);
+	}
+	bench_report("OZArray raw loop objectAtIndex: (10)", total, ITERATIONS);
+
 	/* OZDictionary lookup (key from benchKey to avoid OZ-072 dup string) */
 	OZDictionary *dict = [helper createBenchDict];
 	OZString *key = [helper benchKey];
