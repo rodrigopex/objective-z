@@ -101,7 +101,8 @@ All benchmarks on **nRF52833 DK** (ARM Cortex-M4F @ 64 MHz), DWT cycle counter. 
 | @synchronized (k_spinlock)        |    15 |   398 | OZ: RAII OZSpinLock alloc+free |
 | Block / lambda (non-capturing)    |    12 |    12 | Both compile to fn ptrs |
 | std::function (int capture)       |    19 |    -- | No OZ equivalent |
-| for-in / range-for (10 items)     |    95 |   687 | OZ: iterator protocol overhead |
+| for-in / range-for value (10 int) |    95 |   687 | OZ: iterator protocol overhead |
+| for-in / range-for boxed (10 ptr) |   107 |   687 | Fair comparison: both pointer-based |
 | dynamic_cast (hit) / isKindOfClass |     2 |    -- | OZ introspection via C API |
 
 ### Memory (bytes per object)
