@@ -6,13 +6,14 @@
  * Transpiled to plain C via objz_transpile_sources().
  */
 
-#import <Foundation/OZObject.h>
+#import <Foundation/Foundation.h>
 
 /* ── MemBase: OZObject (8) = 8 bytes ──────────────────────────────── */
 
 @interface MemBase : OZObject
 - (void)nop;
 - (int)getValue;
+- (void)syncNop;
 @end
 
 @implementation MemBase
@@ -24,6 +25,12 @@
 - (int)getValue
 {
 	return 0;
+}
+
+- (void)syncNop
+{
+	@synchronized(self) {
+	}
 }
 
 @end

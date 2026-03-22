@@ -15,8 +15,10 @@
 #include <atomic>
 #include <cstddef>
 #include <cstring>
+#include <functional>
 #include <memory>
 #include <new>
+#include <zephyr/spinlock.h>
 
 /* ── Dedicated heap ───────────────────────────────────────────── */
 
@@ -263,6 +265,19 @@ static void bench_heap_summary()
 	printk("  %-40s: %4zu\n", "max_allocated_bytes", stats.max_allocated_bytes);
 }
 
+static void bench_stl_sizes()
+{
+	printk("\n-- STL / Utility Sizes --\n");
+	printk("  %-40s: %4zu bytes\n", "std::unique_ptr<MemBase>",
+	       sizeof(std::unique_ptr<MemBase>));
+	printk("  %-40s: %4zu bytes\n", "std::shared_ptr<MemBase>",
+	       sizeof(std::shared_ptr<MemBase>));
+	printk("  %-40s: %4zu bytes\n", "std::function<int()>",
+	       sizeof(std::function<int()>));
+	printk("  %-40s: %4zu bytes\n", "k_spinlock",
+	       sizeof(struct k_spinlock));
+}
+
 /* ── Main ─────────────────────────────────────────────────────── */
 
 int main(void)
@@ -276,6 +291,7 @@ int main(void)
 	bench_single_alloc();
 	bench_bulk_alloc();
 	bench_smart_pointers();
+	bench_stl_sizes();
 	bench_heap_summary();
 
 	heap_ready = false;
