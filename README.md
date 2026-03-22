@@ -92,8 +92,8 @@ All benchmarks on **nRF52833 DK** (ARM Cortex-M4F @ 64 MHz), DWT cycle counter. 
 | --------------------------------- | ----: | ----: | ----- |
 | Static / direct call              |     2 |    12 | OZ includes fn-ptr overhead |
 | Virtual / vtable dispatch         |    19 |    21 | OZ: const array, C++: vptr indirection |
-| Slab alloc + init + release       |   126 |   367 | C++ placement-new from slab |
-| new/delete (heap)                 | 1,217 |    -- | OZ uses slab by default |
+| Slab alloc + init + release       |   126 |   400 | C++ placement-new from slab |
+| Heap alloc + init + release       | 1,217 | 1,037 | OZ allocWithHeap: vs new/delete |
 | Atomic inc (retain)               |    10 |    18 | Both inline atomics |
 | retain + release pair             |    20 |    50 | |
 | Property get (nonatomic)          |     1 |    12 | |
@@ -601,9 +601,10 @@ just bench-footprint                       # ELF section size analysis
 
 | Operation                              | OZ (cycles) | C++ (cycles) |
 | -------------------------------------- | ----------: | -----------: |
-| slab alloc + init + release (Base)     |         367 |          --- |
-| slab alloc + init + release (Child)    |         371 |          --- |
-| slab alloc + init + release (GChild)   |         383 |          --- |
+| slab alloc + init + release (Base)     |         400 |          --- |
+| slab alloc + init + release (Child)    |         409 |          --- |
+| slab alloc + init + release (GChild)   |         415 |          --- |
+| heap alloc + init + release (Base)     |       1,037 |          --- |
 | Value type on stack                    |         --- |           12 |
 | new/delete (heap)                      |         --- |        1,217 |
 | unique_ptr create/destroy              |         --- |          745 |
@@ -705,8 +706,8 @@ just bench-footprint                       # ELF section size analysis
 
 - **Vtable dispatch is equivalent** — OZ const-array dispatch (20-21 cycles) matches C++ virtual dispatch (19-20 cycles)
 - **OZ uses 2.5x less RAM** — slab pools in .bss (8.4 KB) vs C++ heap + STL (19.9 KB)
-- **C++ heap is 3.3x slower** than OZ slab for alloc+dealloc (1,217 vs 367 cycles)
-- **C++ placement-new from slab is 2.9x faster** than OZ slab (126 vs 367 cycles) — OZ overhead comes from init + ARC release
+- **OZ heap alloc is 15% faster** than C++ new/delete (1,037 vs 1,217 cycles)
+- **C++ placement-new from slab is 3.2x faster** than OZ slab (126 vs 400 cycles) — OZ overhead comes from init + ARC release
 - **@synchronized is expensive** (398 cycles) due to OZSpinLock RAII alloc+free — k_spinlock alone is 15 cycles
 - **Block invocation matches lambda** — both compile to function pointers (12 cycles)
 - **OZ for-in iteration is 7x slower** than C++ range-for — iterator protocol overhead

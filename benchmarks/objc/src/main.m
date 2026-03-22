@@ -153,6 +153,10 @@ static int block_nop_fn(void)
 	return 0;
 }
 
+/* ── Heap buffer for OZHeap benchmark (module-level for alignment) ── */
+
+static char oz_heap_buf[4096];
+
 /* ── Section 1: Allocation ────────────────────────────────────────── */
 
 static void bench_allocation(void)
@@ -193,6 +197,21 @@ static void bench_allocation(void)
 		total += timing_cycles_get(&s, &e);
 	}
 	bench_report("slab alloc + init + release (GrandChild)", total, SLOW_ITERATIONS);
+
+	/* heap alloc + init + release (BenchBase via OZHeap) */
+	OZHeap *heap = [[OZHeap alloc] initWithBuffer:oz_heap_buf size:sizeof(oz_heap_buf)];
+
+	total = 0;
+	for (int i = 0; i < SLOW_ITERATIONS; i++) {
+		s = timing_counter_get();
+		BenchBase *obj = [[BenchBase allocWithHeap:heap] init];
+		[obj release];
+		e = timing_counter_get();
+		total += timing_cycles_get(&s, &e);
+	}
+	bench_report("heap alloc + init + release (BenchBase)", total, SLOW_ITERATIONS);
+
+	[heap release];
 }
 
 /* ── Section 2: Dispatch ──────────────────────────────────────────── */
