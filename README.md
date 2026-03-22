@@ -84,17 +84,44 @@ Built on Zephyr primitives (`k_mem_slab`, `SYS_INIT`, `k_spinlock_t`, `atomic_t`
 
 ## How It Compares
 
-All benchmarks on **nRF52833 DK** (ARM Cortex-M4F @ 64 MHz), DWT cycle counter, 10 000 iterations.
+All benchmarks on **nRF52833 DK** (ARM Cortex-M4F @ 64 MHz), DWT cycle counter. OZ benchmark is pure Objective-C transpiled to C. Single inheritance only (ObjC limitation).
 
-### Dispatch & Allocation
+### Speed (cycles)
 
-| Operation                      |  C++ | ObjC (transpiler) |
-| ------------------------------ | ---: | ----------------: |
-| Static / direct call           |    2 |               5-9 |
-| Compile-time protocol dispatch |   -- |               5-9 |
-| Const vtable dispatch (polymorphic) |   20 |                19 |
-| Slab / heap alloc+dealloc      |  995 |               228 |
-| Atomic increment (refcount)    |   14 |                17 |
+| Operation                         |   C++ |    OZ | Notes |
+| --------------------------------- | ----: | ----: | ----- |
+| Static / direct call              |     2 |    12 | OZ includes fn-ptr overhead |
+| Virtual / vtable dispatch         |    19 |    21 | OZ: const array, C++: vptr indirection |
+| Slab alloc + init + release       |   126 |   367 | C++ placement-new from slab |
+| new/delete (heap)                 | 1,217 |    -- | OZ uses slab by default |
+| Atomic inc (retain)               |    10 |    18 | Both inline atomics |
+| retain + release pair             |    20 |    50 | |
+| Property get (nonatomic)          |     1 |    12 | |
+| Property get (atomic, k_spinlock) |    17 |    18 | Same Zephyr primitive |
+| @synchronized (k_spinlock)        |    15 |   398 | OZ: RAII OZSpinLock alloc+free |
+| Block / lambda (non-capturing)    |    12 |    12 | Both compile to fn ptrs |
+| std::function (int capture)       |    19 |    -- | No OZ equivalent |
+| for-in / range-for (10 items)     |    95 |   687 | OZ: iterator protocol overhead |
+| dynamic_cast (hit) / isKindOfClass |     2 |    -- | OZ introspection via C API |
+
+### Memory (bytes per object)
+
+| Metric                        |   C++ |    OZ | Notes |
+| ----------------------------- | ----: | ----: | ----- |
+| Base object sizeof            |     8 |     8 | Both: metadata + refcount |
+| Slab alloc overhead           |   n/a |     0 | OZ: block = sizeof |
+| Heap alloc overhead           |     4 |   n/a | C++ sys_heap header |
+| shared_ptr control block      |    12 |     0 | OZ: inline refcount |
+| OZNumber / BoxedInt           |    16 |     4 | OZ tagged union vs raw int |
+
+### Firmware Footprint
+
+| App         | text (B) | data (B) | bss (B) | total (B) |
+| ----------- | -------: | -------: | ------: | --------: |
+| OZ speed    |   27,184 |      568 |   8,445 |    36,197 |
+| C++ speed   |   28,500 |      264 |  19,919 |    48,683 |
+| OZ memory   |   21,348 |      180 |   7,344 |    28,872 |
+| C++ memory  |   22,840 |      180 |  19,654 |    42,674 |
 
 ### Foundation Classes
 
@@ -558,83 +585,132 @@ void no_leak(void)
 <details>
 <summary><strong>Benchmark</strong></summary>
 
-## Benchmark
+## Benchmark (OZ-070)
 
-Cycle-accurate benchmarks on **nRF52833 DK** (ARM Cortex-M4F @ 64 MHz) using the DWT cycle counter. 10 000 iterations, 100 warmup, overhead-calibrated.
+Comprehensive OZ vs C++ benchmarks on **nRF52833 DK** (ARM Cortex-M4F @ 64 MHz), DWT cycle counter, overhead-calibrated. OZ benchmark is pure Objective-C transpiled to C. Single inheritance only (ObjC limitation).
 
 ```sh
-just board=nrf52833dk/nrf52833 bench       # ObjC transpiler benchmark
-just board=nrf52833dk/nrf52833 bench-cpp   # C++ comparison benchmark
-just board=nrf52833dk/nrf52833 bench-mem   # Memory comparison (C, C++, ObjC)
+just board=nrf52833dk/nrf52833 bench       # OZ speed benchmark (6 sections)
+just board=nrf52833dk/nrf52833 bench-cpp   # C++ speed benchmark (7 sections)
+just board=nrf52833dk/nrf52833 bench-mem   # Memory comparison (C, C++, OZ)
 just test-bench                            # Run all via twister (hardware map)
+just bench-footprint                       # ELF section size analysis
 ```
 
-### Dispatch
+### 1. Allocation
 
-Transpiler uses `const` vtable arrays in `.rodata` indexed by `class_id`. When the receiver type is known at transpile time, protocol calls are resolved to direct function calls at zero cost. For truly polymorphic calls (`id`-typed receivers), a single `const` array dereference — no hash lookups, no cache, zero RAM:
+| Operation                              | OZ (cycles) | C++ (cycles) |
+| -------------------------------------- | ----------: | -----------: |
+| slab alloc + init + release (Base)     |         367 |          --- |
+| slab alloc + init + release (Child)    |         371 |          --- |
+| slab alloc + init + release (GChild)   |         383 |          --- |
+| Value type on stack                    |         --- |           12 |
+| new/delete (heap)                      |         --- |        1,217 |
+| unique_ptr create/destroy              |         --- |          745 |
+| placement new + slab + dtor + free     |         --- |          126 |
 
-| Operation                         | Cycles |   ns |
-| --------------------------------- | -----: | ---: |
-| C function pointer (baseline)     |      8 |  125 |
-| Static dispatch (direct call)     |      9 |  140 |
-| Class method (static function)    |      5 |   78 |
-| Const vtable dispatch (depth=0)   |     19 |  296 |
-| Const vtable dispatch (depth=1)   |     19 |  296 |
-| Const vtable dispatch (depth=2)   |     19 |  296 |
+### 2. Dispatch
 
-> **Key result:** With compile-time dispatch, most protocol calls resolve to direct function calls (5-9 cycles) when the receiver type is known at transpile time — same cost as static dispatch. Const vtable dispatch (19 cycles, depth-independent) is the polymorphic fallback for `id`-typed receivers. Vtable arrays are in `.rodata` (FLASH) — zero RAM overhead. C++ virtual calls (20 cycles) use vptr indirection from RAM.
+| Operation                              | OZ (cycles) | C++ (cycles) |
+| -------------------------------------- | ----------: | -----------: |
+| C function pointer (baseline)          |          12 |            9 |
+| Static / direct call                   |          12 |            2 |
+| Class / static method                  |          12 |            2 |
+| Vtable / virtual dispatch (depth=0)    |          21 |           19 |
+| Vtable / virtual dispatch (depth=1)    |          20 |           19 |
+| Vtable / virtual dispatch (depth=2)    |          21 |           20 |
+| Block / lambda (non-capturing)         |          12 |           12 |
+| std::function (int capture)            |         --- |           19 |
+| std::function copy + destroy           |         --- |           50 |
 
-### Object Lifecycle
+### 3. Object Lifecycle
 
-| Operation                     | Cycles |    ns |
-| ----------------------------- | -----: | ----: |
-| slab alloc + init + release   |    228 | 3,562 |
+| Operation                              | OZ (cycles) | C++ (cycles) |
+| -------------------------------------- | ----------: | -----------: |
+| alloc + init + release                 |         376 |          --- |
+| alloc + init + retain + 2x release     |         420 |          --- |
+| new + delete                           |         --- |        1,233 |
+| placement new + slab                   |         --- |          126 |
+| make_unique create/destroy             |         --- |          754 |
 
-> Slab-based allocation (228 cycles) is **4.4x faster** than C++ `new`/`delete` (995 cycles) and **4.7x faster** than `unique_ptr` create/destroy (1,072 cycles). No heap metadata overhead — `alloc`/`free` are direct slab operations.
+### 4. Reference Counting
 
-### Reference Counting
+| Operation                              | OZ (cycles) | C++ (cycles) |
+| -------------------------------------- | ----------: | -----------: |
+| retain / atomic inc                    |          18 |           10 |
+| retain + release pair                  |          50 |           20 |
+| shared_ptr copy                        |         --- |           12 |
+| shared_ptr copy + reset                |         --- |           45 |
 
-| Operation                       | Cycles |  ns |
-| ------------------------------- | -----: | --: |
-| `OZObject_retain` (atomic inc)  |     17 | 265 |
-| retain + release pair           |     44 | 687 |
+### 5. Properties / Synchronization
 
-> `OZObject_retain` (17 cycles) is close to raw `atomic_fetch_add` (14 cycles in C++) — only 3 cycles overhead for null check. Both are inline operations with no function call overhead.
+| Operation                              | OZ (cycles) | C++ (cycles) |
+| -------------------------------------- | ----------: | -----------: |
+| property get (nonatomic)               |          12 |            1 |
+| property set (nonatomic)               |           1 |            3 |
+| property get (atomic, k_spinlock)      |          18 |           17 |
+| property set (atomic, k_spinlock)      |          20 |           14 |
+| @synchronized / syncNop (k_spinlock)   |         398 |           15 |
 
-### Logging
+### 6. Foundation / Collections
 
-Comparison of `printk`, Zephyr `LOG_INF` (minimal mode), and `OZLog` (50 iterations):
+| Operation                              | OZ (cycles) | C++ (cycles) |
+| -------------------------------------- | ----------: | -----------: |
+| OZNumber box + unbox (int32)           |         378 |          --- |
+| OZNumber int32Value (unbox only)       |          33 |          --- |
+| OZArray objectAtIndex: (random access) |          13 |          --- |
+| OZArray for-in iteration (10 items)    |         687 |          --- |
+| OZDictionary objectForKey: (lookup)    |         175 |          --- |
+| int[10] create + access (value)        |         --- |            2 |
+| int[10] iteration (value)              |         --- |           95 |
+| BoxedInt*[10] access (slab-pooled)     |         --- |            1 |
+| BoxedInt*[10] iteration (slab-pooled)  |         --- |          107 |
 
-| Operation                    |  Cycles |        ns |
-| ---------------------------- | ------: | --------: |
-| `printk` (simple string)     |  94,462 | 1,475,968 |
-| `LOG_INF` (simple string)    | 111,138 | 1,736,531 |
-| `OZLog` (simple string)      |  94,456 | 1,475,875 |
-| `printk` (integer format)    |  61,100 |   954,687 |
-| `LOG_INF` (integer format)   |  77,777 | 1,215,265 |
-| `OZLog` (integer format)     |  61,104 |   954,750 |
-| `printk` (string format)     |  66,664 | 1,041,625 |
-| `LOG_INF` (string format)    |  83,343 | 1,302,234 |
-| `OZLog` (string format)      |  66,662 | 1,041,593 |
+### 7. Introspection (C++ only)
 
-> On real hardware with UART output, logging is dominated by serial I/O (~1 ms per line). `OZLog` matches `printk` exactly — both use the same `printk` backend. `LOG_INF` adds ~17% overhead from the logging subsystem.
+| Operation                              | C++ (cycles) |
+| -------------------------------------- | -----------: |
+| dynamic_cast (hit)                     |            2 |
+| dynamic_cast (miss)                    |            2 |
+| typeid() + name()                      |            5 |
+
+> OZ introspection uses C functions (`oz_isKindOfClass`, `oz_name`) — not yet exposed as ObjC methods.
 
 ### Object Sizes
 
-| Object                    |  Size |
-| ------------------------- | ----: |
-| OZObject (class_id + rc)  |   8 B |
-| BenchBase (+ 1 int ivar)  |  12 B |
-| BenchChild (no extra)     |  12 B |
-| BenchGrandChild (no extra)|  12 B |
+| Object                           | OZ (B) | C++ (B) |
+| -------------------------------- | -----: | ------: |
+| Base (metadata + refcount)       |      8 |       8 |
+| Child (+ 1 int ivar)            |     12 |      12 |
+| GrandChild (+ 1 int ivar)       |     16 |      16 |
+| OZString / ---                   |     20 |     --- |
+| OZNumber / BoxedInt              |     16 |       4 |
+| OZArray / ---                    |     20 |     --- |
+| OZDictionary / ---               |     24 |     --- |
+| shared_ptr / ---                 |    --- |       8 |
+| unique_ptr / ---                 |    --- |       4 |
+| std::function<int()> / ---       |    --- |      16 |
+| k_spinlock                       |    --- |       1 |
 
-**Key takeaways:**
+### Firmware Footprint
 
-- **Compile-time dispatch eliminates vtable lookups** — most protocol calls resolve to direct function calls (5-9 cycles) at transpile time, same cost as static dispatch.
-- **Const vtable dispatch matches C++** (19 vs 20 cycles) — only used for truly polymorphic `id`-typed receivers. Vtable arrays in `.rodata` (zero RAM).
-- **Slab allocation is 4.4x faster** than C++ `new`/`delete` (228 vs 995 cycles). Per-class `k_mem_slab` pools have zero allocator overhead.
-- **Inline ARC** adds only 3 cycles over raw atomics (17 vs 14 cycles).
-- **OZLog matches printk** — zero overhead over the underlying `printk` backend on real UART.
+| App         | text (B) | data (B) | bss (B) | total (B) |
+| ----------- | -------: | -------: | ------: | --------: |
+| OZ speed    |   27,184 |      568 |   8,445 |    36,197 |
+| C++ speed   |   28,500 |      264 |  19,919 |    48,683 |
+| OZ memory   |   21,348 |      180 |   7,344 |    28,872 |
+| C++ memory  |   22,840 |      180 |  19,654 |    42,674 |
+
+### Key Takeaways
+
+- **Vtable dispatch is equivalent** — OZ const-array dispatch (20-21 cycles) matches C++ virtual dispatch (19-20 cycles)
+- **OZ uses 2.5x less RAM** — slab pools in .bss (8.4 KB) vs C++ heap + STL (19.9 KB)
+- **C++ heap is 3.3x slower** than OZ slab for alloc+dealloc (1,217 vs 367 cycles)
+- **C++ placement-new from slab is 2.9x faster** than OZ slab (126 vs 367 cycles) — OZ overhead comes from init + ARC release
+- **@synchronized is expensive** (398 cycles) due to OZSpinLock RAII alloc+free — k_spinlock alone is 15 cycles
+- **Block invocation matches lambda** — both compile to function pointers (12 cycles)
+- **OZ for-in iteration is 7x slower** than C++ range-for — iterator protocol overhead
+- **OZ total firmware is 26% smaller** than C++ (36 KB vs 49 KB)
 
 <details>
 <summary>Legacy Runtime Reference</summary>

@@ -43,12 +43,8 @@ for idx in "${!NAMES[@]}"; do
                 continue
         fi
 
-        echo "  Sections:"
-        "$SIZE_TOOL" -A "$ELF" | grep -E '^\.(text|rodata|data|bss|noinit)\s' | \
-                awk '{printf "    %-12s %8d bytes\n", $1, $2}'
-
         "$SIZE_TOOL" "$ELF" | tail -1 | \
-                awk '{printf "  Total: text=%d data=%d bss=%d dec=%d\n", $1, $2, $3, $4}'
+                awk '{printf "  text=%d  data=%d  bss=%d  total=%d\n", $1, $2, $3, $4}'
         echo ""
 done
 
