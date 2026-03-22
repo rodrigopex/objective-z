@@ -58,6 +58,15 @@ bench-mem:
     just bench-mem-cpp
     just bench-mem-objc
 
+bench-footprint board="nrf52833dk/nrf52833":
+    bash benchmarks/footprint.sh {{ board }}
+
+bench-all:
+    just board=nrf52833dk/nrf52833 bench
+    just board=nrf52833dk/nrf52833 bench-cpp
+    just board=nrf52833dk/nrf52833 bench-mem
+    just board=nrf52833dk/nrf52833 bench-footprint
+
 ast-dump file *includes:
     clang -Xclang -ast-dump=json -fsyntax-only {{includes}} {{file}} 2>/dev/null
 
