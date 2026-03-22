@@ -101,8 +101,9 @@ All benchmarks on **nRF52833 DK** (ARM Cortex-M4F @ 64 MHz), DWT cycle counter. 
 | @synchronized (k_spinlock)        |    15 |   398 | OZ: RAII OZSpinLock alloc+free |
 | Block / lambda (non-capturing)    |    12 |    12 | Both compile to fn ptrs |
 | std::function (int capture)       |    19 |    -- | No OZ equivalent |
-| for-in / range-for value (10 int) |    95 |   687 | OZ: iterator protocol overhead |
-| for-in / range-for boxed (10 ptr) |   107 |   687 | Fair comparison: both pointer-based |
+| for-in / range-for value (10 int) |    92 |   687 | OZ: iterator protocol overhead |
+| for-in / range-for boxed (10 ptr) |   104 |   687 | Both pointer-based, raw loop |
+| Iterator boxed (virtual ++/*)     |   155 |   687 | Fair: both use virtual dispatch per step |
 | dynamic_cast (hit) / isKindOfClass |     2 |    -- | OZ introspection via C API |
 
 ### Memory (bytes per object)
@@ -666,7 +667,8 @@ just bench-footprint                       # ELF section size analysis
 | int[10] create + access (value)        |         --- |            2 |
 | int[10] iteration (value)              |         --- |           95 |
 | BoxedInt*[10] access (slab-pooled)     |         --- |            1 |
-| BoxedInt*[10] iteration (slab-pooled)  |         --- |          107 |
+| BoxedInt*[10] iteration (slab-pooled)  |         --- |          104 |
+| BoxedArray iterator (virtual ++/*)     |         --- |          155 |
 
 ### 7. Introspection (C++ only)
 
@@ -711,7 +713,7 @@ just bench-footprint                       # ELF section size analysis
 - **C++ placement-new from slab is 3.2x faster** than OZ slab (126 vs 400 cycles) — OZ overhead comes from init + ARC release
 - **@synchronized is expensive** (398 cycles) due to OZSpinLock RAII alloc+free — k_spinlock alone is 15 cycles
 - **Block invocation matches lambda** — both compile to function pointers (12 cycles)
-- **OZ for-in iteration is 7x slower** than C++ range-for — iterator protocol overhead
+- **OZ for-in is 4.4x slower** than C++ virtual iterator (687 vs 155 cycles) — OZ iterator protocol overhead
 - **OZ total firmware is 26% smaller** than C++ (36 KB vs 49 KB)
 
 <details>

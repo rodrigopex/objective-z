@@ -93,4 +93,52 @@ struct BoxedInt {
 	int32_t val;
 };
 
+/*
+ * Polymorphic container with standard C++ iterators.
+ * Uses virtual begin()/end() + virtual operator++/operator*
+ * to match OZ's for-in overhead (vtable dispatch per step).
+ *
+ * OZ for-in: vtable dispatch on iter() + next() per element.
+ * C++ range-for: vtable dispatch on operator++ + operator* per element.
+ */
+class IIterator {
+public:
+	virtual ~IIterator() = default;
+	virtual IIterator &operator++() = 0;
+	virtual BoxedInt *operator*() const = 0;
+	virtual bool operator!=(const IIterator &other) const = 0;
+};
+
+class BoxedArray {
+public:
+	class Iterator : public IIterator {
+	public:
+		BoxedInt **ptr;
+
+		explicit Iterator(BoxedInt **p) : ptr(p) {}
+
+		Iterator &operator++() override
+		{
+			++ptr;
+			return *this;
+		}
+
+		BoxedInt *operator*() const override { return *ptr; }
+
+		bool operator!=(const IIterator &other) const override
+		{
+			return ptr != static_cast<const Iterator &>(other).ptr;
+		}
+	};
+
+	BoxedInt **items;
+	int count;
+
+	BoxedArray(BoxedInt **items_, int count_)
+		: items(items_), count(count_) {}
+
+	Iterator begin() { return Iterator(items); }
+	Iterator end() { return Iterator(items + count); }
+};
+
 #endif /* BENCH_CLASSES_HPP */
