@@ -476,6 +476,21 @@ static void bench_collections_blocks(void)
         }
         bench_report("BoxedInt*[10] iteration (slab-pooled)", total, ITERATIONS);
 
+        /* Iteration via polymorphic iterator (fair OZ for-in comparison) */
+        BoxedArray boxed_arr(items, 10);
+
+        total = 0;
+        for (int i = 0; i < ITERATIONS; i++) {
+                s = timing_counter_get();
+                volatile int32_t sum = 0;
+                for (auto it = boxed_arr.begin(); it != boxed_arr.end(); ++it) {
+                        sum += (*it)->val;
+                }
+                e = timing_counter_get();
+                total += timing_cycles_get(&s, &e);
+        }
+        bench_report("BoxedArray iterator (virtual ++/*)", total, ITERATIONS);
+
         for (int i = 0; i < 10; i++) {
                 k_mem_slab_free(&boxed_slab, items[i]);
         }
