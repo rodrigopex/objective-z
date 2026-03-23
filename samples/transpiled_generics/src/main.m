@@ -18,9 +18,9 @@ int main(void)
 	printk("=== Generics Demo ===\n");
 
 	@autoreleasepool {
-		/* Typed array of numbers — subscript returns OZNumber * */
-		OZArray<OZNumber *> *numbers = @[ @10, @20, @30 ];
-		OZNumber *first = numbers[0];
+		/* Typed array of numbers — subscript returns OZFixedPoint * */
+		OZArray<OZFixedPoint *> *numbers = @[ @10, @20, @30 ];
+		OZFixedPoint *first = numbers[0];
 		OZLog("numbers[0] = %@", first);
 		OZLog("numbers count = %d", [numbers count]);
 
@@ -31,18 +31,18 @@ int main(void)
 		}
 
 		/* Typed dictionary — keyed subscript returns typed value */
-		OZDictionary<OZString *, OZNumber *> *scores = @{
+		OZDictionary<OZString *, OZFixedPoint *> *scores = @{
 			@"alpha" : @100,
 			@"beta" : @200,
 			@"gamma" : @300,
 		};
-		OZNumber *alpha = scores[@"alpha"];
+		OZFixedPoint *alpha = scores[@"alpha"];
 		OZLog("alpha score = %@", alpha);
 
 		/* Typed block param in enumerateObjectsUsingBlock: */
 		__block int sum = 0;
 		[numbers enumerateObjectsUsingBlock:^(id obj, unsigned int idx, BOOL *stop) {
-		  sum += [(OZNumber *)obj intValue];
+		  sum += [(OZFixedPoint *)obj intValue];
 		  *stop = NO;
 		}];
 		printk("sum = %d\n", sum);
@@ -52,8 +52,8 @@ int main(void)
 		OZLog("generic[0] = %@", generic[0]);
 
 		/* Nested generics: array of arrays */
-		OZArray<OZArray<OZNumber *> *> *matrix = @[ @[@1, @2], @[@3, @4] ];
-		OZArray<OZNumber *> *firstRow = matrix[0];
+		OZArray<OZArray<OZFixedPoint *> *> *matrix = @[ @[@1, @2], @[@3, @4] ];
+		OZArray<OZFixedPoint *> *firstRow = matrix[0];
 		OZLog("matrix[0][1] = %@", firstRow[1]);
 	}
 

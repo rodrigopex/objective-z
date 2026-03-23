@@ -1,4 +1,4 @@
-/* oz-pool: OZObject=1,OZNumber=4,OZDictionary=2 */
+/* oz-pool: OZObject=1,OZFixedPoint=4,OZDictionary=2 */
 #import "OZFoundationBase.h"
 
 @interface DictTest : OZObject
@@ -16,7 +16,7 @@
 }
 - (int)valueForKey {
 	OZDictionary *d = @{@"x": @(99)};
-	OZNumber *n = [d objectForKey:@"x"];
+	OZFixedPoint *n = [d objectForKey:@"x"];
 	int v = [n intValue];
 	[d release];
 	return v;

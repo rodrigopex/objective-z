@@ -6,7 +6,7 @@
 #import <Foundation/OZObject.h>
 #import <Foundation/OZString.h>
 #import <Foundation/OZMutableString.h>
-#import <Foundation/OZNumber.h>
+#import <Foundation/OZFixedPoint.h>
 #import <Foundation/OZArray.h>
 #import <Foundation/OZDictionary.h>
 #import <Foundation/OZDefer.h>
@@ -14,7 +14,7 @@
 #import "OZObject.m"
 #import "OZString.m"
 #import "OZMutableString.m"
-#import "OZNumber.m"
+#import "OZFixedPoint.m"
 #import "OZArray.m"
 #import "OZDictionary.m"
 #import "OZDefer.m"

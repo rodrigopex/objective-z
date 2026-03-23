@@ -1,0 +1,380 @@
+/* Fixed-point (Q31+shift) implementation for OZ transpiler. */
+
+#import <Foundation/OZFixedPoint.h>
+#include <stdio.h>
+
+/**
+ * Compute minimum shift (integer bits) for an unsigned magnitude.
+ * Returns the number of bits needed: ceil(log2(mag + 1)).
+ */
+static inline uint8_t _oz_bits_for_mag(uint32_t mag)
+{
+	if (mag == 0) {
+		return 0;
+	}
+	int bits = 0;
+	while (mag > 0) {
+		mag >>= 1;
+		bits++;
+	}
+	if (bits > 31) {
+		bits = 31;
+	}
+	return (uint8_t)bits;
+}
+
+/**
+ * Compute minimum shift (integer bits) needed to represent |value|.
+ * For float, truncate to integer magnitude for shift computation.
+ */
+static inline uint8_t _oz_shift_for_float(float value)
+{
+	if (value == 0.0f) {
+		return 0;
+	}
+	float mag = (value < 0.0f) ? -value : value;
+	/* Use integer part magnitude to determine shift */
+	uint32_t imag = (uint32_t)mag;
+	/* If there's a fractional part and imag is exact, we still need this many bits */
+	return _oz_bits_for_mag(imag);
+}
+
+/**
+ * Compute minimum shift for an int32 value.
+ */
+static inline uint8_t _oz_shift_for_int32(int32_t value)
+{
+	if (value == 0) {
+		return 0;
+	}
+	uint32_t mag = (value < 0) ? (uint32_t)(-(int64_t)value) : (uint32_t)value;
+	return _oz_bits_for_mag(mag);
+}
+
+/**
+ * Encode a float as Q31 with the given shift.
+ * raw = (value / 2^shift) * 2^31
+ */
+static inline int32_t _oz_encode_float(float value, uint8_t shift)
+{
+	if (shift >= 31) {
+		return (int32_t)(value * 0.5f);
+	}
+	float scale = (float)(1UL << (31 - shift));
+	return (int32_t)(value * scale);
+}
+
+/**
+ * Encode an int32 as Q31 with the given shift.
+ * raw = value << (31 - shift)
+ */
+static inline int32_t _oz_encode_int32(int32_t value, uint8_t shift)
+{
+	return value << (31 - shift);
+}
+
+/**
+ * Decode Q31+shift to float.
+ * real = (raw / 2^31) * 2^shift = raw / 2^(31 - shift)
+ */
+static inline float _oz_decode_float(int32_t raw, uint8_t shift)
+{
+	if (shift >= 31) {
+		return (float)raw;
+	}
+	return (float)raw / (float)(1UL << (31 - shift));
+}
+
+/**
+ * Decode Q31+shift to int32.
+ * real = raw >> (31 - shift)
+ */
+static inline int32_t _oz_decode_int32(int32_t raw, uint8_t shift)
+{
+	if (shift >= 31) {
+		return raw;
+	}
+	return raw >> (31 - shift);
+}
+
+/**
+ * Align two Q31 values to the same shift (the larger of the two).
+ * The value with smaller shift loses fractional precision.
+ */
+static inline void _oz_align_shift(int32_t *raw_a, uint8_t shift_a,
+				    int32_t *raw_b, uint8_t shift_b,
+				    uint8_t *out_shift)
+{
+	if (shift_a == shift_b) {
+		*out_shift = shift_a;
+		return;
+	}
+	if (shift_a > shift_b) {
+		/* b needs more integer bits — shift b's mantissa right */
+		uint8_t diff = shift_a - shift_b;
+		*raw_b = *raw_b >> diff;
+		*out_shift = shift_a;
+	} else {
+		/* a needs more integer bits — shift a's mantissa right */
+		uint8_t diff = shift_b - shift_a;
+		*raw_a = *raw_a >> diff;
+		*out_shift = shift_b;
+	}
+}
+
+@implementation OZFixedPoint
+
++ (instancetype)fixedWithFloat:(float)value
+{
+	OZFixedPoint *fp = [[OZFixedPoint alloc] init];
+	fp->_shift = _oz_shift_for_float(value);
+	fp->_raw = _oz_encode_float(value, fp->_shift);
+	return fp;
+}
+
++ (instancetype)fixedWithInt32:(int32_t)value
+{
+	OZFixedPoint *fp = [[OZFixedPoint alloc] init];
+	fp->_shift = _oz_shift_for_int32(value);
+	fp->_raw = _oz_encode_int32(value, fp->_shift);
+	return fp;
+}
+
++ (instancetype)fixedWithRaw:(int32_t)raw shift:(uint8_t)shift
+{
+	OZFixedPoint *fp = [[OZFixedPoint alloc] init];
+	fp->_raw = raw;
+	fp->_shift = shift;
+	return fp;
+}
+
++ (instancetype)fixedWithBool:(BOOL)value
+{
+	return [OZFixedPoint fixedWithInt32:value ? 1 : 0];
+}
+
++ (instancetype)fixedWithInt:(int)value
+{
+	return [OZFixedPoint fixedWithInt32:(int32_t)value];
+}
+
++ (instancetype)fixedWithUnsignedInt:(unsigned int)value
+{
+	return [OZFixedPoint fixedWithInt32:(int32_t)value];
+}
+
+/* ── Clang literal compatibility (delegates to fixedWith*) ───── */
+
++ (instancetype)numberWithInt8:(int8_t)value
+{
+	return [OZFixedPoint fixedWithInt32:(int32_t)value];
+}
+
++ (instancetype)numberWithUint8:(uint8_t)value
+{
+	return [OZFixedPoint fixedWithInt32:(int32_t)value];
+}
+
++ (instancetype)numberWithInt16:(int16_t)value
+{
+	return [OZFixedPoint fixedWithInt32:(int32_t)value];
+}
+
++ (instancetype)numberWithUint16:(uint16_t)value
+{
+	return [OZFixedPoint fixedWithInt32:(int32_t)value];
+}
+
++ (instancetype)numberWithInt32:(int32_t)value
+{
+	return [OZFixedPoint fixedWithInt32:value];
+}
+
++ (instancetype)numberWithUint32:(uint32_t)value
+{
+	return [OZFixedPoint fixedWithInt32:(int32_t)value];
+}
+
++ (instancetype)numberWithFloat:(float)value
+{
+	return [OZFixedPoint fixedWithFloat:value];
+}
+
++ (instancetype)numberWithBool:(BOOL)value
+{
+	return [OZFixedPoint fixedWithBool:value];
+}
+
++ (instancetype)numberWithInt:(int)value
+{
+	return [OZFixedPoint fixedWithInt32:(int32_t)value];
+}
+
++ (instancetype)numberWithUnsignedInt:(unsigned int)value
+{
+	return [OZFixedPoint fixedWithInt32:(int32_t)value];
+}
+
+/* ── Value extraction ──────────────────────────────────────────── */
+
+- (int8_t)int8Value
+{
+	return (int8_t)_oz_decode_int32(_raw, _shift);
+}
+
+- (uint8_t)uint8Value
+{
+	return (uint8_t)_oz_decode_int32(_raw, _shift);
+}
+
+- (int16_t)int16Value
+{
+	return (int16_t)_oz_decode_int32(_raw, _shift);
+}
+
+- (uint16_t)uint16Value
+{
+	return (uint16_t)_oz_decode_int32(_raw, _shift);
+}
+
+- (int32_t)int32Value
+{
+	return _oz_decode_int32(_raw, _shift);
+}
+
+- (uint32_t)uint32Value
+{
+	return (uint32_t)_oz_decode_int32(_raw, _shift);
+}
+
+- (float)floatValue
+{
+	return _oz_decode_float(_raw, _shift);
+}
+
+- (BOOL)boolValue
+{
+	return _raw != 0;
+}
+
+- (int)intValue
+{
+	return (int)_oz_decode_int32(_raw, _shift);
+}
+
+- (unsigned int)unsignedIntValue
+{
+	return (unsigned int)_oz_decode_int32(_raw, _shift);
+}
+
+/* ── Q31 introspection ─────────────────────────────────────────── */
+
+- (int32_t)rawValue
+{
+	return _raw;
+}
+
+- (uint8_t)shift
+{
+	return _shift;
+}
+
+/* ── Arithmetic ────────────────────────────────────────────────── */
+
+- (instancetype)add:(OZFixedPoint *)other
+{
+	int32_t a = _raw;
+	int32_t b = other->_raw;
+	uint8_t s;
+	_oz_align_shift(&a, _shift, &b, other->_shift, &s);
+
+	/* Saturating add: clamp on overflow */
+	int64_t sum = (int64_t)a + (int64_t)b;
+	if (sum > INT32_MAX) {
+		sum = INT32_MAX;
+	}
+	if (sum < INT32_MIN) {
+		sum = INT32_MIN;
+	}
+	return [OZFixedPoint fixedWithRaw:(int32_t)sum shift:s];
+}
+
+- (instancetype)sub:(OZFixedPoint *)other
+{
+	int32_t a = _raw;
+	int32_t b = other->_raw;
+	uint8_t s;
+	_oz_align_shift(&a, _shift, &b, other->_shift, &s);
+
+	int64_t diff = (int64_t)a - (int64_t)b;
+	if (diff > INT32_MAX) {
+		diff = INT32_MAX;
+	}
+	if (diff < INT32_MIN) {
+		diff = INT32_MIN;
+	}
+	return [OZFixedPoint fixedWithRaw:(int32_t)diff shift:s];
+}
+
+- (instancetype)mul:(OZFixedPoint *)other
+{
+	/*
+	 * Q31 multiply:
+	 * result_raw = (a_raw * b_raw) >> 31
+	 * result_shift = a_shift + b_shift
+	 *
+	 * On Cortex-M4: maps to SMMUL instruction.
+	 */
+	int64_t product = (int64_t)_raw * (int64_t)other->_raw;
+	int32_t result_raw = (int32_t)(product >> 31);
+	uint8_t result_shift = _shift + other->_shift;
+	if (result_shift > 31) {
+		result_shift = 31;
+	}
+	return [OZFixedPoint fixedWithRaw:result_raw shift:result_shift];
+}
+
+- (instancetype)div:(OZFixedPoint *)other
+{
+	/*
+	 * Q31 divide:
+	 * result_raw = (a_raw << 31) / b_raw
+	 * result_shift = a_shift - b_shift  (clamped to >= 0)
+	 *
+	 * Guard against division by zero.
+	 */
+	if (other->_raw == 0) {
+		return [OZFixedPoint fixedWithRaw:0 shift:0];
+	}
+	int64_t num = (int64_t)_raw << 31;
+	int32_t result_raw = (int32_t)(num / (int64_t)other->_raw);
+	int8_t result_shift = (int8_t)_shift - (int8_t)other->_shift;
+	if (result_shift < 0) {
+		result_shift = 0;
+	}
+	return [OZFixedPoint fixedWithRaw:result_raw shift:(uint8_t)result_shift];
+}
+
+/* ── OZObject overrides ────────────────────────────────────────── */
+
+- (int)cDescription:(char *)buf maxLength:(int)maxLen
+{
+	float val = _oz_decode_float(_raw, _shift);
+	return snprintf(buf, maxLen, "%g", (double)val);
+}
+
+- (BOOL)isEqual:(id)anObject
+{
+	if (self == anObject) {
+		return YES;
+	}
+	OZFixedPoint *other = (OZFixedPoint *)anObject;
+	return (_raw == other->_raw) && (_shift == other->_shift);
+}
+
+- (void)dealloc
+{
+	/* OZFixedPoint is a compile-time constant and must never be freed. */
+}
+
+@end

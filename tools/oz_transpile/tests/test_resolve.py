@@ -501,15 +501,15 @@ class TestGenericValidation:
     def test_array_class_constraint_mismatch(self):
         m = _generic_module()
         m.classes["OZString"] = OZClass("OZString", superclass="OZObject")
-        m.classes["OZNumber"] = OZClass("OZNumber", superclass="OZObject")
+        m.classes["OZFixedPoint"] = OZClass("OZFixedPoint", superclass="OZObject")
         body = _body(
             _var_decl("arr", "OZArray<OZString *> *",
-                      _arr_literal("OZNumber *")))
+                      _arr_literal("OZFixedPoint *")))
         m.classes["App"] = OZClass("App", superclass="OZObject",
             methods=[OZMethod("run", OZType("void"), body_ast=body)])
         resolve(m)
         assert any("generic type mismatch" in e for e in m.errors)
-        assert any("OZNumber" in e for e in m.errors)
+        assert any("OZFixedPoint" in e for e in m.errors)
 
     def test_array_subclass_satisfies_constraint(self):
         m = _generic_module()

@@ -47,16 +47,17 @@ transpiler pipeline.
 
 - **Boxed expressions (`@(expr)`) supported for numeric types.** Both literal
   (`@42`, `@3.14f`, `@YES`) and expression (`@(myVar)`, `@(a + b)`,
-  `@(getValue())`) forms are transpiled to `OZNumber_initXxx()` calls. The init
-  suffix is chosen by the inner expression's C type (`int` → `Int32`, `float` →
-  `Float`, `uint16_t` → `Uint16`, etc.). `double` values are narrowed to `float`
+  `@(getValue())`) forms are transpiled to `OZFixedPoint_fixedWithInt32_()` or
+  `OZFixedPoint_fixedWithFloat_()` calls. Integer types go through `int32` path,
+  float types through `float` path. `double` values are narrowed to `float`
   with a diagnostic warning. String boxing (`@("hello")`) is not supported — use
   OZString literals instead.
 
-- **OZNumber supports 8/16/32-bit integers and float.** `OZNumber` boxes
-  `int8_t`, `uint8_t`, `int16_t`, `uint16_t`, `int32_t`, `uint32_t`, `float`,
-  and `BOOL`. 64-bit types (`int64_t`, `double`) are not supported. A future
-  `OZNumber64` class may address this.
+- **OZFixedPoint uses Q31+shift fixed-point representation.** Values are stored
+  as a Q31 mantissa (always in [-1.0, 1.0)) with a shift exponent. Real value =
+  `(raw / 2^31) * 2^shift`. Supports conversion to/from `int8_t` through
+  `uint32_t`, `float`, and `BOOL`. Direct interop with Zephyr `sensor_decode`
+  Q31+shift values. 64-bit types (`int64_t`, `double`) are not supported.
 
 ## Properties
 
@@ -81,7 +82,7 @@ transpiler pipeline.
 
 - **`id` receiver requires explicit cast.** When a variable is typed `id`
   (e.g., a block parameter), calling a class-specific method requires a cast:
-  `[(OZNumber *)obj intValue]`.
+  `[(OZFixedPoint *)obj intValue]`.
 
 - **Use `<stdint.h>` types via OZObject.h.** Fixed-width types (`int8_t`,
   `uint32_t`, etc.) are available through `#include <stdint.h>` in the

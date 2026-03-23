@@ -8,4 +8,4 @@ find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(benchmark)
 
 objz_transpile_sources(app src/main.m
-    POOL_SIZES "BenchBase=8,BenchChild=4,BenchGrandChild=4,OZNumber=16,OZArray=4,OZDictionary=4,OZString=8,OZSpinLock=4")
+    POOL_SIZES "BenchBase=8,BenchChild=4,BenchGrandChild=4,OZFixedPoint=16,OZArray=4,OZDictionary=4,OZString=16,OZSpinLock=4")

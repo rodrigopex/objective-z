@@ -1,4 +1,4 @@
-/* oz-pool: OZObject=1,OZNumber=4,OZArray=2 */
+/* oz-pool: OZObject=1,OZFixedPoint=4,OZArray=2 */
 #import "OZFoundationBase.h"
 
 @interface ArrayTest : OZObject
@@ -16,7 +16,7 @@
 }
 - (int)firstElement {
 	OZArray *arr = @[@(42), @(7)];
-	OZNumber *n = [arr objectAtIndex:0];
+	OZFixedPoint *n = [arr objectAtIndex:0];
 	int v = [n intValue];
 	[arr release];
 	return v;
