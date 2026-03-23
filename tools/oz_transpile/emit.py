@@ -216,9 +216,11 @@ def emit(module: OZModule, outdir: str, pool_sizes: dict[str, int] | None = None
         else:
             source_tmpl = env.get_template("class_source.c.j2")
             source_parts = []
+            shared_dedup: dict[str, str] = {}
             for cls in classes:
                 ctx = _EmitCtx(cls=cls, module=module, root_class=root_class,
                                has_item_pool=_has_item_pool)
+                ctx._string_dedup = shared_dedup
                 source_parts.append(
                     source_tmpl.render(**_class_source_ctx(
                         ctx, stem,
@@ -1504,7 +1506,9 @@ def _emit_block_expr(node: dict, out: StringIO, ctx: _EmitCtx) -> None:
     if line is not None and col is not None:
         func_name = f"_oz_block_L{line}_C{col}"
     else:
-        func_name = f"_oz_block_{len(ctx.block_functions)}"
+        ctx.module.diagnostics.append(
+            "warning: BlockExpr without source location")
+        func_name = f"_oz_block_L0_C{len(ctx.block_functions)}"
 
     # Build param string
     param_parts = []
@@ -1823,7 +1827,9 @@ def _emit_expr(node: dict, out: StringIO, ctx: _EmitCtx) -> None:
             if line is not None and col is not None:
                 name = f"_oz_str_L{line}_C{col}"
             else:
-                name = f"_oz_str_{len(ctx._string_dedup)}"
+                ctx.module.diagnostics.append(
+                    "warning: ObjCStringLiteral without source location")
+                name = f"_oz_str_L0_C{len(ctx._string_dedup)}"
             ctx._string_dedup[val] = name
             ctx.string_constants.append(
                 f"static struct OZString {name} = {{"
@@ -2976,11 +2982,17 @@ def _emit_transpiled_function(func: OZFunction, module: OZModule,
                                out: StringIO,
                                root_class: str,
                                has_item_pool: bool,
-                               source_bytes: bytes | None = None) -> None:
+                               source_bytes: bytes | None = None,
+                               shared_dedup: dict[str, str] | None = None,
+                               shared_strings: list[str] | None = None) -> None:
     """Emit a transpiled C function (replacing one that contained ObjC)."""
     dummy_cls = OZClass(name="__patched__")
     ctx = _EmitCtx(cls=dummy_cls, module=module, root_class=root_class,
                    has_item_pool=has_item_pool, source_bytes=source_bytes)
+    if shared_dedup is not None:
+        ctx._string_dedup = shared_dedup
+    if shared_strings is not None:
+        ctx.string_constants = shared_strings
     ctx.method = None
     ctx.scope_vars = []
     ctx.consumed_vars = set()
@@ -3001,10 +3013,12 @@ def _emit_transpiled_function(func: OZFunction, module: OZModule,
     else:
         body_buf.write("{\n}\n")
 
-    # Emit string constants and block functions before the function body
-    for sc in ctx.string_constants:
-        out.write(sc)
-        out.write("\n")
+    # Emit string constants and block functions before the function body.
+    # When using shared lists the caller emits them once for the whole file.
+    if shared_strings is None:
+        for sc in ctx.string_constants:
+            out.write(sc)
+            out.write("\n")
     for bf in ctx.block_functions:
         out.write(bf)
         out.write("\n\n")
@@ -3041,6 +3055,9 @@ def _emit_patched_source(source_path: Path, module: OZModule,
     emitted_includes = {f'#include "{stem}_ozh.h"'}
     for dep_stem in dep_stems:
         emitted_includes.add(f'#include "{dep_stem}_ozh.h"')
+
+    # Extract shared constants before rendering (not a template variable)
+    shared_sc = context.pop("__shared_constants__", None)
 
     # Filter include context values to avoid duplicates
     # Normalize whitespace for comparison: "#include  <x>" -> "#include <x>"
@@ -3087,6 +3104,13 @@ def _emit_patched_source(source_path: Path, module: OZModule,
         out.write(f"\nOZ_SLAB_DEFINE(oz_slab_{cls.name}, "
                   f"sizeof(struct {cls.name}), {pc}, 4);\n")
 
+    # Emit shared string constants from C functions
+    if shared_sc:
+        out.write("\n")
+        for sc in shared_sc:
+            out.write(sc)
+            out.write("\n")
+
     out.write(rendered)
     return out.getvalue()
 
@@ -3122,6 +3146,9 @@ def _emit_patched_orphan_source(orphan: OrphanSource, module: OZModule,
         )
     finally:
         module.functions = saved_funcs
+
+    # Extract shared constants before rendering (not a template variable)
+    shared_sc = context.pop("__shared_constants__", None)
 
     # Compute dependency includes: all class headers from the module
     dep_stems = sorted({_header_stem(cls) for cls in module.classes.values()})
@@ -3185,6 +3212,14 @@ def _emit_patched_orphan_source(orphan: OrphanSource, module: OZModule,
         decl_str = sv.oz_type.c_param_decl(sv.name)
         init = f" = {sv.init_value}" if sv.init_value is not None else ""
         out.write(f"static {decl_str}{init};\n")
+
+    # Emit shared string constants from C functions
+    if shared_sc:
+        out.write("\n")
+        for sc in shared_sc:
+            out.write(sc)
+            out.write("\n")
+
     out.write(rendered)
     return out.getvalue()
 
