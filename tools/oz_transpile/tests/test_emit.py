@@ -2402,7 +2402,7 @@ class TestReturnProtocolDispatch:
     """OZ-005: protocol dispatch in return statement must declare receiver var."""
 
     def test_return_protocol_dispatch_with_concrete_type(self):
-        """return [_sensors count]; with concrete OZArray * uses direct call."""
+        """return [_sensors count]; with concrete OZArray * uses inline accessor."""
         _, out = clang_emit("""\
 #import <Foundation/OZObject.h>
 #import <Foundation/OZArray.h>
@@ -2418,7 +2418,7 @@ class TestReturnProtocolDispatch:
 @end
 """)
         content = out["Registry_ozm.c"]
-        assert "OZArray_count(" in content
+        assert "OZArray_count_fast_(" in content
 
     def test_return_protocol_dispatch_emits_receiver_var(self):
         """return [obj count]; with id receiver uses OZ_PROTOCOL_SEND + temp var.
@@ -4267,3 +4267,132 @@ enum Unused {
         })
         source = out["Noop_ozm.c"]
         assert "enum Unused" not in source
+
+
+class TestInlineAccessors:
+    """OZ-073: inline accessor fast path for Foundation collection methods."""
+
+    def test_array_objectAtIndex_emits_fast_call(self):
+        """OZ-073: [arr objectAtIndex:i] emits inline fast accessor."""
+        _, out = clang_emit("""\
+#import <Foundation/OZArray.h>
+@interface Foo : OZObject {
+    OZArray *_items;
+}
+- (id)first;
+@end
+@implementation Foo
+- (id)first {
+    return [_items objectAtIndex:0];
+}
+@end
+""")
+        source = out["Foo_ozm.c"]
+        assert "OZArray_objectAtIndex_fast_(" in source
+
+    def test_array_count_emits_fast_call(self):
+        """OZ-073: [arr count] emits inline fast accessor."""
+        _, out = clang_emit("""\
+#import <Foundation/OZArray.h>
+@interface Foo : OZObject {
+    OZArray *_items;
+}
+- (unsigned int)len;
+@end
+@implementation Foo
+- (unsigned int)len {
+    return [_items count];
+}
+@end
+""")
+        source = out["Foo_ozm.c"]
+        assert "OZArray_count_fast_(" in source
+
+    def test_string_length_emits_fast_call(self):
+        """OZ-073: [str length] emits inline fast accessor."""
+        _, out = clang_emit("""\
+#import <Foundation/OZString.h>
+@interface Foo : OZObject
+- (unsigned int)len;
+@end
+@implementation Foo
+- (unsigned int)len {
+    OZString *s = @"hello";
+    return [s length];
+}
+@end
+""")
+        source = out["Foo_ozm.c"]
+        assert "OZString_length_fast_(" in source
+
+    def test_string_cString_emits_fast_call(self):
+        """OZ-073: [str cString] emits inline fast accessor."""
+        _, out = clang_emit("""\
+#import <Foundation/OZString.h>
+@interface Foo : OZObject
+- (const char *)raw;
+@end
+@implementation Foo
+- (const char *)raw {
+    OZString *s = @"hello";
+    return [s cString];
+}
+@end
+""")
+        source = out["Foo_ozm.c"]
+        assert "OZString_cString_fast_(" in source
+
+    def test_id_receiver_no_inline(self):
+        """OZ-073: [obj objectAtIndex:i] with id receiver must NOT inline."""
+        _, out = clang_emit("""\
+#import <Foundation/OZArray.h>
+@interface Foo : OZObject
+- (id)fromId:(id)obj;
+@end
+@implementation Foo
+- (id)fromId:(id)obj {
+    return [obj objectAtIndex:0];
+}
+@end
+""")
+        source = out["Foo_ozm.c"]
+        assert "fast_" not in source
+
+    def test_header_contains_inline_accessor(self):
+        """OZ-073: generated header has static inline fast accessor."""
+        _, out = clang_emit("""\
+#import <Foundation/OZArray.h>
+@interface Foo : OZObject {
+    OZArray *_items;
+}
+- (id)first;
+@end
+@implementation Foo
+- (id)first {
+    return [_items objectAtIndex:0];
+}
+@end
+""")
+        header = out["Foundation/OZArray_ozh.h"]
+        assert "static inline" in header
+        assert "OZArray_objectAtIndex_fast_(" in header
+        assert "self->_count" in header
+        assert "self->_items[index]" in header
+
+    def test_dict_count_emits_fast_call(self):
+        """OZ-073: [dict count] emits inline fast accessor."""
+        _, out = clang_emit("""\
+#import <Foundation/OZDictionary.h>
+@interface Foo : OZObject {
+    OZDictionary *_map;
+}
+- (unsigned int)size;
+@end
+@implementation Foo
+- (unsigned int)size {
+    return [_map count];
+}
+@end
+""")
+        source = out["Foo_ozm.c"]
+        assert "OZDictionary_count_fast_(" in source
