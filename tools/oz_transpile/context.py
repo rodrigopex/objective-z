@@ -88,6 +88,10 @@ def build_source_context(
 
     source_dir = source_path.parent
 
+    # Shared dedup state across all functions/methods in the same file
+    shared_dedup: dict[str, str] = {}
+    shared_strings: list[str] = []
+
     for child in tree.root_node.children:
         text = source[child.start_byte:child.end_byte].decode()
 
@@ -95,6 +99,7 @@ def build_source_context(
             _build_impl_context(
                 child, source, context, class_map, module,
                 root_class, has_item_pool, static_names,
+                shared_dedup=shared_dedup,
             )
 
         elif child.type == "preproc_include":
@@ -112,7 +117,9 @@ def build_source_context(
                 buf = StringIO()
                 _emit_transpiled_function(func, module, buf, root_class,
                                           has_item_pool,
-                                          source_bytes=source)
+                                          source_bytes=source,
+                                          shared_dedup=shared_dedup,
+                                          shared_strings=shared_strings)
                 context[key] = buf.getvalue()
             else:
                 context[key] = text
@@ -136,6 +143,10 @@ def build_source_context(
                     continue
             context[key] = text
 
+    # Store shared string constants from C functions for file-level emission
+    if shared_strings:
+        context["__shared_constants__"] = shared_strings
+
     return context
 
 
@@ -144,6 +155,7 @@ def _build_impl_context(
     class_map: dict[str, OZClass], module: OZModule,
     root_class: str, has_item_pool: bool,
     static_names: set[str] | None = None,
+    shared_dedup: dict[str, str] | None = None,
 ) -> None:
     """Build context entries for methods inside @implementation."""
     from oz_transpile.emit import (
@@ -170,6 +182,8 @@ def _build_impl_context(
 
     ctx = _EmitCtx(cls=cls, module=module, root_class=root_class,
                    has_item_pool=has_item_pool, source_bytes=source)
+    if shared_dedup is not None:
+        ctx._string_dedup = shared_dedup
     is_root = cls.name == root_class
     _root_skip_sels = {"retain", "release", "retainCount",
                        "isEqual:", "cDescription:maxLength:"}

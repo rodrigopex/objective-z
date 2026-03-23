@@ -3299,6 +3299,26 @@ class TestEmitEdgeCases:
             src = open(os.path.join(tmpdir, "Foo_ozm.c")).read()
             assert "_oz_str_L10_C5" in src
 
+    def test_string_dedup_across_c_functions(self):
+        """OZ-071: same string literal in two C functions must not produce
+        duplicate static definitions (redefinition error)."""
+        _, out = clang_emit_patched("""\
+#import <Foundation/OZObject.h>
+#import <Foundation/OZString.h>
+@interface Foo : OZObject
+- (void)greet;
+@end
+@implementation Foo
+- (void)greet { OZString *s = @"key"; }
+@end
+void other_fn(void) {
+    OZString *k = @"key";
+}
+""", stem="Foo")
+        src = out["Foo_ozm.c"]
+        assert src.count("static struct OZString _oz_str_") == 1, \
+            f"Expected 1 string constant, got: {src.count('static struct OZString _oz_str_')}"
+
     def test_explicit_release_prevents_double_release(self):
         """OZ-041: explicit [obj release] must suppress ARC auto-release."""
         _, out = clang_emit("""\
