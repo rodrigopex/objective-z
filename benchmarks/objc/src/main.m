@@ -5,8 +5,7 @@
  * Objective-Z Comprehensive Benchmark (OZ-070)
  *
  * Pure Objective-C benchmark — all measured code goes through
- * the OZ transpiler. Explicit timing loops (no C macros) to
- * work around OZ-071.
+ * the OZ transpiler.
  *
  * 7 sections: Allocation, Dispatch, Lifecycle, Refcount,
  *             Properties/Sync, Foundation, Introspection.
@@ -39,7 +38,6 @@
 - (void)syncNop;
 - (OZArray *)createBenchArray;
 - (OZDictionary *)createBenchDict;
-- (OZString *)benchKey;
 @end
 
 @implementation BenchBase
@@ -73,11 +71,6 @@
 - (OZDictionary *)createBenchDict
 {
 	return @{@"bench_key": @42};
-}
-
-- (OZString *)benchKey
-{
-	return @"bench_key";
 }
 
 @end
@@ -517,9 +510,9 @@ static void bench_foundation(void)
 	}
 	bench_report("OZArray raw loop objectAtIndex: (10)", total, ITERATIONS);
 
-	/* OZDictionary lookup (key from benchKey to avoid OZ-072 dup string) */
+	/* OZDictionary lookup */
 	OZDictionary *dict = [helper createBenchDict];
-	OZString *key = [helper benchKey];
+	OZString *key = @"bench_key";
 
 	total = 0;
 	for (int i = 0; i < ITERATIONS; i++) {

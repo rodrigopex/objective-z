@@ -118,23 +118,31 @@ All benchmarks on **nRF52833 DK** (ARM Cortex-M4F @ 64 MHz), DWT cycle counter. 
 
 ### Firmware Footprint
 
-| App         | text (B) | data (B) | bss (B) | total (B) |
-| ----------- | -------: | -------: | ------: | --------: |
-| OZ speed    |   27,184 |      568 |   8,445 |    36,197 |
-| C++ speed   |   28,500 |      264 |  19,919 |    48,683 |
-| OZ memory   |   21,348 |      180 |   7,344 |    28,872 |
-| C++ memory  |   22,840 |      180 |  19,654 |    42,674 |
+| Benchmark | Metric    |    C++ |     OZ |   Diff |
+| --------- | --------- | -----: | -----: | -----: |
+| Speed     | text      | 28,500 | 27,184 |    -5% |
+| Speed     | data      |    264 |    568 |  +115% |
+| Speed     | bss       | 19,919 |  8,445 |   -58% |
+| Speed     | **total** | **48,683** | **36,197** | **-26%** |
+| Memory    | text      | 22,840 | 21,348 |    -7% |
+| Memory    | data      |    180 |    180 |     0% |
+| Memory    | bss       | 19,654 |  7,344 |   -63% |
+| Memory    | **total** | **42,674** | **28,872** | **-32%** |
 
 ### Foundation Classes
 
-| Class          | Description                                   |
-| -------------- | --------------------------------------------- |
-| `OZObject`     | Root class — alloc, init, dealloc, retain/release, isEqual |
-| `OZString`     | Immutable strings — cStr, length, isEqual     |
-| `OZArray`      | Immutable arrays — count, objectAtIndex, for-in enumeration |
-| `OZDictionary` | Immutable dictionaries — count, objectForKey, for-in enumeration |
-| `OZNumber`     | Tagged union — int8/16/32 (signed/unsigned), float, BOOL |
-| `OZLog`        | printf-style logging with `%@` object specifier |
+| Class              | Description                                              |
+| ------------------ | -------------------------------------------------------- |
+| `OZObject`         | Root class — alloc, init, dealloc, retain/release, isEqual |
+| `OZString`         | Immutable strings — cStr, length, isEqual                |
+| `OZMutableString`  | Mutable strings — appendString, appendFormat             |
+| `OZArray`          | Immutable arrays — count, objectAtIndex, for-in          |
+| `OZDictionary`     | Immutable dictionaries — count, objectForKey, for-in     |
+| `OZNumber`         | Tagged union — int8/16/32 (signed/unsigned), float, BOOL |
+| `OZHeap`           | Dynamic heap allocator — initWithBuffer, allocWithHeap   |
+| `OZSpinLock`       | RAII spinlock for `@synchronized` blocks                 |
+| `OZDefer`          | Scope-guard for deterministic cleanup                    |
+| `OZLog`            | printf-style logging with `%@` object specifier          |
 
 ## Quick Start
 
@@ -222,8 +230,19 @@ The transpiler converts this to plain C: `MyFirstObject_greet(self)` for instanc
 
 ## Architecture
 
-```
-.m sources -> Clang JSON AST -> oz_transpile (Python) -> .h + .c -> GCC -> binary
+```mermaid
+graph LR
+    A[".m sources"] --> B["Clang JSON AST"]
+    B --> C["oz_transpile (Python)"]
+    C --> D[".h + .c"]
+    D --> E["GCC"]
+    E --> F["binary"]
+
+    subgraph "Three-pass transpiler"
+        C1["collect"] --> C2["resolve"] --> C3["emit"]
+    end
+    C --- C1
+    C3 --- D
 ```
 
 ### Transpiler Pipeline
@@ -699,12 +718,16 @@ just bench-footprint                       # ELF section size analysis
 
 ### Firmware Footprint
 
-| App         | text (B) | data (B) | bss (B) | total (B) |
-| ----------- | -------: | -------: | ------: | --------: |
-| OZ speed    |   27,184 |      568 |   8,445 |    36,197 |
-| C++ speed   |   28,500 |      264 |  19,919 |    48,683 |
-| OZ memory   |   21,348 |      180 |   7,344 |    28,872 |
-| C++ memory  |   22,840 |      180 |  19,654 |    42,674 |
+| Benchmark | Metric    |    C++ |     OZ |   Diff |
+| --------- | --------- | -----: | -----: | -----: |
+| Speed     | text      | 28,500 | 27,184 |    -5% |
+| Speed     | data      |    264 |    568 |  +115% |
+| Speed     | bss       | 19,919 |  8,445 |   -58% |
+| Speed     | **total** | **48,683** | **36,197** | **-26%** |
+| Memory    | text      | 22,840 | 21,348 |    -7% |
+| Memory    | data      |    180 |    180 |     0% |
+| Memory    | bss       | 19,654 |  7,344 |   -63% |
+| Memory    | **total** | **42,674** | **28,872** | **-32%** |
 
 ### Key Takeaways
 
