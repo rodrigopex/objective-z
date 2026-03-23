@@ -187,3 +187,12 @@ static inline struct {{ name }} *{{ name }}_initWithKeysValues(
 }
 
 {% endif %}
+{% for acc in inline_accessors %}
+
+static inline {{ acc.return_type }} {{ acc.func_name }}({{ acc.params_decl }})
+{
+{% for line in acc.body_lines %}
+	{{ line }}
+{% endfor %}
+}
+{% endfor %}
