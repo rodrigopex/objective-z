@@ -36,7 +36,7 @@
 - (int)getValue;
 + (void)classNop;
 - (void)syncNop;
-- (OZArray *)createBenchArray;
+- (OZArray *)createBenchStringArray;
 - (OZDictionary *)createBenchDict;
 @end
 
@@ -63,9 +63,9 @@
 	}
 }
 
-- (OZArray *)createBenchArray
+- (OZArray *)createBenchStringArray
 {
-	return @[@0, @1, @2, @3, @4, @5, @6, @7, @8, @9];
+	return @[@"s0", @"s1", @"s2", @"s3", @"s4", @"s5", @"s6", @"s7", @"s8", @"s9"];
 }
 
 - (OZDictionary *)createBenchDict
@@ -422,37 +422,25 @@ static void bench_foundation(void)
 	timing_t s, e;
 	uint64_t total;
 
-	/* OZNumber box + unbox */
-	total = 0;
-	for (int i = 0; i < SLOW_ITERATIONS; i++) {
-		s = timing_counter_get();
-		OZNumber *n = @42;
-		volatile int32_t v = [n int32Value];
-		(void)v;
-		[n release];
-		e = timing_counter_get();
-		total += timing_cycles_get(&s, &e);
-	}
-	bench_report("OZNumber box + unbox (int32)", total, SLOW_ITERATIONS);
-
-	/* OZNumber unbox only */
-	OZNumber *num = @99;
-
+	/* Raw C int32_t array sum (baseline — no boxing overhead) */
+	int32_t raw_arr[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
 	total = 0;
 	for (int i = 0; i < FAST_ITERATIONS; i++) {
 		s = timing_counter_get();
-		(void)[num int32Value];
+		volatile int32_t sum = 0;
+		for (unsigned int j = 0; j < 10; j++) {
+			sum += raw_arr[j];
+		}
 		e = timing_counter_get();
 		total += timing_cycles_get(&s, &e);
 	}
-	bench_report("OZNumber int32Value (unbox only)", total, FAST_ITERATIONS);
+	bench_report("Raw int32_t[] sum (10 elems, baseline)", total, FAST_ITERATIONS);
 
-	[num release];
+	/* OZArray of OZString — object array (fair comparison) */
+	BenchBase *helper = [[BenchBase alloc] init];
+	OZArray *arr = [helper createBenchStringArray];
 
 	/* OZArray random access */
-	BenchBase *helper = [[BenchBase alloc] init];
-	OZArray *arr = [helper createBenchArray];
-
 	total = 0;
 	for (int i = 0; i < FAST_ITERATIONS; i++) {
 		s = timing_counter_get();
@@ -462,34 +450,34 @@ static void bench_foundation(void)
 	}
 	bench_report("OZArray objectAtIndex: (random access)", total, FAST_ITERATIONS);
 
-	/* OZArray for-in iteration (10 items) */
+	/* OZArray for-in iteration (10 OZString items) */
 	total = 0;
 	for (int i = 0; i < ITERATIONS; i++) {
 		s = timing_counter_get();
-		volatile int32_t sum = 0;
-		for (OZNumber *n in arr) {
-			sum += [n int32Value];
+		volatile unsigned int sum = 0;
+		for (OZString *str in arr) {
+			sum += [str length];
 		}
 		e = timing_counter_get();
 		total += timing_cycles_get(&s, &e);
 	}
-	bench_report("OZArray for-in iteration (10 items)", total, ITERATIONS);
+	bench_report("OZArray for-in (10 OZString, length)", total, ITERATIONS);
 
-	/* OZArray raw loop via objectAtIndex: (10 items) */
+	/* OZArray raw loop via objectAtIndex: (10 OZString items) */
 	unsigned int arr_count = [arr count];
 
 	total = 0;
 	for (int i = 0; i < ITERATIONS; i++) {
 		s = timing_counter_get();
-		volatile int32_t sum = 0;
+		volatile unsigned int sum = 0;
 		for (unsigned int j = 0; j < arr_count; j++) {
-			OZNumber *n = [arr objectAtIndex:j];
-			sum += [n int32Value];
+			OZString *str = [arr objectAtIndex:j];
+			sum += [str length];
 		}
 		e = timing_counter_get();
 		total += timing_cycles_get(&s, &e);
 	}
-	bench_report("OZArray raw loop objectAtIndex: (10)", total, ITERATIONS);
+	bench_report("OZArray raw loop objectAtIndex: (10 str)", total, ITERATIONS);
 
 	/* OZDictionary lookup */
 	OZDictionary *dict = [helper createBenchDict];
@@ -532,8 +520,8 @@ static void print_sizes(void)
 	       sizeof(BenchGrandChild));
 	printk("  %-48s: %5zu bytes\n", "OZString",
 	       sizeof(OZString));
-	printk("  %-48s: %5zu bytes\n", "OZNumber",
-	       sizeof(OZNumber));
+	printk("  %-48s: %5zu bytes\n", "OZFixedPoint",
+	       sizeof(OZFixedPoint));
 	printk("  %-48s: %5zu bytes\n", "OZArray",
 	       sizeof(OZArray));
 	printk("  %-48s: %5zu bytes\n", "OZDictionary",

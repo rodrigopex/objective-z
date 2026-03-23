@@ -1,24 +1,24 @@
 /* Boxed expression @(expr) test — exercises variable, arithmetic, and
- * function-call boxing through OZNumber_initXxx() helpers. */
+ * function-call boxing through OZFixedPoint_fixedWith*() helpers. */
 
 #import "OZTestBase.h"
-#import <Foundation/OZNumber.h>
+#import <Foundation/OZFixedPoint.h>
 
 static int triple(int x) { return x * 3; }
 
 @interface BoxedTest : OZObject {
-	OZNumber *_fromVar;
-	OZNumber *_fromExpr;
-	OZNumber *_fromCall;
-	OZNumber *_fromFloat;
-	OZNumber *_fromUint;
+	OZFixedPoint *_fromVar;
+	OZFixedPoint *_fromExpr;
+	OZFixedPoint *_fromCall;
+	OZFixedPoint *_fromFloat;
+	OZFixedPoint *_fromUint;
 }
 - (void)run;
-- (OZNumber *)fromVar;
-- (OZNumber *)fromExpr;
-- (OZNumber *)fromCall;
-- (OZNumber *)fromFloat;
-- (OZNumber *)fromUint;
+- (OZFixedPoint *)fromVar;
+- (OZFixedPoint *)fromExpr;
+- (OZFixedPoint *)fromCall;
+- (OZFixedPoint *)fromFloat;
+- (OZFixedPoint *)fromUint;
 @end
 
 @implementation BoxedTest
@@ -33,9 +33,9 @@ static int triple(int x) { return x * 3; }
 	unsigned int u = 1000;
 	_fromUint = @(u);
 }
-- (OZNumber *)fromVar { return _fromVar; }
-- (OZNumber *)fromExpr { return _fromExpr; }
-- (OZNumber *)fromCall { return _fromCall; }
-- (OZNumber *)fromFloat { return _fromFloat; }
-- (OZNumber *)fromUint { return _fromUint; }
+- (OZFixedPoint *)fromVar { return _fromVar; }
+- (OZFixedPoint *)fromExpr { return _fromExpr; }
+- (OZFixedPoint *)fromCall { return _fromCall; }
+- (OZFixedPoint *)fromFloat { return _fromFloat; }
+- (OZFixedPoint *)fromUint { return _fromUint; }
 @end

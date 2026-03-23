@@ -241,7 +241,7 @@ def _check_protocol_conformance(module: OZModule) -> None:
 
 _OZ_NS_ALIASES: dict[str, str] = {
     "NSArray": "OZArray", "NSDictionary": "OZDictionary",
-    "NSString": "OZString", "NSNumber": "OZNumber",
+    "NSString": "OZString", "NSNumber": "OZFixedPoint",
     "NSObject": "OZObject",
 }
 
@@ -421,7 +421,7 @@ def _satisfies_constraint(elem_type: str, constraint: str,
             return True
         return _class_conforms_to(elem_class, required_proto, module)
 
-    # Class constraint (e.g. "OZString *", "OZArray<OZNumber *> *")
+    # Class constraint (e.g. "OZString *", "OZArray<OZFixedPoint *> *")
     constraint_stripped = constraint.rstrip(" *").strip()
     # Strip generic params — Clang erases them from the element qualType,
     # so we compare base class names only (nested generics validated recursively)

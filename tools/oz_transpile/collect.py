@@ -682,7 +682,7 @@ def _find_main_file(ast_root: dict) -> str | None:
 
 
 _OZ_INCLUDE_PREFIXES = (
-    "OZObject", "OZLog", "OZString", "OZArray", "OZDictionary", "OZNumber",
+    "OZObject", "OZLog", "OZString", "OZArray", "OZDictionary", "OZFixedPoint",
     "OZDefer", "Foundation/", "objc/",
 )
 

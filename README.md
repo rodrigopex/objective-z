@@ -60,7 +60,7 @@ Built on Zephyr primitives (`k_mem_slab`, `SYS_INIT`, `k_spinlock_t`, `atomic_t`
 - **Compile-time ARC** — scope-based retain/release, auto-dealloc, break/continue cleanup
 - **Per-class slab pools** — auto-generated from AST analysis, zero heap overhead
 - **`@autoreleasepool`** — scoped memory management
-- **Foundation classes** — `OZString`, `OZArray`, `OZDictionary`, `OZNumber` with fast enumeration
+- **Foundation classes** — `OZString`, `OZArray`, `OZDictionary`, `OZFixedPoint` with fast enumeration
 
 ### Language Features
 
@@ -112,7 +112,7 @@ All benchmarks on **nRF52833 DK** (ARM Cortex-M4F @ 64 MHz), DWT cycle counter, 
 | Slab alloc overhead           |   n/a |     0 | OZ: block = sizeof |
 | Heap alloc overhead           |     4 |   n/a | C++ sys_heap header |
 | shared_ptr control block      |    12 |     0 | OZ: inline refcount |
-| OZNumber / BoxedInt           |    16 |     4 | OZ tagged union vs raw int |
+| OZFixedPoint / BoxedInt           |    16 |     4 | OZ tagged union vs raw int |
 
 ### Firmware Footprint
 
@@ -136,7 +136,7 @@ All benchmarks on **nRF52833 DK** (ARM Cortex-M4F @ 64 MHz), DWT cycle counter, 
 | `OZMutableString`  | Mutable strings — appendString, appendFormat             |
 | `OZArray`          | Immutable arrays — count, objectAtIndex, for-in          |
 | `OZDictionary`     | Immutable dictionaries — count, objectForKey, for-in     |
-| `OZNumber`         | Tagged union — int8/16/32 (signed/unsigned), float, BOOL |
+| `OZFixedPoint`         | Tagged union — int8/16/32 (signed/unsigned), float, BOOL |
 | `OZHeap`           | Dynamic heap allocator — initWithBuffer, allocWithHeap   |
 | `OZSpinLock`       | RAII spinlock for `@synchronized` blocks                 |
 | `OZDefer`          | Scope-guard for deterministic cleanup                    |
@@ -335,7 +335,7 @@ objz_transpile_sources(app src/main.m)
 CONFIG_OBJZ=y
 ```
 
-The transpiler automatically includes Foundation classes (OZObject, OZString, OZArray, OZDictionary, OZNumber) and generates slab pools for all classes found in the AST.
+The transpiler automatically includes Foundation classes (OZObject, OZString, OZArray, OZDictionary, OZFixedPoint) and generates slab pools for all classes found in the AST.
 
 ### 5. Write your .m file
 
@@ -447,7 +447,7 @@ See [docs/LIMITATIONS.md](docs/LIMITATIONS.md) for the full list. Key limitation
 - **No `typedef`** — use explicit types
 - **No `@try`/`@catch`/`@throw`** — exception handling not supported
 - **No dynamic dispatch** for non-protocol methods — all resolved statically
-- **OZNumber**: 8/16/32-bit integers and float only (no int64/double)
+- **OZFixedPoint**: 8/16/32-bit integers and float only (no int64/double)
 
 <details>
 <summary><strong>ARC Guide</strong></summary>
@@ -675,8 +675,8 @@ just bench-footprint                       # ELF section size analysis
 
 | Operation                              | OZ (cycles) | C++ (cycles) |
 | -------------------------------------- | ----------: | -----------: |
-| OZNumber box + unbox (int32)           |         235 |          --- |
-| OZNumber int32Value (unbox only)       |          37 |          --- |
+| OZFixedPoint box + unbox (int32)           |         235 |          --- |
+| OZFixedPoint int32Value (unbox only)       |          37 |          --- |
 | OZArray objectAtIndex: (random access) |          12 |          --- |
 | OZArray for-in iteration (10 items)    |         663 |          --- |
 | OZArray raw loop objectAtIndex: (10)   |         571 |          --- |
@@ -705,7 +705,7 @@ just bench-footprint                       # ELF section size analysis
 | Child (+ 1 int ivar)            |     12 |      12 |
 | GrandChild (+ 1 int ivar)       |     16 |      16 |
 | OZString / ---                   |     20 |     --- |
-| OZNumber / BoxedInt              |     16 |       4 |
+| OZFixedPoint / BoxedInt              |     16 |       4 |
 | OZArray / ---                    |     20 |     --- |
 | OZDictionary / ---               |     24 |     --- |
 | shared_ptr / ---                 |    --- |       8 |

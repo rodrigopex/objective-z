@@ -102,17 +102,103 @@ static inline void {{ name }}_free(struct {{ name }} *obj)
 {% endif %}
 	oz_slab_free(&oz_slab_{{ name }}, (void *)obj);
 }
-{% if name == "OZNumber" %}
+{% if name == "OZFixedPoint" %}
 
-{% for init in number_inits %}
-static inline struct {{ name }} *{{ name }}_init{{ init.suffix }}({{ init.c_type }} val)
+static inline uint8_t _oz_bits_for_mag(uint32_t mag)
+{
+	if (mag == 0) {
+		return 0;
+	}
+	int bits = 0;
+	while (mag > 0) {
+		mag >>= 1;
+		bits++;
+	}
+	return (bits > 31) ? 31 : (uint8_t)bits;
+}
+
+static inline uint8_t _oz_shift_for_float(float value)
+{
+	if (value == 0.0f) {
+		return 0;
+	}
+	float mag = (value < 0.0f) ? -value : value;
+	return _oz_bits_for_mag((uint32_t)mag);
+}
+
+static inline uint8_t _oz_shift_for_int32(int32_t value)
+{
+	if (value == 0) {
+		return 0;
+	}
+	uint32_t mag = (value < 0) ? (uint32_t)(-(int64_t)value) : (uint32_t)value;
+	return _oz_bits_for_mag(mag);
+}
+
+static inline int32_t _oz_encode_float(float value, uint8_t shift)
+{
+	if (shift >= 31) {
+		return (int32_t)(value * 0.5f);
+	}
+	return (int32_t)(value * (float)(1UL << (31 - shift)));
+}
+
+static inline int32_t _oz_encode_int32(int32_t value, uint8_t shift)
+{
+	return value << (31 - shift);
+}
+
+static inline float _oz_decode_float(int32_t raw, uint8_t shift)
+{
+	if (shift >= 31) {
+		return (float)raw;
+	}
+	return (float)raw / (float)(1UL << (31 - shift));
+}
+
+static inline int32_t _oz_decode_int32(int32_t raw, uint8_t shift)
+{
+	if (shift >= 31) {
+		return raw;
+	}
+	return raw >> (31 - shift);
+}
+
+static inline void _oz_align_shift(int32_t *raw_a, uint8_t shift_a,
+				    int32_t *raw_b, uint8_t shift_b,
+				    uint8_t *out_shift)
+{
+	if (shift_a == shift_b) {
+		*out_shift = shift_a;
+		return;
+	}
+	if (shift_a > shift_b) {
+		*raw_b = *raw_b >> (shift_a - shift_b);
+		*out_shift = shift_a;
+	} else {
+		*raw_a = *raw_a >> (shift_b - shift_a);
+		*out_shift = shift_b;
+	}
+}
+
+{% for init in fixedpoint_inits %}
+static inline struct {{ name }} *{{ name }}_{{ init.suffix }}({{ init.c_type }} val)
 {
 	struct {{ name }} *obj = {{ name }}_alloc();
 	if (!obj) {
 		return (struct {{ name }} *)0;
 	}
-	obj->_tag = {{ init.tag }};
-	obj->_value.{{ init.field }} = val;
+{% if init.is_float %}
+	obj->_shift = _oz_shift_for_float(val);
+	if (obj->_shift >= 31) {
+		obj->_raw = (int32_t)(val * 0.5f);
+	} else {
+		obj->_raw = (int32_t)(val * (float)(1UL << (31 - obj->_shift)));
+	}
+{% else %}
+	obj->_shift = _oz_shift_for_int32((int32_t)val);
+	obj->_raw = (int32_t)((int32_t)val << (31 - obj->_shift));
+{% endif %}
 	return obj;
 }
 

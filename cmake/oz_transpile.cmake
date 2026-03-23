@@ -46,10 +46,10 @@ function(objz_transpile_sources target)
     set(_oz_string_src ${_mod}/src/OZString.m)
     set(_oz_array_src ${_mod}/src/OZArray.m)
     set(_oz_dict_src ${_mod}/src/OZDictionary.m)
-    set(_oz_number_src ${_mod}/src/OZNumber.m)
+    set(_oz_fixedpoint_src ${_mod}/src/OZFixedPoint.m)
     # Prepend so transpiler stubs (assert.h, Foundation/, etc.) take priority
     list(PREPEND _ast_flags -I${_oz_inc_dir})
-    list(PREPEND _sources ${_oz_number_src} ${_oz_dict_src} ${_oz_array_src}
+    list(PREPEND _sources ${_oz_fixedpoint_src} ${_oz_dict_src} ${_oz_array_src}
                           ${_oz_string_src} ${_oz_root_src})
     if(CONFIG_OBJZ_HEAP)
         set(_oz_heap_src ${_mod}/src/OZHeap.m)

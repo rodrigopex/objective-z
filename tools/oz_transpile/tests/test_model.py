@@ -115,16 +115,16 @@ class TestOZType:
         assert OZType("id").generic_params == []
 
     def test_generic_params_single(self):
-        t = OZType("OZArray<OZNumber *> *")
-        assert t.generic_params == ["OZNumber *"]
+        t = OZType("OZArray<OZFixedPoint *> *")
+        assert t.generic_params == ["OZFixedPoint *"]
 
     def test_generic_params_protocol_qualified(self):
         t = OZType("OZArray<id<PXDataProcessor>> *")
         assert t.generic_params == ["id<PXDataProcessor>"]
 
     def test_generic_params_two_params(self):
-        t = OZType("OZDictionary<OZString *, OZNumber *> *")
-        assert t.generic_params == ["OZString *", "OZNumber *"]
+        t = OZType("OZDictionary<OZString *, OZFixedPoint *> *")
+        assert t.generic_params == ["OZString *", "OZFixedPoint *"]
 
     def test_generic_params_dict_with_protocol(self):
         t = OZType("OZDictionary<OZString *, id<Foo>> *")
@@ -135,8 +135,8 @@ class TestOZType:
         assert t.generic_params == ["id"]
 
     def test_generic_params_nested(self):
-        t = OZType("OZArray<OZArray<OZNumber *> *> *")
-        assert t.generic_params == ["OZArray<OZNumber *> *"]
+        t = OZType("OZArray<OZArray<OZFixedPoint *> *> *")
+        assert t.generic_params == ["OZArray<OZFixedPoint *> *"]
 
     def test_generic_params_strips_qualifiers(self):
         t = OZType("__strong OZArray<OZString *> *")
