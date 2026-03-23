@@ -91,17 +91,18 @@ All benchmarks on **nRF52833 DK** (ARM Cortex-M4F @ 64 MHz), DWT cycle counter, 
 | Operation                         |   C++ |    OZ | Notes |
 | --------------------------------- | ----: | ----: | ----- |
 | Static / direct call              |    12 |    12 | Both resolve at compile time |
-| Virtual / vtable dispatch         |    14 |    18 | OZ: const array, C++: vptr indirection |
-| Slab alloc + init + release       |   105 |   210 | C++ placement-new from slab |
-| Atomic inc (retain)               |     7 |    19 | Both inline atomics |
+| Virtual / vtable dispatch         |    14 |    21 | OZ: const array, C++: vptr indirection |
+| Slab alloc + init + release       |   105 |   215 | C++ placement-new from slab |
+| Atomic inc (retain)               |     7 |    22 | Both inline atomics |
 | retain + release pair             |    17 |    44 | |
 | Property get (nonatomic)          |    12 |    12 | |
 | Property get (atomic, k_spinlock) |    12 |    10 | Same Zephyr primitive |
-| @synchronized (k_spinlock)        |    13 |   263 | OZ: RAII OZSpinLock alloc+free |
-| Block / lambda (non-capturing)    |     9 |     6 | Both compile to fn ptrs |
+| @synchronized (k_spinlock)        |    15 |   266 | OZ: RAII OZSpinLock alloc+free |
+| Block / lambda (non-capturing)    |    12 |    12 | Both compile to fn ptrs |
 | std::function (int capture)       |    16 |    -- | No OZ equivalent |
-| Raw loop boxed (10 ptr)           |    93 |   571 | OZ bottleneck: int32Value vtable dispatch |
-| Iterator boxed (virtual ++/*)     |   111 |   663 | Fair: both use virtual dispatch per step |
+| Raw int32_t[] sum (10 elems)      |    81 |    99 | Both raw C arrays, no boxing |
+| String*[10] loop + length()       |   263 |   483 | Fair: both object arrays with method call |
+| String iterator (virtual)         |   211 |   341 | Fair: both virtual dispatch per step |
 | dynamic_cast (hit) / isKindOfClass |    12 |    -- | OZ introspection via C API |
 
 ### Memory (bytes per object)
@@ -112,7 +113,7 @@ All benchmarks on **nRF52833 DK** (ARM Cortex-M4F @ 64 MHz), DWT cycle counter, 
 | Slab alloc overhead           |   n/a |     0 | OZ: block = sizeof |
 | Heap alloc overhead           |     4 |   n/a | C++ sys_heap header |
 | shared_ptr control block      |    12 |     0 | OZ: inline refcount |
-| OZFixedPoint / BoxedInt           |    16 |     4 | OZ tagged union vs raw int |
+| OZFixedPoint / SimpleString       |    16 |    12 | OZ Q31+shift vs vptr+data+len |
 
 ### Firmware Footprint
 
@@ -620,34 +621,34 @@ just bench-footprint                       # ELF section size analysis
 
 | Operation                              | OZ (cycles) | C++ (cycles) |
 | -------------------------------------- | ----------: | -----------: |
-| slab alloc + init + release (Base)     |         210 |          --- |
-| slab alloc + init + release (Child)    |         210 |          --- |
-| slab alloc + init + release (GChild)   |         212 |          --- |
+| slab alloc + init + release (Base)     |         215 |          --- |
+| slab alloc + init + release (Child)    |         217 |          --- |
+| slab alloc + init + release (GChild)   |         218 |          --- |
 | Value type on stack                    |         --- |           12 |
-| new/delete (heap)                      |         --- |          864 |
-| unique_ptr create/destroy              |         --- |          516 |
+| new/delete (heap)                      |         --- |          865 |
+| unique_ptr create/destroy              |         --- |          517 |
 | placement new + slab + dtor + free     |         --- |          105 |
 
 ### 2. Dispatch
 
 | Operation                              | OZ (cycles) | C++ (cycles) |
 | -------------------------------------- | ----------: | -----------: |
-| C function pointer (baseline)          |          12 |           11 |
+| C function pointer (baseline)          |          12 |            8 |
 | Static / direct call                   |          12 |           12 |
 | Class / static method                  |          12 |           12 |
-| Vtable / virtual dispatch (depth=0)    |          18 |           16 |
-| Vtable / virtual dispatch (depth=1)    |          18 |           14 |
-| Vtable / virtual dispatch (depth=2)    |          17 |           14 |
-| Block / lambda (non-capturing)         |           6 |            9 |
+| Vtable / virtual dispatch (depth=0)    |          21 |           20 |
+| Vtable / virtual dispatch (depth=1)    |          29 |           14 |
+| Vtable / virtual dispatch (depth=2)    |          20 |           14 |
+| Block / lambda (non-capturing)         |          12 |           12 |
 | std::function (int capture)            |         --- |           16 |
-| std::function copy + destroy           |         --- |           45 |
+| std::function copy + destroy           |         --- |           42 |
 
 ### 3. Object Lifecycle
 
 | Operation                              | OZ (cycles) | C++ (cycles) |
 | -------------------------------------- | ----------: | -----------: |
-| alloc + init + release                 |         233 |          --- |
-| alloc + init + retain + 2x release     |         248 |          --- |
+| alloc + init + release                 |         218 |          --- |
+| alloc + init + retain + 2x release     |         253 |          --- |
 | new + delete                           |         --- |          853 |
 | placement new + slab                   |         --- |          105 |
 | make_unique create/destroy             |         --- |          503 |
@@ -656,10 +657,10 @@ just bench-footprint                       # ELF section size analysis
 
 | Operation                              | OZ (cycles) | C++ (cycles) |
 | -------------------------------------- | ----------: | -----------: |
-| retain / atomic inc                    |          19 |            7 |
+| retain / atomic inc                    |          22 |            7 |
 | retain + release pair                  |          44 |           17 |
-| shared_ptr copy                        |         --- |            6 |
-| shared_ptr copy + reset                |         --- |            5 |
+| shared_ptr copy                        |         --- |            5 |
+| shared_ptr copy + reset                |         --- |           12 |
 
 ### 5. Properties / Synchronization
 
@@ -668,24 +669,18 @@ just bench-footprint                       # ELF section size analysis
 | property get (nonatomic)               |          12 |           12 |
 | property set (nonatomic)               |           1 |            2 |
 | property get (atomic, k_spinlock)      |          10 |           12 |
-| property set (atomic, k_spinlock)      |          11 |           21 |
-| @synchronized / syncNop (k_spinlock)   |         263 |           13 |
+| property set (atomic, k_spinlock)      |          11 |           12 |
+| @synchronized / syncNop (k_spinlock)   |         266 |           15 |
 
 ### 6. Foundation / Collections
 
 | Operation                              | OZ (cycles) | C++ (cycles) |
 | -------------------------------------- | ----------: | -----------: |
-| OZFixedPoint box + unbox (int32)           |         235 |          --- |
-| OZFixedPoint int32Value (unbox only)       |          37 |          --- |
-| OZArray objectAtIndex: (random access) |          12 |          --- |
-| OZArray for-in iteration (10 items)    |         663 |          --- |
-| OZArray raw loop objectAtIndex: (10)   |         571 |          --- |
-| OZDictionary objectForKey: (lookup)    |         153 |          --- |
-| int[10] create + access (value)        |         --- |           12 |
-| int[10] iteration (value)              |         --- |           81 |
-| BoxedInt*[10] access (slab-pooled)     |         --- |           12 |
-| BoxedInt*[10] iteration (slab-pooled)  |         --- |           93 |
-| BoxedArray iterator (virtual ++/*)     |         --- |          111 |
+| Raw int32_t[] sum (10 elems, baseline) |          99 |           81 |
+| OZArray objectAtIndex: / access        |          12 |           13 |
+| String loop + length (10 items)        |         483 |          263 |
+| String iterator (virtual, length)      |         341 |          211 |
+| OZDictionary objectForKey: (lookup)    |         154 |          --- |
 
 ### 7. Introspection (C++ only)
 
@@ -704,8 +699,8 @@ just bench-footprint                       # ELF section size analysis
 | Base (metadata + refcount)       |      8 |       8 |
 | Child (+ 1 int ivar)            |     12 |      12 |
 | GrandChild (+ 1 int ivar)       |     16 |      16 |
-| OZString / ---                   |     20 |     --- |
-| OZFixedPoint / BoxedInt              |     16 |       4 |
+| OZString / SimpleString          |     20 |      12 |
+| OZFixedPoint / ---               |     16 |     --- |
 | OZArray / ---                    |     20 |     --- |
 | OZDictionary / ---               |     24 |     --- |
 | shared_ptr / ---                 |    --- |       8 |
