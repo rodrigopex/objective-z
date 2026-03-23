@@ -337,22 +337,16 @@ static inline void _oz_align_shift(int32_t *raw_a, uint8_t shift_a,
 - (instancetype)div:(OZFixedPoint *)other
 {
 	/*
-	 * Q31 divide:
-	 * result_raw = (a_raw << 31) / b_raw
-	 * result_shift = a_shift - b_shift  (clamped to >= 0)
-	 *
+	 * Q31 divide via float intermediate.
+	 * Decode both to float, divide, re-encode.
 	 * Guard against division by zero.
 	 */
 	if (other->_raw == 0) {
 		return [OZFixedPoint fixedWithRaw:0 shift:0];
 	}
-	int64_t num = (int64_t)_raw << 31;
-	int32_t result_raw = (int32_t)(num / (int64_t)other->_raw);
-	int8_t result_shift = (int8_t)_shift - (int8_t)other->_shift;
-	if (result_shift < 0) {
-		result_shift = 0;
-	}
-	return [OZFixedPoint fixedWithRaw:result_raw shift:(uint8_t)result_shift];
+	float a_val = _oz_decode_float(_raw, _shift);
+	float b_val = _oz_decode_float(other->_raw, other->_shift);
+	return [OZFixedPoint fixedWithFloat:a_val / b_val];
 }
 
 /* ── OZObject overrides ────────────────────────────────────────── */
