@@ -536,6 +536,11 @@ def _collect_function(node: dict, module: OZModule) -> None:
     if not name:
         return
 
+    # Skip static inline helper functions (e.g. _oz_* from oz_fixedpoint_math.h)
+    if (node.get("storageClass") == "static"
+            and node.get("inline", False)):
+        return
+
     # Only collect functions that have a body (CompoundStmt)
     body_ast = None
     params = []
