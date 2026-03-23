@@ -983,6 +983,9 @@ def _flush_pre_stmts(out: StringIO, ctx: _EmitCtx, indent: int) -> None:
 
 def _emit_stmt(node: dict, out: StringIO, ctx: _EmitCtx,
                indent: int) -> None:
+    if _try_stmt_macro_passthrough(node, out, ctx, indent):
+        return
+
     tabs = "\t" * indent
     kind = node.get("kind", "")
 
@@ -1641,6 +1644,57 @@ def _try_macro_passthrough(node: dict, out: StringIO,
         if 0 <= rel_start < rel_end <= len(result):
             result[rel_start:rel_end] = transpiled.encode()
     out.write(result.decode())
+    return True
+
+
+def _try_stmt_macro_passthrough(node: dict, out: StringIO,
+                                 ctx: _EmitCtx, indent: int) -> bool:
+    """Attempt macro source passthrough for statement nodes.
+
+    Same logic as _try_macro_passthrough() but emits as a full statement
+    (with indentation and semicolon/newline).  When a macro is detected
+    but source_bytes is unavailable, emits a warning diagnostic and
+    falls through to normal reconstruction.
+    """
+    rng = node.get("range", {})
+    begin = rng.get("begin", {})
+    exp = begin.get("expansionLoc", {})
+    if not exp or exp.get("isMacroArgExpansion"):
+        return False
+    # Both begin and end must be macro-expanded — partial expansions
+    # (e.g. __block storage qualifier) only affect the first token.
+    end = rng.get("end", {})
+    end_exp = end.get("expansionLoc", {})
+    if not end_exp:
+        return False
+    spelling = begin.get("spellingLoc", {})
+    if spelling.get("includedFrom"):
+        return False
+    offset = exp.get("offset")
+    tok_len = exp.get("tokLen")
+    if offset is None or tok_len is None:
+        return False
+
+    source = ctx.source_bytes
+    if source is None:
+        ctx.module.diagnostics.append(
+            "warning: macro-expanded statement cannot be preserved "
+            "(source unavailable) — reconstructing from AST")
+        return False
+
+    tabs = "\t" * indent
+    macro_text = _extract_macro_text(source, offset, tok_len)
+    patches = _collect_objc_patches(node, offset, source, ctx)
+
+    if not patches:
+        out.write(f"{tabs}{macro_text};\n")
+        return True
+
+    result = bytearray(macro_text.encode())
+    for rel_start, rel_end, transpiled in sorted(patches, reverse=True):
+        if 0 <= rel_start < rel_end <= len(result):
+            result[rel_start:rel_end] = transpiled.encode()
+    out.write(f"{tabs}{result.decode()};\n")
     return True
 
 
