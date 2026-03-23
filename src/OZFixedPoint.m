@@ -3,10 +3,9 @@
 #import <Foundation/OZFixedPoint.h>
 #include <stdio.h>
 
-/**
- * Compute minimum shift (integer bits) for an unsigned magnitude.
- * Returns the number of bits needed: ceil(log2(mag + 1)).
- */
+#ifndef _OZ_FIXEDPOINT_HELPERS
+#define _OZ_FIXEDPOINT_HELPERS
+
 static inline uint8_t _oz_bits_for_mag(uint32_t mag)
 {
 	if (mag == 0) {
@@ -17,31 +16,18 @@ static inline uint8_t _oz_bits_for_mag(uint32_t mag)
 		mag >>= 1;
 		bits++;
 	}
-	if (bits > 31) {
-		bits = 31;
-	}
-	return (uint8_t)bits;
+	return (bits > 31) ? 31 : (uint8_t)bits;
 }
 
-/**
- * Compute minimum shift (integer bits) needed to represent |value|.
- * For float, truncate to integer magnitude for shift computation.
- */
 static inline uint8_t _oz_shift_for_float(float value)
 {
 	if (value == 0.0f) {
 		return 0;
 	}
 	float mag = (value < 0.0f) ? -value : value;
-	/* Use integer part magnitude to determine shift */
-	uint32_t imag = (uint32_t)mag;
-	/* If there's a fractional part and imag is exact, we still need this many bits */
-	return _oz_bits_for_mag(imag);
+	return _oz_bits_for_mag((uint32_t)mag);
 }
 
-/**
- * Compute minimum shift for an int32 value.
- */
 static inline uint8_t _oz_shift_for_int32(int32_t value)
 {
 	if (value == 0) {
@@ -51,32 +37,19 @@ static inline uint8_t _oz_shift_for_int32(int32_t value)
 	return _oz_bits_for_mag(mag);
 }
 
-/**
- * Encode a float as Q31 with the given shift.
- * raw = (value / 2^shift) * 2^31
- */
 static inline int32_t _oz_encode_float(float value, uint8_t shift)
 {
 	if (shift >= 31) {
 		return (int32_t)(value * 0.5f);
 	}
-	float scale = (float)(1UL << (31 - shift));
-	return (int32_t)(value * scale);
+	return (int32_t)(value * (float)(1UL << (31 - shift)));
 }
 
-/**
- * Encode an int32 as Q31 with the given shift.
- * raw = value << (31 - shift)
- */
 static inline int32_t _oz_encode_int32(int32_t value, uint8_t shift)
 {
 	return value << (31 - shift);
 }
 
-/**
- * Decode Q31+shift to float.
- * real = (raw / 2^31) * 2^shift = raw / 2^(31 - shift)
- */
 static inline float _oz_decode_float(int32_t raw, uint8_t shift)
 {
 	if (shift >= 31) {
@@ -85,10 +58,6 @@ static inline float _oz_decode_float(int32_t raw, uint8_t shift)
 	return (float)raw / (float)(1UL << (31 - shift));
 }
 
-/**
- * Decode Q31+shift to int32.
- * real = raw >> (31 - shift)
- */
 static inline int32_t _oz_decode_int32(int32_t raw, uint8_t shift)
 {
 	if (shift >= 31) {
@@ -97,10 +66,6 @@ static inline int32_t _oz_decode_int32(int32_t raw, uint8_t shift)
 	return raw >> (31 - shift);
 }
 
-/**
- * Align two Q31 values to the same shift (the larger of the two).
- * The value with smaller shift loses fractional precision.
- */
 static inline void _oz_align_shift(int32_t *raw_a, uint8_t shift_a,
 				    int32_t *raw_b, uint8_t shift_b,
 				    uint8_t *out_shift)
@@ -110,17 +75,14 @@ static inline void _oz_align_shift(int32_t *raw_a, uint8_t shift_a,
 		return;
 	}
 	if (shift_a > shift_b) {
-		/* b needs more integer bits — shift b's mantissa right */
-		uint8_t diff = shift_a - shift_b;
-		*raw_b = *raw_b >> diff;
+		*raw_b = *raw_b >> (shift_a - shift_b);
 		*out_shift = shift_a;
 	} else {
-		/* a needs more integer bits — shift a's mantissa right */
-		uint8_t diff = shift_b - shift_a;
-		*raw_a = *raw_a >> diff;
+		*raw_a = *raw_a >> (shift_b - shift_a);
 		*out_shift = shift_b;
 	}
 }
+#endif /* _OZ_FIXEDPOINT_HELPERS */
 
 @implementation OZFixedPoint
 
