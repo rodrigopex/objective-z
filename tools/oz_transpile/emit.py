@@ -16,8 +16,8 @@ from pathlib import Path
 import tree_sitter_objc as tsobjc
 from tree_sitter import Language, Parser
 
-from .model import (DispatchKind, OZClass, OZFunction, OZIvar, OZMethod,
-                     OZModule, OZParam, OZType, OrphanSource)
+from .model import (DispatchKind, INLINE_ACCESSORS, OZClass, OZFunction,
+                     OZIvar, OZMethod, OZModule, OZParam, OZType, OrphanSource)
 
 
 @dataclass
@@ -555,6 +555,26 @@ def _class_header_ctx(ctx: _EmitCtx, stem: str | None = None,
             if has_atomic_props:
                 break
 
+    # Collect inline accessors for this class
+    inline_accessors = []
+    for (acc_cls, acc_sel), acc in INLINE_ACCESSORS.items():
+        if acc_cls == cls.name:
+            c_sel = _selector_to_c(acc_sel)
+            params_decl = ", ".join(
+                f"{ctype} {pname}" for ctype, pname in acc.params
+            )
+            if params_decl:
+                params_decl = f"struct {cls.name} *self, " + params_decl
+            else:
+                params_decl = f"struct {cls.name} *self"
+            inline_accessors.append({
+                "func_name": _inline_accessor_name(cls.name, c_sel,
+                                                   acc.func_suffix),
+                "return_type": acc.return_c_type,
+                "params_decl": params_decl,
+                "body_lines": acc.body_lines,
+            })
+
     return {
         "name": cls.name,
         "stem": stem or _header_stem(cls),
@@ -575,6 +595,7 @@ def _class_header_ctx(ctx: _EmitCtx, stem: str | None = None,
         "user_includes": cls.user_includes,
         "has_atomic_props": has_atomic_props,
         "heap_support": heap_support,
+        "inline_accessors": inline_accessors,
     }
 
 
@@ -2114,6 +2135,33 @@ def _emit_msg_expr(node: dict, out: StringIO, ctx: _EmitCtx) -> None:
     args_exprs = _collect_msg_args(inner)
     receiver = inner[0] if inner else None
 
+    # OZ-073: inline accessor fast path — emit static inline call when
+    # receiver type is a known concrete class with an inline accessor.
+    if receiver:
+        concrete_for_inline = _try_infer_concrete_class(receiver, module)
+        if concrete_for_inline:
+            acc_key = (concrete_for_inline, selector)
+            acc = INLINE_ACCESSORS.get(acc_key)
+            if acc:
+                fast_c_sel = _selector_to_c(selector)
+                func_name = _inline_accessor_name(
+                    concrete_for_inline, fast_c_sel, acc.func_suffix)
+                ret_qt = node.get("type", {}).get("qualType", "void")
+                ret_oz = OZType(ret_qt)
+                ret_c = ret_oz.c_type
+                needs_ret_cast = (ret_oz.is_object
+                                  and ret_c != f"struct {concrete_for_inline} *")
+                if needs_ret_cast:
+                    out.write(f"({ret_c})")
+                out.write(f"{func_name}(")
+                out.write(f"(struct {concrete_for_inline} *)")
+                _emit_expr(receiver, out, ctx)
+                for arg in args_exprs:
+                    out.write(", ")
+                    _emit_expr(arg, out, ctx)
+                out.write(")")
+                return
+
     dispatch = _find_dispatch_kind(selector, module)
     if dispatch == DispatchKind.PROTOCOL:
         # Try compile-time dispatch when concrete receiver type is known
@@ -2825,6 +2873,18 @@ def _selector_to_c(selector: str) -> str:
     Example: "setPin:color:" -> "setPin_color_"
     """
     return selector.replace(":", "_")
+
+
+def _inline_accessor_name(class_name: str, c_sel: str, suffix: str) -> str:
+    """Build the C function name for an inline accessor.
+
+    Ensures an underscore separator between the selector and suffix
+    when the selector does not already end with '_'.
+    Example: "OZArray", "count", "fast_" -> "OZArray_count_fast_"
+             "OZArray", "objectAtIndex_", "fast_" -> "OZArray_objectAtIndex_fast_"
+    """
+    sep = "" if c_sel.endswith("_") else "_"
+    return f"{class_name}_{c_sel}{sep}{suffix}"
 
 
 def _base_chain(class_name: str, module: OZModule) -> str:

@@ -14,6 +14,80 @@ class DispatchKind(enum.Enum):
     PROTOCOL = "protocol"
 
 
+@dataclass(frozen=True, slots=True)
+class InlineAccessor:
+    """Describes a Foundation method that can be inlined as direct ivar access."""
+    class_name: str
+    selector: str
+    return_c_type: str
+    params: tuple[tuple[str, str], ...]   # ((c_type, name), ...)
+    body_lines: tuple[str, ...]           # C statements for the inline body
+    func_suffix: str = "fast_"            # appended to C selector name
+
+
+# Mapping of (class_name, selector) -> InlineAccessor for Foundation methods
+# whose bodies are simple ivar accesses suitable for static inline emission.
+INLINE_ACCESSORS: dict[tuple[str, str], InlineAccessor] = {}
+
+
+def _register_inline(acc: InlineAccessor) -> None:
+    INLINE_ACCESSORS[(acc.class_name, acc.selector)] = acc
+
+
+_register_inline(InlineAccessor(
+    class_name="OZArray",
+    selector="objectAtIndex:",
+    return_c_type="struct OZObject *",
+    params=(("unsigned int", "index"),),
+    body_lines=(
+        "if (index >= self->_count) {",
+        "\treturn (struct OZObject *)0;",
+        "}",
+        "return self->_items[index];",
+    ),
+))
+
+_register_inline(InlineAccessor(
+    class_name="OZArray",
+    selector="count",
+    return_c_type="unsigned int",
+    params=(),
+    body_lines=(
+        "return self->_count;",
+    ),
+))
+
+_register_inline(InlineAccessor(
+    class_name="OZString",
+    selector="cString",
+    return_c_type="const char *",
+    params=(),
+    body_lines=(
+        "return self->_data;",
+    ),
+))
+
+_register_inline(InlineAccessor(
+    class_name="OZString",
+    selector="length",
+    return_c_type="unsigned int",
+    params=(),
+    body_lines=(
+        "return self->_length;",
+    ),
+))
+
+_register_inline(InlineAccessor(
+    class_name="OZDictionary",
+    selector="count",
+    return_c_type="unsigned int",
+    params=(),
+    body_lines=(
+        "return self->_count;",
+    ),
+))
+
+
 @dataclass(slots=True)
 class OZType:
     raw_qual_type: str
