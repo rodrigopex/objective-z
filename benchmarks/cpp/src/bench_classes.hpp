@@ -88,34 +88,45 @@ public:
 	virtual void nop() { __asm__ volatile("" ::: "memory"); }
 };
 
-/* Boxed integer for fair collection comparison with OZNumber */
-struct BoxedInt {
-	int32_t val;
+/*
+ * SimpleString — mirrors OZString layout for fair collection comparison.
+ * Stores const char * + length, with a virtual length() accessor.
+ */
+class SimpleString {
+public:
+	const char *_data;
+	unsigned int _length;
+
+	SimpleString(const char *s, unsigned int len) : _data(s), _length(len) {}
+
+	virtual ~SimpleString() = default;
+
+	virtual unsigned int length() { return _length; }
 };
 
 /*
  * Polymorphic container with standard C++ iterators.
- * Uses virtual begin()/end() + virtual operator++/operator*
+ * Uses virtual begin()/end() + virtual operator++ and operator*
  * to match OZ's for-in overhead (vtable dispatch per step).
  *
  * OZ for-in: vtable dispatch on iter() + next() per element.
- * C++ range-for: vtable dispatch on operator++ + operator* per element.
+ * C++ range-for: vtable dispatch on operator++ and operator* per element.
  */
 class IIterator {
 public:
 	virtual ~IIterator() = default;
 	virtual IIterator &operator++() = 0;
-	virtual BoxedInt *operator*() const = 0;
+	virtual SimpleString *operator*() const = 0;
 	virtual bool operator!=(const IIterator &other) const = 0;
 };
 
-class BoxedArray {
+class StringArray {
 public:
 	class Iterator : public IIterator {
 	public:
-		BoxedInt **ptr;
+		SimpleString **ptr;
 
-		explicit Iterator(BoxedInt **p) : ptr(p) {}
+		explicit Iterator(SimpleString **p) : ptr(p) {}
 
 		Iterator &operator++() override
 		{
@@ -123,7 +134,7 @@ public:
 			return *this;
 		}
 
-		BoxedInt *operator*() const override { return *ptr; }
+		SimpleString *operator*() const override { return *ptr; }
 
 		bool operator!=(const IIterator &other) const override
 		{
@@ -131,10 +142,10 @@ public:
 		}
 	};
 
-	BoxedInt **items;
+	SimpleString **items;
 	int count;
 
-	BoxedArray(BoxedInt **items_, int count_)
+	StringArray(SimpleString **items_, int count_)
 		: items(items_), count(count_) {}
 
 	Iterator begin() { return Iterator(items); }

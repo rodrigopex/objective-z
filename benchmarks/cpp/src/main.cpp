@@ -404,8 +404,12 @@ static void bench_properties_sync(void)
 
 /* ── Section 6: Collections + Blocks ──────────────────────────────── */
 
-/* Slab for BoxedInt (mirrors OZNumber slab pool) */
-K_MEM_SLAB_DEFINE(boxed_slab, sizeof(BoxedInt), 16, sizeof(void *));
+/* Slab for SimpleString (mirrors OZString slab pool) */
+K_MEM_SLAB_DEFINE(string_slab, sizeof(SimpleString), 16, sizeof(void *));
+
+static const char *str_data[10] = {
+        "s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9",
+};
 
 static void bench_collections_blocks(void)
 {
@@ -413,86 +417,75 @@ static void bench_collections_blocks(void)
         timing_t s, e;
         uint64_t total;
 
-        /* ── Value-based (idiomatic C++ vs OZArray) ─── */
+        /* ── Value-based baseline ─── */
 
-        /* Array create (value-based, 10 ints on stack) */
+        /* Raw int32_t array sum (baseline — no objects) */
+        int32_t raw_arr[10] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
+
         total = 0;
         for (int i = 0; i < FAST_ITERATIONS; i++) {
                 s = timing_counter_get();
-                int arr[10] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
-                (void)arr[5];
-                e = timing_counter_get();
-                total += timing_cycles_get(&s, &e);
-        }
-        bench_report("int[10] create + access (value)", total, FAST_ITERATIONS);
-
-        /* Array iteration (value-based, 10 ints) */
-        int val_arr[10] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
-
-        total = 0;
-        for (int i = 0; i < ITERATIONS; i++) {
-                s = timing_counter_get();
-                volatile int sum = 0;
+                volatile int32_t sum = 0;
                 for (int j = 0; j < 10; j++) {
-                        sum += val_arr[j];
+                        sum += raw_arr[j];
                 }
                 e = timing_counter_get();
                 total += timing_cycles_get(&s, &e);
         }
-        bench_report("int[10] iteration (value)", total, ITERATIONS);
+        bench_report("Raw int32_t[] sum (10 elems, baseline)", total, FAST_ITERATIONS);
 
-        /* ── Boxed pointer-based (fair OZArray comparison) ─── */
+        /* ── Object array (fair OZArray<OZString> comparison) ─── */
 
-        /* Create 10 boxed ints from slab */
-        BoxedInt *items[10];
+        /* Create 10 SimpleString objects from slab */
+        SimpleString *items[10];
 
         for (int i = 0; i < 10; i++) {
                 void *mem;
-                k_mem_slab_alloc(&boxed_slab, &mem, K_NO_WAIT);
-                items[i] = static_cast<BoxedInt *>(mem);
-                items[i]->val = i;
+                k_mem_slab_alloc(&string_slab, &mem, K_NO_WAIT);
+                items[i] = new (mem) SimpleString(str_data[i], 2);
         }
 
-        /* Random access (boxed) */
+        /* Random access + length() */
         total = 0;
         for (int i = 0; i < FAST_ITERATIONS; i++) {
                 s = timing_counter_get();
-                (void)items[5]->val;
+                (void)items[5]->length();
                 e = timing_counter_get();
                 total += timing_cycles_get(&s, &e);
         }
-        bench_report("BoxedInt*[10] access (slab-pooled)", total, FAST_ITERATIONS);
+        bench_report("SimpleString*[10] access + length()", total, FAST_ITERATIONS);
 
-        /* Iteration (boxed) */
+        /* Raw loop: index + virtual length() per element */
         total = 0;
         for (int i = 0; i < ITERATIONS; i++) {
                 s = timing_counter_get();
-                volatile int32_t sum = 0;
+                volatile unsigned int sum = 0;
                 for (int j = 0; j < 10; j++) {
-                        sum += items[j]->val;
+                        sum += items[j]->length();
                 }
                 e = timing_counter_get();
                 total += timing_cycles_get(&s, &e);
         }
-        bench_report("BoxedInt*[10] iteration (slab-pooled)", total, ITERATIONS);
+        bench_report("SimpleString*[10] loop + length()", total, ITERATIONS);
 
-        /* Iteration via polymorphic iterator (fair OZ for-in comparison) */
-        BoxedArray boxed_arr(items, 10);
+        /* Polymorphic iterator: virtual ++ and * + length() per element */
+        StringArray str_arr(items, 10);
 
         total = 0;
         for (int i = 0; i < ITERATIONS; i++) {
                 s = timing_counter_get();
-                volatile int32_t sum = 0;
-                for (auto it = boxed_arr.begin(); it != boxed_arr.end(); ++it) {
-                        sum += (*it)->val;
+                volatile unsigned int sum = 0;
+                for (auto it = str_arr.begin(); it != str_arr.end(); ++it) {
+                        sum += (*it)->length();
                 }
                 e = timing_counter_get();
                 total += timing_cycles_get(&s, &e);
         }
-        bench_report("BoxedArray iterator (virtual ++/*)", total, ITERATIONS);
+        bench_report("StringArray iterator (virtual, length)", total, ITERATIONS);
 
         for (int i = 0; i < 10; i++) {
-                k_mem_slab_free(&boxed_slab, items[i]);
+                items[i]->~SimpleString();
+                k_mem_slab_free(&string_slab, items[i]);
         }
 
         /* ── Blocks (lambda / std::function, from Section 2) ─── */
@@ -562,8 +555,8 @@ static void print_sizes(void)
                sizeof(BenchChild));
         printk("  %-48s: %5zu bytes\n", "BenchGrandChild",
                sizeof(BenchGrandChild));
-        printk("  %-48s: %5zu bytes\n", "BoxedInt (int32_t)",
-               sizeof(BoxedInt));
+        printk("  %-48s: %5zu bytes\n", "SimpleString (vptr + data + len)",
+               sizeof(SimpleString));
         printk("  %-48s: %5zu bytes\n", "std::shared_ptr<BenchBase>",
                sizeof(std::shared_ptr<BenchBase>));
         printk("  %-48s: %5zu bytes\n", "std::unique_ptr<BenchBase>",
