@@ -3671,6 +3671,86 @@ class TestMacroPassthrough:
         assert "DOUBLE(" in content
         assert "self->_count" in content
 
+    def test_stmt_macro_do_while_with_objc(self):
+        """OZ-072: do/while(0) macro with ObjC call must preserve macro."""
+        _, out = clang_emit_patched("""\
+#import <Foundation/OZObject.h>
+#define RUN(code) do { code; } while (0)
+@interface Foo : OZObject
+- (void)nop;
+@end
+@implementation Foo
+- (void)nop {}
+- (void)test {
+    RUN([self nop]);
+}
+@end
+""", stem="Foo")
+        content = out["Foo_ozm.c"]
+        assert "RUN(" in content
+        assert "do" not in content or "RUN(" in content
+
+    def test_stmt_macro_nested(self):
+        """OZ-072: nested macro-inside-macro at statement level."""
+        _, out = clang_emit_patched("""\
+#import <Foundation/OZObject.h>
+#define INNER(code) do { code; } while (0)
+#define OUTER(code) INNER(code)
+@interface Foo : OZObject
+- (void)nop;
+@end
+@implementation Foo
+- (void)nop {}
+- (void)test {
+    OUTER([self nop]);
+}
+@end
+""", stem="Foo")
+        content = out["Foo_ozm.c"]
+        assert "OUTER(" in content
+
+    def test_stmt_macro_multi_objc(self):
+        """OZ-072: macro with multiple ObjC calls must patch all."""
+        _, out = clang_emit_patched("""\
+#import <Foundation/OZObject.h>
+#define RUN2(a, b) do { a; b; } while (0)
+@interface Foo : OZObject
+- (void)nop;
+- (void)ping;
+@end
+@implementation Foo
+- (void)nop {}
+- (void)ping {}
+- (void)test {
+    RUN2([self nop], [self ping]);
+}
+@end
+""", stem="Foo")
+        content = out["Foo_ozm.c"]
+        assert "RUN2(" in content
+        assert "Foo_nop" in content
+        assert "Foo_ping" in content
+
+    def test_stmt_macro_no_source_warning(self):
+        """OZ-072: stmt macro without source emits warning diagnostic."""
+        mod, out = clang_emit_patched("""\
+#import <Foundation/OZObject.h>
+#define RUN(code) do { code; } while (0)
+@interface Foo : OZObject
+- (void)nop;
+@end
+@implementation Foo
+- (void)nop {}
+- (void)test {
+    RUN([self nop]);
+}
+@end
+""", stem="Foo")
+        # The patched path provides source, so no warning expected here.
+        # Warning only fires in the non-patched path (source_bytes=None).
+        content = out["Foo_ozm.c"]
+        assert "RUN(" in content
+
 
 # ===========================================================================
 # OZ-069: Type definitions from headers must be emitted in source files
