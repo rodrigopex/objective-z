@@ -10,7 +10,7 @@
 #import "OZObject.h"
 #import "OZString.h"
 #import "OZMutableString.h"
-#import "OZFixedPoint.h"
+#import "OZQ31.h"
 #import "OZArray.h"
 #import "OZDictionary.h"
 #import "OZHeap.h"

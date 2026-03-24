@@ -127,7 +127,7 @@ def _associate_module_items(module: OZModule) -> None:
 """Known foundation class names auto-tagged when --sources is not provided."""
 _FOUNDATION_NAMES = frozenset({
     "OZObject", "OZString", "OZMutableString", "OZArray", "OZDictionary",
-    "OZFixedPoint", "OZDefer", "OZHeap", "OZSpinLock",
+    "OZQ31", "OZDefer", "OZHeap", "OZSpinLock",
 })
 
 
@@ -525,7 +525,7 @@ def _class_header_ctx(ctx: _EmitCtx, stem: str | None = None,
     if cls.superclass and cls.superclass in module.classes:
         superclass_stem = _header_stem(module.classes[cls.superclass])
 
-    fixedpoint_inits = [
+    q31_inits = [
         {"suffix": "fixedWithInt32_", "c_type": "int32_t", "is_float": False},
         {"suffix": "fixedWithFloat_", "c_type": "float", "is_float": True},
         {"suffix": "fixedWithBool_", "c_type": "int8_t", "is_float": False},
@@ -579,7 +579,7 @@ def _class_header_ctx(ctx: _EmitCtx, stem: str | None = None,
         "extern_decls": extern_decls,
         "base_chain": _base_chain(cls.name, module),
         "root_class": ctx.root_class,
-        "fixedpoint_inits": fixedpoint_inits,
+        "q31_inits": q31_inits,
         "item_pool_count": item_pool_count,
         "user_includes": cls.user_includes,
         "has_atomic_props": has_atomic_props,
@@ -1378,13 +1378,13 @@ def _boxed_type_category(qt: str) -> tuple[str, bool]:
 
 
 def _emit_boxed_number(node: dict, out: StringIO, ctx: _EmitCtx) -> None:
-    """Emit a dynamically allocated OZFixedPoint via OZFixedPoint_fixedWith*."""
+    """Emit a dynamically allocated OZQ31 via OZQ31_fixedWith*."""
     inner = node.get("inner", [])
     if not inner:
         ctx.module.errors.append(
             "boxed expression @(...) is not supported; "
-            "use [OZFixedPoint fixedWithInt32:] or "
-            "[OZFixedPoint fixedWithFloat:]")
+            "use [OZQ31 fixedWithInt32:] or "
+            "[OZQ31 fixedWithFloat:]")
         out.write("((void *)0)")
         return
 
@@ -1402,16 +1402,16 @@ def _emit_boxed_number(node: dict, out: StringIO, ctx: _EmitCtx) -> None:
     # Fast path: literal children
     if child_kind == "IntegerLiteral":
         val = child.get("value", "0")
-        out.write(f"OZFixedPoint_fixedWithInt32_({val})")
+        out.write(f"OZQ31_fixedWithInt32_({val})")
         return
     if child_kind == "FloatingLiteral":
         val = child.get("value", "0.0")
         fval = val if val.endswith("f") or val.endswith("F") else f"{val}f"
-        out.write(f"OZFixedPoint_fixedWithFloat_({fval})")
+        out.write(f"OZQ31_fixedWithFloat_({fval})")
         return
     if child_kind == "CharacterLiteral":
         val = str(child.get("value", 0))
-        out.write(f"OZFixedPoint_fixedWithInt32_({val})")
+        out.write(f"OZQ31_fixedWithInt32_({val})")
         return
     if child_kind == "ObjCBoolLiteralExpr":
         raw = child.get("value", False)
@@ -1419,7 +1419,7 @@ def _emit_boxed_number(node: dict, out: StringIO, ctx: _EmitCtx) -> None:
             val = "0" if "no" in raw.lower() else "1"
         else:
             val = "1" if raw else "0"
-        out.write(f"OZFixedPoint_fixedWithBool_({val})")
+        out.write(f"OZQ31_fixedWithBool_({val})")
         return
 
     # Expression path: variables, arithmetic, function calls, etc.
@@ -1435,16 +1435,16 @@ def _emit_boxed_number(node: dict, out: StringIO, ctx: _EmitCtx) -> None:
     if warn:
         ctx.module.diagnostics.append(
             f"warning: @(expr) with type '{inner_qt}' boxed to "
-            f"OZFixedPoint via int32; verify no precision loss")
+            f"OZQ31 via int32; verify no precision loss")
 
     buf = StringIO()
     _emit_expr(original_child, buf, ctx)
     expr_str = buf.getvalue()
 
     if category == "float":
-        out.write(f"OZFixedPoint_fixedWithFloat_((float)({expr_str}))")
+        out.write(f"OZQ31_fixedWithFloat_((float)({expr_str}))")
     else:
-        out.write(f"OZFixedPoint_fixedWithInt32_((int32_t)({expr_str}))")
+        out.write(f"OZQ31_fixedWithInt32_((int32_t)({expr_str}))")
 
 
 def _emit_block_expr(node: dict, out: StringIO, ctx: _EmitCtx) -> None:
@@ -2804,7 +2804,7 @@ def _count_alloc_calls(module: OZModule) -> dict[str, int]:
     """Count allocations across all method/function body ASTs.
 
     Counts explicit [ClassName alloc] calls plus implicit allocations
-    from literal expressions (@42 → OZFixedPoint, @[...] → OZArray,
+    from literal expressions (@42 → OZQ31, @[...] → OZArray,
     @{...} → OZDictionary).
     """
     counts: dict[str, int] = {}
@@ -2822,7 +2822,7 @@ def _count_alloc_calls(module: OZModule) -> dict[str, int]:
         elif kind == "ObjCDictionaryLiteral":
             counts["OZDictionary"] = counts.get("OZDictionary", 0) + 1
         elif kind == "ObjCBoxedExpr":
-            counts["OZFixedPoint"] = counts.get("OZFixedPoint", 0) + 1
+            counts["OZQ31"] = counts.get("OZQ31", 0) + 1
         elif kind == "ObjCAtSynchronizedStmt":
             counts["OZSpinLock"] = counts.get("OZSpinLock", 0) + 1
         for child in node.get("inner", []):
@@ -2959,7 +2959,7 @@ _TS_LANG = Language(tsobjc.language())
 
 _OZ_IMPORT_PREFIXES = (
     "Foundation/", "Foundation.h", "objc/", "objc.h",
-    "OZObject", "OZLog", "OZString", "OZArray", "OZDictionary", "OZFixedPoint",
+    "OZObject", "OZLog", "OZString", "OZArray", "OZDictionary", "OZQ31",
 )
 
 def _is_objc_header(header_path: Path) -> bool:

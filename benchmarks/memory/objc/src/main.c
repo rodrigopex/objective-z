@@ -17,7 +17,7 @@
 #include "oz_dispatch.h"
 #include "OZObject_ozh.h"
 #include "OZString_ozh.h"
-#include "OZFixedPoint_ozh.h"
+#include "OZQ31_ozh.h"
 #include "OZArray_ozh.h"
 #include "OZDictionary_ozh.h"
 #include "OZSpinLock_ozh.h"
@@ -89,8 +89,8 @@ static void bench_foundation_sizes(void)
 	printk("\n-- Foundation Class Sizes --\n");
 	printk("  %-40s: %4zu bytes\n", "OZString",
 	       sizeof(struct OZString));
-	printk("  %-40s: %4zu bytes\n", "OZFixedPoint",
-	       sizeof(struct OZFixedPoint));
+	printk("  %-40s: %4zu bytes\n", "OZQ31",
+	       sizeof(struct OZQ31));
 	printk("  %-40s: %4zu bytes\n", "OZArray",
 	       sizeof(struct OZArray));
 	printk("  %-40s: %4zu bytes\n", "OZDictionary",

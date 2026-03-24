@@ -1,4 +1,4 @@
-/* oz-pool: OZObject=1,OZFixedPoint=16 */
+/* oz-pool: OZObject=1,OZQ31=16 */
 #import "OZFoundationBase.h"
 
 @interface FPTest : OZObject
@@ -25,14 +25,14 @@
 @implementation FPTest
 
 - (int)intFromLiteral {
-	OZFixedPoint *n = @42;
+	OZQ31 *n = @42;
 	int v = [n intValue];
 	[n release];
 	return v;
 }
 
 - (float)floatFromLiteral {
-	OZFixedPoint *n = @(3.5f);
+	OZQ31 *n = @(3.5f);
 	float v = [n floatValue];
 	[n release];
 	return v;
@@ -40,58 +40,58 @@
 
 - (int)intFromExpr {
 	int x = 7;
-	OZFixedPoint *n = @(x + 3);
+	OZQ31 *n = @(x + 3);
 	int v = [n int32Value];
 	[n release];
 	return v;
 }
 
 - (int)int8Roundtrip {
-	OZFixedPoint *n = @(100);
+	OZQ31 *n = @(100);
 	int v = [n int8Value];
 	[n release];
 	return v;
 }
 
 - (int)uint16Roundtrip {
-	OZFixedPoint *n = @(1000);
+	OZQ31 *n = @(1000);
 	int v = [n uint16Value];
 	[n release];
 	return v;
 }
 
 - (int)boolTrue {
-	OZFixedPoint *n = @(42);
+	OZQ31 *n = @(42);
 	int v = [n boolValue];
 	[n release];
 	return v;
 }
 
 - (int)boolFalse {
-	OZFixedPoint *n = @(0);
+	OZQ31 *n = @(0);
 	int v = [n boolValue];
 	[n release];
 	return v;
 }
 
 - (int)rawNonZero {
-	OZFixedPoint *n = @(5);
+	OZQ31 *n = @(5);
 	int v = [n rawValue] != 0;
 	[n release];
 	return v;
 }
 
 - (int)shiftForTen {
-	OZFixedPoint *n = @(10);
+	OZQ31 *n = @(10);
 	int v = [n shift];
 	[n release];
 	return v;
 }
 
 - (int)addResult {
-	OZFixedPoint *a = @(10);
-	OZFixedPoint *b = @(20);
-	OZFixedPoint *c = [a add:b];
+	OZQ31 *a = @(10);
+	OZQ31 *b = @(20);
+	OZQ31 *c = [a add:b];
 	int v = [c int32Value];
 	[a release];
 	[b release];
@@ -100,9 +100,9 @@
 }
 
 - (int)subResult {
-	OZFixedPoint *a = @(50);
-	OZFixedPoint *b = @(20);
-	OZFixedPoint *c = [a sub:b];
+	OZQ31 *a = @(50);
+	OZQ31 *b = @(20);
+	OZQ31 *c = [a sub:b];
 	int v = [c int32Value];
 	[a release];
 	[b release];
@@ -111,9 +111,9 @@
 }
 
 - (int)mulResult {
-	OZFixedPoint *a = @(6);
-	OZFixedPoint *b = @(7);
-	OZFixedPoint *c = [a mul:b];
+	OZQ31 *a = @(6);
+	OZQ31 *b = @(7);
+	OZQ31 *c = [a mul:b];
 	int v = [c int32Value];
 	[a release];
 	[b release];
@@ -122,9 +122,9 @@
 }
 
 - (float)divResult {
-	OZFixedPoint *a = @(10);
-	OZFixedPoint *b = @(4);
-	OZFixedPoint *c = [a div:b];
+	OZQ31 *a = @(10);
+	OZQ31 *b = @(4);
+	OZQ31 *c = [a div:b];
 	float v = [c floatValue];
 	[a release];
 	[b release];

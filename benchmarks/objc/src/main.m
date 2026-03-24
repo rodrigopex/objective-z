@@ -520,8 +520,8 @@ static void print_sizes(void)
 	       sizeof(BenchGrandChild));
 	printk("  %-48s: %5zu bytes\n", "OZString",
 	       sizeof(OZString));
-	printk("  %-48s: %5zu bytes\n", "OZFixedPoint",
-	       sizeof(OZFixedPoint));
+	printk("  %-48s: %5zu bytes\n", "OZQ31",
+	       sizeof(OZQ31));
 	printk("  %-48s: %5zu bytes\n", "OZArray",
 	       sizeof(OZArray));
 	printk("  %-48s: %5zu bytes\n", "OZDictionary",

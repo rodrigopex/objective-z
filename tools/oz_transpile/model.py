@@ -210,7 +210,7 @@ class OZType:
                       "__autoreleasing", "_Nonnull", "_Nullable",
                       "__kindof"):
             qt = qt.replace(qual, "")
-        # Strip nested generics (e.g. OZArray<OZArray<OZFixedPoint *> *>)
+        # Strip nested generics (e.g. OZArray<OZArray<OZQ31 *> *>)
         prev = None
         while prev != qt:
             prev = qt

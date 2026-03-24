@@ -1,6 +1,6 @@
 /**
- * @file OZFixedPoint.h
- * @brief Fixed-point numeric class using Q31+shift representation.
+ * @file OZQ31.h
+ * @brief Q31 fixed-point numeric class.
  *
  * Lightweight ObjC interface that Clang can parse for AST dump.
  * The transpiler emits pure-C fixed-point operations.
@@ -11,7 +11,7 @@
 #pragma once
 #import "OZObject.h"
 
-@interface OZFixedPoint : OZObject {
+@interface OZQ31 : OZObject {
 	int32_t _raw;    /* Q31 mantissa, normalised to [-1.0, 1.0) */
 	uint8_t _shift;  /* exponent: real_value = (raw / 2^31) * 2^shift */
 }
@@ -52,10 +52,10 @@
 - (uint8_t)shift;
 
 /* Arithmetic (Q31 native) */
-- (instancetype)add:(OZFixedPoint *)other;
-- (instancetype)sub:(OZFixedPoint *)other;
-- (instancetype)mul:(OZFixedPoint *)other;
-- (instancetype)div:(OZFixedPoint *)other;
+- (instancetype)add:(OZQ31 *)other;
+- (instancetype)sub:(OZQ31 *)other;
+- (instancetype)mul:(OZQ31 *)other;
+- (instancetype)div:(OZQ31 *)other;
 
 /* OZObject overrides */
 - (int)cDescription:(char *)buf maxLength:(int)maxLen;
@@ -63,5 +63,5 @@
 @end
 
 #ifdef __clang__
-@compatibility_alias NSNumber OZFixedPoint;
+@compatibility_alias NSNumber OZQ31;
 #endif

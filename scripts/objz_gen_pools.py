@@ -18,7 +18,7 @@ from collections import defaultdict
 
 SKIP_CLASSES = frozenset({
     "Object", "Protocol", "OZString", "OZMutableString",
-    "OZAutoreleasePool", "OZFixedPoint", "OZArray", "OZDictionary",
+    "OZAutoreleasePool", "OZQ31", "OZArray", "OZDictionary",
     "OZLog", "OZGPIOPin", "OZGPIOOutput", "OZGPIOInput",
 })
 
