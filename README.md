@@ -117,18 +117,22 @@ All benchmarks on **nRF52833 DK** (ARM Cortex-M4F @ 64 MHz), DWT cycle counter, 
 
 ### Firmware Footprint
 
-| Benchmark      | Metric    |    C++ |     OZ |   Diff |
-| -------------- | --------- | -----: | -----: | -----: |
-| Speed (`-O2`)  | text      | 50,388 | 35,756 |   -29% |
-| Speed (`-O2`)  | data      |    312 |    568 |   +82% |
-| Speed (`-O2`)  | bss       |  9,733 |  8,445 |   -13% |
-| Speed (`-O2`)  | **total** | **60,433** | **44,769** | **-26%** |
-| Memory (`-Os`) | text      | 22,840 | 21,348 |    -7% |
-| Memory (`-Os`) | data      |    180 |    180 |     0% |
-| Memory (`-Os`) | bss       | 15,558 |  7,344 |   -53% |
-| Memory (`-Os`) | **total** | **38,578** | **28,872** | **-25%** |
+| Benchmark      | Metric      |    C++ |     OZ |   Diff |
+| -------------- | ----------- | -----: | -----: | -----: |
+| Speed (`-O2`)  | text        | 50,588 | 34,272 |   -32% |
+| Speed (`-O2`)  | data        |    312 |    768 |  +146% |
+| Speed (`-O2`)  | bss         |  9,861 |  8,605 |   -13% |
+| Speed (`-O2`)  | **total**   | **60,761** | **43,645** | **-28%** |
+| Speed (`-O2`)  | **Flash**   | **50,900** | **35,040** | **-31%** |
+| Speed (`-O2`)  | **RAM**     | **10,173** | **9,373** | **-8%** |
+| Memory (`-Os`) | text        | 22,840 | 21,344 |    -7% |
+| Memory (`-Os`) | data        |    180 |    180 |     0% |
+| Memory (`-Os`) | bss         | 15,558 |  7,344 |   -53% |
+| Memory (`-Os`) | **total**   | **38,578** | **28,868** | **-25%** |
+| Memory (`-Os`) | **Flash**   | **23,020** | **21,524** | **-6%** |
+| Memory (`-Os`) | **RAM**     | **15,738** | **7,524** | **-52%** |
 
-> **OZ firmware is 26% smaller at `-O2`** (44 KB vs 60 KB) and **25% smaller at `-Os`** (28 KB vs 38 KB) than equivalent C++. C++ template instantiation and STL inlining inflate code size significantly on embedded targets.
+> **OZ firmware is 28% smaller at `-O2`** (43 KB vs 60 KB) and **25% smaller at `-Os`** (28 KB vs 38 KB) than equivalent C++. Flash usage is 31% lower at `-O2` (35 KB vs 50 KB). RAM is 52% lower at `-Os` (7.5 KB vs 15.7 KB) due to slab pools vs sys_heap.
 
 ### Foundation Classes
 
@@ -714,26 +718,31 @@ just bench-footprint                       # ELF section size analysis
 
 | Benchmark      | Metric    |    C++ |     OZ |   Diff |
 | -------------- | --------- | -----: | -----: | -----: |
-| Speed (`-O2`)  | text      | 50,388 | 35,756 |   -29% |
-| Speed (`-O2`)  | data      |    312 |    568 |   +82% |
-| Speed (`-O2`)  | bss       |  9,733 |  8,445 |   -13% |
-| Speed (`-O2`)  | **total** | **60,433** | **44,769** | **-26%** |
-| Memory (`-Os`) | text      | 22,840 | 21,348 |    -7% |
-| Memory (`-Os`) | data      |    180 |    180 |     0% |
-| Memory (`-Os`) | bss       | 15,558 |  7,344 |   -53% |
-| Memory (`-Os`) | **total** | **38,578** | **28,872** | **-25%** |
+| Speed (`-O2`)  | text        | 50,588 | 34,272 |   -32% |
+| Speed (`-O2`)  | data        |    312 |    768 |  +146% |
+| Speed (`-O2`)  | bss         |  9,861 |  8,605 |   -13% |
+| Speed (`-O2`)  | **total**   | **60,761** | **43,645** | **-28%** |
+| Speed (`-O2`)  | **Flash**   | **50,900** | **35,040** | **-31%** |
+| Speed (`-O2`)  | **RAM**     | **10,173** | **9,373** | **-8%** |
+| Memory (`-Os`) | text        | 22,840 | 21,344 |    -7% |
+| Memory (`-Os`) | data        |    180 |    180 |     0% |
+| Memory (`-Os`) | bss         | 15,558 |  7,344 |   -53% |
+| Memory (`-Os`) | **total**   | **38,578** | **28,868** | **-25%** |
+| Memory (`-Os`) | **Flash**   | **23,020** | **21,524** | **-6%** |
+| Memory (`-Os`) | **RAM**     | **15,738** | **7,524** | **-52%** |
 
 ### Key Takeaways
 
 - **Vtable dispatch is comparable** — OZ const-array dispatch (21 cycles) vs C++ virtual dispatch (14-20 cycles)
-- **OZ uses less RAM** — slab pools in .bss (8.4 KB) vs C++ heap + libc (9.7 KB)
+- **OZ uses less RAM** — slab pools in .bss (8.6 KB) vs C++ heap + libc (9.9 KB) at -O2; 52% less at -Os
 - **C++ placement-new from slab is 2x faster** than OZ slab (105 vs 215 cycles) — OZ overhead comes from init + ARC release
 - **@synchronized is expensive** (266 cycles) due to OZSpinLock RAII alloc+free — k_spinlock alone is 15 cycles
 - **Block invocation matches lambda** — both compile to function pointers
 - **Raw array iteration is near-parity** — OZ 99 vs C++ 81 cycles for int32_t[10] sum (1.2x)
 - **Object array iteration is 1.8x slower** — OZ 483 vs C++ 263 cycles for string loop + length(); fair comparison with both sides calling a virtual method per element
-- **OZ text is 29% smaller** at `-O2` (36 KB vs 50 KB) — C++ template/STL inlining inflates code size
-- **OZ total firmware is 26% smaller** at `-O2` (45 KB vs 60 KB)
+- **OZ Flash is 31% smaller** at `-O2` (35 KB vs 50 KB) — C++ template/STL inlining inflates code size
+- **OZ RAM is 52% smaller** at `-Os` (7.5 KB vs 15.7 KB) — slab pools in .bss vs sys_heap
+- **OZ total firmware is 28% smaller** at `-O2` (43 KB vs 60 KB)
 
 <details>
 <summary>Legacy Runtime Reference</summary>
