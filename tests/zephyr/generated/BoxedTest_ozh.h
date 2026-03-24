@@ -8,19 +8,19 @@
 
 struct BoxedTest {
 	struct OZObject base;
-	struct OZNumber * _fromVar;
-	struct OZNumber * _fromExpr;
-	struct OZNumber * _fromCall;
-	struct OZNumber * _fromFloat;
-	struct OZNumber * _fromUint;
+	struct OZQ31 * _fromVar;
+	struct OZQ31 * _fromExpr;
+	struct OZQ31 * _fromCall;
+	struct OZQ31 * _fromFloat;
+	struct OZQ31 * _fromUint;
 };
 
 void BoxedTest_run(struct BoxedTest *self);
-struct OZNumber * BoxedTest_fromVar(struct BoxedTest *self);
-struct OZNumber * BoxedTest_fromExpr(struct BoxedTest *self);
-struct OZNumber * BoxedTest_fromCall(struct BoxedTest *self);
-struct OZNumber * BoxedTest_fromFloat(struct BoxedTest *self);
-struct OZNumber * BoxedTest_fromUint(struct BoxedTest *self);
+struct OZQ31 * BoxedTest_fromVar(struct BoxedTest *self);
+struct OZQ31 * BoxedTest_fromExpr(struct BoxedTest *self);
+struct OZQ31 * BoxedTest_fromCall(struct BoxedTest *self);
+struct OZQ31 * BoxedTest_fromFloat(struct BoxedTest *self);
+struct OZQ31 * BoxedTest_fromUint(struct BoxedTest *self);
 void BoxedTest_dealloc(struct BoxedTest *self);
 
 extern oz_slab_t oz_slab_BoxedTest;

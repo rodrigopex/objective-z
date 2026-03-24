@@ -10,7 +10,7 @@
 #include "Level4_ozh.h"
 #include "LightSwitch_ozh.h"
 #include "Node_ozh.h"
-#include "OZNumber_ozh.h"
+#include "OZQ31_ozh.h"
 #include "Widget_ozh.h"
 
 OZ_SLAB_DEFINE(oz_slab_OZObject, sizeof(struct OZObject), 1, 4);
