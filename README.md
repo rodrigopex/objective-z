@@ -50,8 +50,8 @@ Built on Zephyr primitives (`k_mem_slab`, `SYS_INIT`, `k_spinlock_t`, `atomic_t`
 
 ### Dispatch
 
-- **Static dispatch** — direct C function calls for non-protocol methods (5-9 cycles)
-- **Compile-time dispatch** — protocol calls resolved to direct calls when receiver type is known at transpile time (5-9 cycles)
+- **Static dispatch** — direct C function calls for non-protocol methods (12 cycles)
+- **Compile-time dispatch** — protocol calls resolved to direct calls when receiver type is known at transpile time (12 cycles)
 - **Protocol vtable dispatch** — `const` vtable arrays in `.rodata` (zero RAM), 19 cycles polymorphic fallback for `id`-typed receivers
 - **Class methods** — static function calls
 
@@ -127,6 +127,8 @@ All benchmarks on **nRF52833 DK** (ARM Cortex-M4F @ 64 MHz), DWT cycle counter, 
 | Memory (`-Os`) | data      |    180 |    180 |     0% |
 | Memory (`-Os`) | bss       | 15,558 |  7,344 |   -53% |
 | Memory (`-Os`) | **total** | **38,578** | **28,872** | **-25%** |
+
+> **OZ firmware is 26% smaller at `-O2`** (44 KB vs 60 KB) and **25% smaller at `-Os`** (28 KB vs 38 KB) than equivalent C++. C++ template instantiation and STL inlining inflate code size significantly on embedded targets.
 
 ### Foundation Classes
 
@@ -723,12 +725,13 @@ just bench-footprint                       # ELF section size analysis
 
 ### Key Takeaways
 
-- **Vtable dispatch is comparable** — OZ const-array dispatch (18 cycles) vs C++ virtual dispatch (14-16 cycles)
+- **Vtable dispatch is comparable** — OZ const-array dispatch (21 cycles) vs C++ virtual dispatch (14-20 cycles)
 - **OZ uses less RAM** — slab pools in .bss (8.4 KB) vs C++ heap + libc (9.7 KB)
-- **C++ placement-new from slab is 2x faster** than OZ slab (105 vs 210 cycles) — OZ overhead comes from init + ARC release
-- **@synchronized is expensive** (263 cycles) due to OZSpinLock RAII alloc+free — k_spinlock alone is 13 cycles
+- **C++ placement-new from slab is 2x faster** than OZ slab (105 vs 215 cycles) — OZ overhead comes from init + ARC release
+- **@synchronized is expensive** (266 cycles) due to OZSpinLock RAII alloc+free — k_spinlock alone is 15 cycles
 - **Block invocation matches lambda** — both compile to function pointers
-- **OZ iteration is 6x slower** than C++ virtual iterator (571 vs 93 cycles) — bottleneck is `int32Value` vtable dispatch per element, not `objectAtIndex:` (now inlined via OZ-073)
+- **Raw array iteration is near-parity** — OZ 99 vs C++ 81 cycles for int32_t[10] sum (1.2x)
+- **Object array iteration is 1.8x slower** — OZ 483 vs C++ 263 cycles for string loop + length(); fair comparison with both sides calling a virtual method per element
 - **OZ text is 29% smaller** at `-O2` (36 KB vs 50 KB) — C++ template/STL inlining inflates code size
 - **OZ total firmware is 26% smaller** at `-O2` (45 KB vs 60 KB)
 
@@ -854,52 +857,52 @@ Side-by-side C++ vs Objective-Z on **nRF52833 DK** (ARM Cortex-M4F @ 64 MHz). Al
 
 | Operation                          | C++ | ObjC (transpiler) |
 | ---------------------------------- | --: | ----------------: |
-| C function pointer (baseline)      |   8 |                 8 |
-| Direct / static / class method     |   2 |               5-9 |
-| Compile-time protocol dispatch     |  -- |               5-9 |
-| Virtual / const vtable (depth=0)   |  20 |                19 |
-| Virtual / const vtable (depth=1)   |  21 |                19 |
-| Virtual / const vtable (depth=2)   |  20 |                19 |
+| C function pointer (baseline)      |   8 |                12 |
+| Direct / static / class method     |  12 |                12 |
+| Compile-time protocol dispatch     |  -- |                12 |
+| Virtual / const vtable (depth=0)   |  20 |                21 |
+| Virtual / const vtable (depth=1)   |  14 |                29 |
+| Virtual / const vtable (depth=2)   |  14 |                20 |
 
-> With compile-time dispatch, most protocol calls resolve to direct function calls (5-9 cycles) — same cost as static dispatch. Const vtable dispatch (19 cycles, depth-independent) matches C++ virtual calls (20-21 cycles) and is only used for truly polymorphic `id`-typed receivers. Vtable arrays are `const` in `.rodata` — zero RAM overhead.
+> With compile-time dispatch, most protocol calls resolve to direct function calls (12 cycles) — same cost as static dispatch. Const vtable dispatch (20-29 cycles) is only used for truly polymorphic `id`-typed receivers. Vtable arrays are `const` in `.rodata` — zero RAM overhead.
 
 #### Object Lifecycle
 
 | Operation                              |   C++ | ObjC (transpiler) |
 | -------------------------------------- | ----: | ----------------: |
-| Slab / heap alloc+dealloc              |   995 |               228 |
-| Placement new + dtor + slab free       |   130 |                -- |
-| `unique_ptr` create/destroy            | 1,072 |                -- |
+| Slab / heap alloc+dealloc              |   865 |               215 |
+| Placement new + dtor + slab free       |   105 |                -- |
+| `unique_ptr` create/destroy            |   517 |                -- |
 
-> Transpiler slab alloc+init+release (228 cycles) is **4.4x faster** than C++ `new`/`delete` (995 cycles). Both C++ placement new (130 cycles) and ObjC slab (228 cycles) use `k_mem_slab` — the extra ObjC cycles cover `init` vtable call + ARC release.
+> Transpiler slab alloc+init+release (215 cycles) is **4x faster** than C++ `new`/`delete` (865 cycles). Both C++ placement new (105 cycles) and ObjC slab (215 cycles) use `k_mem_slab` — the extra ObjC cycles cover `init` vtable call + ARC release.
 
 #### Reference Counting
 
 | Operation                     |   C++ | ObjC (transpiler) |
 | ----------------------------- | ----: | ----------------: |
-| Atomic increment              |    14 |                17 |
-| Atomic inc + dec pair         |    24 |                44 |
-| `shared_ptr` copy             | 1,140 |                -- |
-| `shared_ptr` copy + reset     | 1,182 |                -- |
+| Atomic increment              |     7 |                22 |
+| Atomic inc + dec pair         |    17 |                44 |
+| `shared_ptr` copy             |     5 |                -- |
+| `shared_ptr` copy + reset     |    12 |                -- |
 
-> `OZObject_retain` (17 cycles) is close to raw `atomic_fetch_add` (14 cycles) — 3 cycles for null check. C++ `shared_ptr` operations (1,140+ cycles) are 67x slower due to control block allocation and atomic operations on the control block.
+> `OZObject_retain` (22 cycles) vs raw `atomic_fetch_add` (7 cycles) — extra cycles from null check and function call overhead. C++ `shared_ptr` operations (5-12 cycles) use inline atomics on the control block.
 
 #### Introspection (C++)
 
 | Operation          | Cycles |
 | ------------------ | -----: |
-| `dynamic_cast` (hit)  |      2 |
-| `dynamic_cast` (miss) |      2 |
-| `typeid()`             |      4 |
+| `dynamic_cast` (hit)  |     12 |
+| `dynamic_cast` (miss) |     12 |
+| `typeid()`             |      7 |
 
 #### Lambdas / std::function (C++)
 
 | Operation                          | Cycles |
 | ---------------------------------- | -----: |
 | C function pointer call            |      8 |
-| Non-capturing lambda (func ptr)    |      9 |
-| `std::function` invocation         |     25 |
-| `std::function` copy + destroy     |    102 |
+| Non-capturing lambda (func ptr)    |     12 |
+| `std::function` invocation         |     16 |
+| `std::function` copy + destroy     |     42 |
 
 ### Memory Comparison
 
