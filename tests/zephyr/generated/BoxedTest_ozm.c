@@ -9,8 +9,8 @@
 #include "Level4_ozh.h"
 #include "LightSwitch_ozh.h"
 #include "Node_ozh.h"
-#include "OZNumber_ozh.h"
 #include "OZObject_ozh.h"
+#include "OZQ31_ozh.h"
 #include "Widget_ozh.h"
 
 OZ_SLAB_DEFINE(oz_slab_BoxedTest, sizeof(struct BoxedTest), 4, 4);
@@ -18,41 +18,41 @@ OZ_SLAB_DEFINE(oz_slab_BoxedTest, sizeof(struct BoxedTest), 4, 4);
 void BoxedTest_run(struct BoxedTest *self)
 {
 	int val = 7;
-	struct OZNumber *_oz_recv0 = OZNumber_initInt32((val));
+	struct OZQ31 *_oz_recv0 = OZQ31_fixedWithInt32_((int32_t)((val)));
 	OZObject_release((struct OZObject *)self->_fromVar);
 	self->_fromVar = _oz_recv0;
-	struct OZNumber *_oz_recv1 = OZNumber_initInt32((val + 3));
+	struct OZQ31 *_oz_recv1 = OZQ31_fixedWithInt32_((int32_t)((val + 3)));
 	OZObject_release((struct OZObject *)self->_fromExpr);
 	self->_fromExpr = _oz_recv1;
-	struct OZNumber *_oz_recv2 = OZNumber_initInt32((triple(val)));
+	struct OZQ31 *_oz_recv2 = OZQ31_fixedWithInt32_((int32_t)((triple(val))));
 	OZObject_release((struct OZObject *)self->_fromCall);
 	self->_fromCall = _oz_recv2;
 	float f = 2.5;
-	struct OZNumber *_oz_recv3 = OZNumber_initFloat((f));
+	struct OZQ31 *_oz_recv3 = OZQ31_fixedWithFloat_((float)((f)));
 	OZObject_release((struct OZObject *)self->_fromFloat);
 	self->_fromFloat = _oz_recv3;
 	unsigned int u = 1000;
-	struct OZNumber *_oz_recv4 = OZNumber_initUint32((u));
+	struct OZQ31 *_oz_recv4 = OZQ31_fixedWithInt32_((int32_t)((u)));
 	OZObject_release((struct OZObject *)self->_fromUint);
 	self->_fromUint = _oz_recv4;
 }
-struct OZNumber * BoxedTest_fromVar(struct BoxedTest *self)
+struct OZQ31 * BoxedTest_fromVar(struct BoxedTest *self)
 {
 	return self->_fromVar;
 }
-struct OZNumber * BoxedTest_fromExpr(struct BoxedTest *self)
+struct OZQ31 * BoxedTest_fromExpr(struct BoxedTest *self)
 {
 	return self->_fromExpr;
 }
-struct OZNumber * BoxedTest_fromCall(struct BoxedTest *self)
+struct OZQ31 * BoxedTest_fromCall(struct BoxedTest *self)
 {
 	return self->_fromCall;
 }
-struct OZNumber * BoxedTest_fromFloat(struct BoxedTest *self)
+struct OZQ31 * BoxedTest_fromFloat(struct BoxedTest *self)
 {
 	return self->_fromFloat;
 }
-struct OZNumber * BoxedTest_fromUint(struct BoxedTest *self)
+struct OZQ31 * BoxedTest_fromUint(struct BoxedTest *self)
 {
 	return self->_fromUint;
 }
