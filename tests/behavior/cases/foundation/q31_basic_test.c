@@ -1,4 +1,4 @@
-/* Behavior test: OZFixedPoint Q31+shift encoding, extraction, arithmetic */
+/* Behavior test: OZQ31 Q31+shift encoding, extraction, arithmetic */
 #include "unity.h"
 #include "oz_dispatch.h"
 #include "FPTest_ozh.h"

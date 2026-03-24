@@ -80,7 +80,7 @@ All PAL functions are `static inline` — vanish at -O1+.
 
 OZ Foundation class headers and system shims for Clang AST analysis:
 
-- **`Foundation/`** — OZObject.h, OZString.h, OZFixedPoint.h, OZArray.h, OZDictionary.h, OZLog.h, protocols, Foundation.h umbrella
+- **`Foundation/`** — OZObject.h, OZString.h, OZQ31.h, OZArray.h, OZDictionary.h, OZLog.h, protocols, Foundation.h umbrella
 - **`objc/`** — objc.h (runtime stub)
 - **`assert.h`** — System shim for Clang AST (must stay at root for `#import <assert.h>` resolution)
 
@@ -90,7 +90,7 @@ ObjC implementations consumed by Clang AST analysis:
 
 - **OZObject.m** — Root class
 - **OZString.m** — String class
-- **OZArray.m**, **OZDictionary.m**, **OZFixedPoint.m** — Collection/fixed-point classes
+- **OZArray.m**, **OZDictionary.m**, **OZQ31.m** — Collection/fixed-point classes
 - **OZLog.c** — Pure C logging support for `%@` object specifier
 
 ### Legacy Runtime (`src/runtime_legacy/`, `include/runtime_legacy/`)

@@ -1407,12 +1407,12 @@ void test_dict(void) {
         assert found
 
     def test_number_literal(self):
-        """ObjCBoxedExpr with IntegerLiteral -> dynamic OZFixedPoint_fixedWithInt32_."""
+        """ObjCBoxedExpr with IntegerLiteral -> dynamic OZQ31_fixedWithInt32_."""
         _, out = clang_emit("""\
 #import <Foundation/OZObject.h>
-#import <Foundation/OZFixedPoint.h>
+#import <Foundation/OZQ31.h>
 void test_num(void) {
-    OZFixedPoint *n = @42;
+    OZQ31 *n = @42;
 }
 @interface Dummy : OZObject
 @end
@@ -1421,7 +1421,7 @@ void test_num(void) {
 """)
         found = False
         for path, content in out.items():
-            if "OZFixedPoint_fixedWithInt32_(42)" in content:
+            if "OZQ31_fixedWithInt32_(42)" in content:
                 found = True
                 break
         assert found
@@ -1430,10 +1430,10 @@ void test_num(void) {
         """Each boxed number literal produces its own dynamic allocation."""
         _, out = clang_emit("""\
 #import <Foundation/OZObject.h>
-#import <Foundation/OZFixedPoint.h>
+#import <Foundation/OZQ31.h>
 void test_allocs(void) {
-    OZFixedPoint *a = @42;
-    OZFixedPoint *b = @42;
+    OZQ31 *a = @42;
+    OZQ31 *b = @42;
 }
 @interface Dummy : OZObject
 @end
@@ -1441,8 +1441,8 @@ void test_allocs(void) {
 @end
 """)
         for path, content in out.items():
-            if "OZFixedPoint_fixedWithInt32_" in content:
-                assert content.count("OZFixedPoint_fixedWithInt32_(42)") == 2
+            if "OZQ31_fixedWithInt32_" in content:
+                assert content.count("OZQ31_fixedWithInt32_(42)") == 2
                 break
 
     def test_expr_with_cleanups_passthrough(self):
@@ -2898,12 +2898,12 @@ class TestParentIvarAccess:
 
 class TestBoxedExpressions:
     def test_boxed_variable_int(self):
-        """@(myInt) with int type -> OZFixedPoint_fixedWithInt32_((int32_t)(myInt))."""
+        """@(myInt) with int type -> OZQ31_fixedWithInt32_((int32_t)(myInt))."""
         _, out = clang_emit("""\
 #import <Foundation/OZObject.h>
-#import <Foundation/OZFixedPoint.h>
+#import <Foundation/OZQ31.h>
 void test_boxed(int myInt) {
-    OZFixedPoint *n = @(myInt);
+    OZQ31 *n = @(myInt);
 }
 @interface Dummy : OZObject
 @end
@@ -2911,19 +2911,19 @@ void test_boxed(int myInt) {
 @end
 """)
         for path, content in out.items():
-            if "OZFixedPoint_fixedWithInt32_" in content:
+            if "OZQ31_fixedWithInt32_" in content:
                 assert "myInt" in content
                 break
         else:
-            assert False, "OZFixedPoint_fixedWithInt32_ not found"
+            assert False, "OZQ31_fixedWithInt32_ not found"
 
     def test_boxed_binary_expr(self):
-        """@(a + b) with int type -> OZFixedPoint_fixedWithInt32_((int32_t)(a + b))."""
+        """@(a + b) with int type -> OZQ31_fixedWithInt32_((int32_t)(a + b))."""
         _, out = clang_emit("""\
 #import <Foundation/OZObject.h>
-#import <Foundation/OZFixedPoint.h>
+#import <Foundation/OZQ31.h>
 void test_boxed(int a, int b) {
-    OZFixedPoint *n = @(a + b);
+    OZQ31 *n = @(a + b);
 }
 @interface Dummy : OZObject
 @end
@@ -2931,19 +2931,19 @@ void test_boxed(int a, int b) {
 @end
 """)
         for path, content in out.items():
-            if "OZFixedPoint_fixedWithInt32_" in content:
+            if "OZQ31_fixedWithInt32_" in content:
                 assert "a + b" in content
                 break
         else:
-            assert False, "OZFixedPoint_fixedWithInt32_ not found"
+            assert False, "OZQ31_fixedWithInt32_ not found"
 
     def test_boxed_variable_float(self):
-        """@(myFloat) with float type -> OZFixedPoint_fixedWithFloat_((float)(myFloat))."""
+        """@(myFloat) with float type -> OZQ31_fixedWithFloat_((float)(myFloat))."""
         _, out = clang_emit("""\
 #import <Foundation/OZObject.h>
-#import <Foundation/OZFixedPoint.h>
+#import <Foundation/OZQ31.h>
 void test_boxed(float myFloat) {
-    OZFixedPoint *n = @(myFloat);
+    OZQ31 *n = @(myFloat);
 }
 @interface Dummy : OZObject
 @end
@@ -2951,22 +2951,22 @@ void test_boxed(float myFloat) {
 @end
 """)
         for path, content in out.items():
-            if "OZFixedPoint_fixedWithFloat_" in content:
+            if "OZQ31_fixedWithFloat_" in content:
                 assert "myFloat" in content
                 break
         else:
-            assert False, "OZFixedPoint_fixedWithFloat_ not found"
+            assert False, "OZQ31_fixedWithFloat_ not found"
 
     def test_boxed_variable_uint16(self):
-        """@(myU16) with uint16_t type -> OZFixedPoint_fixedWithInt32_((int32_t)(myU16)).
+        """@(myU16) with uint16_t type -> OZQ31_fixedWithInt32_((int32_t)(myU16)).
 
-        Kept synthetic: OZ SDK OZFixedPoint doesn't define
+        Kept synthetic: OZ SDK OZQ31 doesn't define
         numberWithUnsignedShort: so Clang rejects @(uint16_t) —
         testing emit behavior for this type requires bypassing Clang.
         """
         m = _simple_module()
-        m.classes["OZFixedPoint"] = OZClass(
-            "OZFixedPoint", superclass="OZObject",
+        m.classes["OZQ31"] = OZClass(
+            "OZQ31", superclass="OZObject",
             ivars=[
                 OZIvar("_raw", OZType("int32_t")),
                 OZIvar("_shift", OZType("uint8_t")),
@@ -2982,7 +2982,7 @@ void test_boxed(float myFloat) {
                     "inner": [{
                         "kind": "VarDecl",
                         "name": "n",
-                        "type": {"qualType": "OZFixedPoint *"},
+                        "type": {"qualType": "OZQ31 *"},
                         "inner": [{
                             "kind": "ObjCBoxedExpr",
                             "type": {"qualType": "NSNumber *"},
@@ -3004,16 +3004,16 @@ void test_boxed(float myFloat) {
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
             src = open(os.path.join(tmpdir, "Foundation", "OZObject_ozm.c")).read()
-            assert "OZFixedPoint_fixedWithInt32_((int32_t)(myU16))" in src
+            assert "OZQ31_fixedWithInt32_((int32_t)(myU16))" in src
 
     def test_boxed_call_expr(self):
-        """@(getValue()) with int return -> OZFixedPoint_fixedWithInt32_(getValue())."""
+        """@(getValue()) with int return -> OZQ31_fixedWithInt32_(getValue())."""
         _, out = clang_emit("""\
 #import <Foundation/OZObject.h>
-#import <Foundation/OZFixedPoint.h>
+#import <Foundation/OZQ31.h>
 int getValue(void);
 void test_boxed(void) {
-    OZFixedPoint *n = @(getValue());
+    OZQ31 *n = @(getValue());
 }
 @interface Dummy : OZObject
 @end
@@ -3021,19 +3021,19 @@ void test_boxed(void) {
 @end
 """)
         for path, content in out.items():
-            if "OZFixedPoint_fixedWithInt32_" in content and "getValue()" in content:
+            if "OZQ31_fixedWithInt32_" in content and "getValue()" in content:
                 break
         else:
-            assert False, "OZFixedPoint_fixedWithInt32_(getValue()) not found"
+            assert False, "OZQ31_fixedWithInt32_(getValue()) not found"
 
     def test_boxed_enum(self):
-        """@(enumVar) with enum type -> OZFixedPoint boxing call."""
+        """@(enumVar) with enum type -> OZQ31 boxing call."""
         _, out = clang_emit("""\
 #import <Foundation/OZObject.h>
-#import <Foundation/OZFixedPoint.h>
+#import <Foundation/OZQ31.h>
 enum Color { Red, Green, Blue };
 void test_boxed(enum Color enumVar) {
-    OZFixedPoint *n = @(enumVar);
+    OZQ31 *n = @(enumVar);
 }
 @interface Dummy : OZObject
 @end
@@ -3041,20 +3041,20 @@ void test_boxed(enum Color enumVar) {
 @end
 """)
         for path, content in out.items():
-            if "OZFixedPoint_fixedWith" in content and "enumVar" in content:
+            if "OZQ31_fixedWith" in content and "enumVar" in content:
                 break
         else:
             assert False, "Boxed enum not found"
 
     def test_boxed_double_warns(self):
-        """@(myDouble) with double -> OZFixedPoint_fixedWithFloat_((float)(...)) + diagnostic.
+        """@(myDouble) with double -> OZQ31_fixedWithFloat_((float)(...)) + diagnostic.
 
-        Kept synthetic: OZ SDK OZFixedPoint doesn't define numberWithDouble:
+        Kept synthetic: OZ SDK OZQ31 doesn't define numberWithDouble:
         so Clang rejects @(double).
         """
         m = _simple_module()
-        m.classes["OZFixedPoint"] = OZClass(
-            "OZFixedPoint", superclass="OZObject",
+        m.classes["OZQ31"] = OZClass(
+            "OZQ31", superclass="OZObject",
             ivars=[
                 OZIvar("_raw", OZType("int32_t")),
                 OZIvar("_shift", OZType("uint8_t")),
@@ -3070,7 +3070,7 @@ void test_boxed(enum Color enumVar) {
                     "inner": [{
                         "kind": "VarDecl",
                         "name": "n",
-                        "type": {"qualType": "OZFixedPoint *"},
+                        "type": {"qualType": "OZQ31 *"},
                         "inner": [{
                             "kind": "ObjCBoxedExpr",
                             "type": {"qualType": "NSNumber *"},
@@ -3092,16 +3092,16 @@ void test_boxed(enum Color enumVar) {
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
             src = open(os.path.join(tmpdir, "Foundation", "OZObject_ozm.c")).read()
-            assert "OZFixedPoint_fixedWithFloat_((float)(myDouble))" in src
+            assert "OZQ31_fixedWithFloat_((float)(myDouble))" in src
             assert any("double" in d for d in m.diagnostics)
 
     def test_boxed_literal_regression(self):
         """Existing @42 literal path still works after refactor."""
         mod, out = clang_emit("""\
 #import <Foundation/OZObject.h>
-#import <Foundation/OZFixedPoint.h>
+#import <Foundation/OZQ31.h>
 void test_lit(void) {
-    OZFixedPoint *n = @99;
+    OZQ31 *n = @99;
 }
 @interface Dummy : OZObject
 @end
@@ -3109,10 +3109,10 @@ void test_lit(void) {
 @end
 """)
         for path, content in out.items():
-            if "OZFixedPoint_fixedWithInt32_(99)" in content:
+            if "OZQ31_fixedWithInt32_(99)" in content:
                 break
         else:
-            assert False, "OZFixedPoint_fixedWithInt32_(99) not found"
+            assert False, "OZQ31_fixedWithInt32_(99) not found"
         assert not mod.errors
 
 

@@ -1,4 +1,4 @@
-/* Behavior test: OZFixedPoint boxing */
+/* Behavior test: OZQ31 boxing */
 #include "unity.h"
 #include "oz_dispatch.h"
 #include "NumTest_ozh.h"

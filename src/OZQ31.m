@@ -1,10 +1,10 @@
 /* Fixed-point (Q31+shift) implementation for OZ transpiler. */
 
-#import <Foundation/OZFixedPoint.h>
+#import <Foundation/OZQ31.h>
 #include <stdio.h>
 
-#ifndef _OZ_FIXEDPOINT_HELPERS
-#define _OZ_FIXEDPOINT_HELPERS
+#ifndef _OZ_Q31_HELPERS
+#define _OZ_Q31_HELPERS
 
 static inline uint8_t _oz_bits_for_mag(uint32_t mag)
 {
@@ -82,13 +82,13 @@ static inline void _oz_align_shift(int32_t *raw_a, uint8_t shift_a,
 		*out_shift = shift_b;
 	}
 }
-#endif /* _OZ_FIXEDPOINT_HELPERS */
+#endif /* _OZ_Q31_HELPERS */
 
-@implementation OZFixedPoint
+@implementation OZQ31
 
 + (instancetype)fixedWithFloat:(float)value
 {
-	OZFixedPoint *fp = [[OZFixedPoint alloc] init];
+	OZQ31 *fp = [[OZQ31 alloc] init];
 	fp->_shift = _oz_shift_for_float(value);
 	fp->_raw = _oz_encode_float(value, fp->_shift);
 	return fp;
@@ -96,7 +96,7 @@ static inline void _oz_align_shift(int32_t *raw_a, uint8_t shift_a,
 
 + (instancetype)fixedWithInt32:(int32_t)value
 {
-	OZFixedPoint *fp = [[OZFixedPoint alloc] init];
+	OZQ31 *fp = [[OZQ31 alloc] init];
 	fp->_shift = _oz_shift_for_int32(value);
 	fp->_raw = _oz_encode_int32(value, fp->_shift);
 	return fp;
@@ -104,7 +104,7 @@ static inline void _oz_align_shift(int32_t *raw_a, uint8_t shift_a,
 
 + (instancetype)fixedWithRaw:(int32_t)raw shift:(uint8_t)shift
 {
-	OZFixedPoint *fp = [[OZFixedPoint alloc] init];
+	OZQ31 *fp = [[OZQ31 alloc] init];
 	fp->_raw = raw;
 	fp->_shift = shift;
 	return fp;
@@ -112,69 +112,69 @@ static inline void _oz_align_shift(int32_t *raw_a, uint8_t shift_a,
 
 + (instancetype)fixedWithBool:(BOOL)value
 {
-	return [OZFixedPoint fixedWithInt32:value ? 1 : 0];
+	return [OZQ31 fixedWithInt32:value ? 1 : 0];
 }
 
 + (instancetype)fixedWithInt:(int)value
 {
-	return [OZFixedPoint fixedWithInt32:(int32_t)value];
+	return [OZQ31 fixedWithInt32:(int32_t)value];
 }
 
 + (instancetype)fixedWithUnsignedInt:(unsigned int)value
 {
-	return [OZFixedPoint fixedWithInt32:(int32_t)value];
+	return [OZQ31 fixedWithInt32:(int32_t)value];
 }
 
 /* ── Clang literal compatibility (delegates to fixedWith*) ───── */
 
 + (instancetype)numberWithInt8:(int8_t)value
 {
-	return [OZFixedPoint fixedWithInt32:(int32_t)value];
+	return [OZQ31 fixedWithInt32:(int32_t)value];
 }
 
 + (instancetype)numberWithUint8:(uint8_t)value
 {
-	return [OZFixedPoint fixedWithInt32:(int32_t)value];
+	return [OZQ31 fixedWithInt32:(int32_t)value];
 }
 
 + (instancetype)numberWithInt16:(int16_t)value
 {
-	return [OZFixedPoint fixedWithInt32:(int32_t)value];
+	return [OZQ31 fixedWithInt32:(int32_t)value];
 }
 
 + (instancetype)numberWithUint16:(uint16_t)value
 {
-	return [OZFixedPoint fixedWithInt32:(int32_t)value];
+	return [OZQ31 fixedWithInt32:(int32_t)value];
 }
 
 + (instancetype)numberWithInt32:(int32_t)value
 {
-	return [OZFixedPoint fixedWithInt32:value];
+	return [OZQ31 fixedWithInt32:value];
 }
 
 + (instancetype)numberWithUint32:(uint32_t)value
 {
-	return [OZFixedPoint fixedWithInt32:(int32_t)value];
+	return [OZQ31 fixedWithInt32:(int32_t)value];
 }
 
 + (instancetype)numberWithFloat:(float)value
 {
-	return [OZFixedPoint fixedWithFloat:value];
+	return [OZQ31 fixedWithFloat:value];
 }
 
 + (instancetype)numberWithBool:(BOOL)value
 {
-	return [OZFixedPoint fixedWithBool:value];
+	return [OZQ31 fixedWithBool:value];
 }
 
 + (instancetype)numberWithInt:(int)value
 {
-	return [OZFixedPoint fixedWithInt32:(int32_t)value];
+	return [OZQ31 fixedWithInt32:(int32_t)value];
 }
 
 + (instancetype)numberWithUnsignedInt:(unsigned int)value
 {
-	return [OZFixedPoint fixedWithInt32:(int32_t)value];
+	return [OZQ31 fixedWithInt32:(int32_t)value];
 }
 
 /* ── Value extraction ──────────────────────────────────────────── */
@@ -243,7 +243,7 @@ static inline void _oz_align_shift(int32_t *raw_a, uint8_t shift_a,
 
 /* ── Arithmetic ────────────────────────────────────────────────── */
 
-- (instancetype)add:(OZFixedPoint *)other
+- (instancetype)add:(OZQ31 *)other
 {
 	int32_t a = _raw;
 	int32_t b = other->_raw;
@@ -258,10 +258,10 @@ static inline void _oz_align_shift(int32_t *raw_a, uint8_t shift_a,
 	if (sum < INT32_MIN) {
 		sum = INT32_MIN;
 	}
-	return [OZFixedPoint fixedWithRaw:(int32_t)sum shift:s];
+	return [OZQ31 fixedWithRaw:(int32_t)sum shift:s];
 }
 
-- (instancetype)sub:(OZFixedPoint *)other
+- (instancetype)sub:(OZQ31 *)other
 {
 	int32_t a = _raw;
 	int32_t b = other->_raw;
@@ -275,10 +275,10 @@ static inline void _oz_align_shift(int32_t *raw_a, uint8_t shift_a,
 	if (diff < INT32_MIN) {
 		diff = INT32_MIN;
 	}
-	return [OZFixedPoint fixedWithRaw:(int32_t)diff shift:s];
+	return [OZQ31 fixedWithRaw:(int32_t)diff shift:s];
 }
 
-- (instancetype)mul:(OZFixedPoint *)other
+- (instancetype)mul:(OZQ31 *)other
 {
 	/*
 	 * Q31 multiply:
@@ -293,10 +293,10 @@ static inline void _oz_align_shift(int32_t *raw_a, uint8_t shift_a,
 	if (result_shift > 31) {
 		result_shift = 31;
 	}
-	return [OZFixedPoint fixedWithRaw:result_raw shift:result_shift];
+	return [OZQ31 fixedWithRaw:result_raw shift:result_shift];
 }
 
-- (instancetype)div:(OZFixedPoint *)other
+- (instancetype)div:(OZQ31 *)other
 {
 	/*
 	 * Q31 divide via float intermediate.
@@ -304,11 +304,11 @@ static inline void _oz_align_shift(int32_t *raw_a, uint8_t shift_a,
 	 * Guard against division by zero.
 	 */
 	if (other->_raw == 0) {
-		return [OZFixedPoint fixedWithRaw:0 shift:0];
+		return [OZQ31 fixedWithRaw:0 shift:0];
 	}
 	float a_val = _oz_decode_float(_raw, _shift);
 	float b_val = _oz_decode_float(other->_raw, other->_shift);
-	return [OZFixedPoint fixedWithFloat:a_val / b_val];
+	return [OZQ31 fixedWithFloat:a_val / b_val];
 }
 
 /* ── OZObject overrides ────────────────────────────────────────── */
@@ -324,13 +324,13 @@ static inline void _oz_align_shift(int32_t *raw_a, uint8_t shift_a,
 	if (self == anObject) {
 		return YES;
 	}
-	OZFixedPoint *other = (OZFixedPoint *)anObject;
+	OZQ31 *other = (OZQ31 *)anObject;
 	return (_raw == other->_raw) && (_shift == other->_shift);
 }
 
 - (void)dealloc
 {
-	/* OZFixedPoint is a compile-time constant and must never be freed. */
+	/* OZQ31 is a compile-time constant and must never be freed. */
 }
 
 @end

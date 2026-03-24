@@ -47,13 +47,13 @@ transpiler pipeline.
 
 - **Boxed expressions (`@(expr)`) supported for numeric types.** Both literal
   (`@42`, `@3.14f`, `@YES`) and expression (`@(myVar)`, `@(a + b)`,
-  `@(getValue())`) forms are transpiled to `OZFixedPoint_fixedWithInt32_()` or
-  `OZFixedPoint_fixedWithFloat_()` calls. Integer types go through `int32` path,
+  `@(getValue())`) forms are transpiled to `OZQ31_fixedWithInt32_()` or
+  `OZQ31_fixedWithFloat_()` calls. Integer types go through `int32` path,
   float types through `float` path. `double` values are narrowed to `float`
   with a diagnostic warning. String boxing (`@("hello")`) is not supported — use
   OZString literals instead.
 
-- **OZFixedPoint uses Q31+shift fixed-point representation.** Values are stored
+- **OZQ31 uses Q31+shift fixed-point representation.** Values are stored
   as a Q31 mantissa (always in [-1.0, 1.0)) with a shift exponent. Real value =
   `(raw / 2^31) * 2^shift`. Supports conversion to/from `int8_t` through
   `uint32_t`, `float`, and `BOOL`. Direct interop with Zephyr `sensor_decode`
@@ -82,7 +82,7 @@ transpiler pipeline.
 
 - **`id` receiver requires explicit cast.** When a variable is typed `id`
   (e.g., a block parameter), calling a class-specific method requires a cast:
-  `[(OZFixedPoint *)obj intValue]`.
+  `[(OZQ31 *)obj intValue]`.
 
 - **Use `<stdint.h>` types via OZObject.h.** Fixed-width types (`int8_t`,
   `uint32_t`, etc.) are available through `#include <stdint.h>` in the

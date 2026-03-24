@@ -60,7 +60,7 @@ Built on Zephyr primitives (`k_mem_slab`, `SYS_INIT`, `k_spinlock_t`, `atomic_t`
 - **Compile-time ARC** — scope-based retain/release, auto-dealloc, break/continue cleanup
 - **Per-class slab pools** — auto-generated from AST analysis, zero heap overhead
 - **`@autoreleasepool`** — scoped memory management
-- **Foundation classes** — `OZString`, `OZArray`, `OZDictionary`, `OZFixedPoint` with fast enumeration
+- **Foundation classes** — `OZString`, `OZArray`, `OZDictionary`, `OZQ31` with fast enumeration
 
 ### Language Features
 
@@ -113,7 +113,7 @@ All benchmarks on **nRF52833 DK** (ARM Cortex-M4F @ 64 MHz), DWT cycle counter, 
 | Slab alloc overhead           |   n/a |     0 | OZ: block = sizeof |
 | Heap alloc overhead           |     4 |   n/a | C++ sys_heap header |
 | shared_ptr control block      |    12 |     0 | OZ: inline refcount |
-| OZFixedPoint / SimpleString       |    16 |    12 | OZ Q31+shift vs vptr+data+len |
+| OZQ31 / SimpleString       |    16 |    12 | OZ Q31+shift vs vptr+data+len |
 
 ### Firmware Footprint
 
@@ -137,7 +137,7 @@ All benchmarks on **nRF52833 DK** (ARM Cortex-M4F @ 64 MHz), DWT cycle counter, 
 | `OZMutableString`  | Mutable strings — appendString, appendFormat             |
 | `OZArray`          | Immutable arrays — count, objectAtIndex, for-in          |
 | `OZDictionary`     | Immutable dictionaries — count, objectForKey, for-in     |
-| `OZFixedPoint`         | Tagged union — int8/16/32 (signed/unsigned), float, BOOL |
+| `OZQ31`          | Q31+shift fixed-point — Zephyr sensor_decode interop, arithmetic |
 | `OZHeap`           | Dynamic heap allocator — initWithBuffer, allocWithHeap   |
 | `OZSpinLock`       | RAII spinlock for `@synchronized` blocks                 |
 | `OZDefer`          | Scope-guard for deterministic cleanup                    |
@@ -336,7 +336,7 @@ objz_transpile_sources(app src/main.m)
 CONFIG_OBJZ=y
 ```
 
-The transpiler automatically includes Foundation classes (OZObject, OZString, OZArray, OZDictionary, OZFixedPoint) and generates slab pools for all classes found in the AST.
+The transpiler automatically includes Foundation classes (OZObject, OZString, OZArray, OZDictionary, OZQ31) and generates slab pools for all classes found in the AST.
 
 ### 5. Write your .m file
 
@@ -448,7 +448,7 @@ See [docs/LIMITATIONS.md](docs/LIMITATIONS.md) for the full list. Key limitation
 - **No `typedef`** — use explicit types
 - **No `@try`/`@catch`/`@throw`** — exception handling not supported
 - **No dynamic dispatch** for non-protocol methods — all resolved statically
-- **OZFixedPoint**: 8/16/32-bit integers and float only (no int64/double)
+- **OZQ31**: Q31+shift fixed-point, converts to int8/16/32 and float (no int64/double)
 
 <details>
 <summary><strong>ARC Guide</strong></summary>
@@ -700,7 +700,7 @@ just bench-footprint                       # ELF section size analysis
 | Child (+ 1 int ivar)            |     12 |      12 |
 | GrandChild (+ 1 int ivar)       |     16 |      16 |
 | OZString / SimpleString          |     20 |      12 |
-| OZFixedPoint / ---               |     16 |     --- |
+| OZQ31 / ---               |     16 |     --- |
 | OZArray / ---                    |     20 |     --- |
 | OZDictionary / ---               |     24 |     --- |
 | shared_ptr / ---                 |    --- |       8 |

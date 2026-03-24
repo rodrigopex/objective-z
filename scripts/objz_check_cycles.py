@@ -31,7 +31,7 @@ FOUNDATION_CLASSES = frozenset({
     "OZString",
     "OZMutableString",
     "OZAutoreleasePool",
-    "OZFixedPoint",
+    "OZQ31",
     "OZArray",
     "OZDictionary",
     "OZLog",

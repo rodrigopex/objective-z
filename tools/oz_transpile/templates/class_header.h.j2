@@ -102,9 +102,9 @@ static inline void {{ name }}_free(struct {{ name }} *obj)
 {% endif %}
 	oz_slab_free(&oz_slab_{{ name }}, (void *)obj);
 }
-{% if name == "OZFixedPoint" %}
-#ifndef _OZ_FIXEDPOINT_HELPERS
-#define _OZ_FIXEDPOINT_HELPERS
+{% if name == "OZQ31" %}
+#ifndef _OZ_Q31_HELPERS
+#define _OZ_Q31_HELPERS
 
 static inline uint8_t _oz_bits_for_mag(uint32_t mag)
 {
@@ -182,9 +182,9 @@ static inline void _oz_align_shift(int32_t *raw_a, uint8_t shift_a,
 		*out_shift = shift_b;
 	}
 }
-#endif /* _OZ_FIXEDPOINT_HELPERS */
+#endif /* _OZ_Q31_HELPERS */
 
-{% for init in fixedpoint_inits %}
+{% for init in q31_inits %}
 static inline struct {{ name }} *{{ name }}_{{ init.suffix }}({{ init.c_type }} val)
 {
 	struct {{ name }} *obj = {{ name }}_alloc();
