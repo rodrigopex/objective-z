@@ -412,8 +412,15 @@ static inline void _oz_q31_div(int32_t a_raw, uint8_t a_shift,
 	uint8_t s;
 	_oz_align_shift(&a, _shift, &b, other->_shift, &s);
 
-	/* Saturating add: clamp on overflow */
+	/*
+	 * Re-normalizing add: if the sum overflows int32, shift right
+	 * and increase the shift to preserve magnitude over precision.
+	 */
 	int64_t sum = (int64_t)a + (int64_t)b;
+	while ((sum > INT32_MAX || sum < INT32_MIN) && s < 31) {
+		sum >>= 1;
+		s++;
+	}
 	if (sum > INT32_MAX) {
 		sum = INT32_MAX;
 	}
@@ -430,7 +437,14 @@ static inline void _oz_q31_div(int32_t a_raw, uint8_t a_shift,
 	uint8_t s;
 	_oz_align_shift(&a, _shift, &b, other->_shift, &s);
 
+	/*
+	 * Re-normalizing sub: same overflow handling as add.
+	 */
 	int64_t diff = (int64_t)a - (int64_t)b;
+	while ((diff > INT32_MAX || diff < INT32_MIN) && s < 31) {
+		diff >>= 1;
+		s++;
+	}
 	if (diff > INT32_MAX) {
 		diff = INT32_MAX;
 	}
