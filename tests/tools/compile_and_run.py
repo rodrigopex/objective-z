@@ -23,6 +23,7 @@ GEN_MAIN = REPO_ROOT / "tests" / "tools" / "gen_test_main.py"
 
 POOL_RE = re.compile(r"/\*\s*oz-pool:\s*(.+?)\s*\*/")
 HEAP_RE = re.compile(r"/\*\s*oz-heap\s*\*/")
+BRIDGE_RE = re.compile(r"__bridge\b")
 
 LLVM_SEARCH_PATHS = [
     Path("/opt/homebrew/opt/llvm/bin"),
@@ -61,6 +62,11 @@ def _parse_pool_sizes(m_path: Path) -> str:
 def _needs_heap_support(m_path: Path) -> bool:
     """Check for /* oz-heap */ marker in .m file."""
     return bool(HEAP_RE.search(m_path.read_text()))
+
+
+def _needs_arc(m_path: Path) -> bool:
+    """Check if .m file uses __bridge casts (requires -fobjc-arc for AST)."""
+    return bool(BRIDGE_RE.search(m_path.read_text()))
 
 
 def _default_pool_sizes(m_path: Path) -> str:
@@ -121,10 +127,13 @@ def _run_pipeline_inner(m_path: Path, test_file: Path, tmpdir: Path,
     oz_src = REPO_ROOT / "src"
     stubs_dir = REPO_ROOT / "tests" / "behavior" / "include" / "stubs"
 
+    arc_flag = ["-fobjc-arc"] if _needs_arc(m_path) else []
+
     result = subprocess.run(
         [llvm_clang, "-Xclang", "-ast-dump=json", "-fsyntax-only",
-         "-fobjc-runtime=macosx", "--target=x86_64-unknown-linux-gnu",
-         "-fblocks",
+         "-fobjc-runtime=macosx",
+         "--target=x86_64-unknown-linux-gnu",
+         "-fblocks"] + arc_flag + [
          "-isystem", str(stubs_dir),
          "-I", str(inc_dir),
          "-I", str(oz_hdr),

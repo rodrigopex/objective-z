@@ -12,7 +12,7 @@
 struct NSFastEnumerationState;
 
 @interface OZArray<__covariant ObjectType> : OZObject <IteratorProtocol> {
-	id *_items;
+	__unsafe_unretained id *_items;
 	unsigned int _count;
 	uint16_t _iterIdx;
 }
