@@ -211,6 +211,21 @@ void oz_heap_obj_free(void *obj);
 #endif /* OZ_HEAP_SUPPORT */
 
 /* ------------------------------------------------------------------ */
+/* Timer helper — bridges void* to k_timer function pointers           */
+/* ------------------------------------------------------------------ */
+
+/*
+ * __oz_timer_setup — ARC forbids direct block-to-fptr cast;
+ * void*-to-fptr is unrestricted. Bridges the gap for k_timer_init.
+ */
+static inline void __oz_timer_setup(struct k_timer *t, void *exp,
+                                     void *stp, void *ud)
+{
+        k_timer_init(t, (k_timer_expiry_t)exp, (k_timer_stop_t)stp);
+        k_timer_user_data_set(t, ud);
+}
+
+/* ------------------------------------------------------------------ */
 /* Auto-initialization — SYS_INIT for +initialize methods              */
 /* ------------------------------------------------------------------ */
 
