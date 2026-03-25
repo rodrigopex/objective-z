@@ -182,6 +182,169 @@ static inline void _oz_align_shift(int32_t *raw_a, uint8_t shift_a,
 		*out_shift = shift_b;
 	}
 }
+/*
+ * Integer-only Q31-to-string: %f-style with 6 decimal places, trailing zero removal.
+ * No stdio, no float — pure integer math.
+ */
+static inline int _oz_q31_to_str(int32_t raw, uint8_t shift, char *buf, int maxLen)
+{
+	if (maxLen <= 0) {
+		return 0;
+	}
+
+	int pos = 0;
+
+	if (raw == 0) {
+		if (pos < maxLen) {
+			buf[pos++] = '0';
+		}
+		return pos;
+	}
+
+	int neg = (raw < 0);
+	uint32_t abs_raw = neg ? (uint32_t)(-(int64_t)raw) : (uint32_t)raw;
+
+	uint8_t frac_bits = (shift >= 31) ? 0 : (31 - shift);
+	uint32_t int_part = abs_raw >> frac_bits;
+	uint32_t frac_mask = frac_bits ? (((uint32_t)1 << frac_bits) - 1) : 0;
+	uint32_t frac_part = abs_raw & frac_mask;
+
+	/* Generate 7 fractional digits (6 + 1 for rounding) */
+	char frac_digits[7] = {0, 0, 0, 0, 0, 0, 0};
+	uint64_t frac = (uint64_t)frac_part;
+	if (frac_bits > 0) {
+		for (int i = 0; i < 7; i++) {
+			frac *= 10;
+			frac_digits[i] = (char)(frac >> frac_bits);
+			frac &= ((uint64_t)1 << frac_bits) - 1;
+		}
+	}
+
+	/* Round at 6th digit using 7th */
+	if (frac_digits[6] >= 5) {
+		int carry = 1;
+		for (int i = 5; i >= 0 && carry; i--) {
+			int d = frac_digits[i] + carry;
+			if (d >= 10) {
+				frac_digits[i] = 0;
+			} else {
+				frac_digits[i] = (char)d;
+				carry = 0;
+			}
+		}
+		if (carry) {
+			int_part++;
+		}
+	}
+
+	/* Find last non-zero fractional digit */
+	int last_frac = -1;
+	for (int i = 5; i >= 0; i--) {
+		if (frac_digits[i] != 0) {
+			last_frac = i;
+			break;
+		}
+	}
+
+	/* Write sign */
+	if (neg && pos < maxLen) {
+		buf[pos++] = '-';
+	}
+
+	/* Write integer part (reverse digit extraction) */
+	char int_buf[12];
+	int int_len = 0;
+	if (int_part == 0) {
+		int_buf[int_len++] = '0';
+	} else {
+		uint32_t tmp = int_part;
+		while (tmp > 0) {
+			int_buf[int_len++] = '0' + (char)(tmp % 10);
+			tmp /= 10;
+		}
+	}
+	for (int i = int_len - 1; i >= 0 && pos < maxLen; i--) {
+		buf[pos++] = int_buf[i];
+	}
+
+	/* Write fractional part if any non-zero digits remain */
+	if (last_frac >= 0) {
+		if (pos < maxLen) {
+			buf[pos++] = '.';
+		}
+		for (int i = 0; i <= last_frac && pos < maxLen; i++) {
+			buf[pos++] = '0' + frac_digits[i];
+		}
+	}
+
+	return pos;
+}
+
+/*
+ * Integer-only Q31 division using 64-bit long division.
+ * No float decode/encode — works entirely in Q31 domain.
+ */
+static inline void _oz_q31_div(int32_t a_raw, uint8_t a_shift,
+				int32_t b_raw, uint8_t b_shift,
+				int32_t *out_raw, uint8_t *out_shift)
+{
+	if (b_raw == 0) {
+		*out_raw = 0;
+		*out_shift = 0;
+		return;
+	}
+
+	int neg = ((a_raw ^ b_raw) < 0) ? 1 : 0;
+	uint64_t a = (a_raw < 0) ? (uint64_t)(-(int64_t)a_raw) : (uint64_t)a_raw;
+	uint64_t b = (b_raw < 0) ? (uint64_t)(-(int64_t)b_raw) : (uint64_t)b_raw;
+
+	/*
+	 * Normalize both to Q31 (31 fractional bits):
+	 * a_norm = a << a_shift, b_norm = b << b_shift
+	 * Now value = x_norm / 2^31.
+	 */
+	uint64_t a_norm = a << a_shift;
+	uint64_t b_norm = b << b_shift;
+
+	/* Integer part of quotient */
+	uint64_t q_int = a_norm / b_norm;
+	uint64_t q_rem = a_norm % b_norm;
+
+	/* Saturate if result too large for Q31 */
+	if (q_int > (uint64_t)INT32_MAX) {
+		*out_raw = neg ? INT32_MIN : INT32_MAX;
+		*out_shift = 31;
+		return;
+	}
+
+	uint8_t result_shift = _oz_bits_for_mag((uint32_t)q_int);
+	uint8_t frac_bits = 31 - result_shift;
+
+	/* Build result: integer part in upper bits */
+	uint64_t result = q_int << frac_bits;
+
+	/* Extract fractional bits via long division */
+	for (int i = (int)frac_bits - 1; i >= 0; i--) {
+		q_rem <<= 1;
+		if (q_rem >= b_norm) {
+			result |= ((uint64_t)1 << i);
+			q_rem -= b_norm;
+		}
+	}
+
+	/* Rounding: check next bit */
+	q_rem <<= 1;
+	if (q_rem >= b_norm) {
+		result++;
+	}
+
+	if (result > (uint64_t)INT32_MAX) {
+		result = INT32_MAX;
+	}
+
+	*out_raw = neg ? -(int32_t)result : (int32_t)result;
+	*out_shift = result_shift;
+}
 #endif /* _OZ_Q31_HELPERS */
 
 {% for init in q31_inits %}
