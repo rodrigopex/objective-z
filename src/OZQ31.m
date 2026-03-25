@@ -1,6 +1,7 @@
 /* Fixed-point (Q31+shift) implementation for OZ transpiler. */
 
 #import <Foundation/OZQ31.h>
+#import <Foundation/OZLog.h>
 
 #ifndef _OZ_Q31_HELPERS
 #define _OZ_Q31_HELPERS
@@ -82,13 +83,22 @@ static inline void _oz_align_shift(int32_t *raw_a, uint8_t shift_a,
 	}
 }
 /*
- * Integer-only Q31-to-string: %f-style with 6 decimal places, trailing zero removal.
- * No stdio, no float — pure integer math.
+ * Integer-only Q31-to-string with configurable decimal precision.
+ * No stdio, no float — pure integer math. Trailing zero removal.
+ * precision: number of fractional digits (clamped to 0..14).
  */
-static inline int _oz_q31_to_str(int32_t raw, uint8_t shift, char *buf, int maxLen)
+static inline int _oz_q31_to_str(int32_t raw, uint8_t shift, char *buf, int maxLen,
+				 int precision)
 {
 	if (maxLen <= 0) {
 		return 0;
+	}
+
+	/* Clamp precision to valid range */
+	if (precision < 0) {
+		precision = 0;
+	} else if (precision > 14) {
+		precision = 14;
 	}
 
 	int pos = 0;
@@ -108,21 +118,25 @@ static inline int _oz_q31_to_str(int32_t raw, uint8_t shift, char *buf, int maxL
 	uint32_t frac_mask = frac_bits ? (((uint32_t)1 << frac_bits) - 1) : 0;
 	uint32_t frac_part = abs_raw & frac_mask;
 
-	/* Generate 7 fractional digits (6 + 1 for rounding) */
-	char frac_digits[7] = {0, 0, 0, 0, 0, 0, 0};
+	/* Generate precision + 1 fractional digits (extra one for rounding) */
+	char frac_digits[15] = {0};
+	int n_digits = precision + 1;
+	if (n_digits > 15) {
+		n_digits = 15;
+	}
 	uint64_t frac = (uint64_t)frac_part;
 	if (frac_bits > 0) {
-		for (int i = 0; i < 7; i++) {
+		for (int i = 0; i < n_digits; i++) {
 			frac *= 10;
 			frac_digits[i] = (char)(frac >> frac_bits);
 			frac &= ((uint64_t)1 << frac_bits) - 1;
 		}
 	}
 
-	/* Round at 6th digit using 7th */
-	if (frac_digits[6] >= 5) {
+	/* Round at precision-th digit using the extra digit */
+	if (precision > 0 && frac_digits[precision] >= 5) {
 		int carry = 1;
-		for (int i = 5; i >= 0 && carry; i--) {
+		for (int i = precision - 1; i >= 0 && carry; i--) {
 			int d = frac_digits[i] + carry;
 			if (d >= 10) {
 				frac_digits[i] = 0;
@@ -138,7 +152,7 @@ static inline int _oz_q31_to_str(int32_t raw, uint8_t shift, char *buf, int maxL
 
 	/* Find last non-zero fractional digit */
 	int last_frac = -1;
-	for (int i = 5; i >= 0; i--) {
+	for (int i = precision - 1; i >= 0; i--) {
 		if (frac_digits[i] != 0) {
 			last_frac = i;
 			break;
@@ -489,7 +503,11 @@ static inline void _oz_q31_div(int32_t a_raw, uint8_t a_shift,
 
 - (int)cDescription:(char *)buf maxLength:(int)maxLen
 {
-	return _oz_q31_to_str(_raw, _shift, buf, maxLen);
+	int prec = _oz_get_log_precision();
+	if (prec < 0) {
+		prec = 14;
+	}
+	return _oz_q31_to_str(_raw, _shift, buf, maxLen, prec);
 }
 
 - (BOOL)isEqual:(id)anObject

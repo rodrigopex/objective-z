@@ -28,6 +28,10 @@ const OZ_fn_{{ sel.c_sel }} OZ_PROTOCOL_RESOLVE_{{ sel.c_sel }}[OZ_CLASS_COUNT] 
 };
 {% endfor %}
 
+/* Weak default: returns -1 (no precision override).
+ * OZLog.c provides the strong definition on Zephyr. */
+__attribute__((weak)) int _oz_get_log_precision(void) { return -1; }
+
 void {{ root_class }}_dispatch_free(struct {{ root_class }} *obj)
 {
 	switch (obj->_meta.class_id) {

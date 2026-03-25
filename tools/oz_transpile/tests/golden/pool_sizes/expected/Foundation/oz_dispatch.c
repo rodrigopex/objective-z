@@ -21,6 +21,10 @@ const OZ_fn_toggle OZ_PROTOCOL_RESOLVE_toggle[OZ_CLASS_COUNT] = {
 	[OZ_CLASS_OZLed] = (OZ_fn_toggle)OZLed_toggle,
 };
 
+/* Weak default: returns -1 (no precision override).
+ * OZLog.c provides the strong definition on Zephyr. */
+__attribute__((weak)) int _oz_get_log_precision(void) { return -1; }
+
 void OZObject_dispatch_free(struct OZObject *obj)
 {
 	switch (obj->_meta.class_id) {
