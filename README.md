@@ -146,6 +146,7 @@ All benchmarks on **nRF52833 DK** (ARM Cortex-M4F @ 64 MHz), DWT cycle counter, 
 | `OZQ31`          | Q31+shift fixed-point — Zephyr sensor_decode interop, arithmetic |
 | `OZHeap`           | Dynamic heap allocator — initWithBuffer, allocWithHeap   |
 | `OZSpinLock`       | RAII spinlock for `@synchronized` blocks                 |
+| `OZTimer`          | Zephyr `k_timer` wrapper — block expiry, strong userdata |
 | `OZDefer`          | Scope-guard for deterministic cleanup                    |
 | `OZLog`            | printf-style logging with `%@` object specifier          |
 
@@ -596,6 +597,29 @@ void no_leak(void)
 }
 ```
 
+### `__bridge` casts
+
+Use `__bridge` to cast between ObjC pointers and `void *` when interfacing with C APIs (e.g., Zephyr kernel callbacks). The transpiler emits a plain C cast and suppresses ARC retain/release for the result:
+
+```objc
+#import <Foundation/OZTimer.h>
+
+/* Pass an ObjC object as void* user data to a Zephyr timer */
+_timer = [[OZTimer alloc]
+    initWithUserData:target
+              expiry:^(struct k_timer *t) {
+                  /* Recover the object — __bridge means borrowed, no retain/release */
+                  MyTarget *tgt = (__bridge MyTarget *)k_timer_user_data_get(t);
+                  [tgt onTimeout];
+              }
+                stop:nil];
+```
+
+Rules:
+- `(__bridge void *)obj` — cast object to `void *` without ownership transfer
+- `(__bridge Type *)ptr` — cast `void *` back to object type, **borrowed** (not retained)
+- The `__bridge` result is never released at scope exit — the caller must ensure the object stays alive independently (e.g., via a strong ivar like OZTimer's `_userdata`)
+
 ### ARC rules summary
 
 | Do                                      | Don't                                          |
@@ -604,6 +628,7 @@ void no_leak(void)
 | Let the compiler manage object lifetime | Call `[super dealloc]` — ARC inserts it         |
 | Use `@autoreleasepool` in loops/threads | Create strong reference cycles                  |
 | Use `strong` properties for ownership   | Assume temporaries are released immediately     |
+| Use `__bridge` for C API interop        | Cast objects to `void *` without `__bridge`     |
 | Break cycles manually before scope exit | Use `__weak` (not supported, panics at runtime) |
 
 </details>
