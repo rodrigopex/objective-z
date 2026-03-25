@@ -26,6 +26,10 @@ const OZ_fn_draw OZ_PROTOCOL_RESOLVE_draw[OZ_CLASS_COUNT] = {
 	[OZ_CLASS_Square] = (OZ_fn_draw)Square_draw,
 };
 
+/* Weak default: returns -1 (no precision override).
+ * OZLog.c provides the strong definition on Zephyr. */
+__attribute__((weak)) int _oz_get_log_precision(void) { return -1; }
+
 void OZObject_dispatch_free(struct OZObject *obj)
 {
 	switch (obj->_meta.class_id) {

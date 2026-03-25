@@ -21,6 +21,13 @@
 #define CONFIG_OBJZ_LOG_BUFFER_SIZE 128
 #endif
 
+static int _oz_log_precision = -1;
+
+int _oz_get_log_precision(void)
+{
+	return _oz_log_precision;
+}
+
 void OZLog(const char *fmt, ...)
 {
 	char buf[CONFIG_OBJZ_LOG_BUFFER_SIZE];
@@ -49,20 +56,39 @@ void OZLog(const char *fmt, ...)
 			continue;
 		}
 
-		/* %@ → object description */
-		if (*p == '@') {
-			struct OZObject *obj = va_arg(args, struct OZObject *);
-			if (obj == NULL) {
-				const char *s = "(nil)";
-				while (*s && pos < max) {
-					buf[pos++] = *s++;
+		/* %@ or %.N@ → object description (optional precision) */
+		{
+			int obj_prec = -1;
+			const char *saved = p;
+
+			if (*p == '.' && p[1] >= '0' && p[1] <= '9') {
+				p++;
+				obj_prec = 0;
+				while (*p >= '0' && *p <= '9') {
+					obj_prec = obj_prec * 10 + (*p - '0');
+					p++;
 				}
-			} else {
-				pos += OZ_PROTOCOL_SEND_cDescription_maxLength_(
-					obj, buf + pos, max - pos);
 			}
-			p++;
-			continue;
+
+			if (*p == '@') {
+				struct OZObject *obj = va_arg(args, struct OZObject *);
+				if (obj == NULL) {
+					const char *s = "(nil)";
+					while (*s && pos < max) {
+						buf[pos++] = *s++;
+					}
+				} else {
+					_oz_log_precision = obj_prec;
+					pos += OZ_PROTOCOL_SEND_cDescription_maxLength_(
+						obj, buf + pos, max - pos);
+					_oz_log_precision = -1;
+				}
+				p++;
+				continue;
+			}
+
+			/* Not @, restore and fall through to regular specifier */
+			p = saved;
 		}
 
 		/* Regular format specifier: collect into spec[] */

@@ -9,11 +9,20 @@
 #include <string.h>
 #include <limits.h>
 
-/* ── Helper: call _oz_q31_to_str and null-terminate ─────────────── */
+/* ── Helpers: call _oz_q31_to_str and null-terminate ────────────── */
 
 static int q31_str(int32_t raw, uint8_t shift, char *buf, int maxLen)
 {
-	int n = _oz_q31_to_str(raw, shift, buf, maxLen);
+	int n = _oz_q31_to_str(raw, shift, buf, maxLen, 14);
+	if (n < maxLen) {
+		buf[n] = '\0';
+	}
+	return n;
+}
+
+static int q31_str_prec(int32_t raw, uint8_t shift, char *buf, int maxLen, int precision)
+{
+	int n = _oz_q31_to_str(raw, shift, buf, maxLen, precision);
 	if (n < maxLen) {
 		buf[n] = '\0';
 	}
@@ -118,29 +127,27 @@ void test_str_trailing_zero_removal(void)
 	TEST_ASSERT_EQUAL_STRING("10.5", buf);
 }
 
-void test_str_six_decimal_places(void)
+void test_str_fourteen_decimal_places(void)
 {
 	/*
 	 * 1/3 ≈ 0.333333...
 	 * Q31 shift=0: raw = floor(1/3 * 2^31) = 715827882
-	 * Expected: "0.333333" (6 decimal places, trailing zeros trimmed)
+	 * 14 decimal places with trailing zero removal.
 	 */
 	char buf[32];
 	q31_str(715827882, 0, buf, sizeof(buf));
-	TEST_ASSERT_EQUAL_STRING("0.333333", buf);
+	TEST_ASSERT_EQUAL_STRING("0.33333333302289", buf);
 }
 
 void test_str_rounding_up(void)
 {
 	/*
-	 * 2/3 ≈ 0.666666...7
-	 * Q31 shift=0: raw = floor(2/3 * 2^31) = 1431655765
-	 * The 7th digit should be >= 5, causing rounding of 6th digit.
-	 * Expected: "0.666667"
+	 * 2/3 in Q31 shift=0: raw = floor(2/3 * 2^31) = 1431655765
+	 * 14 decimal places with rounding and trailing zero removal.
 	 */
 	char buf[32];
 	q31_str(1431655765, 0, buf, sizeof(buf));
-	TEST_ASSERT_EQUAL_STRING("0.666667", buf);
+	TEST_ASSERT_EQUAL_STRING("0.66666666651145", buf);
 }
 
 void test_str_negative_fraction(void)
@@ -156,7 +163,7 @@ void test_str_negative_fraction(void)
 void test_str_maxlen_zero(void)
 {
 	char buf[4] = "XYZ";
-	int n = _oz_q31_to_str(1 << 30, 1, buf, 0);
+	int n = _oz_q31_to_str(1 << 30, 1, buf, 0, 14);
 	TEST_ASSERT_EQUAL_INT(0, n);
 	/* buf untouched */
 	TEST_ASSERT_EQUAL_CHAR('X', buf[0]);
@@ -198,22 +205,22 @@ void test_str_shift_31_negative(void)
 
 void test_str_shift_0_smallest_positive(void)
 {
-	/* shift=0: smallest positive = 1/2^31 ≈ 0.000000000465 → "0" (rounds to zero in 6 places) */
+	/* shift=0: smallest positive = 1/2^31 ≈ 0.00000000046566 (visible at 14 places) */
 	char buf[32];
 	q31_str(1, 0, buf, sizeof(buf));
-	TEST_ASSERT_EQUAL_STRING("0", buf);
+	TEST_ASSERT_EQUAL_STRING("0.00000000046566", buf);
 }
 
 void test_str_rounding_carry_into_integer(void)
 {
 	/*
 	 * Value very close to 1.0 from below.
-	 * shift=0, raw = 2^31 - 1 = 2147483647 → value ≈ 0.999999999534
-	 * 6 decimal places: 0.999999 → 7th digit is 9 → rounds up → 1.000000 → "1"
+	 * shift=0, raw = 2^31 - 1 = 2147483647 → value ≈ 0.99999999953434
+	 * At 14 decimal places the value is visible without carry.
 	 */
 	char buf[32];
 	q31_str(2147483647, 0, buf, sizeof(buf));
-	TEST_ASSERT_EQUAL_STRING("1", buf);
+	TEST_ASSERT_EQUAL_STRING("0.99999999953434", buf);
 }
 
 void test_str_large_value_shift_31(void)
@@ -466,11 +473,11 @@ void test_str_all_nines_rounding(void)
 {
 	/*
 	 * 0.9999995 in Q31 shift=0: raw = floor(0.9999995 * 2^31) = 2147483537
-	 * 6 decimal places → 0.999999 → 7th digit 5 → rounds up → 1.000000 → "1"
+	 * At 14 decimal places: "0.9999999483116"
 	 */
 	char buf[32];
 	q31_str(2147483537, 0, buf, sizeof(buf));
-	TEST_ASSERT_EQUAL_STRING("1", buf);
+	TEST_ASSERT_EQUAL_STRING("0.9999999483116", buf);
 }
 
 void test_str_exact_power_of_two(void)
@@ -489,4 +496,97 @@ void test_div_helper_large_by_one(void)
 	_oz_q31_div(500 << 22, 9, 1 << 30, 1, &r_raw, &r_shift);
 	int32_t int_val = (r_shift >= 31) ? r_raw : (r_raw >> (31 - r_shift));
 	TEST_ASSERT_EQUAL_INT(500, int_val);
+}
+
+/* ── Configurable precision tests ──────────────────────────────── */
+
+void test_str_precision_zero(void)
+{
+	/* 1/3 at precision 0 → integer only → "0" */
+	char buf[32];
+	q31_str_prec(715827882, 0, buf, sizeof(buf), 0);
+	TEST_ASSERT_EQUAL_STRING("0", buf);
+}
+
+void test_str_precision_one(void)
+{
+	/* 1/3 at precision 1 → "0.3" */
+	char buf[32];
+	q31_str_prec(715827882, 0, buf, sizeof(buf), 1);
+	TEST_ASSERT_EQUAL_STRING("0.3", buf);
+}
+
+void test_str_precision_four(void)
+{
+	/* 1/3 at precision 4 → "0.3333" */
+	char buf[32];
+	q31_str_prec(715827882, 0, buf, sizeof(buf), 4);
+	TEST_ASSERT_EQUAL_STRING("0.3333", buf);
+}
+
+void test_str_precision_six(void)
+{
+	/* 1/3 at precision 6 → "0.333333" (matches previous default) */
+	char buf[32];
+	q31_str_prec(715827882, 0, buf, sizeof(buf), 6);
+	TEST_ASSERT_EQUAL_STRING("0.333333", buf);
+}
+
+void test_str_precision_six_rounding(void)
+{
+	/* 2/3 at precision 6 → "0.666667" (rounds at 6th digit) */
+	char buf[32];
+	q31_str_prec(1431655765, 0, buf, sizeof(buf), 6);
+	TEST_ASSERT_EQUAL_STRING("0.666667", buf);
+}
+
+void test_str_precision_zero_half(void)
+{
+	/* 0.5 at precision 0 → integer only → "0" */
+	char buf[32];
+	q31_str_prec(1073741824, 0, buf, sizeof(buf), 0);
+	TEST_ASSERT_EQUAL_STRING("0", buf);
+}
+
+void test_str_precision_one_half(void)
+{
+	/* 0.5 at precision 1 → "0.5" */
+	char buf[32];
+	q31_str_prec(1073741824, 0, buf, sizeof(buf), 1);
+	TEST_ASSERT_EQUAL_STRING("0.5", buf);
+}
+
+void test_str_precision_negative_clamped(void)
+{
+	/* Negative precision clamped to 0 → integer only */
+	char buf[32];
+	q31_str_prec(1073741824, 0, buf, sizeof(buf), -5);
+	TEST_ASSERT_EQUAL_STRING("0", buf);
+}
+
+void test_str_precision_over_fourteen_clamped(void)
+{
+	/* Precision > 14 clamped to 14 */
+	char buf[32];
+	q31_str_prec(715827882, 0, buf, sizeof(buf), 20);
+	TEST_ASSERT_EQUAL_STRING("0.33333333302289", buf);
+}
+
+void test_str_precision_six_carry_into_integer(void)
+{
+	/*
+	 * 2^31 - 1 at precision 6 → rounds up to "1"
+	 * (same as old 6-digit default behavior)
+	 */
+	char buf[32];
+	q31_str_prec(2147483647, 0, buf, sizeof(buf), 6);
+	TEST_ASSERT_EQUAL_STRING("1", buf);
+}
+
+void test_str_precision_six_smallest_positive(void)
+{
+	/* 1/2^31 at precision 6 → "0" (all zeros in 6 places) */
+	char buf[32];
+	q31_str_prec(1, 0, buf, sizeof(buf), 6);
+	TEST_ASSERT_EQUAL_STRING("0", buf);
 }
