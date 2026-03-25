@@ -23,9 +23,6 @@
 	OZQ31 *b = @(4);
 	OZQ31 *c = [a div:b];
 	float v = [c floatValue];
-	[a release];
-	[b release];
-	[c release];
 	return v;
 }
 
@@ -35,9 +32,6 @@
 	OZQ31 *b = @(3);
 	OZQ31 *c = [a div:b];
 	float v = [c floatValue];
-	[a release];
-	[b release];
-	[c release];
 	return v;
 }
 
@@ -47,9 +41,6 @@
 	OZQ31 *b = @(2);
 	OZQ31 *c = [a div:b];
 	float v = [c floatValue];
-	[a release];
-	[b release];
-	[c release];
 	return v;
 }
 
@@ -59,9 +50,6 @@
 	OZQ31 *b = @(-2);
 	OZQ31 *c = [a div:b];
 	float v = [c floatValue];
-	[a release];
-	[b release];
-	[c release];
 	return v;
 }
 
@@ -71,9 +59,6 @@
 	OZQ31 *b = @(-2);
 	OZQ31 *c = [a div:b];
 	float v = [c floatValue];
-	[a release];
-	[b release];
-	[c release];
 	return v;
 }
 
@@ -83,9 +68,6 @@
 	OZQ31 *b = @(42);
 	OZQ31 *c = [a div:b];
 	float v = [c floatValue];
-	[a release];
-	[b release];
-	[c release];
 	return v;
 }
 
@@ -95,9 +77,6 @@
 	OZQ31 *b = @(1000);
 	OZQ31 *c = [a div:b];
 	float v = [c floatValue];
-	[a release];
-	[b release];
-	[c release];
 	return v;
 }
 
@@ -107,9 +86,6 @@
 	OZQ31 *b = @(1);
 	OZQ31 *c = [a div:b];
 	float v = [c floatValue];
-	[a release];
-	[b release];
-	[c release];
 	return v;
 }
 
@@ -119,9 +95,6 @@
 	OZQ31 *b = [OZQ31 fixedWithRaw:0 shift:0];
 	OZQ31 *c = [a div:b];
 	int v = [c rawValue];
-	[a release];
-	[b release];
-	[c release];
 	return v;
 }
 

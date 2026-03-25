@@ -9,7 +9,6 @@
 - (int)boxed {
 	OZQ31 *n = @(42);
 	int v = [n intValue];
-	[n release];
 	return v;
 }
 @end

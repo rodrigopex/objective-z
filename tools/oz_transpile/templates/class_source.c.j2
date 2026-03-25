@@ -29,13 +29,13 @@ OZ_SLAB_DEFINE(oz_slab_{{ name }}, sizeof(struct {{ name }}), {{ pool_count }}, 
 {% if root_introspection %}
 {{ root_introspection }}
 {% endif %}
+{% for body in function_bodies %}
+{{ body }}
+
+{% endfor %}
 {% for body in method_bodies %}
 {{ body }}
 {% endfor %}
 {% if dealloc_body %}
 {{ dealloc_body }}
 {% endif %}
-{% for body in function_bodies %}
-{{ body }}
-
-{% endfor %}
