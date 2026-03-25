@@ -12,22 +12,28 @@ int main(void)
 {
 	OZLog("=== ObjC Literals Demo ===");
 
-	@autoreleasepool {
-		/* String literals */
-		OZString *greeting = @"hello";
-		OZLog("greeting = %@", greeting);
+	/* Q31 fixed point numbers literals */
+	OZQ31 *a = @10;
+	OZQ31 *b = @250;
+	OZLog("a = %@, b = %@, a + b = %@", a, b, [a add:b]);
+	OZLog("a = %@, b = %@, a - b = %@", a, b, [a sub:b]);
+	OZLog("a = %@, b = %@, a * b = %@", a, b, [a mul:b]);
+	OZLog("a = %@, b = %@, a / b = %@", a, b, [a div:b]);
 
-		/* Array literal */
-		OZArray *arr = @[ @"hello", @"world" ];
-		OZLog("array = %@", arr);
-		OZLog("arr[0] = %@", [arr objectAtIndex:0]);
-		OZLog("arr[1] = %@", [arr objectAtIndex:1]);
+	/* String literals */
+	OZString *greeting = @"hello";
+	OZLog("greeting = %@", greeting);
 
-		/* Dictionary literal */
-		OZDictionary *dict = @{@"key" : @"value"};
-		OZLog("dict = %@", dict);
-		OZLog("dict[@\"key\"] = %@", [dict objectForKey:@"key"]);
-	}
+	/* Array literal */
+	OZArray *arr = @[ @"hello", @"world" ];
+	OZLog("array = %@", arr);
+	OZLog("arr[0] = %@", [arr objectAtIndex:0]);
+	OZLog("arr[1] = %@", [arr objectAtIndex:1]);
+
+	/* Dictionary literal */
+	OZDictionary *dict = @{@"key" : @"value"};
+	OZLog("dict = %@", dict);
+	OZLog("dict[@\"key\"] = %@", [dict objectForKey:@"key"]);
 
 	OZLog("=== Demo complete ===");
 	return 0;
