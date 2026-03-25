@@ -18,20 +18,11 @@ int main(void)
 	OZLog("a = %@, b = %@, a + b = %@", a, b, [a add:b]);
 	OZLog("a = %@, b = %@, a - b = %@", a, b, [a sub:b]);
 	OZLog("a = %@, b = %@, a * b = %@", a, b, [a mul:b]);
-	OZLog("a = %@, b = %@, a / b = %.10@", a, b, [a div:b]);
-
-	/* Precision demo: 1/3 has full Q31 precision */
-	OZQ31 *one = @1;
-	OZQ31 *three = @3;
-	OZQ31 *third = [one div:three];
-	OZLog("1/3 default %%@:   %@", third);
-	OZLog("1/3 with %%.4@:    %.4@", third);
-	OZLog("1/3 with %%.10@:   %.10@", third);
-	OZLog("1/3 with %%.14@:   %.14@", third);
+	OZLog("a = %@, b = %@, a / b = %.14@", a, b, [a div:b]);
 
 	/* String literals */
 	OZString *greeting = @"hello";
-	OZLog("greeting = %@", greeting);
+	OZLog("greeting = %.3@", greeting);
 
 	/* Array literal */
 	OZArray *arr = @[ @"hello", @"world" ];
