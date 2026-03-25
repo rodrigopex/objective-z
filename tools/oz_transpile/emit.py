@@ -1533,11 +1533,13 @@ def _emit_block_expr(node: dict, out: StringIO, ctx: _EmitCtx) -> None:
     buf = StringIO()
     buf.write(f"static {ret_type} {func_name}({params_str})\n")
     if body_ast:
-        # Create a minimal context for the block body
+        # Create a minimal context for the block body — inherit the
+        # enclosing method so ivar access control works correctly
         block_ctx = _EmitCtx(
             cls=ctx.cls,
             module=ctx.module,
             root_class=ctx.root_class,
+            method=ctx.method,
             string_constants=ctx.string_constants,
             block_functions=ctx.block_functions,
             has_item_pool=ctx.has_item_pool,

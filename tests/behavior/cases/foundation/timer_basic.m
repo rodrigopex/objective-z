@@ -1,26 +1,70 @@
-/* oz-pool: OZObject=2,OZTimer=1,TimerTarget=1 */
+/* oz-pool: OZObject=2,OZTimer=1,TimerTest=1,TimerTarget=1 */
 #import "OZFoundationBase.h"
 #import <Foundation/OZTimer.h>
 #include <zephyr/kernel.h>
 #import "OZTimer.m"
 
 @interface TimerTarget : OZObject {
-	int _fired;
+	int _value;
 }
-- (int)fired;
-- (void)markFired;
+- (instancetype)initWithValue:(int)v;
+- (int)value;
+- (void)increment;
 @end
 
 @implementation TimerTarget
 
-- (int)fired
+- (instancetype)initWithValue:(int)v
 {
-	return _fired;
+	_value = v;
+	return self;
 }
 
-- (void)markFired
+- (int)value
 {
-	_fired = 1;
+	return _value;
+}
+
+- (void)increment
+{
+	_value = _value + 1;
+}
+
+@end
+
+@interface TimerTest : OZObject {
+	OZTimer *_timer;
+	TimerTarget *_target;
+}
+- (instancetype)initWithTarget:(TimerTarget *)target;
+- (OZTimer *)timer;
+- (TimerTarget *)target;
+@end
+
+@implementation TimerTest
+
+- (instancetype)initWithTarget:(TimerTarget *)target
+{
+	_target = target;
+	_timer = [[OZTimer alloc]
+		initWithUserData:target
+			  expiry:^(struct k_timer *t) {
+				  TimerTarget *tgt =
+					  (__bridge TimerTarget *)k_timer_user_data_get(t);
+				  [tgt increment];
+			  }
+			    stop:nil];
+	return self;
+}
+
+- (OZTimer *)timer
+{
+	return _timer;
+}
+
+- (TimerTarget *)target
+{
+	return _target;
 }
 
 @end

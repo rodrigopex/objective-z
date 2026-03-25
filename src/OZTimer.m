@@ -10,9 +10,11 @@
                             stop:(void (^)(struct k_timer *timer))stopBlock
 {
 	_userdata = userData;
-	k_timer_init(&_timer, (k_timer_expiry_t)expBlock,
-		     (k_timer_stop_t)stopBlock);
-	k_timer_user_data_set(&_timer, (__bridge void *)userData);
+	_expiryBlock = expBlock;
+	_stopBlock = stopBlock;
+	__oz_timer_setup(&_timer, (__bridge void *)expBlock,
+			 (__bridge void *)stopBlock,
+			 (__bridge void *)userData);
 	return self;
 }
 

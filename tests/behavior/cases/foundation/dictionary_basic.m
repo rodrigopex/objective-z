@@ -11,20 +11,17 @@
 - (unsigned int)literalCount {
 	OZDictionary *d = @{@"a": @(1), @"b": @(2)};
 	unsigned int c = [d count];
-	[d release];
 	return c;
 }
 - (int)valueForKey {
 	OZDictionary *d = @{@"x": @(99)};
 	OZQ31 *n = [d objectForKey:@"x"];
 	int v = [n intValue];
-	[d release];
 	return v;
 }
 - (BOOL)missingKeyNil {
 	OZDictionary *d = @{@"a": @(1)};
 	id obj = [d objectForKey:@"z"];
-	[d release];
 	return obj == nil;
 }
 @end

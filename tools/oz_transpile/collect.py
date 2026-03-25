@@ -786,16 +786,26 @@ def _distribute_verbatim_to_classes(module: OZModule) -> None:
     When a .m file defines class implementations alongside verbatim macro calls
     (e.g. ZBUS_MSG_SUBSCRIBER_DEFINE), the macros must be in the same TU as the
     class methods. Move them from module-level to the class.
+
+    User includes (e.g. #include <zephyr/kernel.h>) are distributed to ALL
+    implementation classes so each generated header gets required type
+    definitions.  Verbatim lines go to a single class (single-class case)
+    to avoid duplication of macro invocations.
     """
     impl_classes = [c for c in module.classes.values() if c.methods]
     if not impl_classes:
         return
-    if len(impl_classes) == 1:
-        cls = impl_classes[0]
-        cls.verbatim_lines = module.verbatim_lines
-        cls.user_includes = module.user_includes
-        module.verbatim_lines = []
+    # Distribute user includes to all implementation classes
+    if module.user_includes:
+        for cls in impl_classes:
+            for inc in module.user_includes:
+                if inc not in cls.user_includes:
+                    cls.user_includes.append(inc)
         module.user_includes = []
+    # Verbatim lines only distributed in single-class case
+    if len(impl_classes) == 1 and module.verbatim_lines:
+        impl_classes[0].verbatim_lines = module.verbatim_lines
+        module.verbatim_lines = []
 
 
 def _has_struct_definition(node) -> bool:

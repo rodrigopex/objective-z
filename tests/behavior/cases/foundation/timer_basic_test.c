@@ -1,66 +1,63 @@
-/* Behavior test: OZTimer lifecycle, userdata, and __bridge callback */
+/* Behavior test: OZTimer with __bridge cast in expiry block */
 #include "unity.h"
 #include "oz_dispatch.h"
 #include "OZTimer_ozh.h"
 #include "TimerTarget_ozh.h"
+#include "TimerTest_ozh.h"
 
-static int g_expiry_called = 0;
-static int g_target_fired = 0;
-
-static void test_expiry_fn(struct k_timer *timer)
+void test_timer_init_and_userdata(void)
 {
-	struct TimerTarget *target =
-		(struct TimerTarget *)k_timer_user_data_get(timer);
-	TimerTarget_markFired(target);
-	g_target_fired = TimerTarget_fired(target);
-	g_expiry_called = 1;
-}
+	struct TimerTarget *tgt = TimerTarget_initWithValue_(
+		TimerTarget_alloc(), 10);
+	TEST_ASSERT_NOT_NULL(tgt);
 
-void test_timer_alloc_and_userdata(void)
-{
-	struct TimerTarget *target = TimerTarget_alloc();
-	TEST_ASSERT_NOT_NULL(target);
-	target = (struct TimerTarget *)OZObject_init((struct OZObject *)target);
+	struct TimerTest *tt = TimerTest_initWithTarget_(
+		TimerTest_alloc(), tgt);
+	TEST_ASSERT_NOT_NULL(tt);
 
-	struct OZTimer *timer = OZTimer_alloc();
+	/* timer userdata points to target */
+	struct OZTimer *timer = TimerTest_timer(tt);
 	TEST_ASSERT_NOT_NULL(timer);
-	timer = OZTimer_initWithUserData_expiry_stop_(
-		timer, (struct OZObject *)target, test_expiry_fn,
-		(void *)0);
-	TEST_ASSERT_NOT_NULL(timer);
-
-	/* userdata accessor returns the target */
 	struct OZObject *ud = OZTimer_userdata(timer);
-	TEST_ASSERT_EQUAL_PTR(target, ud);
+	TEST_ASSERT_EQUAL_PTR(tgt, ud);
 
-	/* k_timer_user_data_get returns the same pointer */
-	void *raw = k_timer_user_data_get(&timer->_timer);
-	TEST_ASSERT_EQUAL_PTR(target, raw);
-
-	/* Manually fire the expiry callback (host stub doesn't fire timers) */
-	g_expiry_called = 0;
-	g_target_fired = 0;
-	timer->_timer.expiry_fn(&timer->_timer);
-	TEST_ASSERT_EQUAL_INT(1, g_expiry_called);
-	TEST_ASSERT_EQUAL_INT(1, g_target_fired);
-
-	/* Release timer first (strong ref keeps target alive) */
-	OZObject_release((struct OZObject *)timer);
-	/* Now release target */
-	OZObject_release((struct OZObject *)target);
+	OZObject_release((struct OZObject *)tt);
+	OZObject_release((struct OZObject *)tgt);
 }
 
-void test_timer_start_stop(void)
+void test_timer_expiry_fires_block(void)
 {
-	struct OZTimer *timer = OZTimer_alloc();
-	TEST_ASSERT_NOT_NULL(timer);
-	timer = OZTimer_initWithUserData_expiry_stop_(
-		timer, (struct OZObject *)0, test_expiry_fn,
-		(void *)0);
+	struct TimerTarget *tgt = TimerTarget_initWithValue_(
+		TimerTarget_alloc(), 42);
+	struct TimerTest *tt = TimerTest_initWithTarget_(
+		TimerTest_alloc(), tgt);
+	struct OZTimer *timer = TimerTest_timer(tt);
 
-	/* start/stop should not crash (no-op on host stub) */
+	/* Manually fire expiry — simulates k_timer on host */
+	timer->_timer.expiry_fn(&timer->_timer);
+
+	/* Block called [tgt increment] via __bridge recovery */
+	TEST_ASSERT_EQUAL_INT(43, TimerTarget_value(tgt));
+
+	/* Fire again */
+	timer->_timer.expiry_fn(&timer->_timer);
+	TEST_ASSERT_EQUAL_INT(44, TimerTarget_value(tgt));
+
+	OZObject_release((struct OZObject *)tt);
+	OZObject_release((struct OZObject *)tgt);
+}
+
+void test_timer_start_stop_no_crash(void)
+{
+	struct TimerTarget *tgt = TimerTarget_initWithValue_(
+		TimerTarget_alloc(), 0);
+	struct TimerTest *tt = TimerTest_initWithTarget_(
+		TimerTest_alloc(), tgt);
+	struct OZTimer *timer = TimerTest_timer(tt);
+
 	OZTimer_startAfter_period_(timer, 100, 500);
 	OZTimer_stop(timer);
 
-	OZObject_release((struct OZObject *)timer);
+	OZObject_release((struct OZObject *)tt);
+	OZObject_release((struct OZObject *)tgt);
 }
