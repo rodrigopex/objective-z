@@ -51,15 +51,17 @@ static inline void *k_timer_user_data_get(struct k_timer *timer)
         return timer->user_data;
 }
 
-/*
- * __oz_timer_setup — bridges void* to function pointer for k_timer_init.
- * ARC forbids direct block-to-fptr cast; void*-to-fptr is unrestricted.
+/**
+ * @brief Bridge void* to function pointer for k_timer_init (ARC workaround).
  */
+#ifndef __OZ_TIMER_SETUP_DEFINED
+#define __OZ_TIMER_SETUP_DEFINED
 static inline void __oz_timer_setup(struct k_timer *t, void *exp,
                                      void *stp, void *ud)
 {
         k_timer_init(t, (k_timer_expiry_t)exp, (k_timer_stop_t)stp);
         k_timer_user_data_set(t, ud);
 }
+#endif
 
 #endif /* ZEPHYR_KERNEL_STUB_H */

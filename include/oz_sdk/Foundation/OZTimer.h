@@ -11,6 +11,22 @@
 #import "OZObject.h"
 #include <zephyr/kernel.h>
 
+/**
+ * @brief Bridge block void* to function pointer for k_timer_init.
+ *
+ * ARC forbids direct block-to-fptr cast; void*-to-fptr is unrestricted.
+ * Used by OZTimer init to pass block callbacks to k_timer_init.
+ */
+#ifndef __OZ_TIMER_SETUP_DEFINED
+#define __OZ_TIMER_SETUP_DEFINED
+static inline void __oz_timer_setup(struct k_timer *t, void *exp,
+                                     void *stp, void *ud)
+{
+	k_timer_init(t, (k_timer_expiry_t)exp, (k_timer_stop_t)stp);
+	k_timer_user_data_set(t, ud);
+}
+#endif
+
 @interface OZTimer : OZObject {
 	struct k_timer _timer;
 	void (^_expiryBlock)(struct k_timer *);
