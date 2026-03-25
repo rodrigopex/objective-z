@@ -159,3 +159,4 @@ void OZObject_dispatch_free(struct OZObject *obj);
 
 /* OZLog — formatted logging with %@ object support */
 void OZLog(const char *fmt, ...);
+int _oz_get_log_precision(void);
