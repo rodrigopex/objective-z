@@ -23,7 +23,6 @@
 	if (_block) {
 		_block(_owner);
 	}
-	[super dealloc];
 }
 
 @end

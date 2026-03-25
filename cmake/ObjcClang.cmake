@@ -409,6 +409,7 @@ function(_objz_build_ast_flags result_var)
     set(_flags "")
 
     list(APPEND _flags -fconstant-string-class=OZString)
+    list(APPEND _flags -fobjc-arc)
 
     # Include dirs from zephyr_interface (skip generator expressions)
     get_property(_inc_dirs TARGET zephyr_interface

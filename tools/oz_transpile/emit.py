@@ -999,6 +999,13 @@ def _emit_stmt(node: dict, out: StringIO, ctx: _EmitCtx,
     tabs = "\t" * indent
     kind = node.get("kind", "")
 
+    # Unwrap ExprWithCleanups (added by -fobjc-arc) to expose inner stmt
+    if kind == "ExprWithCleanups":
+        inner = node.get("inner", [])
+        if inner:
+            _emit_stmt(inner[0], out, ctx, indent)
+        return
+
     if kind == "ReturnStmt":
         _emit_return_stmt(node, out, ctx, indent)
 
@@ -1121,16 +1128,19 @@ def _emit_var_decl(node: dict, out: StringIO, ctx: _EmitCtx,
         return
     c_type = oz_type.c_type
 
-    # Track object locals for scope-exit release (never track self)
-    if oz_type.is_object and name != "self" and ctx.scope_vars:
-        ctx.scope_vars[-1][name] = oz_type
-
     inner = node.get("inner", [])
     init_expr = None
     for child in inner:
         if child.get("kind") not in ("FullComment",):
             init_expr = child
             break
+
+    # Track object locals for scope-exit release (never track self).
+    # Skip __unsafe_unretained vars and __bridge cast results — both are
+    # borrowed references that must not be released at scope exit.
+    if oz_type.is_object and name != "self" and ctx.scope_vars:
+        if not oz_type.is_unretained and not _is_bridge_cast_expr(init_expr):
+            ctx.scope_vars[-1][name] = oz_type
 
     decl_str = oz_type.c_param_decl(name)
 
@@ -1722,6 +1732,14 @@ def _emit_expr(node: dict, out: StringIO, ctx: _EmitCtx) -> None:
             target_oz = OZType(target_qt)
             if cast_kind == "BitCast" and target_oz.is_object:
                 out.write(f"({target_oz.c_type})")
+            _emit_expr(inner[0], out, ctx)
+        return
+
+    if kind == "ObjCBridgedCastExpr":
+        qt = node.get("type", {}).get("qualType", "")
+        out.write(f"({OZType(qt).c_type})")
+        inner = node.get("inner", [])
+        if inner:
             _emit_expr(inner[0], out, ctx)
         return
 
@@ -2366,6 +2384,11 @@ def _emit_return_stmt(node: dict, out: StringIO, ctx: _EmitCtx,
 
     if inner:
         ret_expr = inner[0]
+        # Unwrap ExprWithCleanups (added by -fobjc-arc) before checking casts
+        if ret_expr.get("kind") == "ExprWithCleanups":
+            ewc_inner = ret_expr.get("inner", [])
+            if ewc_inner:
+                ret_expr = ewc_inner[0]
         # Strip ImplicitCastExpr BitCast to id/instancetype on returns — the
         # C function already uses the class pointer type for these returns.
         ret_qt = ret_expr.get("type", {}).get("qualType", "")
@@ -2414,6 +2437,23 @@ def _is_param_name(name: str, ctx: _EmitCtx) -> bool:
     """Check if a variable name is a method/function parameter."""
     if ctx.method:
         return any(p.name == name for p in ctx.method.params)
+    return False
+
+
+def _is_bridge_cast_expr(node: dict | None) -> bool:
+    """Check if expression is or wraps an ObjCBridgedCastExpr (__bridge).
+
+    Bridge casts produce borrowed references that must not be released
+    at scope exit.
+    """
+    if node is None:
+        return False
+    kind = node.get("kind", "")
+    if kind == "ObjCBridgedCastExpr":
+        return True
+    if kind in ("ImplicitCastExpr", "ExprWithCleanups", "ParenExpr"):
+        inner = node.get("inner", [])
+        return bool(inner) and _is_bridge_cast_expr(inner[0])
     return False
 
 
