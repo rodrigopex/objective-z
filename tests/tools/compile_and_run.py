@@ -126,6 +126,7 @@ def _run_pipeline_inner(m_path: Path, test_file: Path, tmpdir: Path,
     oz_hdr = REPO_ROOT / "include" / "oz_sdk"
     oz_src = REPO_ROOT / "src"
     stubs_dir = REPO_ROOT / "tests" / "behavior" / "include" / "stubs"
+    zephyr_stubs = REPO_ROOT / "tests" / "behavior" / "include" / "zephyr_stubs"
 
     arc_flag = ["-fobjc-arc"] if _needs_arc(m_path) else []
 
@@ -135,6 +136,7 @@ def _run_pipeline_inner(m_path: Path, test_file: Path, tmpdir: Path,
          "--target=x86_64-unknown-linux-gnu",
          "-fblocks"] + arc_flag + [
          "-isystem", str(stubs_dir),
+         "-isystem", str(zephyr_stubs),
          "-I", str(inc_dir),
          "-I", str(oz_hdr),
          "-I", str(oz_src),
@@ -189,12 +191,14 @@ def _run_pipeline_inner(m_path: Path, test_file: Path, tmpdir: Path,
     all_sources = c_files + [str(test_file), str(UNITY_DIR / "unity.c")]
     test_bin = tmpdir / "test_bin"
 
+    zephyr_stubs = REPO_ROOT / "tests" / "behavior" / "include" / "zephyr_stubs"
     cc_flags = [compiler, "-std=c11", f"-{opt}",
                 "-Wall", "-Werror", "-Wno-unused-function",
                 "-DOZ_PLATFORM_HOST",
                 "-I", str(tmpdir),
                 "-I", str(tmpdir / "Foundation"),
                 "-I", str(PAL_INC),
+                "-I", str(zephyr_stubs),
                 "-I", str(UNITY_DIR)]
     if heap_support:
         cc_flags.append("-DOZ_HEAP_SUPPORT")
