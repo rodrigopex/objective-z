@@ -3289,8 +3289,28 @@ class TestEmitEdgeCases:
 @end
 """)
         src = out["Foo_ozm.c"]
-        assert "(struct Bar *" in src
-        assert "Bar *b" in src or "Bar *const" in src
+        assert "(struct Bar *)" in src
+        assert "struct Bar *" in src
+        assert "*const" not in src
+
+    def test_forin_no_const_qualifier(self):
+        """OZ-082: for-in loop variable must not be const — it is reassigned."""
+        _, out = clang_emit("""\
+#import <Foundation/OZObject.h>
+#import <Foundation/OZString.h>
+@interface Foo : OZObject
+- (void)iterate;
+@end
+@implementation Foo
+- (void)iterate {
+    for (OZString *name in self) {}
+}
+@end
+""")
+        src = out["Foo_ozm.c"]
+        assert "struct OZString *" in src
+        assert "name" in src
+        assert "*const" not in src
 
     def test_string_dedup_unique_across_methods(self):
         """OZ-039: different string literals in separate methods must get
