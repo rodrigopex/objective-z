@@ -3749,6 +3749,67 @@ class TestMacroPassthrough:
         content = out["Foo_ozm.c"]
         assert "RUN(" in content
 
+    def test_header_function_like_macro(self):
+        """OZ-079: function-like macro from included header must be preserved."""
+        _, out = clang_emit_patched("""\
+#import <Foundation/OZObject.h>
+#import "my_macros.h"
+@interface Foo : OZObject
+@end
+@implementation Foo
+- (void)test {
+    int x = SCALE(3, 4);
+}
+@end
+""", stem="Foo", extra_files={
+            "my_macros.h": "#define SCALE(a, b) ((a) * (b))\n",
+        })
+        content = out["Foo_ozm.c"]
+        assert "SCALE(3, 4)" in content
+
+    def test_header_nontrivial_object_macro(self):
+        """OZ-079: non-trivial object-like macro from header must be preserved."""
+        _, out = clang_emit_patched("""\
+#import <Foundation/OZObject.h>
+#import "timer_defs.h"
+@interface Foo : OZObject
+@end
+@implementation Foo
+- (void)test {
+    struct my_timeout t = MY_FOREVER;
+}
+@end
+""", stem="Foo", extra_files={
+            "timer_defs.h": (
+                "struct my_timeout { int ticks; };\n"
+                "#define MY_FOREVER ((struct my_timeout){-1})\n"
+            ),
+        })
+        content = out["Foo_ozm.c"]
+        assert "MY_FOREVER" in content
+
+    def test_header_stmt_function_like_macro(self):
+        """OZ-079: statement-level function-like macro from header preserved."""
+        _, out = clang_emit_patched("""\
+#import <Foundation/OZObject.h>
+#import "my_macros.h"
+@interface Foo : OZObject
+@end
+@implementation Foo
+- (void)test {
+    LOG_INFO("hello %d", 42);
+}
+@end
+""", stem="Foo", extra_files={
+            "my_macros.h": (
+                "void log_output(const char *fmt, ...);\n"
+                "#define LOG_INFO(fmt, ...) "
+                "do { log_output(fmt, ##__VA_ARGS__); } while (0)\n"
+            ),
+        })
+        content = out["Foo_ozm.c"]
+        assert "LOG_INFO(" in content
+
 
 # ===========================================================================
 # OZ-069: Type definitions from headers must be emitted in source files
