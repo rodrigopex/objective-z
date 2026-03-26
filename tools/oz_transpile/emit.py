@@ -1321,6 +1321,9 @@ def _emit_forin_stmt(node: dict, out: StringIO, ctx: _EmitCtx,
     vd = decl_stmt.get("inner", [{}])[0]
     var_name = vd.get("name", "obj")
     qt = vd.get("type", {}).get("qualType", "id")
+    # OZ-082: strip pointer const — loop variable is reassigned each iteration
+    import re
+    qt = re.sub(r'\*\s*const\b', '*', qt)
     c_type = OZType(qt).c_type
 
     coll_buf = StringIO()
