@@ -48,7 +48,7 @@ def clang_collect(source, *, extra_files=None):
         result = subprocess.run(
             [
                 "clang", "-Xclang", "-ast-dump=json", "-fsyntax-only",
-                "-fobjc-runtime=macosx", "-fblocks",
+                "-fobjc-runtime=macosx", "-fobjc-arc", "-fblocks",
                 "-I", OZ_SDK_DIR, "-I", tmpdir, src_path,
             ],
             capture_output=True,
@@ -115,7 +115,7 @@ def clang_emit_patched(source, stem, **kwargs):
         result = subprocess.run(
             [
                 "clang", "-Xclang", "-ast-dump=json", "-fsyntax-only",
-                "-fobjc-runtime=macosx", "-fblocks",
+                "-fobjc-runtime=macosx", "-fobjc-arc", "-fblocks",
                 "-I", OZ_SDK_DIR, "-I", tmpdir, src_path,
             ],
             capture_output=True,

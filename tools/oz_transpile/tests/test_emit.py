@@ -303,7 +303,7 @@ class TestBodyEmission:
 @end
 @implementation OZLed
 - (instancetype)initWithPin:(int)pin {
-    [super init];
+    self = [super init];
     return self;
 }
 @end
@@ -561,7 +561,6 @@ class TestARCAutoDealloc:
 @implementation Holder
 - (void)dealloc {
     _count = 42;
-    [super dealloc];
 }
 @end
 """)
@@ -1578,6 +1577,33 @@ enum my_status { MY_OK = 0, MY_ERR };
 """)
         src = out["Foo_ozm.c"]
         assert "OZArray_objectAtIndexedSubscript_" in src
+
+    def test_pseudo_object_expr_property_on_method_return(self):
+        """OZ-080: [obj method].property must emit getter wrapping the call."""
+        _, out = clang_emit("""\
+#import <Foundation/OZObject.h>
+#import <Foundation/OZHeap.h>
+@interface App : OZObject
+@property(readonly, nonatomic) OZHeap *heap;
++ (instancetype)sharedInstance;
+@end
+@implementation App
+static App *app;
+@synthesize heap = _heap;
++ (void)initialize { app = [[App alloc] init]; }
++ (instancetype)sharedInstance { return app; }
+- (id)init { self = [super init]; return self; }
+@end
+@interface Tester : OZObject
+@end
+@implementation Tester
+- (void)run {
+    OZHeap *h = [App sharedInstance].heap;
+}
+@end
+""")
+        src = out["Tester_ozm.c"]
+        assert "App_heap(App_cls_sharedInstance())" in src
 
 
 # ===========================================================================
@@ -3317,8 +3343,8 @@ void other_fn(void) {
         assert src.count("static struct OZString _oz_str_") == 1, \
             f"Expected 1 string constant, got: {src.count('static struct OZString _oz_str_')}"
 
-    def test_explicit_release_prevents_double_release(self):
-        """OZ-041: explicit [obj release] must suppress ARC auto-release."""
+    def test_arc_scope_exit_releases_local(self):
+        """OZ-041: ARC auto-release emits exactly one release at scope exit."""
         _, out = clang_emit("""\
 #import <Foundation/OZObject.h>
 @interface Foo : OZObject
@@ -3327,7 +3353,6 @@ void other_fn(void) {
 @implementation Foo
 - (void)doWork {
     OZObject *obj = [[OZObject alloc] init];
-    [obj release];
 }
 @end
 """)
