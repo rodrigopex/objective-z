@@ -7,6 +7,8 @@
 #ifndef BOOL
 #define BOOL _Bool
 #endif
+#include <zephyr/kernel.h>
+
 
 struct OZObject;
 struct Base;
@@ -20,6 +22,9 @@ struct Level4;
 struct LightSwitch;
 struct Node;
 struct OZQ31;
+struct OZTimer;
+struct TimerZephyrTarget;
+struct TimerZephyrTest;
 struct Widget;
 
 typedef struct OZObject *id;
@@ -37,8 +42,11 @@ enum oz_class_id_enum {
 	OZ_CLASS_LightSwitch = 9,
 	OZ_CLASS_Node = 10,
 	OZ_CLASS_OZQ31 = 11,
-	OZ_CLASS_Widget = 12,
-	OZ_CLASS_COUNT = 13
+	OZ_CLASS_OZTimer = 12,
+	OZ_CLASS_TimerZephyrTarget = 13,
+	OZ_CLASS_TimerZephyrTest = 14,
+	OZ_CLASS_Widget = 15,
+	OZ_CLASS_COUNT = 16
 };
 
 /* Class introspection tables */
@@ -88,6 +96,9 @@ typedef int (*OZ_fn_toggle)(struct OZObject *);
 #define OZ_IMPL_LightSwitch_cDescription_maxLength_(self, ...)	OZObject_cDescription_maxLength_((struct OZObject *)(self), ##__VA_ARGS__)
 #define OZ_IMPL_Node_cDescription_maxLength_(self, ...)	OZObject_cDescription_maxLength_((struct OZObject *)(self), ##__VA_ARGS__)
 #define OZ_IMPL_OZQ31_cDescription_maxLength_(self, ...)	OZObject_cDescription_maxLength_((struct OZObject *)(self), ##__VA_ARGS__)
+#define OZ_IMPL_OZTimer_cDescription_maxLength_(self, ...)	OZObject_cDescription_maxLength_((struct OZObject *)(self), ##__VA_ARGS__)
+#define OZ_IMPL_TimerZephyrTarget_cDescription_maxLength_(self, ...)	OZObject_cDescription_maxLength_((struct OZObject *)(self), ##__VA_ARGS__)
+#define OZ_IMPL_TimerZephyrTest_cDescription_maxLength_(self, ...)	OZObject_cDescription_maxLength_((struct OZObject *)(self), ##__VA_ARGS__)
 #define OZ_IMPL_Widget_cDescription_maxLength_(self, ...)	OZObject_cDescription_maxLength_((struct OZObject *)(self), ##__VA_ARGS__)
 #define OZ_IMPL_OZObject_dealloc(self, ...)	OZObject_dealloc((struct OZObject *)(self), ##__VA_ARGS__)
 #define OZ_IMPL_Base_dealloc(self, ...)	Base_dealloc((struct Base *)(self), ##__VA_ARGS__)
@@ -101,6 +112,9 @@ typedef int (*OZ_fn_toggle)(struct OZObject *);
 #define OZ_IMPL_LightSwitch_dealloc(self, ...)	LightSwitch_dealloc((struct LightSwitch *)(self), ##__VA_ARGS__)
 #define OZ_IMPL_Node_dealloc(self, ...)	Node_dealloc((struct Node *)(self), ##__VA_ARGS__)
 #define OZ_IMPL_OZQ31_dealloc(self, ...)	OZQ31_dealloc((struct OZQ31 *)(self), ##__VA_ARGS__)
+#define OZ_IMPL_OZTimer_dealloc(self, ...)	OZTimer_dealloc((struct OZTimer *)(self), ##__VA_ARGS__)
+#define OZ_IMPL_TimerZephyrTarget_dealloc(self, ...)	TimerZephyrTarget_dealloc((struct TimerZephyrTarget *)(self), ##__VA_ARGS__)
+#define OZ_IMPL_TimerZephyrTest_dealloc(self, ...)	TimerZephyrTest_dealloc((struct TimerZephyrTest *)(self), ##__VA_ARGS__)
 #define OZ_IMPL_Widget_dealloc(self, ...)	Widget_dealloc((struct Widget *)(self), ##__VA_ARGS__)
 #define OZ_IMPL_Level1_depth(self, ...)	Level1_depth((struct Level1 *)(self), ##__VA_ARGS__)
 #define OZ_IMPL_Level2_depth(self, ...)	Level2_depth((struct Level2 *)(self), ##__VA_ARGS__)
@@ -118,6 +132,9 @@ typedef int (*OZ_fn_toggle)(struct OZObject *);
 #define OZ_IMPL_LightSwitch_init(self, ...)	OZObject_init((struct OZObject *)(self), ##__VA_ARGS__)
 #define OZ_IMPL_Node_init(self, ...)	OZObject_init((struct OZObject *)(self), ##__VA_ARGS__)
 #define OZ_IMPL_OZQ31_init(self, ...)	OZObject_init((struct OZObject *)(self), ##__VA_ARGS__)
+#define OZ_IMPL_OZTimer_init(self, ...)	OZObject_init((struct OZObject *)(self), ##__VA_ARGS__)
+#define OZ_IMPL_TimerZephyrTarget_init(self, ...)	OZObject_init((struct OZObject *)(self), ##__VA_ARGS__)
+#define OZ_IMPL_TimerZephyrTest_init(self, ...)	OZObject_init((struct OZObject *)(self), ##__VA_ARGS__)
 #define OZ_IMPL_Widget_init(self, ...)	OZObject_init((struct OZObject *)(self), ##__VA_ARGS__)
 #define OZ_IMPL_OZObject_isEqual_(self, ...)	OZObject_isEqual_((struct OZObject *)(self), ##__VA_ARGS__)
 #define OZ_IMPL_Base_isEqual_(self, ...)	OZObject_isEqual_((struct OZObject *)(self), ##__VA_ARGS__)
@@ -131,6 +148,9 @@ typedef int (*OZ_fn_toggle)(struct OZObject *);
 #define OZ_IMPL_LightSwitch_isEqual_(self, ...)	OZObject_isEqual_((struct OZObject *)(self), ##__VA_ARGS__)
 #define OZ_IMPL_Node_isEqual_(self, ...)	OZObject_isEqual_((struct OZObject *)(self), ##__VA_ARGS__)
 #define OZ_IMPL_OZQ31_isEqual_(self, ...)	OZObject_isEqual_((struct OZObject *)(self), ##__VA_ARGS__)
+#define OZ_IMPL_OZTimer_isEqual_(self, ...)	OZObject_isEqual_((struct OZObject *)(self), ##__VA_ARGS__)
+#define OZ_IMPL_TimerZephyrTarget_isEqual_(self, ...)	OZObject_isEqual_((struct OZObject *)(self), ##__VA_ARGS__)
+#define OZ_IMPL_TimerZephyrTest_isEqual_(self, ...)	OZObject_isEqual_((struct OZObject *)(self), ##__VA_ARGS__)
 #define OZ_IMPL_Widget_isEqual_(self, ...)	OZObject_isEqual_((struct OZObject *)(self), ##__VA_ARGS__)
 #define OZ_IMPL_Fan_toggle(self, ...)	Fan_toggle((struct Fan *)(self), ##__VA_ARGS__)
 #define OZ_IMPL_LightSwitch_toggle(self, ...)	LightSwitch_toggle((struct LightSwitch *)(self), ##__VA_ARGS__)

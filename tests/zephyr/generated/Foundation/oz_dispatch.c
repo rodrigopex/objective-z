@@ -12,6 +12,9 @@
 #include "LightSwitch_ozh.h"
 #include "Node_ozh.h"
 #include "OZQ31_ozh.h"
+#include "OZTimer_ozh.h"
+#include "TimerZephyrTarget_ozh.h"
+#include "TimerZephyrTest_ozh.h"
 #include "Widget_ozh.h"
 
 const char *const oz_class_names[OZ_CLASS_COUNT] = {
@@ -27,6 +30,9 @@ const char *const oz_class_names[OZ_CLASS_COUNT] = {
 	[OZ_CLASS_LightSwitch] = "LightSwitch",
 	[OZ_CLASS_Node] = "Node",
 	[OZ_CLASS_OZQ31] = "OZQ31",
+	[OZ_CLASS_OZTimer] = "OZTimer",
+	[OZ_CLASS_TimerZephyrTarget] = "TimerZephyrTarget",
+	[OZ_CLASS_TimerZephyrTest] = "TimerZephyrTest",
 	[OZ_CLASS_Widget] = "Widget",
 };
 
@@ -43,6 +49,9 @@ const uint8_t oz_superclass_id[OZ_CLASS_COUNT] = {
 	[OZ_CLASS_LightSwitch] = OZ_CLASS_OZObject,
 	[OZ_CLASS_Node] = OZ_CLASS_OZObject,
 	[OZ_CLASS_OZQ31] = OZ_CLASS_OZObject,
+	[OZ_CLASS_OZTimer] = OZ_CLASS_OZObject,
+	[OZ_CLASS_TimerZephyrTarget] = OZ_CLASS_OZObject,
+	[OZ_CLASS_TimerZephyrTest] = OZ_CLASS_OZObject,
 	[OZ_CLASS_Widget] = OZ_CLASS_OZObject,
 };
 
@@ -59,6 +68,9 @@ const OZ_fn_cDescription_maxLength_ OZ_PROTOCOL_RESOLVE_cDescription_maxLength_[
 	[OZ_CLASS_LightSwitch] = (OZ_fn_cDescription_maxLength_)OZObject_cDescription_maxLength_,
 	[OZ_CLASS_Node] = (OZ_fn_cDescription_maxLength_)OZObject_cDescription_maxLength_,
 	[OZ_CLASS_OZQ31] = (OZ_fn_cDescription_maxLength_)OZObject_cDescription_maxLength_,
+	[OZ_CLASS_OZTimer] = (OZ_fn_cDescription_maxLength_)OZObject_cDescription_maxLength_,
+	[OZ_CLASS_TimerZephyrTarget] = (OZ_fn_cDescription_maxLength_)OZObject_cDescription_maxLength_,
+	[OZ_CLASS_TimerZephyrTest] = (OZ_fn_cDescription_maxLength_)OZObject_cDescription_maxLength_,
 	[OZ_CLASS_Widget] = (OZ_fn_cDescription_maxLength_)OZObject_cDescription_maxLength_,
 };
 
@@ -75,6 +87,9 @@ const OZ_fn_dealloc OZ_PROTOCOL_RESOLVE_dealloc[OZ_CLASS_COUNT] = {
 	[OZ_CLASS_LightSwitch] = (OZ_fn_dealloc)LightSwitch_dealloc,
 	[OZ_CLASS_Node] = (OZ_fn_dealloc)Node_dealloc,
 	[OZ_CLASS_OZQ31] = (OZ_fn_dealloc)OZQ31_dealloc,
+	[OZ_CLASS_OZTimer] = (OZ_fn_dealloc)OZTimer_dealloc,
+	[OZ_CLASS_TimerZephyrTarget] = (OZ_fn_dealloc)TimerZephyrTarget_dealloc,
+	[OZ_CLASS_TimerZephyrTest] = (OZ_fn_dealloc)TimerZephyrTest_dealloc,
 	[OZ_CLASS_Widget] = (OZ_fn_dealloc)Widget_dealloc,
 };
 
@@ -98,6 +113,9 @@ const OZ_fn_init OZ_PROTOCOL_RESOLVE_init[OZ_CLASS_COUNT] = {
 	[OZ_CLASS_LightSwitch] = (OZ_fn_init)OZObject_init,
 	[OZ_CLASS_Node] = (OZ_fn_init)OZObject_init,
 	[OZ_CLASS_OZQ31] = (OZ_fn_init)OZObject_init,
+	[OZ_CLASS_OZTimer] = (OZ_fn_init)OZObject_init,
+	[OZ_CLASS_TimerZephyrTarget] = (OZ_fn_init)OZObject_init,
+	[OZ_CLASS_TimerZephyrTest] = (OZ_fn_init)OZObject_init,
 	[OZ_CLASS_Widget] = (OZ_fn_init)OZObject_init,
 };
 
@@ -114,6 +132,9 @@ const OZ_fn_isEqual_ OZ_PROTOCOL_RESOLVE_isEqual_[OZ_CLASS_COUNT] = {
 	[OZ_CLASS_LightSwitch] = (OZ_fn_isEqual_)OZObject_isEqual_,
 	[OZ_CLASS_Node] = (OZ_fn_isEqual_)OZObject_isEqual_,
 	[OZ_CLASS_OZQ31] = (OZ_fn_isEqual_)OZObject_isEqual_,
+	[OZ_CLASS_OZTimer] = (OZ_fn_isEqual_)OZObject_isEqual_,
+	[OZ_CLASS_TimerZephyrTarget] = (OZ_fn_isEqual_)OZObject_isEqual_,
+	[OZ_CLASS_TimerZephyrTest] = (OZ_fn_isEqual_)OZObject_isEqual_,
 	[OZ_CLASS_Widget] = (OZ_fn_isEqual_)OZObject_isEqual_,
 };
 
@@ -141,6 +162,9 @@ void OZObject_dispatch_free(struct OZObject *obj)
 	case OZ_CLASS_LightSwitch: LightSwitch_free((struct LightSwitch *)obj); break;
 	case OZ_CLASS_Node: Node_free((struct Node *)obj); break;
 	case OZ_CLASS_OZQ31: OZQ31_free((struct OZQ31 *)obj); break;
+	case OZ_CLASS_OZTimer: OZTimer_free((struct OZTimer *)obj); break;
+	case OZ_CLASS_TimerZephyrTarget: TimerZephyrTarget_free((struct TimerZephyrTarget *)obj); break;
+	case OZ_CLASS_TimerZephyrTest: TimerZephyrTest_free((struct TimerZephyrTest *)obj); break;
 	case OZ_CLASS_Widget: Widget_free((struct Widget *)obj); break;
 	default: break;
 	}
