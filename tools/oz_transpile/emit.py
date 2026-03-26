@@ -2023,13 +2023,23 @@ def _emit_expr(node: dict, out: StringIO, ctx: _EmitCtx) -> None:
         return
 
     if kind == "PseudoObjectExpr":
-        # ObjC subscript: inner[0] is ObjCSubscriptRefExpr (syntactic),
+        # ObjC property/subscript: inner[0] is the syntactic ref,
         # last ObjCMessageExpr child is the lowered call.
+        # ARC may wrap it in ImplicitCastExpr/ExprWithCleanups.
         inner = node.get("inner", [])
         if inner:
             msg = None
             for child in reversed(inner):
-                if child.get("kind") == "ObjCMessageExpr":
+                unwrapped = child
+                while unwrapped.get("kind") in (
+                    "ImplicitCastExpr", "ExprWithCleanups",
+                ):
+                    sub = unwrapped.get("inner", [])
+                    if sub:
+                        unwrapped = sub[0]
+                    else:
+                        break
+                if unwrapped.get("kind") == "ObjCMessageExpr":
                     msg = child
                     break
             _emit_expr(msg if msg else inner[0], out, ctx)
