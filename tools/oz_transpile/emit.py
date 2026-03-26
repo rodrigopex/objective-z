@@ -1564,6 +1564,29 @@ _OBJC_NODE_KINDS = frozenset({
     "ObjCSelectorExpr", "ObjCProtocolExpr", "PseudoObjectExpr",
 })
 
+_TRIVIAL_LITERAL_KINDS = frozenset({
+    "IntegerLiteral", "FloatingLiteral", "CharacterLiteral",
+    "ObjCBoolLiteralExpr", "GNUNullExpr",
+    "CXXNullPtrLiteralExpr", "CXXBoolLiteralExpr",
+})
+
+
+def _is_trivial_macro_expansion(node: dict) -> bool:
+    """Return True for trivial constant expansions (nil, YES, NO, etc.).
+
+    Recursively unwraps implicit casts and parens to find the inner node.
+    Compound literals, function calls, and other complex expansions return
+    False so they are preserved via macro passthrough.
+    """
+    kind = node.get("kind", "")
+    if kind in _TRIVIAL_LITERAL_KINDS:
+        return True
+    if kind in ("ImplicitCastExpr", "CStyleCastExpr", "ParenExpr"):
+        inner = node.get("inner", [])
+        if len(inner) == 1:
+            return _is_trivial_macro_expansion(inner[0])
+    return False
+
 
 def _extract_macro_text(source: bytes, offset: int, tok_len: int) -> str:
     """Extract full macro invocation from source via paren matching.
@@ -1634,17 +1657,22 @@ def _try_macro_passthrough(node: dict, out: StringIO,
     exp = begin.get("expansionLoc", {})
     if not exp or exp.get("isMacroArgExpansion"):
         return False
-    # Skip system/SDK macros (nil, YES, BOOL, etc.) — their spellingLoc
-    # points to an included header, not the user's source file.
-    spelling = begin.get("spellingLoc", {})
-    if spelling.get("includedFrom"):
-        return False
     offset = exp.get("offset")
     tok_len = exp.get("tokLen")
     if offset is None or tok_len is None:
         return False
 
     macro_text = _extract_macro_text(source, offset, tok_len)
+
+    # For macros defined in included headers, preserve function-like macros
+    # (K_MSEC, etc.) and non-trivial object-like macros (K_FOREVER, etc.),
+    # but skip trivial constants (nil, YES, NO).
+    spelling = begin.get("spellingLoc", {})
+    if spelling.get("includedFrom"):
+        is_function_like = len(macro_text) > tok_len
+        if not is_function_like and _is_trivial_macro_expansion(node):
+            return False
+
     patches = _collect_objc_patches(node, offset, source, ctx)
 
     if not patches:
@@ -1679,9 +1707,6 @@ def _try_stmt_macro_passthrough(node: dict, out: StringIO,
     end_exp = end.get("expansionLoc", {})
     if not end_exp:
         return False
-    spelling = begin.get("spellingLoc", {})
-    if spelling.get("includedFrom"):
-        return False
     offset = exp.get("offset")
     tok_len = exp.get("tokLen")
     if offset is None or tok_len is None:
@@ -1696,6 +1721,15 @@ def _try_stmt_macro_passthrough(node: dict, out: StringIO,
 
     tabs = "\t" * indent
     macro_text = _extract_macro_text(source, offset, tok_len)
+
+    # For macros defined in included headers, preserve function-like macros
+    # (K_MSEC, etc.) and non-trivial object-like macros (K_FOREVER, etc.),
+    # but skip trivial constants (nil, YES, NO).
+    spelling = begin.get("spellingLoc", {})
+    if spelling.get("includedFrom"):
+        is_function_like = len(macro_text) > tok_len
+        if not is_function_like and _is_trivial_macro_expansion(node):
+            return False
     patches = _collect_objc_patches(node, offset, source, ctx)
 
     if not patches:
