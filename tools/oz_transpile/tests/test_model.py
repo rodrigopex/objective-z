@@ -142,6 +142,17 @@ class TestOZType:
         t = OZType("__strong OZArray<OZString *> *")
         assert t.generic_params == ["OZString *"]
 
+    def test_const_pointer_is_object(self):
+        """OZ-081: for-in loop var qualType ends with *const."""
+        t = OZType("OZQ31 *const")
+        assert t.is_object
+        assert t.c_type == "struct OZQ31 *const"
+
+    def test_const_pointer_with_space(self):
+        t = OZType("OZQ31 * const")
+        assert t.is_object
+        assert t.c_type == "struct OZQ31 *const"
+
 
 class TestOZParam:
     def test_construction(self):
