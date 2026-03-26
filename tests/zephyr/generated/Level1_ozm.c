@@ -11,6 +11,9 @@
 #include "Node_ozh.h"
 #include "OZObject_ozh.h"
 #include "OZQ31_ozh.h"
+#include "OZTimer_ozh.h"
+#include "TimerZephyrTarget_ozh.h"
+#include "TimerZephyrTest_ozh.h"
 #include "Widget_ozh.h"
 
 OZ_SLAB_DEFINE(oz_slab_Level1, sizeof(struct Level1), 4, 4);

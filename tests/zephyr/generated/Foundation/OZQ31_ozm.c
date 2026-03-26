@@ -11,6 +11,9 @@
 #include "LightSwitch_ozh.h"
 #include "Node_ozh.h"
 #include "OZObject_ozh.h"
+#include "OZTimer_ozh.h"
+#include "TimerZephyrTarget_ozh.h"
+#include "TimerZephyrTest_ozh.h"
 #include "Widget_ozh.h"
 
 OZ_SLAB_DEFINE(oz_slab_OZQ31, sizeof(struct OZQ31), 5, 4);

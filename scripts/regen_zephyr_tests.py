@@ -23,6 +23,7 @@ CASES_DIR = REPO_ROOT / "tests" / "behavior" / "cases"
 STUBS_DIR = REPO_ROOT / "include" / "oz_sdk"
 TEST_INC = REPO_ROOT / "tests" / "behavior" / "include"
 OZ_SRC = REPO_ROOT / "src"
+ZEPHYR_STUBS = REPO_ROOT / "tests" / "behavior" / "include" / "zephyr_stubs"
 OUT_DIR = REPO_ROOT / "tests" / "zephyr" / "generated"
 
 LLVM_SEARCH_PATHS = [
@@ -38,6 +39,7 @@ SOURCES = [
     "protocol/switch_routes_correct.m",
     "edge/deep_inheritance.m",
     "edge/boxed_expression.m",
+    "foundation/timer_zephyr.m",
 ]
 
 
@@ -74,10 +76,11 @@ def _ast_dump(clang: str, m_path: Path, out_json: Path) -> None:
     """Run Clang JSON AST dump on a .m file."""
     result = subprocess.run(
         [clang, "-Xclang", "-ast-dump=json", "-fsyntax-only",
-         "-fobjc-runtime=macosx", "--target=x86_64-unknown-linux-gnu",
+         "-fobjc-runtime=macosx", "-fobjc-arc", "-fblocks",
          "-I", str(STUBS_DIR),
          "-I", str(TEST_INC),
          "-I", str(OZ_SRC),
+         "-isystem", str(ZEPHYR_STUBS),
          str(m_path)],
         capture_output=True, text=True)
     if result.returncode != 0:
