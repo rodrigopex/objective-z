@@ -3271,6 +3271,27 @@ class TestEmitEdgeCases:
         assert "OZ_PROTOCOL_SEND_next" in src
         assert "item" in src
 
+    def test_forin_typed_var_struct_prefix(self):
+        """OZ-081: for-in with typed variable must emit struct prefix in cast."""
+        _, out = clang_emit("""\
+#import <Foundation/OZObject.h>
+@interface Bar : OZObject
+@end
+@implementation Bar
+@end
+@interface Foo : OZObject
+- (void)iterate;
+@end
+@implementation Foo
+- (void)iterate {
+    for (Bar *b in self) {}
+}
+@end
+""")
+        src = out["Foo_ozm.c"]
+        assert "(struct Bar *" in src
+        assert "Bar *b" in src or "Bar *const" in src
+
     def test_string_dedup_unique_across_methods(self):
         """OZ-039: different string literals in separate methods must get
         unique constant names (no _oz_str_N redefinition)."""

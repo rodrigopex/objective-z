@@ -98,6 +98,8 @@ class OZType:
 
     _NON_OBJECT_TYPES = frozenset({"BOOL"})
 
+    _PTR_QUALIFIERS = ("const", "volatile", "restrict")
+
     @property
     def is_object(self) -> bool:
         qt = self._strip_qualifiers()
@@ -105,8 +107,12 @@ class OZType:
             return False
         if qt == "id" or qt == "instancetype":
             return True
-        if qt.endswith("*") and qt[0].isupper():
-            name = qt.rstrip(" *")
+        bare = qt
+        for q in OZType._PTR_QUALIFIERS:
+            if bare.endswith(q):
+                bare = bare[:-len(q)].rstrip()
+        if bare.endswith("*") and bare[0].isupper():
+            name = bare.rstrip(" *")
             return name not in OZType._NON_OBJECT_TYPES
         return False
 
@@ -128,8 +134,10 @@ class OZType:
         if qt == "id *":
             return "struct OZObject **"
         if self.is_object:
-            name = qt.rstrip(" *")
-            return f"struct {name} *"
+            star = qt.index("*")
+            name = qt[:star].rstrip()
+            suffix = qt[star + 1:].strip()
+            return f"struct {name} *{suffix}" if suffix else f"struct {name} *"
         return qt
 
     @staticmethod
