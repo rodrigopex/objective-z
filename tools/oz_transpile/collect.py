@@ -29,6 +29,30 @@ _UNSUPPORTED_AST_KINDS = frozenset({
     "ObjCAtTryStmt",
 })
 
+_OBJC_AST_KINDS = frozenset({
+    "ObjCMessageExpr",
+    "ObjCIvarRefExpr",
+    "ObjCSelectorExpr",
+    "ObjCProtocolExpr",
+    "ObjCBoolLiteralExpr",
+    "ObjCStringLiteral",
+    "ObjCBoxedExpr",
+    "ObjCArrayLiteral",
+    "ObjCDictionaryLiteral",
+    "BlockExpr",
+    "PseudoObjectExpr",
+})
+
+
+def _has_objc_nodes(node: dict) -> bool:
+    """Check if an AST subtree contains any ObjC-specific nodes."""
+    if node.get("kind", "") in _OBJC_AST_KINDS:
+        return True
+    for child in node.get("inner", []):
+        if _has_objc_nodes(child):
+            return True
+    return False
+
 
 def merge_modules(modules: list[OZModule]) -> OZModule:
     """Merge multiple OZModules into one, combining class data."""
@@ -559,11 +583,15 @@ def _collect_function(node: dict, module: OZModule) -> None:
     _collect_block_vars(body_ast, module)
 
     ret_type = OZType(node.get("type", {}).get("qualType", "int ()").split("(")[0].strip())
+    has_objc = (_has_objc_nodes(body_ast)
+                or ret_type.is_object
+                or any(p.oz_type.is_object for p in params))
     module.functions.append(OZFunction(
         name=name,
         return_type=ret_type,
         params=params,
         body_ast=body_ast,
+        has_objc=has_objc,
     ))
 
 

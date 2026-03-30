@@ -292,6 +292,7 @@ class OZFunction:
     return_type: OZType
     params: list[OZParam] = field(default_factory=list)
     body_ast: dict | None = None
+    has_objc: bool = False
 
 
 @dataclass(slots=True)
