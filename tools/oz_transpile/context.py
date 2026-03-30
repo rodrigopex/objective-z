@@ -113,7 +113,7 @@ def build_source_context(
             key = _loc_key(child)
             name = _extract_func_name(child)
             func = func_map.get(name) if name else None
-            if func and func.body_ast:
+            if func and func.body_ast and func.has_objc:
                 buf = StringIO()
                 _emit_transpiled_function(func, module, buf, root_class,
                                           has_item_pool,
@@ -121,8 +121,13 @@ def build_source_context(
                                           shared_dedup=shared_dedup,
                                           shared_strings=shared_strings)
                 context[key] = buf.getvalue()
+                module.diagnostics.append(
+                    f"info: function '{name}' transpiled (contains ObjC)")
             else:
                 context[key] = text
+                if func and func.body_ast:
+                    module.diagnostics.append(
+                        f"info: function '{name}' preserved verbatim (pure C)")
 
         elif child.type == "declaration":
             key = _loc_key(child)
@@ -131,16 +136,21 @@ def build_source_context(
                 continue
             name = _extract_decl_name(child)
             if name and name in static_names:
-                # Emit the transpiled declaration at the original position
-                # (preserves ordering for C functions that reference it).
-                # Look up the OZStaticVar to get the correct C type.
                 sv = _find_static_var(name, classes)
-                if sv:
+                if sv and sv.oz_type.is_object:
+                    # Re-emit only statics with ObjC types (need struct transform)
                     decl_str = sv.oz_type.c_param_decl(sv.name)
                     init = f" = {sv.init_value}" if sv.init_value is not None else ""
                     context[key] = f"static {decl_str}{init};"
                     static_names.discard(name)
+                    module.diagnostics.append(
+                        f"info: static '{name}' transpiled (ObjC type)")
                     continue
+                elif sv:
+                    # Pure C static — preserve verbatim
+                    static_names.discard(name)
+                    module.diagnostics.append(
+                        f"info: static '{name}' preserved verbatim (pure C)")
             context[key] = text
 
     # Store shared string constants from C functions for file-level emission
