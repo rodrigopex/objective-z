@@ -4521,3 +4521,126 @@ class TestInlineAccessors:
 """)
         source = out["Foo_ozm.c"]
         assert "OZDictionary_count_fast_(" in source
+
+
+class TestCPassthrough:
+    """OZ-083: pure C code must be preserved verbatim during transpilation."""
+
+    def test_pure_c_function_preserved_verbatim(self):
+        """Pure C functions (no ObjC) must appear byte-for-byte in output."""
+        c_func = (
+            "static int add(int a, int b)\n"
+            "{\n"
+            "\t/* add two numbers */\n"
+            "\treturn a + b;\n"
+            "}"
+        )
+        mod, out = clang_emit_patched(f"""\
+#import <Foundation/OZObject.h>
+{c_func}
+@interface Foo : OZObject
+@end
+@implementation Foo
+- (int)value {{
+    return add(1, 2);
+}}
+@end
+""", stem="Foo")
+        src = out["Foo_ozm.c"]
+        assert c_func in src
+
+    def test_objc_function_still_transpiled(self):
+        """Functions with ObjC type params must still be transpiled."""
+        mod, out = clang_emit_patched("""\
+#import <Foundation/OZObject.h>
+static int get_id(OZObject *obj) {
+    return 0;
+}
+@interface Foo : OZObject
+@end
+@implementation Foo
+@end
+""", stem="Foo")
+        src = out["Foo_ozm.c"]
+        assert "struct OZObject *" in src
+
+    def test_pure_c_static_preserved_verbatim(self):
+        """Static variables with non-ObjC type must be preserved verbatim."""
+        mod, out = clang_emit_patched("""\
+#import <Foundation/OZObject.h>
+static int _counter = 42;
+@interface Foo : OZObject
+@end
+@implementation Foo
+- (int)value {
+    return _counter;
+}
+@end
+""", stem="Foo")
+        src = out["Foo_ozm.c"]
+        assert "static int _counter = 42;" in src
+
+    def test_objc_static_still_transpiled(self):
+        """Static variables with ObjC type must still be transpiled."""
+        mod, out = clang_emit_patched("""\
+#import <Foundation/OZObject.h>
+@interface Foo : OZObject
+@end
+static Foo *_shared = nil;
+@implementation Foo
++ (Foo *)shared {
+    return _shared;
+}
+@end
+""", stem="Foo")
+        src = out["Foo_ozm.c"]
+        assert "static struct Foo * _shared = NULL;" in src
+
+    def test_has_objc_flag_on_functions(self):
+        """collect pass must set has_objc correctly on OZFunction."""
+        mod = clang_collect_resolve("""\
+#import <Foundation/OZObject.h>
+static int pure_c(int x) { return x + 1; }
+static int uses_objc(OZObject *obj) { return 0; }
+@interface Foo : OZObject
+@end
+@implementation Foo
+@end
+""")
+        func_map = {f.name: f for f in mod.functions}
+        assert "pure_c" in func_map
+        assert func_map["pure_c"].has_objc is False
+        assert "uses_objc" in func_map
+        assert func_map["uses_objc"].has_objc is True
+
+    def test_diagnostics_report_preserved_and_transpiled(self):
+        """Verbose diagnostics must report which functions were preserved."""
+        mod, _ = clang_emit_patched("""\
+#import <Foundation/OZObject.h>
+static int helper(int x) { return x; }
+static int caller(OZObject *obj) { return 0; }
+@interface Foo : OZObject
+@end
+@implementation Foo
+- (int)dummy { return helper(1); }
+@end
+""", stem="Foo")
+        diags = "\n".join(mod.diagnostics)
+        assert "function 'helper' preserved verbatim" in diags
+        assert "function 'caller' transpiled" in diags
+
+    def test_define_and_struct_preserved(self):
+        """#define macros and struct definitions must survive transpilation."""
+        mod, out = clang_emit_patched("""\
+#import <Foundation/OZObject.h>
+#define MAX_COUNT 10
+@interface Foo : OZObject
+@end
+@implementation Foo
+- (int)max {
+    return MAX_COUNT;
+}
+@end
+""", stem="Foo")
+        src = out["Foo_ozm.c"]
+        assert "#define MAX_COUNT 10" in src
