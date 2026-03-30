@@ -247,3 +247,9 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# Obsidian
+.obsidian/
+
+# CMake system info
+__cmake_systeminformation/
