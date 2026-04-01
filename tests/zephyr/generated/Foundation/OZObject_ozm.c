@@ -60,11 +60,6 @@ int OZObject_cDescription_maxLength_(struct OZObject *self, char *buf, int maxLe
 	return oz_platform_snprint(buf, (size_t)maxLen, "<%s: %p>",
 		oz_class_names[self->_meta.class_id], (void *)self);
 }
-int triple(int x)
-{
-	return x * 3;
-}
-
 struct OZObject * OZObject_cls_alloc(void)
 {
 	return (struct OZObject *)(((void *)0));

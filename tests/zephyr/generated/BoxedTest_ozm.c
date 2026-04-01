@@ -18,6 +18,11 @@
 
 OZ_SLAB_DEFINE(oz_slab_BoxedTest, sizeof(struct BoxedTest), 4, 4);
 
+static int triple(int x)
+{
+	return x * 3;
+}
+
 void BoxedTest_run(struct BoxedTest *self)
 {
 	int val = 7;
