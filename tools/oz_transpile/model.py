@@ -293,6 +293,7 @@ class OZFunction:
     params: list[OZParam] = field(default_factory=list)
     body_ast: dict | None = None
     has_objc: bool = False
+    is_static: bool = False
 
 
 @dataclass(slots=True)
