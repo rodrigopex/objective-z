@@ -625,7 +625,7 @@ def _emit_synthesized_accessor(cls: OZClass, m: OZMethod,
     if is_getter:
         if is_atomic:
             out.write("{\n")
-            out.write(f"\t{c_type} val;\n")
+            out.write(f"\t{c_type} val = {{0}};\n")
             out.write(f"\tOZ_SPINLOCK(&{lock_expr}) {{\n")
             out.write(f"\t\tval = self->{ivar};\n")
             out.write("\t}\n")
@@ -640,7 +640,7 @@ def _emit_synthesized_accessor(cls: OZClass, m: OZMethod,
         if is_strong_obj:
             if is_atomic:
                 out.write("{\n")
-                out.write(f"\t{c_type} old;\n")
+                out.write(f"\t{c_type} old = {{0}};\n")
                 out.write(f"\t{root}_retain((struct {root} *){param_name});\n")
                 out.write(f"\tOZ_SPINLOCK(&{lock_expr}) {{\n")
                 out.write(f"\t\told = self->{ivar};\n")
