@@ -1648,6 +1648,7 @@ class TestSynthesizedPropertyEmission:
         assert "oz_spinlock_t" not in code
         assert "OZ_SPINLOCK(&self->base._oz_prop_lock)" in code
         assert "val = self->_model;" in code
+        assert "= {0};" in code
         assert "return val;" in code
 
     def test_nonatomic_strong_setter(self):
@@ -1719,6 +1720,30 @@ class TestSynthesizedPropertyEmission:
         assert "self->_delegate = delegate;" in code
         assert "retain" not in code
         assert "release" not in code
+
+    def test_atomic_getter_val_zero_initialized(self):
+        """OZ-085: atomic getter val must be zero-initialized to avoid -Wmaybe-uninitialized."""
+        prop = OZProperty("iterIdx", OZType("uint16_t"),
+                          ivar_name="_iterIdx", is_nonatomic=False,
+                          ownership="assign")
+        cls = OZClass("Arr")
+        m = OZMethod("iterIdx", OZType("uint16_t"),
+                     synthesized_property=prop)
+        code = self._emit(cls, m)
+        assert "uint16_t val = {0};" in code
+        assert "return val;" in code
+
+    def test_atomic_strong_setter_old_zero_initialized(self):
+        """OZ-085: atomic strong setter old must be zero-initialized."""
+        prop = OZProperty("name", OZType("OZString *"),
+                          ivar_name="_name", is_nonatomic=False,
+                          ownership="strong")
+        cls = OZClass("Obj")
+        m = OZMethod("setName:", OZType("void"),
+                     params=[OZParam("name", OZType("OZString *"))],
+                     synthesized_property=prop)
+        code = self._emit(cls, m, root_class="OZObject")
+        assert "struct OZString * old = {0};" in code
 
     def test_atomic_getter_child_class(self):
         """Grandchild class uses base.base. chain to reach root lock."""
