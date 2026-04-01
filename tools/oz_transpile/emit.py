@@ -101,8 +101,11 @@ def _associate_module_items(module: OZModule) -> None:
     primary = None
     for cls in module.classes.values():
         if any(m.body_ast for m in cls.methods):
-            primary = cls
-            break
+            if cls.name not in _FOUNDATION_NAMES:
+                primary = cls
+                break
+            if primary is None:
+                primary = cls
     if primary is None:
         for cls in module.classes.values():
             if cls.methods or cls.ivars:
@@ -513,6 +516,8 @@ def _class_header_ctx(ctx: _EmitCtx, stem: str | None = None,
 
     function_protos = []
     for func in cls.functions:
+        if func.is_static:
+            continue
         ret = func.return_type.c_type
         parts = [p.oz_type.c_param_decl(p.name) for p in func.params]
         params_str = ", ".join(parts) if parts else "void"
@@ -750,7 +755,8 @@ def _class_source_ctx(ctx: _EmitCtx, stem: str | None = None,
         ctx.pre_stmts = []
         ctx._tmp_counter = 0
         buf = StringIO()
-        buf.write(f"{ret} {func.name}({params_str})\n")
+        prefix = "static " if func.is_static else ""
+        buf.write(f"{prefix}{ret} {func.name}({params_str})\n")
         if func.body_ast:
             _emit_compound_stmt(func.body_ast, buf, ctx, indent=0,
                                 param_retains=_object_params(func))
@@ -806,7 +812,8 @@ def _orphan_source_ctx(orphan: OrphanSource, module: OZModule,
         parts = [p.oz_type.c_param_decl(p.name) for p in func.params]
         params_str = ", ".join(parts) if parts else "void"
         buf = StringIO()
-        buf.write(f"{ret} {func.name}({params_str})\n")
+        prefix = "static " if func.is_static else ""
+        buf.write(f"{prefix}{ret} {func.name}({params_str})\n")
         if func.body_ast:
             # Create a minimal _EmitCtx for body emission
             dummy_cls = OZClass(name="__orphan__")
@@ -3188,7 +3195,8 @@ def _emit_transpiled_function(func: OZFunction, module: OZModule,
 
     # Emit body to buffer first to collect string constants/block functions
     body_buf = StringIO()
-    body_buf.write(f"{ret} {func.name}({params_str})\n")
+    prefix = "static " if func.is_static else ""
+    body_buf.write(f"{prefix}{ret} {func.name}({params_str})\n")
     if func.body_ast:
         _emit_compound_stmt(func.body_ast, body_buf, ctx, indent=0,
                             param_retains=_object_params(func))

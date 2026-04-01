@@ -3029,7 +3029,7 @@ void test_boxed(float myFloat) {
         ))
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
-            src = open(os.path.join(tmpdir, "Foundation", "OZObject_ozm.c")).read()
+            src = open(os.path.join(tmpdir, "OZLed_ozm.c")).read()
             assert "OZQ31_fixedWithInt32_((int32_t)(myU16))" in src
 
     def test_boxed_call_expr(self):
@@ -3117,7 +3117,7 @@ void test_boxed(enum Color enumVar) {
         ))
         with tempfile.TemporaryDirectory() as tmpdir:
             emit(m, tmpdir)
-            src = open(os.path.join(tmpdir, "Foundation", "OZObject_ozm.c")).read()
+            src = open(os.path.join(tmpdir, "OZLed_ozm.c")).read()
             assert "OZQ31_fixedWithFloat_((float)(myDouble))" in src
             assert any("double" in d for d in m.diagnostics)
 
@@ -4644,3 +4644,62 @@ static int caller(OZObject *obj) { return 0; }
 """, stem="Foo")
         src = out["Foo_ozm.c"]
         assert "#define MAX_COUNT 10" in src
+
+    """OZ-084: static C functions must not leak into generated headers."""
+
+    def test_static_function_not_in_header(self):
+        """OZ-084: static C function must not appear in the generated header."""
+        mod, out = clang_emit_patched("""\
+#import <Foundation/OZObject.h>
+static int helper(int a, int b)
+{
+    return a + b;
+}
+@interface Foo : OZObject
+@end
+@implementation Foo
+- (int)value {
+    return helper(1, 2);
+}
+@end
+""", stem="Foo")
+        header = out["Foo_ozh.h"]
+        assert "helper" not in header
+
+    def test_static_function_preserved_in_source(self):
+        """OZ-084: static C function must keep static qualifier in .c output."""
+        mod, out = clang_emit_patched("""\
+#import <Foundation/OZObject.h>
+static int helper(int a, int b)
+{
+    return a + b;
+}
+@interface Foo : OZObject
+@end
+@implementation Foo
+- (int)value {
+    return helper(1, 2);
+}
+@end
+""", stem="Foo")
+        src = out["Foo_ozm.c"]
+        assert "static int helper(int a, int b)" in src
+
+    def test_non_static_function_still_in_header(self):
+        """OZ-084: non-static C functions must still get forward declarations."""
+        mod, out = clang_emit_patched("""\
+#import <Foundation/OZObject.h>
+int public_helper(int x)
+{
+    return x + 1;
+}
+@interface Foo : OZObject
+@end
+@implementation Foo
+- (int)value {
+    return public_helper(1);
+}
+@end
+""", stem="Foo")
+        header = out["Foo_ozh.h"]
+        assert "int public_helper(int x);" in header

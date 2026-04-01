@@ -586,12 +586,14 @@ def _collect_function(node: dict, module: OZModule) -> None:
     has_objc = (_has_objc_nodes(body_ast)
                 or ret_type.is_object
                 or any(p.oz_type.is_object for p in params))
+    is_static = node.get("storageClass") == "static"
     module.functions.append(OZFunction(
         name=name,
         return_type=ret_type,
         params=params,
         body_ast=body_ast,
         has_objc=has_objc,
+        is_static=is_static,
     ))
 
 

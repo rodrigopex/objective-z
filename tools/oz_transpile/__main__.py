@@ -93,11 +93,18 @@ def _associate_module_items_with_class(module):
     if not has_items:
         return
 
+    _FOUNDATION_NAMES = {
+        "OZObject", "OZString", "OZMutableString", "OZArray",
+        "OZDictionary", "OZQ31", "OZDefer", "OZHeap", "OZSpinLock",
+    }
     primary = None
     for cls in module.classes.values():
         if any(m.body_ast for m in cls.methods):
-            primary = cls
-            break
+            if cls.name not in _FOUNDATION_NAMES:
+                primary = cls
+                break
+            if primary is None:
+                primary = cls
 
     # No class with implementation — treat as orphan source
     if primary is None:
