@@ -358,6 +358,40 @@ class TestCLIErrors:
             rc = main(["--input", ast_file, "--outdir", tmpdir, "--strict"])
             assert rc == 1
 
+    def test_recovery_expr_produces_fatal_error(self):
+        """OZ-087: RecoveryExpr nodes from LLVM Clang should cause a fatal
+        error with actionable guidance instead of emitting broken C.
+        Corner case: synthetic AST — Apple Clang never produces RecoveryExpr."""
+        import json
+        ast = {
+            "kind": "TranslationUnitDecl",
+            "inner": [
+                {"kind": "ObjCInterfaceDecl", "name": "OZObject", "inner": []},
+                {"kind": "ObjCImplementationDecl", "name": "OZObject",
+                 "inner": [
+                     {"kind": "ObjCMethodDecl", "name": "init",
+                      "returnType": {"qualType": "id"},
+                      "instance": True,
+                      "inner": [
+                          {"kind": "CompoundStmt", "inner": [
+                              {"kind": "ReturnStmt", "inner": [
+                                  {"kind": "RecoveryExpr",
+                                   "type": {"qualType": "<recovery-expr>"},
+                                   "range": {"begin": {"line": 5, "col": 10}},
+                                   "inner": []}
+                              ]}
+                          ]}
+                      ]}
+                 ]},
+            ],
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ast_file = os.path.join(tmpdir, "recovery.ast.json")
+            with open(ast_file, "w") as f:
+                json.dump(ast, f)
+            rc = main(["--input", ast_file, "--outdir", tmpdir])
+            assert rc == 1
+
     def test_manifest_written(self):
         """--manifest should write generated file paths."""
         with tempfile.TemporaryDirectory() as tmpdir:
