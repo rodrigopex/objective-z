@@ -1757,6 +1757,18 @@ def _try_stmt_macro_passthrough(node: dict, out: StringIO,
 def _emit_expr(node: dict, out: StringIO, ctx: _EmitCtx) -> None:
     kind = node.get("kind", "")
 
+    if kind == "RecoveryExpr":
+        loc = node.get("loc", node.get("range", {}).get("begin", {}))
+        line = loc.get("line", "?")
+        col = loc.get("col", "?")
+        ctx.module.errors.append(
+            f"RecoveryExpr at line {line}, col {col} — Clang could not "
+            f"analyze this expression. Ensure -fblocks is enabled, or "
+            f"use Apple Clang on macOS / a full LLVM Clang with ObjC "
+            f"support on Linux.")
+        out.write("0")
+        return
+
     if _try_macro_passthrough(node, out, ctx):
         return
 

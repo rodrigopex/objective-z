@@ -223,6 +223,7 @@ function(_objz_build_clang_flags result_var)
     # ObjC runtime (for clangd IDE support)
     list(APPEND _flags -fobjc-runtime=gnustep-2.0)
     list(APPEND _flags -fconstant-string-class=OZString)
+    list(APPEND _flags -fblocks)
 
     # Include dirs from zephyr_interface (skip generator expressions)
     get_property(_inc_dirs TARGET zephyr_interface
@@ -418,6 +419,8 @@ endfunction()
 # Uses -fobjc-runtime=macosx so both Apple Clang and LLVM Clang
 # (Zephyr SDK) produce valid ObjC AST.  gnustep-2.0 is avoided
 # because Apple Clang may crash with -ast-dump=json.
+# -fblocks is required for LLVM Clang (Apple Clang enables it
+# implicitly); without it, block syntax produces RecoveryExpr nodes.
 #
 function(_objz_build_ast_flags result_var)
     set(_flags "")
@@ -425,6 +428,7 @@ function(_objz_build_ast_flags result_var)
     list(APPEND _flags -fobjc-runtime=macosx)
     list(APPEND _flags -fconstant-string-class=OZString)
     list(APPEND _flags -fobjc-arc)
+    list(APPEND _flags -fblocks)
 
     # Include dirs from zephyr_interface (skip generator expressions)
     get_property(_inc_dirs TARGET zephyr_interface

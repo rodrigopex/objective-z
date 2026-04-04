@@ -686,6 +686,26 @@ def _check_unsupported_features(ast_root: dict, module: OZModule) -> None:
 def _scan_unsupported(node: dict, module: OZModule) -> None:
     """Recursively scan for unsupported AST node kinds."""
     kind = node.get("kind", "")
+    if kind == "RecoveryExpr":
+        loc = node.get("loc", node.get("range", {}).get("begin", {}))
+        line = loc.get("line", "")
+        col = loc.get("col", "")
+        src = ""
+        if module.source_path:
+            src = f"{module.source_path.name}"
+        if src and line and col:
+            src = f"{src}:{line}:{col}: "
+        elif src and line:
+            src = f"{src}:{line}: "
+        elif src:
+            src = f"{src}: "
+        module.errors.append(
+            f"{src}Clang produced a RecoveryExpr node — the expression "
+            f"could not be analyzed. This typically happens with "
+            f"non-Apple LLVM Clang builds (e.g. Zephyr SDK). "
+            f"Ensure -fblocks is enabled, or use Apple Clang on macOS / "
+            f"a full LLVM Clang with ObjC support on Linux.")
+        return
     if kind in _UNSUPPORTED_AST_KINDS:
         loc = node.get("loc", {})
         line = loc.get("line", "")
