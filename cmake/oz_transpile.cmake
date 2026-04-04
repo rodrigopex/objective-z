@@ -74,11 +74,30 @@ function(objz_transpile_sources target)
     endif()
 
     # ── Collect compile_commands entries for clangd ─────────────────────
-    # Build Clang flags but swap gnustep-2.0 for macosx runtime so clangd
-    # gets native blocks and ARC support (clangd is IDE-only, not for build).
+    # Build Clang flags then replace the embedded target with Darwin.
+    # Darwin is supported by upstream LLVM on both macOS and Linux as a
+    # cross-compilation target, and natively enables blocks, ARC, and the
+    # macosx ObjC runtime.  A minimal .clangd (generated at CMAKE_SOURCE_DIR)
+    # suppresses ELF-vs-Mach-O section attribute errors and tells clangd
+    # where to find compile_commands.json.  Arch built-in defines (__ARM_*,
+    # __riscv*, __thumb*) are injected from a Clang predefines query so
+    # CMSIS/Zephyr headers still work.
     _objz_build_clang_flags(_clang_flags)
-    list(REMOVE_ITEM _clang_flags -fobjc-runtime=gnustep-2.0)
-    list(APPEND _clang_flags -fobjc-runtime=macosx -fobjc-arc -fblocks -I${_oz_inc_dir})
+    list(FILTER _clang_flags EXCLUDE REGEX "^--target=")
+    list(FILTER _clang_flags EXCLUDE REGEX "^-mcpu=")
+    list(FILTER _clang_flags EXCLUDE REGEX "^-mthumb$")
+    list(FILTER _clang_flags EXCLUDE REGEX "^-mfpu=")
+    list(FILTER _clang_flags EXCLUDE REGEX "^-mfloat-abi=")
+    list(FILTER _clang_flags EXCLUDE REGEX "^-march=")
+    list(FILTER _clang_flags EXCLUDE REGEX "^-mabi=")
+    list(FILTER _clang_flags EXCLUDE REGEX "^-mno-relax$")
+    list(FILTER _clang_flags EXCLUDE REGEX "^-fobjc-runtime=")
+    list(APPEND _clang_flags --target=arm64-apple-darwin)
+    _objz_append_arch_defines(_clang_flags)
+    list(APPEND _clang_flags -fobjc-runtime=macosx -fobjc-arc -fblocks -I${_oz_inc_dir}
+        -Wno-objc-interface-ivars
+        -Wno-unknown-attributes
+        -Wno-objc-macro-redefinition)
     foreach(_dir ${OZT_INCLUDE_DIRS})
         list(APPEND _clang_flags -I${_dir})
     endforeach()
