@@ -10,6 +10,7 @@ manifest:
       import:
         name-allowlist:
           - cmsis
+          - cmsis_6
 
   self:
     path: objective-z
