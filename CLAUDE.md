@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**Current version: v0.5.89**
+**Current version: v0.5.90**
 
 Objective-Z is an Objective-C transpiler for Zephyr RTOS, packaged as a Zephyr module (`zephyr/module.yml`). Converts `.m` sources to plain C via Clang AST analysis — no ObjC runtime needed. Uses the Platform Abstraction Layer (PAL) for zero-cost Zephyr integration.
 
