@@ -62,6 +62,7 @@ venv
 .DS_Store
 .zed
 .clangd
+compile_commands.json
 new.info
 
 # Cargo drops lock files in projects to capture resolved dependencies.
