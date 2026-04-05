@@ -39,6 +39,11 @@ class _EmitCtx:
     _string_dedup: dict[str, str] = field(default_factory=dict)
 
 
+# Module-level set of (class_name, selector) pairs that return +1 ownership.
+# Populated by _find_owning_return_methods() at the start of emit().
+_owning_return_methods: set[tuple[str, str]] = set()
+
+
 def _create_env() -> Environment:
     """Create Jinja2 environment loading templates from the templates/ directory."""
     tmpl_dir = os.path.join(os.path.dirname(__file__), "templates")
@@ -157,6 +162,11 @@ def emit(module: OZModule, outdir: str, pool_sizes: dict[str, int] | None = None
     _associate_module_items(module)
     _inject_oz_spinlock(module, root_class)
     _ensure_foundation_tags(module, root_class)
+
+    # Pre-analyze which methods return +1 (owning) references so callers
+    # don't add a redundant retain.
+    global _owning_return_methods
+    _owning_return_methods = _find_owning_return_methods(module)
 
     # Compute pool sizes and item pool count early (needed by per-class templates)
     auto_counts = _count_alloc_calls(module)
@@ -2821,6 +2831,58 @@ def _is_fresh_alloc(node: dict) -> bool:
     return False
 
 
+def _find_owning_return_methods(module: OZModule) -> set[tuple[str, str]]:
+    """Pre-analyze method bodies to find methods that return +1 references.
+
+    Walks each method's body_ast looking for ReturnStmt nodes. If every
+    return path returns an owning expression (alloc, init, factory, literal),
+    the method is marked as +1-returning. This allows callers to skip the
+    redundant retain that would otherwise cause a memory leak.
+    """
+    result: set[tuple[str, str]] = set()
+
+    def _find_returns(node: dict) -> list[dict]:
+        """Collect all ReturnStmt nodes in a method body."""
+        found = []
+        if node.get("kind") == "ReturnStmt":
+            found.append(node)
+        for child in node.get("inner", []):
+            found.extend(_find_returns(child))
+        return found
+
+    for cls in module.classes.values():
+        for m in cls.methods:
+            if not m.return_type.is_object or not m.body_ast:
+                continue
+            # Skip alloc/init — already handled by _is_owning_expr
+            if m.selector in ("alloc", "new", "copy", "mutableCopy"):
+                continue
+            if m.selector.startswith("init"):
+                continue
+            returns = _find_returns(m.body_ast)
+            if not returns:
+                continue
+            all_owning = True
+            for ret in returns:
+                inner = ret.get("inner", [])
+                if not inner:
+                    all_owning = False
+                    break
+                ret_expr = inner[0]
+                # Unwrap ExprWithCleanups
+                if ret_expr.get("kind") == "ExprWithCleanups":
+                    ewc = ret_expr.get("inner", [])
+                    if ewc:
+                        ret_expr = ewc[0]
+                if not _is_owning_expr(ret_expr):
+                    all_owning = False
+                    break
+            if all_owning:
+                result.add((cls.name, m.selector))
+
+    return result
+
+
 def _is_owning_expr(node: dict) -> bool:
     """Check if an expression returns a +1 (owning) reference.
 
@@ -2872,6 +2934,16 @@ def _is_borrowed_object_expr(node: dict) -> bool:
         # that internally call alloc — they return +1, not borrowed.
         if node.get("receiverKind") == "class":
             return False
+        # Interprocedural: if the method body analysis determined this method
+        # returns +1 (all return paths are owning expressions), skip retain.
+        if node.get("receiverKind") == "instance":
+            recv_inner = node.get("inner", [])
+            if recv_inner:
+                qt = recv_inner[0].get("type", {}).get("qualType", "")
+                # Extract class name from "OZQ31 *" or "OZQ31 *const __strong"
+                cls_name = qt.split("*")[0].strip().split()[-1] if "*" in qt else ""
+                if cls_name and (cls_name, sel) in _owning_return_methods:
+                    return False
         return True
     if kind == "DeclRefExpr":
         qt = node.get("type", {}).get("qualType", "")
