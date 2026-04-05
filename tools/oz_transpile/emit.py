@@ -2908,6 +2908,9 @@ def _is_owning_expr(node: dict) -> bool:
         # init always returns +1 (alloc→init, self→init, super→init)
         if sel.startswith("init"):
             return True
+        # Class method sends are factory methods that internally alloc → +1
+        if node.get("receiverKind") == "class":
+            return True
     return False
 
 
