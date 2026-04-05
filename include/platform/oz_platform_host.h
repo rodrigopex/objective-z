@@ -50,6 +50,25 @@ static inline void oz_slab_free(oz_slab_t *slab, void *mem)
 }
 
 /* ------------------------------------------------------------------ */
+/* Slab leak detection — check for outstanding allocations at exit     */
+/* ------------------------------------------------------------------ */
+
+static inline uint32_t oz_slab_outstanding_count(oz_slab_t *slab)
+{
+        return slab->num_used;
+}
+
+static inline int oz_slab_check_leaks(oz_slab_t *slab, const char *name)
+{
+        if (slab->num_used > 0) {
+                fprintf(stderr, "LEAK: %s has %u outstanding allocation(s)\n",
+                        name, slab->num_used);
+                return 1;
+        }
+        return 0;
+}
+
+/* ------------------------------------------------------------------ */
 /* Contiguous block allocator — malloc-backed for OZArray/OZDictionary */
 /* ------------------------------------------------------------------ */
 

@@ -14,3 +14,5 @@ def pytest_addoption(parser):
                      help="Extra compiler flags")
     parser.addoption("--ldflags", default="",
                      help="Extra linker flags")
+    parser.addoption("--check-leaks", action="store_true", default=False,
+                     help="Enable leak detection via LSan")
