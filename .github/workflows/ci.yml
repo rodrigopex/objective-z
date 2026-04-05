@@ -140,6 +140,134 @@ jobs:
           flags: c-transpiled
           fail_ci_if_error: false
 
+  # Adapted upstream tests
+  adapted-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install system dependencies
+        run: |
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/llvm.asc
+          echo "deb http://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-20 main" | sudo tee /etc/apt/sources.list.d/llvm-20.list
+          sudo apt-get update
+          sudo apt-get install -y clang-20
+
+      - name: Install Python dependencies
+        run: pip install pytest jinja2 tree-sitter tree-sitter-objc
+
+      - name: Run adapted upstream tests
+        run: PYTHONPATH=tools python3 -m pytest tests/adapted/ -v
+
+  # PAL (Platform Abstraction Layer) tests
+  pal-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python dependencies
+        run: pip install pytest
+
+      - name: Run PAL tests
+        run: python3 -m pytest tests/pal/ -v
+
+  # LeakSanitizer (standalone LSan)
+  leak-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install system dependencies
+        run: |
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/llvm.asc
+          echo "deb http://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-20 main" | sudo tee /etc/apt/sources.list.d/llvm-20.list
+          sudo apt-get update
+          sudo apt-get install -y clang-20
+
+      - name: Install Python dependencies
+        run: pip install pytest jinja2 tree-sitter tree-sitter-objc
+
+      - name: Run behavior tests with LeakSanitizer
+        run: >
+          PYTHONPATH=tools
+          python3 -m pytest tests/behavior/ -v
+          --compiler=gcc
+          --opt=O0
+          --check-leaks
+
+  # Hardware build verification (compile-only for ARM + RISC-V)
+  hw-build-check:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    strategy:
+      matrix:
+        board: [mps2/an385, qemu_riscv32]
+    env:
+      ZEPHYR_SDK_INSTALL_DIR: /home/runner/zephyr-sdk-1.0.0
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build gperf device-tree-compiler gcc-multilib g++-multilib
+
+      - name: Install west
+        run: pip install west
+
+      - name: Cache Zephyr SDK
+        uses: actions/cache@v4
+        with:
+          path: /home/runner/zephyr-sdk-1.0.0
+          key: zephyr-sdk-1.0.0-${{ matrix.board }}
+
+      - name: Install Zephyr SDK
+        run: |
+          if [ ! -d "/home/runner/zephyr-sdk-1.0.0" ]; then
+            wget -q https://github.com/zephyrproject-rtos/sdk-ng/releases/download/v1.0.0/zephyr-sdk-1.0.0_linux-x86_64_minimal.tar.xz
+            tar xf zephyr-sdk-1.0.0_linux-x86_64_minimal.tar.xz -C /home/runner
+            /home/runner/zephyr-sdk-1.0.0/setup.sh -t arm-zephyr-eabi -t riscv64-zephyr-elf -h -c
+          fi
+
+      - name: Initialize workspace
+        run: |
+          west init -l .
+          west update --narrow --fetch-opt=--depth=1
+
+      - name: Install Zephyr deps
+        run: pip install -r ../zephyr/scripts/requirements-base.txt natsort tabulate
+
+      - name: Build sample (compile only)
+        run: west build -b ${{ matrix.board }} samples/hello_world
+
+      - name: Verify PAL inlining (ARM only)
+        if: contains(matrix.board, 'mps2')
+        run: |
+          OBJDUMP=$(find $ZEPHYR_SDK_INSTALL_DIR -name "arm-zephyr-eabi-objdump" | head -1)
+          PAL_CALLS=$($OBJDUMP -d build/zephyr/zephyr.elf | grep -c 'bl.*oz_slab_alloc\|bl.*oz_atomic\|bl.*oz_spin' || true)
+          if [ "$PAL_CALLS" -ne 0 ]; then
+            echo "FAIL: PAL functions not inlined ($PAL_CALLS call sites found)"
+            $OBJDUMP -d build/zephyr/zephyr.elf | grep 'bl.*oz_'
+            exit 1
+          fi
+          echo "PASS: All PAL functions inlined (zero call sites)"
+
   # Zephyr integration tests (native_sim)
   zephyr-integration:
     runs-on: ubuntu-latest
