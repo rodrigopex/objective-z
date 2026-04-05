@@ -33,6 +33,7 @@ def compile_and_run(request):
     sanitize = request.config.getoption("--sanitize")
     cflags = request.config.getoption("--cflags")
     ldflags = request.config.getoption("--ldflags")
+    check_leaks = request.config.getoption("--check-leaks")
 
     def _run(m_path: pathlib.Path) -> subprocess.CompletedProcess:
         cmd = [sys.executable, str(COMPILE_AND_RUN), str(m_path),
@@ -43,6 +44,8 @@ def compile_and_run(request):
             cmd.append(f"--cflags={cflags}")
         if ldflags:
             cmd.append(f"--ldflags={ldflags}")
+        if check_leaks:
+            cmd.append("--check-leaks")
         result = subprocess.run(
             cmd,
             capture_output=True, text=True,

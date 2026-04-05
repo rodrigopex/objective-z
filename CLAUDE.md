@@ -99,9 +99,9 @@ Retained as reference for transpiler development. Not compiled — the runtime c
 
 ### Test Infrastructure (`tests/`)
 
-- **`tests/behavior/`** — Compiled behavior tests (Unity framework, host-side)
-- **`tests/adapted/`** — Adapted upstream tests (LLVM, GNUstep, Apple spec)
-- **`tests/zephyr/`** — Zephyr integration tests (`native_sim` + `ztest` + `twister`)
+- **`tests/behavior/`** — 72 compiled behavior tests across 16 categories (Unity framework, host-side)
+- **`tests/adapted/`** — 12 adapted upstream tests (LLVM, GNUstep, Apple spec)
+- **`tests/zephyr/`** — 21 Zephyr integration tests (`native_sim` + `ztest` + `twister`)
 - **`tests/objc-reference/`** — Legacy runtime tests (reference only, not compiled)
 
 ## Coding Conventions

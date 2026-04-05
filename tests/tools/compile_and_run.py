@@ -83,7 +83,8 @@ def _find_test_file(m_path: Path) -> Path | None:
 def run_pipeline(m_path: Path, opt: str = "O0", sanitize: str | None = None,
                  compiler: str = "gcc", cflags: str = "",
                  ldflags: str = "",
-                 keep_tmp: bool = False) -> subprocess.CompletedProcess:
+                 keep_tmp: bool = False,
+                 check_leaks: bool = False) -> subprocess.CompletedProcess:
     """Run the full transpile → compile → execute pipeline."""
     m_path = m_path.resolve()
     test_file = _find_test_file(m_path)
@@ -97,7 +98,8 @@ def run_pipeline(m_path: Path, opt: str = "O0", sanitize: str | None = None,
 
     try:
         return _run_pipeline_inner(m_path, test_file, tmpdir, opt, sanitize,
-                                   compiler, cflags, ldflags)
+                                   compiler, cflags, ldflags,
+                                   check_leaks=check_leaks)
     finally:
         if not keep_tmp:
             shutil.rmtree(tmpdir, ignore_errors=True)
@@ -106,7 +108,8 @@ def run_pipeline(m_path: Path, opt: str = "O0", sanitize: str | None = None,
 def _run_pipeline_inner(m_path: Path, test_file: Path, tmpdir: Path,
                         opt: str, sanitize: str | None,
                         compiler: str = "gcc", cflags: str = "",
-                        ldflags: str = "") -> subprocess.CompletedProcess:
+                        ldflags: str = "",
+                        check_leaks: bool = False) -> subprocess.CompletedProcess:
     llvm_clang = _find_llvm_clang()
     ast_json = tmpdir / "input.ast.json"
 
@@ -196,6 +199,8 @@ def _run_pipeline_inner(m_path: Path, test_file: Path, tmpdir: Path,
                 "-I", str(UNITY_DIR)]
     if heap_support:
         cc_flags.append("-DOZ_HEAP_SUPPORT")
+    if check_leaks and not sanitize:
+        cc_flags.extend(["-fsanitize=leak", "-fno-omit-frame-pointer"])
     if sanitize:
         cc_flags.extend([f"-fsanitize={sanitize}",
                          "-fno-omit-frame-pointer"])
@@ -215,7 +220,9 @@ def _run_pipeline_inner(m_path: Path, test_file: Path, tmpdir: Path,
 
     # Step 5: Run
     env = dict(os.environ)
-    if sanitize:
+    if check_leaks and sanitize:
+        env["ASAN_OPTIONS"] = "detect_leaks=1"
+    elif sanitize:
         env["ASAN_OPTIONS"] = "detect_leaks=0"
 
     return subprocess.run(
@@ -236,14 +243,18 @@ def main(argv: list[str] | None = None) -> int:
                    help="Extra compiler flags (space-separated)")
     p.add_argument("--ldflags", default="",
                    help="Extra linker flags (space-separated)")
+    p.add_argument("--check-leaks", action="store_true",
+                   help="Enable leak detection (LSan or ASan detect_leaks)")
     p.add_argument("--keep-tmp", action="store_true",
                    help="Keep temporary build directory")
     args = p.parse_args(argv)
 
+    check_leaks = args.check_leaks or os.environ.get("OZ_TEST_CHECK_LEAKS") == "1"
     result = run_pipeline(Path(args.m_file), opt=args.opt,
                           sanitize=args.sanitize, compiler=args.compiler,
                           cflags=args.cflags, ldflags=args.ldflags,
-                          keep_tmp=args.keep_tmp)
+                          keep_tmp=args.keep_tmp,
+                          check_leaks=check_leaks)
     if result.stdout:
         print(result.stdout, end="")
     if result.stderr:
