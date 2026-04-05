@@ -81,6 +81,9 @@ def merge_modules(modules: list[OZModule]) -> OZModule:
                 for line in cls.verbatim_lines:
                     if line not in existing.verbatim_lines:
                         existing.verbatim_lines.append(line)
+                for line in cls.header_verbatim_lines:
+                    if line not in existing.header_verbatim_lines:
+                        existing.header_verbatim_lines.append(line)
                 for inc in cls.user_includes:
                     if inc not in existing.user_includes:
                         existing.user_includes.append(inc)
@@ -96,6 +99,9 @@ def merge_modules(modules: list[OZModule]) -> OZModule:
         for line in m.verbatim_lines:
             if line not in merged.verbatim_lines:
                 merged.verbatim_lines.append(line)
+        for line in m.header_verbatim_lines:
+            if line not in merged.header_verbatim_lines:
+                merged.header_verbatim_lines.append(line)
         for inc in m.user_includes:
             if inc not in merged.user_includes:
                 merged.user_includes.append(inc)
@@ -294,6 +300,9 @@ def _walk(node: dict, module: OZModule, impl_name: str | None = None,
         _collect_interface(node, module)
     elif kind == "ObjCImplementationDecl":
         _collect_implementation(node, module)
+        name = node.get("name", "")
+        if name and _is_from_main_file(node):
+            module._main_impl_classes.add(name)
         return  # children handled inside
     elif kind == "ObjCProtocolDecl":
         _collect_protocol(node, module)
@@ -787,6 +796,93 @@ def _scan_includes(path: Path, module: OZModule) -> None:
                     module.user_includes.append(line)
 
 
+_OBJC_TS_NODE_TYPES = frozenset({
+    "class_interface",
+    "class_implementation",
+    "protocol_declaration",
+    "category_interface",
+    "category_implementation",
+    "class_forward_declaration",
+    "protocol_forward_declaration",
+})
+
+
+def _scan_header_verbatim(path: Path, module: OZModule) -> None:
+    """Scan a companion header for non-ObjC content to preserve verbatim.
+
+    Collects struct/union/enum definitions, macro calls, #define directives,
+    and any other non-ObjC top-level content from the header file.  These are
+    stored in module.header_verbatim_lines and later emitted in the generated
+    _ozh.h so that user-defined types and macros are not silently dropped.
+    """
+    if not path.is_file():
+        return
+    source = path.read_bytes()
+    parser = Parser(_TS_LANG)
+    tree = parser.parse(source)
+
+    children = tree.root_node.children
+
+    # Detect include-guard pattern: if the entire file is wrapped in a single
+    # preproc_ifdef / preproc_ifndef, descend into its children instead.
+    if (len(children) == 1
+            and children[0].type in ("preproc_ifdef", "preproc_ifndef")):
+        children = children[0].children
+
+    # Tree-sitter splits "struct foo { ... };" into struct_specifier + ";"
+    # as separate sibling nodes.  Merge trailing semicolons into the previous
+    # collected verbatim line so definitions are syntactically complete.
+    _NEEDS_SEMI = frozenset({
+        "struct_specifier", "union_specifier", "enum_specifier",
+    })
+
+    for i, child in enumerate(children):
+        if child.type in _OBJC_TS_NODE_TYPES:
+            continue
+        if child.type in ("preproc_include", "preproc_import"):
+            continue
+        if child.type in ("comment", "identifier", "#endif"):
+            continue
+
+        # Absorb standalone ";" — already merged with previous node below
+        if child.type == ";":
+            continue
+
+        text = source[child.start_byte:child.end_byte].decode()
+        stripped = text.strip()
+
+        # Skip #import/#include that tree-sitter may classify differently
+        if stripped.startswith(("#import", "#include")):
+            continue
+        # Skip #pragma once (generated header already has it)
+        if stripped == "#pragma once":
+            continue
+        # Skip bare include-guard #define with no value (e.g. #define HEADER_H_)
+        # but keep #define macros that have a value or body
+        if child.type == "preproc_def":
+            has_value = any(c.type == "preproc_arg"
+                           for c in child.children)
+            if not has_value:
+                continue
+        # Skip empty / whitespace-only fragments
+        if not stripped:
+            continue
+        # Skip preproc_ifdef / preproc_ifndef tokens (#ifndef, #endif, etc.)
+        if child.type in ("preproc_ifdef", "preproc_ifndef",
+                          "#ifndef", "#ifdef", "#endif"):
+            continue
+
+        # Merge trailing semicolon for type specifiers
+        if child.type in _NEEDS_SEMI:
+            end = child.end_byte
+            if i + 1 < len(children) and children[i + 1].type == ";":
+                end = children[i + 1].end_byte
+            text = source[child.start_byte:end].decode()
+
+        if text not in module.header_verbatim_lines:
+            module.header_verbatim_lines.append(text)
+
+
 def _collect_verbatim_lines(ast_root: dict, module: OZModule) -> None:
     """Scan original source for top-level expression statements and includes."""
     main_file = _find_main_file(ast_root)
@@ -796,7 +892,7 @@ def _collect_verbatim_lines(ast_root: dict, module: OZModule) -> None:
     if not path.is_file():
         return
 
-    # Also scan companion header file(s) for user includes
+    # Also scan companion header file(s) for user includes and verbatim content
     header_candidates = [
         path.with_suffix(".h"),
         path.parent / "include" / (path.stem + ".h"),
@@ -804,6 +900,7 @@ def _collect_verbatim_lines(ast_root: dict, module: OZModule) -> None:
     ]
     for header in header_candidates:
         _scan_includes(header, module)
+        _scan_header_verbatim(header, module)
 
     source = path.read_bytes()
     parser = Parser(_TS_LANG)
@@ -856,6 +953,15 @@ def _distribute_verbatim_to_classes(module: OZModule) -> None:
     if len(impl_classes) == 1 and module.verbatim_lines:
         impl_classes[0].verbatim_lines = module.verbatim_lines
         module.verbatim_lines = []
+    # Header verbatim lines go to the main-file implementation class
+    if impl_classes and module.header_verbatim_lines:
+        main_classes = getattr(module, "_main_impl_classes", set())
+        main_impl = [c for c in impl_classes if c.name in main_classes]
+        target = main_impl[0] if main_impl else impl_classes[0]
+        for line in module.header_verbatim_lines:
+            if line not in target.header_verbatim_lines:
+                target.header_verbatim_lines.append(line)
+        module.header_verbatim_lines = []
 
 
 def _has_struct_definition(node) -> bool:

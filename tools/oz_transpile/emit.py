@@ -524,6 +524,14 @@ def _class_header_ctx(ctx: _EmitCtx, stem: str | None = None,
         for p in func.params:
             _add_type_def(p.oz_type.raw_qual_type)
 
+    # OZ-090: deduplicate type_defs already present in header verbatim lines
+    if cls.header_verbatim_lines:
+        hdr_text = "\n".join(cls.header_verbatim_lines)
+        type_defs = [td for td in type_defs
+                     if not any(key in hdr_text
+                                for key in module.type_defs
+                                if module.type_defs[key] == td)]
+
     function_protos = []
     for func in cls.functions:
         if func.is_static:
@@ -597,6 +605,7 @@ def _class_header_ctx(ctx: _EmitCtx, stem: str | None = None,
         "q31_inits": q31_inits,
         "item_pool_count": item_pool_count,
         "user_includes": cls.user_includes,
+        "header_verbatim_lines": cls.header_verbatim_lines,
         "has_atomic_props": has_atomic_props,
         "heap_support": heap_support,
         "inline_accessors": inline_accessors,
