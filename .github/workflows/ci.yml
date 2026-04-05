@@ -248,7 +248,7 @@ jobs:
       - name: Initialize workspace
         run: |
           west init -l .
-          west update --narrow --fetch-opt=--depth=1
+          west update --fetch-opt=--depth=1
 
       - name: Install system dependencies (Clang for transpiler)
         run: |
