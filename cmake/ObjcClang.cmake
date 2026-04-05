@@ -8,22 +8,53 @@
 include_guard(GLOBAL)
 
 # ─── Find Clang ──────────────────────────────────────────────────────
+#
+# Search order:
+#   1. OBJZ_CLANG_PATH   (explicit user override)
+#   2. Zephyr SDK LLVM   (from ZEPHYR_SDK_INSTALL_DIR — the tested default)
+#   3. Homebrew LLVM      (macOS fallback for RISC-V / missing system clang)
+#   4. System clang       (PATH — Apple Clang or distro LLVM)
+#
+# The Zephyr SDK LLVM Clang 19 is the tested reference toolchain.
+# Other compilers work but emit a compatibility warning.
+#
 function(objz_find_clang)
+    set(_oz_tested_clang_ver "19")
+
+    # 1. Explicit user override
     if(DEFINED OBJZ_CLANG_PATH)
         find_program(OBJZ_CLANG_COMPILER clang
             PATHS ${OBJZ_CLANG_PATH} NO_DEFAULT_PATH)
-    else()
+    endif()
+
+    # 2. Zephyr SDK LLVM (default)
+    if(NOT OBJZ_CLANG_COMPILER AND DEFINED ZEPHYR_SDK_INSTALL_DIR)
+        find_program(OBJZ_CLANG_COMPILER clang
+            PATHS ${ZEPHYR_SDK_INSTALL_DIR}/llvm/bin
+            NO_DEFAULT_PATH)
+    endif()
+
+    # 3. Homebrew LLVM (macOS — needed for RISC-V when Apple Clang lacks backend)
+    if(NOT OBJZ_CLANG_COMPILER)
+        find_program(OBJZ_CLANG_COMPILER clang
+            PATHS /opt/homebrew/opt/llvm/bin
+                  /usr/local/opt/llvm/bin
+            NO_DEFAULT_PATH)
+    endif()
+
+    # 4. System clang in PATH
+    if(NOT OBJZ_CLANG_COMPILER)
         find_program(OBJZ_CLANG_COMPILER clang)
     endif()
 
     if(NOT OBJZ_CLANG_COMPILER)
         message(FATAL_ERROR
             "CONFIG_OBJZ requires clang but clang not found.\n"
-            "Set -DOBJZ_CLANG_PATH=/path/to/clang/bin or ensure clang is in PATH.")
+            "Install the Zephyr SDK (includes LLVM Clang), or set\n"
+            "-DOBJZ_CLANG_PATH=/path/to/clang/bin")
     endif()
 
-    # Apple Clang lacks RISC-V backend. When targeting RISC-V, verify the
-    # found Clang supports the target; if not, try Homebrew LLVM as fallback.
+    # RISC-V target verification — Apple Clang lacks RISC-V backend
     if(CONFIG_RISCV)
         _objz_get_clang_target_triple(_check_triple)
         execute_process(
@@ -32,27 +63,31 @@ function(objz_find_clang)
             RESULT_VARIABLE _target_result
             ERROR_QUIET OUTPUT_QUIET)
         if(NOT _target_result EQUAL 0)
-            message(STATUS "Objective-Z: ${OBJZ_CLANG_COMPILER} lacks RISC-V backend, "
-                           "searching for LLVM Clang...")
-            unset(OBJZ_CLANG_COMPILER CACHE)
-            find_program(OBJZ_CLANG_COMPILER clang
-                PATHS /opt/homebrew/opt/llvm/bin
-                      /usr/local/opt/llvm/bin
-                NO_DEFAULT_PATH)
-            if(NOT OBJZ_CLANG_COMPILER)
-                message(FATAL_ERROR
-                    "CONFIG_OBJZ on RISC-V requires Clang with RISC-V backend.\n"
-                    "Install LLVM: brew install llvm\n"
-                    "Or set -DOBJZ_CLANG_PATH=/path/to/llvm/bin")
-            endif()
+            message(FATAL_ERROR
+                "Objective-Z: ${OBJZ_CLANG_COMPILER} lacks RISC-V backend.\n"
+                "Set -DOBJZ_CLANG_PATH to a Clang with RISC-V support\n"
+                "(Zephyr SDK LLVM or brew install llvm).")
         endif()
     endif()
 
+    # Version / compatibility check
     execute_process(
         COMMAND ${OBJZ_CLANG_COMPILER} --version
-        OUTPUT_VARIABLE _ver OUTPUT_STRIP_TRAILING_WHITESPACE)
-    string(REGEX MATCH "[0-9]+\\.[0-9]+" _ver "${_ver}")
-    message(STATUS "Objective-Z: Using Clang ${_ver} for ObjC: ${OBJZ_CLANG_COMPILER}")
+        OUTPUT_VARIABLE _ver_full OUTPUT_STRIP_TRAILING_WHITESPACE)
+    string(REGEX MATCH "[0-9]+\\.[0-9]+" _ver "${_ver_full}")
+    string(REGEX MATCH "^[0-9]+" _ver_major "${_ver}")
+
+    # Detect whether this is the Zephyr SDK LLVM
+    string(FIND "${OBJZ_CLANG_COMPILER}" "zephyr-sdk" _is_zsdk)
+    if(_is_zsdk GREATER -1)
+        message(STATUS "Objective-Z: Using Zephyr SDK Clang ${_ver}: ${OBJZ_CLANG_COMPILER}")
+    else()
+        message(WARNING
+            "Objective-Z: Using non-Zephyr-SDK Clang ${_ver}: ${OBJZ_CLANG_COMPILER}\n"
+            "The tested environment is Zephyr SDK LLVM Clang ${_oz_tested_clang_ver}. "
+            "Other versions may produce different AST output. "
+            "Set ZEPHYR_SDK_INSTALL_DIR or -DOBJZ_CLANG_PATH to use the Zephyr SDK LLVM.")
+    endif()
 
     set(OBJZ_CLANG_COMPILER ${OBJZ_CLANG_COMPILER} CACHE INTERNAL
         "Clang compiler for Objective-C")
