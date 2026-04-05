@@ -279,6 +279,7 @@ class OZClass:
     class_id: int = -1
     base_depth: int = 0
     verbatim_lines: list[str] = field(default_factory=list)
+    header_verbatim_lines: list[str] = field(default_factory=list)
     user_includes: list[str] = field(default_factory=list)
     functions: list[OZFunction] = field(default_factory=list)
     statics: list[OZStaticVar] = field(default_factory=list)
@@ -320,6 +321,7 @@ class OZModule:
     functions: list[OZFunction] = field(default_factory=list)
     statics: list[OZStaticVar] = field(default_factory=list)
     verbatim_lines: list[str] = field(default_factory=list)
+    header_verbatim_lines: list[str] = field(default_factory=list)
     user_includes: list[str] = field(default_factory=list)
     type_defs: dict[str, str] = field(default_factory=dict)
     diagnostics: list[str] = field(default_factory=list)
@@ -330,3 +332,4 @@ class OZModule:
     source_path: Path | None = None
     source_paths: dict[str, Path] = field(default_factory=dict)
     orphan_sources: list[OrphanSource] = field(default_factory=list)
+    _main_impl_classes: set[str] = field(default_factory=set)

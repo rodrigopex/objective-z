@@ -4728,3 +4728,175 @@ int public_helper(int x)
 """, stem="Foo")
         header = out["Foo_ozh.h"]
         assert "int public_helper(int x);" in header
+
+
+# ===========================================================================
+# OZ-090: Header content preservation — structs, unions, enums, macros, etc.
+# ===========================================================================
+
+_OZ090_HEADER = """\
+#pragma once
+#import <Foundation/OZObject.h>
+
+enum test_state {
+    TEST_IDLE = 0,
+    TEST_RUNNING,
+    TEST_DONE,
+};
+
+struct test_msg {
+    enum test_state state;
+    int value;
+};
+
+union test_data {
+    int i;
+    float f;
+};
+
+#define TEST_MAX_ITEMS 64
+
+static inline int test_clamp(int v, int lo, int hi)
+{
+    if (v < lo) {
+        return lo;
+    }
+    if (v > hi) {
+        return hi;
+    }
+    return v;
+}
+
+#define DECLARE_CHANNEL(name) extern int name##_channel
+DECLARE_CHANNEL(test);
+
+@interface Sensor : OZObject
+- (void)run;
+@end
+"""
+
+_OZ090_SOURCE = """\
+#import "source.h"
+
+@implementation Sensor
+- (void)run {
+}
+@end
+"""
+
+
+class TestHeaderVerbatimPreservation:
+    """OZ-090: non-ObjC content in companion headers must be preserved."""
+
+    def test_struct_not_used_by_objc_preserved(self):
+        """struct defined in header but not used by @interface must appear."""
+        _, out = clang_emit(
+            _OZ090_SOURCE,
+            extra_files={"source.h": _OZ090_HEADER})
+        header = out["Sensor_ozh.h"]
+        assert "struct test_msg" in header
+        assert "enum test_state state;" in header
+
+    def test_union_not_used_by_objc_preserved(self):
+        """union defined in header but not used by @interface must appear."""
+        _, out = clang_emit(
+            _OZ090_SOURCE,
+            extra_files={"source.h": _OZ090_HEADER})
+        header = out["Sensor_ozh.h"]
+        assert "union test_data" in header
+        assert "int i;" in header
+        assert "float f;" in header
+
+    def test_enum_not_used_by_objc_preserved(self):
+        """enum defined in header but not used by @interface must appear."""
+        _, out = clang_emit(
+            _OZ090_SOURCE,
+            extra_files={"source.h": _OZ090_HEADER})
+        header = out["Sensor_ozh.h"]
+        assert "TEST_IDLE" in header
+        assert "TEST_RUNNING" in header
+        assert "TEST_DONE" in header
+
+    def test_define_macro_preserved(self):
+        """#define with value in header must be preserved."""
+        _, out = clang_emit(
+            _OZ090_SOURCE,
+            extra_files={"source.h": _OZ090_HEADER})
+        header = out["Sensor_ozh.h"]
+        assert "#define TEST_MAX_ITEMS 64" in header
+
+    def test_static_inline_function_preserved(self):
+        """static inline function in header must be preserved."""
+        _, out = clang_emit(
+            _OZ090_SOURCE,
+            extra_files={"source.h": _OZ090_HEADER})
+        header = out["Sensor_ozh.h"]
+        assert "static inline int test_clamp" in header
+
+    def test_macro_call_preserved(self):
+        """Macro call (expression_statement) in header must be preserved."""
+        _, out = clang_emit(
+            _OZ090_SOURCE,
+            extra_files={"source.h": _OZ090_HEADER})
+        header = out["Sensor_ozh.h"]
+        assert "DECLARE_CHANNEL(test)" in header
+
+    def test_function_like_define_preserved(self):
+        """Function-like #define macro in header must be preserved."""
+        _, out = clang_emit(
+            _OZ090_SOURCE,
+            extra_files={"source.h": _OZ090_HEADER})
+        header = out["Sensor_ozh.h"]
+        assert "#define DECLARE_CHANNEL(name)" in header
+
+    def test_no_type_def_duplication(self):
+        """Types in header verbatim must not also appear as ivar_type_defs."""
+        _, out = clang_emit(
+            _OZ090_SOURCE,
+            extra_files={"source.h": _OZ090_HEADER})
+        header = out["Sensor_ozh.h"]
+        # enum test_state should appear exactly once (from verbatim, not type_defs)
+        count = header.count("enum test_state {")
+        assert count == 1, f"enum test_state {{ appeared {count} times"
+
+    def test_referenced_type_still_works_with_verbatim(self):
+        """Types used in @interface still work when also in header verbatim."""
+        hdr = """\
+#import <Foundation/OZObject.h>
+enum color { RED = 0, GREEN, BLUE };
+@interface Pal : OZObject {
+    enum color _c;
+}
+@end
+"""
+        _, out = clang_emit("""\
+#import "source.h"
+@implementation Pal
+@end
+""", extra_files={"source.h": hdr})
+        header = out["Pal_ozh.h"]
+        assert "RED" in header
+        # Should appear once from verbatim, deduped from ivar_type_defs
+        count = header.count("enum color {")
+        assert count == 1, f"enum color {{ appeared {count} times"
+
+    def test_include_guard_header_content_preserved(self):
+        """Header with #ifndef include guards must still have content preserved."""
+        hdr = """\
+#ifndef SOURCE_H_
+#define SOURCE_H_
+#import <Foundation/OZObject.h>
+struct guarded_type { int x; };
+@interface Grd : OZObject
+- (void)run;
+@end
+#endif
+"""
+        _, out = clang_emit("""\
+#import "source.h"
+@implementation Grd
+- (void)run {}
+@end
+""", extra_files={"source.h": hdr})
+        header = out["Grd_ozh.h"]
+        assert "struct guarded_type" in header
