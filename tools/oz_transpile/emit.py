@@ -2473,6 +2473,7 @@ def _emit_return_stmt(node: dict, out: StringIO, ctx: _EmitCtx,
         expr_buf = StringIO()
         _emit_expr(ret_expr, expr_buf, ctx)
         _flush_pre_stmts(out, ctx, indent)
+
         out.write(f"{tabs}return {expr_buf.getvalue()};\n")
     else:
         out.write(f"{tabs}return;\n")
@@ -2842,11 +2843,9 @@ def _is_owning_expr(node: dict) -> bool:
         sel = node.get("selector", "")
         if sel in ("alloc", "new", "copy", "mutableCopy"):
             return True
-        # init on alloc receiver: [[Foo alloc] init] → +1
+        # init always returns +1 (alloc→init, self→init, super→init)
         if sel.startswith("init"):
-            inner = node.get("inner", [])
-            if inner and _is_owning_expr(inner[0]):
-                return True
+            return True
     return False
 
 
@@ -2855,7 +2854,8 @@ def _is_borrowed_object_expr(node: dict) -> bool:
 
     Returns True for non-owning method calls (objectAtIndex:, etc.) and
     variable references (DeclRefExpr). Returns False for owning returns
-    (alloc, init, new, copy, literals) and non-object expressions (nil, 0).
+    (alloc, init, new, copy, literals, class factory methods) and
+    non-object expressions (nil, 0).
     """
     kind = node.get("kind", "")
     if kind in ("ImplicitCastExpr", "ExprWithCleanups", "ParenExpr",
@@ -2867,6 +2867,10 @@ def _is_borrowed_object_expr(node: dict) -> bool:
         if sel in ("alloc", "new", "copy", "mutableCopy"):
             return False
         if sel.startswith("init"):
+            return False
+        # Class method sends (receiverKind == "class") are factory methods
+        # that internally call alloc — they return +1, not borrowed.
+        if node.get("receiverKind") == "class":
             return False
         return True
     if kind == "DeclRefExpr":
