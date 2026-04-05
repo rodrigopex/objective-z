@@ -438,11 +438,11 @@ function(_objz_write_compile_db)
 # Regenerated on every CMake configure (just build / just rebuild).\n\
 \n\
 CompileFlags:\n\
-\tCompilationDatabase: build\n\
+  CompilationDatabase: build\n\
 \n\
 Diagnostics:\n\
-\tSuppress:\n\
-\t\t- attribute_section_invalid_for_target\n")
+  Suppress:\n\
+    - attribute_section_invalid_for_target\n")
     message(STATUS "Objective-Z: generated ${_clangd_path}")
 
     message(STATUS "Objective-Z: wrote ${CMAKE_BINARY_DIR}/compile_commands_objc.json")
