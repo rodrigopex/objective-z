@@ -91,6 +91,22 @@ test-all-transpiler:
     just test-adapted
     just test-pal
 
+test-all:
+    just test-transpiler
+    just test-behavior
+    just test-adapted
+    just test-pal
+    just smoke
+
+test-ci-local:
+    just test-all
+    just test-behavior -- --compiler=clang
+    just test-behavior -- --opt=O2
+    just test-behavior -- --sanitize=address,undefined
+
+test-regression:
+    python3 -m pytest tests/behavior/ -v -k regression
+
 smoke:
     python3 tests/smoke/run.py
 
