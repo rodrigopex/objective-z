@@ -67,7 +67,7 @@ def _render(env: Environment, template_name: str, context: dict,
 
 def _inject_oz_spinlock(module: OZModule, root_class: str) -> None:
     """Add synthetic OZSpinLock class if any @synchronized is used."""
-    counts = _count_alloc_calls(module)
+    counts, _uncertain = _count_alloc_calls(module)
     if counts.get("OZSpinLock", 0) == 0:
         return
     if "OZSpinLock" in module.classes:
@@ -90,6 +90,23 @@ def _inject_oz_spinlock(module: OZModule, root_class: str) -> None:
 def _header_stem(cls: OZClass) -> str:
     """Return the file stem for a class: source_stem if set, else class name."""
     return cls.source_stem or cls.name
+
+
+class _MacroBoundaryError(Exception):
+    """Raised when a macro invocation's extent cannot be determined safely."""
+
+
+def _node_line_col(node: dict) -> tuple[object, object]:
+    """Extract (line, col) from a node's loc/range for diagnostics."""
+    loc = node.get("loc", node.get("range", {}).get("begin", {}))
+    loc = loc.get("spellingLoc", loc)
+    return loc.get("line", "?"), loc.get("col", "?")
+
+
+def _loc(node: dict, stem: str) -> str:
+    """Return 'stem:line:col' for a node's location, for diagnostics."""
+    line, col = _node_line_col(node)
+    return f"{stem}:{line}:{col}"
 
 
 def _associate_module_items(module: OZModule) -> None:
@@ -169,8 +186,18 @@ def emit(module: OZModule, outdir: str, pool_sizes: dict[str, int] | None = None
     _owning_return_methods = _find_owning_return_methods(module)
 
     # Compute pool sizes and item pool count early (needed by per-class templates)
-    auto_counts = _count_alloc_calls(module)
+    auto_counts, uncertain_counts = _count_alloc_calls(module)
     _pool_sizes = pool_sizes or {}
+    for cls_name, loc in uncertain_counts.items():
+        if cls_name not in _pool_sizes:
+            module.errors.append(
+                f"OZ004: allocation count for '{cls_name}' cannot be "
+                f"determined statically at {loc} — an alloc site inside "
+                f"a loop stores its result somewhere that can outlive a "
+                f"single iteration (not a fresh per-iteration local), so "
+                f"the true number of live instances may exceed the "
+                f"source occurrence count. Pass an explicit override via "
+                f"--pool-sizes {cls_name}=N.")
     if item_pool_size is not None:
         _item_pool_count = item_pool_size
     else:
@@ -1489,13 +1516,23 @@ def _emit_boxed_number(node: dict, out: StringIO, ctx: _EmitCtx) -> None:
 def _emit_block_expr(node: dict, out: StringIO, ctx: _EmitCtx) -> None:
     """Emit a non-capturing block as a static C function."""
     inner = node.get("inner", [])
+    stem = _header_stem(ctx.cls) if ctx.cls else "?"
     if not inner:
-        out.write("/* TODO: empty BlockExpr */")
+        ctx.module.errors.append(
+            f"OZ002: empty block expression at {_loc(node, stem)} — "
+            f"the transpiler cannot generate a function body for a block "
+            f"with no AST content. Give the block a body, e.g. `^{{}}`.")
+        out.write("0")
         return
 
     block_decl = inner[0]
     if block_decl.get("kind") != "BlockDecl":
-        out.write("/* TODO: BlockExpr without BlockDecl */")
+        ctx.module.errors.append(
+            f"OZ002: unsupported block expression at {_loc(node, stem)} — "
+            f"expected a BlockDecl child (got '{block_decl.get('kind', '?')}'), "
+            f"which the transpiler does not know how to lower to a static "
+            f"C function. Simplify the block literal.")
+        out.write("0")
         return
 
     block_inner = block_decl.get("inner", [])
@@ -1621,7 +1658,11 @@ def _extract_macro_text(source: bytes, offset: int, tok_len: int) -> str:
     """Extract full macro invocation from source via paren matching.
 
     Given the offset/tokLen of the macro name, finds the matching closing
-    parenthesis (if any) to capture the complete invocation.
+    parenthesis (if any) to capture the complete invocation. Skips over
+    string/char literals and comments so a literal ')' inside them doesn't
+    unbalance the count. Raises _MacroBoundaryError if the parens never
+    balance (e.g. truncated/malformed source) rather than returning a
+    silently truncated invocation.
     """
     end = offset + tok_len
     rest = source[end:]
@@ -1632,11 +1673,34 @@ def _extract_macro_text(source: bytes, offset: int, tok_len: int) -> str:
         depth = 1
         j = i + 1
         while j < len(rest) and depth > 0:
-            if rest[j:j + 1] == b'(':
+            c = rest[j:j + 1]
+            if c in (b'"', b"'"):
+                quote = c
+                j += 1
+                while j < len(rest) and rest[j:j + 1] != quote:
+                    if rest[j:j + 1] == b'\\':
+                        j += 1
+                    j += 1
+                j += 1
+                continue
+            if rest[j:j + 2] == b'//':
+                while j < len(rest) and rest[j:j + 1] != b'\n':
+                    j += 1
+                continue
+            if rest[j:j + 2] == b'/*':
+                j += 2
+                while j < len(rest) and rest[j:j + 2] != b'*/':
+                    j += 1
+                j += 2
+                continue
+            if c == b'(':
                 depth += 1
-            elif rest[j:j + 1] == b')':
+            elif c == b')':
                 depth -= 1
             j += 1
+        if depth > 0:
+            raise _MacroBoundaryError(
+                "unbalanced parentheses in macro invocation")
         return source[offset:end + j].decode()
     return source[offset:end].decode()
 
@@ -1675,6 +1739,34 @@ def _collect_objc_patches(node: dict, macro_start: int,
     return patches
 
 
+def _apply_macro_patches(macro_text: str,
+                         patches: list[tuple[int, int, str]]) -> str:
+    """Splice transpiled ObjC patches into extracted macro source text.
+
+    Raises _MacroBoundaryError if a patch's offsets fall outside the
+    extracted text, rather than silently dropping the patch (which would
+    leave untranspiled ObjC syntax in the generated C output).
+    """
+    result = bytearray(macro_text.encode())
+    for rel_start, rel_end, transpiled in sorted(patches, reverse=True):
+        if not (0 <= rel_start < rel_end <= len(result)):
+            raise _MacroBoundaryError(
+                "macro-passthrough patch offset out of bounds")
+        result[rel_start:rel_end] = transpiled.encode()
+    return result.decode()
+
+
+def _report_macro_boundary_error(err: _MacroBoundaryError, node: dict,
+                                 ctx: _EmitCtx) -> None:
+    stem = _header_stem(ctx.cls) if ctx.cls else "?"
+    ctx.module.errors.append(
+        f"OZ001: {err} at {_loc(node, stem)} — the transpiler could not "
+        f"safely reconstruct this macro-expanded construct from source. "
+        f"Rewrite the macro invocation to avoid nested unbalanced "
+        f"parentheses/literals, or restructure the code without the "
+        f"macro so the ObjC construct is emitted directly.")
+
+
 def _try_macro_passthrough(node: dict, out: StringIO,
                            ctx: _EmitCtx) -> bool:
     """Attempt macro source passthrough.  Returns True if handled."""
@@ -1691,7 +1783,12 @@ def _try_macro_passthrough(node: dict, out: StringIO,
     if offset is None or tok_len is None:
         return False
 
-    macro_text = _extract_macro_text(source, offset, tok_len)
+    try:
+        macro_text = _extract_macro_text(source, offset, tok_len)
+    except _MacroBoundaryError as err:
+        _report_macro_boundary_error(err, node, ctx)
+        out.write("0")
+        return True
 
     # For macros defined in included headers, preserve function-like macros
     # (K_MSEC, etc.) and non-trivial object-like macros (K_FOREVER, etc.),
@@ -1708,11 +1805,11 @@ def _try_macro_passthrough(node: dict, out: StringIO,
         out.write(macro_text)
         return True
 
-    result = bytearray(macro_text.encode())
-    for rel_start, rel_end, transpiled in sorted(patches, reverse=True):
-        if 0 <= rel_start < rel_end <= len(result):
-            result[rel_start:rel_end] = transpiled.encode()
-    out.write(result.decode())
+    try:
+        out.write(_apply_macro_patches(macro_text, patches))
+    except _MacroBoundaryError as err:
+        _report_macro_boundary_error(err, node, ctx)
+        out.write("0")
     return True
 
 
@@ -1749,7 +1846,12 @@ def _try_stmt_macro_passthrough(node: dict, out: StringIO,
         return False
 
     tabs = "\t" * indent
-    macro_text = _extract_macro_text(source, offset, tok_len)
+    try:
+        macro_text = _extract_macro_text(source, offset, tok_len)
+    except _MacroBoundaryError as err:
+        _report_macro_boundary_error(err, node, ctx)
+        out.write(f"{tabs}(void)0;\n")
+        return True
 
     # For macros defined in included headers, preserve function-like macros
     # (K_MSEC, etc.) and non-trivial object-like macros (K_FOREVER, etc.),
@@ -1765,11 +1867,13 @@ def _try_stmt_macro_passthrough(node: dict, out: StringIO,
         out.write(f"{tabs}{macro_text};\n")
         return True
 
-    result = bytearray(macro_text.encode())
-    for rel_start, rel_end, transpiled in sorted(patches, reverse=True):
-        if 0 <= rel_start < rel_end <= len(result):
-            result[rel_start:rel_end] = transpiled.encode()
-    out.write(f"{tabs}{result.decode()};\n")
+    try:
+        result = _apply_macro_patches(macro_text, patches)
+    except _MacroBoundaryError as err:
+        _report_macro_boundary_error(err, node, ctx)
+        out.write(f"{tabs}(void)0;\n")
+        return True
+    out.write(f"{tabs}{result};\n")
     return True
 
 
@@ -2147,12 +2251,19 @@ def _emit_expr(node: dict, out: StringIO, ctx: _EmitCtx) -> None:
                 out.write(f"{op_name}(/* unknown */)")
         return
 
-    # Fallback: try inner children or emit placeholder
+    # Fallback: try inner children, else it's an unhandled AST kind
     inner = node.get("inner", [])
     if inner:
         _emit_expr(inner[0], out, ctx)
     else:
-        out.write(f"/* TODO: {kind} */")
+        stem = _header_stem(ctx.cls) if ctx.cls else "?"
+        ctx.module.errors.append(
+            f"OZ003: unhandled AST node '{kind}' at {_loc(node, stem)} — "
+            f"the transpiler has no emission rule for this expression kind "
+            f"and it has no children to fall back to. Rewrite the "
+            f"expression using a supported construct, or file an issue "
+            f"with a minimal reproduction.")
+        out.write("0")
 
 
 def _emit_msg_expr(node: dict, out: StringIO, ctx: _EmitCtx) -> None:
@@ -2996,50 +3107,88 @@ def _count_item_slots(module: OZModule) -> int:
     return total
 
 
-def _count_alloc_calls(module: OZModule) -> dict[str, int]:
+_LOOP_STMT_KINDS = frozenset({
+    "ForStmt", "WhileStmt", "DoStmt", "ObjCForCollectionStmt",
+    "CXXForRangeStmt",
+})
+
+
+def _count_alloc_calls(
+        module: OZModule) -> tuple[dict[str, int], dict[str, str]]:
     """Count allocations across all method/function body ASTs.
 
     Counts explicit [ClassName alloc] calls plus implicit allocations
     from literal expressions (@42 → OZQ31, @[...] → OZArray,
     @{...} → OZDictionary).
+
+    Also returns a map of class name -> location string for classes with
+    an alloc site that both (a) is reachable from a loop and (b) does not
+    initialize a fresh local variable declared inside that loop.  Such a
+    site can accumulate live objects across iterations (e.g. assigned to
+    an ivar/static, or passed straight into a call), so the flat
+    occurrence count may under-size the pool.  A fresh per-iteration
+    local (the common "alloc, use, let ARC release at scope exit" idiom)
+    is *not* flagged: it is bounded to at most one live instance no
+    matter how many iterations run.
     """
     counts: dict[str, int] = {}
+    uncertain: dict[str, str] = {}
 
-    def walk(node: dict) -> None:
+    def walk(node: dict, stem: str, in_loop: bool, fresh_decl: bool) -> None:
         kind = node.get("kind", "")
+        class_name = ""
         if (kind == "ObjCMessageExpr" and
                 node.get("selector") == "alloc" and
                 node.get("receiverKind") == "class"):
             class_name = node.get("classType", {}).get("qualType", "")
-            if class_name:
-                counts[class_name] = counts.get(class_name, 0) + 1
         elif kind == "ObjCArrayLiteral":
-            counts["OZArray"] = counts.get("OZArray", 0) + 1
+            class_name = "OZArray"
         elif kind == "ObjCDictionaryLiteral":
-            counts["OZDictionary"] = counts.get("OZDictionary", 0) + 1
+            class_name = "OZDictionary"
         elif kind == "ObjCBoxedExpr":
-            counts["OZQ31"] = counts.get("OZQ31", 0) + 1
-        elif kind == "ObjCAtSynchronizedStmt":
+            class_name = "OZQ31"
+        if kind == "ObjCAtSynchronizedStmt":
+            # The synthetic lock object is always scoped to the
+            # @synchronized block itself (locked, used, freed on exit) —
+            # never assigned or escaped by user code — so it can't
+            # accumulate across iterations no matter where it appears.
             counts["OZSpinLock"] = counts.get("OZSpinLock", 0) + 1
+        elif class_name:
+            counts[class_name] = counts.get(class_name, 0) + 1
+            if in_loop and not fresh_decl and class_name not in uncertain:
+                uncertain[class_name] = _loc(node, stem)
+
+        child_in_loop = in_loop or kind in _LOOP_STMT_KINDS
+
+        if kind == "DeclStmt":
+            for decl in node.get("inner", []):
+                if decl.get("kind") == "VarDecl":
+                    for init in decl.get("inner", []):
+                        walk(init, stem, child_in_loop, True)
+                else:
+                    walk(decl, stem, child_in_loop, fresh_decl)
+            return
+
         for child in node.get("inner", []):
-            walk(child)
+            walk(child, stem, child_in_loop, fresh_decl)
 
     for cls in module.classes.values():
+        stem = _header_stem(cls)
         for m in cls.methods:
             if m.body_ast:
-                walk(m.body_ast)
+                walk(m.body_ast, stem, False, False)
         for func in cls.functions:
             if func.body_ast:
-                walk(func.body_ast)
+                walk(func.body_ast, stem, False, False)
     for func in module.functions:
         if func.body_ast:
-            walk(func.body_ast)
+            walk(func.body_ast, module.source_stem, False, False)
     for orphan in module.orphan_sources:
         for func in orphan.functions:
             if func.body_ast:
-                walk(func.body_ast)
+                walk(func.body_ast, orphan.stem, False, False)
 
-    return counts
+    return counts, uncertain
 
 
 def _selector_to_c(selector: str) -> str:

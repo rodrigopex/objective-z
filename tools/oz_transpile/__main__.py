@@ -37,7 +37,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                    help="Override auto-computed sys_mem_blocks pool size for "
                         "array/dict item slots")
     p.add_argument("--verbose", action="store_true",
-                   help="Print diagnostic messages")
+                   help="Print per-file progress (diagnostics always print)")
     p.add_argument("--heap-support", action="store_true",
                    help="Enable allocWithHeap: and heap-aware free")
     p.add_argument("--strict", action="store_true",
@@ -190,9 +190,8 @@ def main(argv: list[str] | None = None) -> int:
             print(f"oz_transpile: error: {e}", file=sys.stderr)
         return 1
 
-    if args.verbose:
-        for d in module.diagnostics:
-            print(f"oz_transpile: warning: {d}", file=sys.stderr)
+    for d in module.diagnostics:
+        print(f"oz_transpile: warning: {d}", file=sys.stderr)
 
     if args.strict and module.diagnostics:
         for d in module.diagnostics:
