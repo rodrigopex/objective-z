@@ -10,6 +10,7 @@ from oz_transpile.emit import (
     _emit_include_replacement,
     _is_func_prototype, _extract_func_name, _extract_class_name,
     _extract_decl_name,
+    _extract_macro_text, _MacroBoundaryError, _emit_block_expr, _emit_expr,
 )
 from oz_transpile.model import (
     DispatchKind,
@@ -3900,6 +3901,208 @@ class TestMacroPassthrough:
         })
         content = out["Foo_ozm.c"]
         assert "LOG_INFO(" in content
+
+
+# ===========================================================================
+# OZ-091: harden silent-failure paths — OZ001..OZ004 hard errors
+# ===========================================================================
+
+class TestMacroParenCountingSkipsLiterals:
+    """OZ001: paren counting inside macro invocations must skip string/char
+    literals and comments, not just raise blindly count '(' / ')'."""
+
+    def test_literal_paren_in_string_arg_preserved(self):
+        """A ')' inside a string argument must not truncate the macro text."""
+        _, out = clang_emit_patched("""\
+#import <Foundation/OZObject.h>
+#define TAG(s) (s)
+@interface Foo : OZObject
+@end
+@implementation Foo
+- (void)test {
+    const char *x = TAG("value = )");
+}
+@end
+""", stem="Foo")
+        content = out["Foo_ozm.c"]
+        assert 'TAG("value = )")' in content
+
+    def test_extract_macro_text_skips_string_literal(self):
+        """Unit-level: paren inside a string literal is not counted."""
+        source = b'FOO("a)b")'
+        assert _extract_macro_text(source, 0, 3) == 'FOO("a)b")'
+
+    def test_extract_macro_text_skips_line_comment(self):
+        """Unit-level: paren inside a // comment is not counted."""
+        source = b'FOO(1 /* ) */, 2)'
+        assert _extract_macro_text(source, 0, 3) == 'FOO(1 /* ) */, 2)'
+
+    def test_extract_macro_text_raises_on_unbalanced_parens(self):
+        """Unit-level: parens that never balance raise _MacroBoundaryError
+        instead of returning silently truncated text."""
+        source = b'FOO(1, 2'
+        try:
+            _extract_macro_text(source, 0, 3)
+            assert False, "expected _MacroBoundaryError"
+        except _MacroBoundaryError:
+            pass
+
+
+class TestMacroPassthroughPatchBounds:
+    """OZ001: a patch offset outside the extracted macro text must raise a
+    hard error, not silently drop the transpiled ObjC substitution."""
+
+    def test_macro_boundary_error_reports_oz001(self):
+        """_report_macro_boundary_error appends a stable OZ001 code."""
+        from io import StringIO
+
+        from oz_transpile.emit import _report_macro_boundary_error
+        from oz_transpile.model import OZClass, OZModule
+
+        ctx = _EmitCtx(cls=OZClass("Foo"), module=OZModule(),
+                       root_class="OZObject")
+        node = {"loc": {"line": 5, "col": 2}}
+        _report_macro_boundary_error(
+            _MacroBoundaryError("test boundary failure"), node, ctx)
+        assert any("OZ001" in e and "Foo:5:2" in e
+                  for e in ctx.module.errors)
+
+
+class TestUnsupportedBlockExpr:
+    """OZ002: unsupported block-expression AST shapes must hard-error
+    instead of emitting a bare /* TODO */ comment."""
+
+    def test_empty_block_expr_errors(self):
+        from io import StringIO
+
+        from oz_transpile.model import OZClass, OZModule
+
+        ctx = _EmitCtx(cls=OZClass("Foo"), module=OZModule(),
+                       root_class="OZObject")
+        out = StringIO()
+        _emit_block_expr({"kind": "BlockExpr", "inner": []}, out, ctx)
+        assert any("OZ002" in e for e in ctx.module.errors)
+        assert out.getvalue() == "0"
+
+    def test_block_expr_without_block_decl_errors(self):
+        from io import StringIO
+
+        from oz_transpile.model import OZClass, OZModule
+
+        ctx = _EmitCtx(cls=OZClass("Foo"), module=OZModule(),
+                       root_class="OZObject")
+        out = StringIO()
+        node = {"kind": "BlockExpr", "inner": [{"kind": "NotABlockDecl"}]}
+        _emit_block_expr(node, out, ctx)
+        assert any("OZ002" in e for e in ctx.module.errors)
+        assert out.getvalue() == "0"
+
+
+class TestUnhandledAstNodeFallback:
+    """OZ003: an unhandled AST expression kind with no children to fall
+    back to must hard-error instead of emitting a bare /* TODO */ comment."""
+
+    def test_unhandled_kind_errors(self):
+        from io import StringIO
+
+        from oz_transpile.model import OZClass, OZModule
+
+        ctx = _EmitCtx(cls=OZClass("Foo"), module=OZModule(),
+                       root_class="OZObject")
+        out = StringIO()
+        _emit_expr({"kind": "TotallyUnknownExprKind"}, out, ctx)
+        assert any("OZ003" in e and "TotallyUnknownExprKind" in e
+                  for e in ctx.module.errors)
+        assert out.getvalue() == "0"
+
+
+class TestAllocInLoopRequiresPoolOverride:
+    """OZ004: an alloc site inside a loop whose result escapes to an
+    ivar/static (rather than a fresh per-iteration local) must require an
+    explicit --pool-sizes override instead of silently under-sizing the
+    pool to the flat source-occurrence count."""
+
+    _ESCAPING_SOURCE = """\
+#import <Foundation/OZObject.h>
+@interface Sensor : OZObject
+@end
+@implementation Sensor
+@end
+@interface Foo : OZObject {
+    Sensor *_cached;
+}
+- (void)test;
+@end
+@implementation Foo
+- (void)test {
+    for (int i = 0; i < 3; i++) {
+        _cached = [Sensor alloc];
+    }
+}
+@end
+"""
+
+    _FRESH_LOCAL_SOURCE = """\
+#import <Foundation/OZObject.h>
+@interface Sensor : OZObject
+@end
+@implementation Sensor
+@end
+@interface Foo : OZObject
+- (void)test;
+@end
+@implementation Foo
+- (void)test {
+    for (int i = 0; i < 3; i++) {
+        @autoreleasepool {
+            Sensor *s = [Sensor alloc];
+        }
+    }
+}
+@end
+"""
+
+    def test_escaping_alloc_in_loop_without_override_errors(self):
+        mod = clang_collect_resolve(self._ESCAPING_SOURCE)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(mod, tmpdir)
+        assert any("OZ004" in e and "Sensor" in e for e in mod.errors)
+
+    def test_escaping_alloc_in_loop_with_override_ok(self):
+        mod = clang_collect_resolve(self._ESCAPING_SOURCE)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(mod, tmpdir, pool_sizes={"Sensor": 4})
+        assert not any("OZ004" in e for e in mod.errors)
+
+    def test_fresh_local_alloc_in_loop_not_flagged(self):
+        """A fresh per-iteration local (alloc, use, ARC-released at scope
+        exit) is bounded to one live instance regardless of iteration
+        count, so it must not require an override."""
+        mod = clang_collect_resolve(self._FRESH_LOCAL_SOURCE)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(mod, tmpdir)
+        assert not any("OZ004" in e for e in mod.errors)
+
+    def test_synchronized_in_loop_not_flagged(self):
+        """The synthetic OZSpinLock is always scoped to its @synchronized
+        block, so it must never be flagged even inside a loop."""
+        mod = clang_collect_resolve("""\
+#import <Foundation/OZObject.h>
+@interface Foo : OZObject
+- (void)test;
+@end
+@implementation Foo
+- (void)test {
+    for (int i = 0; i < 3; i++) {
+        @synchronized(self) {
+        }
+    }
+}
+@end
+""")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            emit(mod, tmpdir)
+        assert not any("OZ004" in e for e in mod.errors)
 
 
 # ===========================================================================
