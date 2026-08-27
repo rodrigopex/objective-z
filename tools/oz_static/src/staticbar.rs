@@ -1,0 +1,281 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// staticbar.rs - accept/reject scan for the static subset.
+//
+// Philosophy carried over from OZ-091 Track A: never silently degrade or
+// best-effort a construct outside the static bar. Anything not explicitly
+// supported is a named, located hard error.
+
+use std::collections::HashSet;
+
+use tree_sitter::Node;
+
+use crate::model::{ClassInfo, Diagnostic, Program};
+use crate::parse::line_col;
+
+const REFLECTION_SELECTORS: &[&str] = &[
+    "respondsToSelector:",
+    "performSelector:",
+    "performSelector:withObject:",
+    "performSelector:withObject:withObject:",
+    "isKindOfClass:",
+    "isMemberOfClass:",
+    "conformsToProtocol:",
+];
+
+const LOOP_KINDS: &[&str] = &["for_statement", "while_statement", "do_statement"];
+
+fn node_text<'a>(node: Node, src: &'a str) -> &'a str {
+    &src[node.start_byte()..node.end_byte()]
+}
+
+fn err(diags: &mut Vec<Diagnostic>, src: &str, node: Node, message: impl Into<String>) {
+    let (line, col) = line_col(src, node.start_byte());
+    diags.push(Diagnostic::new(message, line, col));
+}
+
+fn message_selector(node: Node, src: &str) -> String {
+    // message_expression: [ receiver piece1 : arg1 piece2 : arg2 ... ]
+    // Selector pieces are `identifier` children immediately followed by a
+    // `:` sibling; the very first identifier is the receiver, so skip it.
+    let mut cursor = node.walk();
+    let children: Vec<Node> = node.children(&mut cursor).collect();
+    let mut selector = String::new();
+    let mut seen_receiver = false;
+    let mut i = 0;
+    while i < children.len() {
+        let c = children[i];
+        if c.kind() == "identifier" {
+            if !seen_receiver {
+                seen_receiver = true;
+                i += 1;
+                continue;
+            }
+            // A selector piece is an identifier followed by ':'.
+            if children.get(i + 1).map(|n| n.kind()) == Some(":") {
+                selector.push_str(node_text(c, src));
+                selector.push(':');
+                i += 2;
+                continue;
+            }
+            // Bare identifier with no following ':' and no ':' anywhere in
+            // this message -> unary selector (only valid as the sole piece).
+            if selector.is_empty() {
+                selector.push_str(node_text(c, src));
+            }
+        }
+        i += 1;
+    }
+    selector
+}
+
+struct MethodScope<'a> {
+    class_ivars: &'a HashSet<String>,
+    locals: HashSet<String>,
+}
+
+fn walk_for_reject(
+    node: Node,
+    src: &str,
+    scope: &mut MethodScope,
+    in_loop: bool,
+    fresh_decl: bool,
+    diags: &mut Vec<Diagnostic>,
+) {
+    match node.kind() {
+        "try_statement" => {
+            err(diags, src, node, "@try/@catch is not supported in the static subset (exception handling requires runtime unwinding info this backend does not generate)");
+            return;
+        }
+        "synchronized_statement" => {
+            err(diags, src, node, "@synchronized is not supported in the static subset spike");
+            return;
+        }
+        "property_declaration" | "property_implementation" => {
+            err(diags, src, node, "@property/@synthesize is not supported in the static subset spike; declare an ivar and accessor methods explicitly");
+            return;
+        }
+        "message_expression" => {
+            let selector = message_selector(node, src);
+            if REFLECTION_SELECTORS.contains(&selector.as_str()) {
+                err(
+                    diags,
+                    src,
+                    node,
+                    format!(
+                        "'{}' is reflection, which the static subset rejects (no runtime type/selector registry is generated)",
+                        selector
+                    ),
+                );
+            }
+            if selector == "alloc" && in_loop && !fresh_decl {
+                let class_name = node_text(node, src)
+                    .trim_start_matches('[')
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or("?");
+                err(diags, src, node, format!(
+                    "allocation of '{}' inside a loop escapes the iteration (not a fresh per-iteration local) — the static subset cannot bound how many live instances this may need; hoist it out of the loop or restructure",
+                    class_name));
+            }
+        }
+        "block_literal" => {
+            check_block_capture(node, src, scope, diags);
+            return; // don't descend further with loop/decl context; block is opaque
+        }
+        "array_literal" | "dictionary_literal" | "boxed_expression" | "selector_expression"
+        | "protocol_expression" => {
+            err(
+                diags,
+                src,
+                node,
+                format!(
+                    "'{}' is not in the static subset's accepted construct set",
+                    node.kind()
+                ),
+            );
+            return;
+        }
+        _ => {}
+    }
+
+    let child_in_loop = in_loop || LOOP_KINDS.contains(&node.kind());
+
+    if node.kind() == "declaration" {
+        // A declaration's own init_declarator initializer is "fresh" only
+        // when the declaration itself sits directly in a loop body.
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            if child.kind() == "init_declarator" {
+                // record the declared name as a local
+                if let Some(name) = find_first_identifier_before_eq(child, src) {
+                    scope.locals.insert(name);
+                }
+                let mut c2 = child.walk();
+                for gc in child.children(&mut c2) {
+                    walk_for_reject(gc, src, scope, child_in_loop, true, diags);
+                }
+            } else {
+                walk_for_reject(child, src, scope, child_in_loop, fresh_decl, diags);
+            }
+        }
+        return;
+    }
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        walk_for_reject(child, src, scope, child_in_loop, fresh_decl, diags);
+    }
+}
+
+fn check_block_capture(node: Node, src: &str, scope: &MethodScope, diags: &mut Vec<Diagnostic>) {
+    // Anything the block itself declares/binds is not a capture.
+    let mut own_names: HashSet<String> = HashSet::new();
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        collect_bound_names(child, src, &mut own_names);
+    }
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        find_capture(child, src, scope, &own_names, diags);
+    }
+}
+
+fn collect_bound_names(node: Node, src: &str, out: &mut HashSet<String>) {
+    match node.kind() {
+        "parameter_declaration" => {
+            if let Some(id) = find_last_identifier(node, src) {
+                out.insert(id);
+            }
+        }
+        "init_declarator" | "declaration" => {
+            if let Some(id) = find_first_identifier_before_eq(node, src) {
+                out.insert(id);
+            }
+        }
+        _ => {}
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        collect_bound_names(child, src, out);
+    }
+}
+
+fn find_last_identifier(node: Node, src: &str) -> Option<String> {
+    let mut result = None;
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.kind() == "identifier" {
+            result = Some(node_text(child, src).to_string());
+        } else {
+            result = find_last_identifier(child, src).or(result);
+        }
+    }
+    result
+}
+
+fn find_first_identifier_before_eq(node: Node, src: &str) -> Option<String> {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.kind() == "=" {
+            break;
+        }
+        if child.kind() == "identifier" {
+            return Some(node_text(child, src).to_string());
+        }
+        if let Some(found) = find_first_identifier_before_eq(child, src) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+fn find_capture(
+    node: Node,
+    src: &str,
+    scope: &MethodScope,
+    own_names: &HashSet<String>,
+    diags: &mut Vec<Diagnostic>,
+) {
+    if node.kind() == "identifier" {
+        let name = node_text(node, src);
+        if own_names.contains(name) {
+            return;
+        }
+        if name == "self" || scope.class_ivars.contains(name) || scope.locals.contains(name) {
+            err(
+                diags,
+                src,
+                node,
+                format!(
+                    "block captures '{}' from the enclosing scope; the static subset only accepts non-capturing blocks",
+                    name
+                ),
+            );
+        }
+        return;
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        find_capture(child, src, scope, own_names, diags);
+    }
+}
+
+pub fn check_method_body(
+    body: Node,
+    src: &str,
+    program: &Program,
+    class_info: &ClassInfo,
+    params: &[(String, String)],
+) -> Vec<Diagnostic> {
+    let mut diags = Vec::new();
+    let ivar_names: HashSet<String> =
+        program.all_ivars(&class_info.name).into_iter().map(|(n, _)| n).collect();
+    let mut scope = MethodScope { class_ivars: &ivar_names, locals: HashSet::new() };
+    for (name, _) in params {
+        scope.locals.insert(name.clone());
+    }
+    walk_for_reject(body, src, &mut scope, false, false, &mut diags);
+    diags
+}

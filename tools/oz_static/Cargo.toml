@@ -1,0 +1,18 @@
+[package]
+name = "oz_static"
+version = "0.1.0"
+edition = "2021"
+description = "OZ-091 Track B spike: static-subset Objective-C to C transpiler using in-place textual substitution"
+publish = false
+
+[lib]
+name = "oz_static"
+path = "src/lib.rs"
+
+[[bin]]
+name = "oz_static"
+path = "src/main.rs"
+
+[dependencies]
+tree-sitter = "0.24"
+tree-sitter-objc = "3.0.2"
