@@ -428,16 +428,27 @@ fn render_interface(node: Node, ctx: &mut EmitCtx, program: &Program) -> String 
         }
     }
 
-    ctx.hoisted_structs.push((
-        name.clone(),
-        format!("struct {name} {{\n{base}{ivars}}};\n", name = name, base = base_field, ivars = ivars_text),
-    ));
+    let struct_text =
+        format!("struct {name} {{\n{base}{ivars}}};\n", name = name, base = base_field, ivars = ivars_text);
 
     let mut protos = String::new();
     for m in &info.methods {
         protos.push_str(&render_prototype(&name, m));
     }
-    protos
+
+    if info.superclass.is_none() {
+        // Root: full struct hoisted to the companion, since
+        // oz_static_retain/release/the dealloc switch need its tracking
+        // fields directly. Its alloc/free live there too.
+        ctx.hoisted_structs.push((name.clone(), struct_text));
+        protos
+    } else {
+        // Every other class: struct + alloc/free (which need the full
+        // struct for sizeof) stay in-place, next to this class's own
+        // methods. The companion only forward-declares the type.
+        let root = program.root_class().unwrap_or(&name).to_string();
+        format!("{}\n{}\n{}", struct_text, crate::companion::render_alloc_free(&name, &root), protos)
+    }
 }
 
 pub(crate) fn render_prototype(class_name: &str, m: &crate::model::MethodSig) -> String {
