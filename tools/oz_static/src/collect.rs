@@ -72,6 +72,24 @@ pub(crate) fn extract_type_and_stars(node: Node, src: &str) -> (String, usize) {
                     *type_text = node_text(n, src).to_string();
                 }
             }
+            "enum_specifier" => {
+                // `enum Name { ... }` -- the tag name is a `type_identifier`
+                // child, but the "enum" keyword itself isn't a separate
+                // node, so it must be prepended explicitly or the rendered
+                // C type loses the tag (`Direction` instead of
+                // `enum Direction`), which doesn't name a type on its own.
+                if type_text.is_empty() {
+                    let mut c = n.walk();
+                    let found = n.children(&mut c).find(|ch| ch.kind() == "type_identifier");
+                    *type_text = match found {
+                        Some(name) => format!("enum {}", node_text(name, src)),
+                        // Anonymous `enum { ... }` (no tag name): not
+                        // supported by this spike -- there's no name to
+                        // reference the type by outside its own declaration.
+                        None => "enum".to_string(),
+                    };
+                }
+            }
             "*" => *stars += 1,
             _ => {
                 let mut c = n.walk();
@@ -130,6 +148,38 @@ pub(crate) fn find_declared_name(node: Node, src: &str) -> String {
     String::new()
 }
 
+/// Placeholder substituted with the actual parameter name inside a C type
+/// string that needs the name embedded mid-declarator (a function-pointer
+/// type, e.g. `int (*NAME)(int)`) rather than appended as a plain suffix
+/// (`TYPE NAME`, e.g. `int NAME`). See `detect_block_param_type`.
+pub(crate) const PARAM_NAME_PLACEHOLDER: &str = "@@PARAM_NAME@@";
+
+/// A block-typed method parameter -- `(RET (^)(ARGS))name` -- parses under
+/// tree-sitter-objc as a `method_type` whose `type_name` contains an
+/// `abstract_function_declarator` wrapping an `abstract_parenthesized_declarator`/
+/// `abstract_block_pointer_declarator` (the exact same shape a plain
+/// function-pointer parameter type `(RET (*)(ARGS))name` would produce,
+/// just with `^` instead of `*` -- the static subset has no block runtime,
+/// so both collapse to the same plain C function-pointer type). Returns the
+/// full C type text with `PARAM_NAME_PLACEHOLDER` where the parameter name
+/// must be embedded, or `None` if this parameter isn't block/function-
+/// pointer shaped.
+fn detect_block_param_type(method_parameter: Node, src: &str) -> Option<String> {
+    let method_type = child_by_kind(method_parameter, "method_type")?;
+    let type_name = child_by_kind(method_type, "type_name")?;
+    let func_decl = child_by_kind(type_name, "abstract_function_declarator")?;
+    let mut cursor = type_name.walk();
+    let ret = type_name
+        .children(&mut cursor)
+        .find(|c| c.kind() != "abstract_function_declarator")
+        .map(|c| node_text(c, src).to_string())
+        .unwrap_or_else(|| "void".to_string());
+    let params = child_by_kind(func_decl, "parameter_list")
+        .map(|p| node_text(p, src).to_string())
+        .unwrap_or_else(|| "(void)".to_string());
+    Some(format!("{} (*{}){}", ret, PARAM_NAME_PLACEHOLDER, params))
+}
+
 /// method_declaration / method_definition share the shape:
 /// [-|+] method_type identifier (method_parameter | identifier method_parameter)* ...
 pub(crate) fn extract_method_sig(
@@ -161,12 +211,14 @@ pub(crate) fn extract_method_sig(
             }
             "method_parameter" => {
                 selector.push(':');
-                let (t, stars) = extract_type_and_stars(child, src);
-                let param_type = if t == "instancetype" {
-                    format!("struct {} *", self_class)
-                } else {
-                    render_type(&t, stars, known_classes)
-                };
+                let param_type = detect_block_param_type(child, src).unwrap_or_else(|| {
+                    let (t, stars) = extract_type_and_stars(child, src);
+                    if t == "instancetype" {
+                        format!("struct {} *", self_class)
+                    } else {
+                        render_type(&t, stars, known_classes)
+                    }
+                });
                 let param_name = child_by_kind(child, "identifier")
                     .map(|n| node_text(n, src).to_string())
                     .unwrap_or_default();
