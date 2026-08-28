@@ -4,22 +4,12 @@
 // subset must be a named, located hard error -- never a silent skip.
 
 mod common;
-use common::expect_reject;
-
-const PREAMBLE: &str = "\
-@interface OZSRoot
-- (void)dealloc;
-@end
-@implementation OZSRoot
-- (void)dealloc {
-}
-@end
-";
+use common::{expect_reject, OZOBJECT_SRC as PREAMBLE};
 
 #[test]
 fn try_catch_rejected() {
     let src = format!(
-        "{}\n@interface Foo : OZSRoot\n- (void)test;\n@end\n@implementation Foo\n\
+        "{}\n@interface Foo : OZObject\n- (void)test;\n@end\n@implementation Foo\n\
          - (void)test {{\n    @try {{\n        int x = 1;\n    }} @catch (id e) {{\n    }}\n}}\n@end\n",
         PREAMBLE
     );
@@ -30,7 +20,7 @@ fn try_catch_rejected() {
 #[test]
 fn synchronized_rejected() {
     let src = format!(
-        "{}\n@interface Foo : OZSRoot\n- (void)test;\n@end\n@implementation Foo\n\
+        "{}\n@interface Foo : OZObject\n- (void)test;\n@end\n@implementation Foo\n\
          - (void)test {{\n    @synchronized(self) {{\n    }}\n}}\n@end\n",
         PREAMBLE
     );
@@ -41,7 +31,7 @@ fn synchronized_rejected() {
 #[test]
 fn property_rejected() {
     let src = format!(
-        "{}\n@interface Foo : OZSRoot\n@property (nonatomic) int count;\n@end\n\
+        "{}\n@interface Foo : OZObject\n@property (nonatomic) int count;\n@end\n\
          @implementation Foo\n@synthesize count = _count;\n@end\n",
         PREAMBLE
     );
@@ -52,7 +42,7 @@ fn property_rejected() {
 #[test]
 fn reflection_selector_rejected() {
     let src = format!(
-        "{}\n@interface Foo : OZSRoot\n- (void)test;\n@end\n@implementation Foo\n\
+        "{}\n@interface Foo : OZObject\n- (void)test;\n@end\n@implementation Foo\n\
          - (void)test {{\n    if ([self respondsToSelector:0]) {{\n    }}\n}}\n@end\n",
         PREAMBLE
     );
@@ -64,7 +54,7 @@ fn reflection_selector_rejected() {
 #[test]
 fn is_kind_of_class_rejected() {
     let src = format!(
-        "{}\n@interface Foo : OZSRoot\n- (void)test;\n@end\n@implementation Foo\n\
+        "{}\n@interface Foo : OZObject\n- (void)test;\n@end\n@implementation Foo\n\
          - (void)test {{\n    if ([self isKindOfClass:0]) {{\n    }}\n}}\n@end\n",
         PREAMBLE
     );
@@ -75,7 +65,7 @@ fn is_kind_of_class_rejected() {
 #[test]
 fn capturing_block_rejected() {
     let src = format!(
-        "{}\n@interface Foo : OZSRoot\n- (void)test;\n@end\n@implementation Foo\n\
+        "{}\n@interface Foo : OZObject\n- (void)test;\n@end\n@implementation Foo\n\
          - (void)test {{\n    int local = 5;\n    void (^blk)(void) = ^{{\n        local;\n    }};\n}}\n@end\n",
         PREAMBLE
     );
@@ -86,7 +76,7 @@ fn capturing_block_rejected() {
 #[test]
 fn self_capturing_block_rejected() {
     let src = format!(
-        "{}\n@interface Foo : OZSRoot {{\n    int _x;\n}}\n- (void)test;\n@end\n\
+        "{}\n@interface Foo : OZObject {{\n    int _x;\n}}\n- (void)test;\n@end\n\
          @implementation Foo\n- (void)test {{\n    void (^blk)(void) = ^{{\n        _x;\n    }};\n}}\n@end\n",
         PREAMBLE
     );
@@ -97,7 +87,7 @@ fn self_capturing_block_rejected() {
 #[test]
 fn non_capturing_block_accepted() {
     let src = format!(
-        "{}\n@interface Foo : OZSRoot\n- (void)test;\n@end\n@implementation Foo\n\
+        "{}\n@interface Foo : OZObject\n- (void)test;\n@end\n@implementation Foo\n\
          - (void)test {{\n    void (^blk)(void) = ^{{\n        int y = 1;\n    }};\n}}\n@end\n",
         PREAMBLE
     );
@@ -112,8 +102,8 @@ fn non_capturing_block_accepted() {
 #[test]
 fn escaping_alloc_in_loop_rejected() {
     let src = format!(
-        "{}\n@interface Item : OZSRoot\n@end\n@implementation Item\n@end\n\
-         @interface Foo : OZSRoot {{\n    Item *_cached;\n}}\n- (void)test;\n@end\n\
+        "{}\n@interface Item : OZObject\n@end\n@implementation Item\n@end\n\
+         @interface Foo : OZObject {{\n    Item *_cached;\n}}\n- (void)test;\n@end\n\
          @implementation Foo\n- (void)test {{\n    int i;\n    for (i = 0; i < 3; i++) {{\n\
          \x20       _cached = [Item alloc];\n    }}\n}}\n@end\n",
         PREAMBLE
@@ -126,9 +116,9 @@ fn escaping_alloc_in_loop_rejected() {
 #[test]
 fn fresh_local_alloc_in_loop_accepted() {
     let src = format!(
-        "{}\n@interface Item : OZSRoot\n- (void)ping;\n@end\n@implementation Item\n\
+        "{}\n@interface Item : OZObject\n- (void)ping;\n@end\n@implementation Item\n\
          - (void)ping {{\n}}\n@end\n\
-         @interface Foo : OZSRoot\n- (void)test;\n@end\n@implementation Foo\n\
+         @interface Foo : OZObject\n- (void)test;\n@end\n@implementation Foo\n\
          - (void)test {{\n    int i;\n    for (i = 0; i < 3; i++) {{\n\
          \x20       Item *it = [Item alloc];\n        [it ping];\n        [it release];\n    }}\n}}\n@end\n",
         PREAMBLE
@@ -147,7 +137,7 @@ fn unresolvable_receiver_type_rejected() {
     // cannot determine (here, a param typed `id`) must be a hard error,
     // not a best-effort guess.
     let src = format!(
-        "{}\n@interface Foo : OZSRoot\n- (void)test:(id)obj;\n@end\n@implementation Foo\n\
+        "{}\n@interface Foo : OZObject\n- (void)test:(id)obj;\n@end\n@implementation Foo\n\
          - (void)test:(id)obj {{\n    [obj ping];\n}}\n@end\n",
         PREAMBLE
     );
@@ -164,7 +154,7 @@ fn protocol_conformance_missing_method_rejected() {
     // dispatch function with a hole in it.
     let src = format!(
         "{}\n@protocol Greeter\n- (void)greet;\n@end\n\
-         @interface Foo : OZSRoot <Greeter>\n@end\n@implementation Foo\n@end\n",
+         @interface Foo : OZObject <Greeter>\n@end\n@implementation Foo\n@end\n",
         PREAMBLE
     );
     let diags = expect_reject(&src);
@@ -177,7 +167,7 @@ fn protocol_conformance_missing_method_rejected() {
 fn protocol_conformance_satisfied_accepted() {
     let src = format!(
         "{}\n@protocol Greeter\n- (void)greet;\n@end\n\
-         @interface Foo : OZSRoot <Greeter>\n@end\n@implementation Foo\n- (void)greet {{\n}}\n@end\n",
+         @interface Foo : OZObject <Greeter>\n@end\n@implementation Foo\n- (void)greet {{\n}}\n@end\n",
         PREAMBLE
     );
     oz_static::transpile(&src).unwrap_or_else(|diags| {

@@ -8,12 +8,10 @@
 // original Unity assertions checked, and an exact-stdout assertion in the
 // Rust test (see tests/end_to_end_behavior.rs for the established pattern).
 //
-// oz_static has no shared Foundation root yet, so every test declares its
-// own minimal root class `OZSRoot` (mirroring tests/end_to_end_behavior.rs
-// and tests/static_bar_rejects.rs) instead of importing the real OZObject.
+// Uses the real `OZObject` (`common::OZOBJECT_SRC`) as the root class.
 
 mod common;
-use common::compile_and_run;
+use common::{compile_and_run, OZOBJECT_SRC};
 
 // tests/behavior/cases/lifecycle/alloc_failure_enomem.{m,_test.c} is not
 // ported here: it declares a pool of size 1 (`/* oz-pool: Box=1 */`) and
@@ -37,16 +35,11 @@ use common::compile_and_run;
 /// struct; a non-root class reaches them through the `base` embedding hop.
 #[test]
 fn alloc_returns_valid_pointer_class_id_and_refcount() {
-    let src = "\
-@interface OZSRoot
-- (void)dealloc;
-@end
-@implementation OZSRoot
-- (void)dealloc {
-}
-@end
-
-@interface Widget : OZSRoot {
+    let src = format!(
+        "{}{}",
+        OZOBJECT_SRC,
+        "\
+@interface Widget : OZObject {
 	int _tag;
 }
 - (void)setTag:(int)t;
@@ -72,8 +65,9 @@ int main(void) {
 	[w release];
 	return 0;
 }
-";
-    let stdout = compile_and_run(src, "alloc_returns_valid_pointer_class_id_and_refcount");
+"
+    );
+    let stdout = compile_and_run(&src, "alloc_returns_valid_pointer_class_id_and_refcount");
     assert_eq!(stdout, "nonnull=1\nclass_id_matches=1\nrefcount=1\n");
 }
 
@@ -88,16 +82,11 @@ int main(void) {
 /// work correctly afterward (no leak/corruption from the free path).
 #[test]
 fn release_then_realloc_succeeds() {
-    let src = "\
-@interface OZSRoot
-- (void)dealloc;
-@end
-@implementation OZSRoot
-- (void)dealloc {
-}
-@end
-
-@interface Slot : OZSRoot
+    let src = format!(
+        "{}{}",
+        OZOBJECT_SRC,
+        "\
+@interface Slot : OZObject
 @end
 @implementation Slot
 @end
@@ -114,8 +103,9 @@ int main(void) {
 	[s2 release];
 	return 0;
 }
-";
-    let stdout = compile_and_run(src, "release_then_realloc_succeeds");
+"
+    );
+    let stdout = compile_and_run(&src, "release_then_realloc_succeeds");
     assert_eq!(stdout, "first_nonnull=1\nsecond_nonnull=1\n");
 }
 
@@ -130,16 +120,11 @@ int main(void) {
 /// works, mirroring the original's `TEST_PASS()` (pass == "we got here").
 #[test]
 fn dealloc_reentrant_guard() {
-    let src = "\
-@interface OZSRoot
-- (void)dealloc;
-@end
-@implementation OZSRoot
-- (void)dealloc {
-}
-@end
-
-@interface Probe : OZSRoot
+    let src = format!(
+        "{}{}",
+        OZOBJECT_SRC,
+        "\
+@interface Probe : OZObject
 - (void)dealloc;
 @end
 @implementation Probe
@@ -159,8 +144,9 @@ int main(void) {
 	printf(\"survived_reentrant_dealloc=1\\n\");
 	return 0;
 }
-";
-    let stdout = compile_and_run(src, "dealloc_reentrant_guard");
+"
+    );
+    let stdout = compile_and_run(&src, "dealloc_reentrant_guard");
     assert_eq!(stdout, "nonnull=1\nsurvived_reentrant_dealloc=1\n");
 }
 
@@ -175,16 +161,11 @@ int main(void) {
 /// original's trailing `TEST_PASS()`.
 #[test]
 fn release_completes_without_crash() {
-    let src = "\
-@interface OZSRoot
-- (void)dealloc;
-@end
-@implementation OZSRoot
-- (void)dealloc {
-}
-@end
-
-@interface Item : OZSRoot
+    let src = format!(
+        "{}{}",
+        OZOBJECT_SRC,
+        "\
+@interface Item : OZObject
 @end
 @implementation Item
 @end
@@ -198,8 +179,9 @@ int main(void) {
 	printf(\"survived_release=1\\n\");
 	return 0;
 }
-";
-    let stdout = compile_and_run(src, "release_completes_without_crash");
+"
+    );
+    let stdout = compile_and_run(&src, "release_completes_without_crash");
     assert_eq!(stdout, "nonnull=1\nsurvived_release=1\n");
 }
 
@@ -208,24 +190,15 @@ int main(void) {
 /// asserted both fields via the Python pipeline's `OZ_PROTOCOL_SEND_init`
 /// dispatch helper. oz_static has no such helper (dispatch is always
 /// compile-time-fixed direct calls), so `-init` is just an ordinary
-/// instance method here, requiring OZSRoot to declare/define its own
+/// instance method here, requiring OZObject to declare/define its own
 /// `-init` (a no-op returning self) for `[super init]` to resolve.
 #[test]
 fn init_sets_fields() {
-    let src = "\
-@interface OZSRoot
-- (instancetype)init;
-- (void)dealloc;
-@end
-@implementation OZSRoot
-- (instancetype)init {
-	return self;
-}
-- (void)dealloc {
-}
-@end
-
-@interface Gadget : OZSRoot {
+    let src = format!(
+        "{}{}",
+        OZOBJECT_SRC,
+        "\
+@interface Gadget : OZObject {
 	int _value;
 	int _ready;
 }
@@ -259,7 +232,8 @@ int main(void) {
 	[g release];
 	return 0;
 }
-";
-    let stdout = compile_and_run(src, "init_sets_fields");
+"
+    );
+    let stdout = compile_and_run(&src, "init_sets_fields");
     assert_eq!(stdout, "value=42\nready=1\n");
 }

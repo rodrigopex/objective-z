@@ -4,20 +4,17 @@
 // OZQ31, the fixed-point number Foundation class, ported from
 // tests/behavior/cases/foundation/{number_basic,q31_basic,q31_stdio_free}.m.
 //
-// oz_static tests use a synthetic minimal `OZSRoot` in place of the real
-// `OZObject` (see behavior_lifecycle.rs) because the real header's
-// `__attribute__((objc_root_class)) @interface OZObject` (no superclass,
-// attribute-based root marking) isn't a shape the static-subset grammar
-// handles. OZQ31 itself, however, is transplanted verbatim from the real
-// `src/OZQ31.m` / `include/oz_sdk/Foundation/OZQ31.h` -- same helper
-// function bodies (`_oz_bits_for_mag`, `_oz_shift_for_*`, `_oz_encode_*`,
-// `_oz_decode_*`, `_oz_align_shift`, `_oz_q31_to_str`, `_oz_q31_div`),
-// same method bodies, including `other->_raw` cross-instance ivar access
-// and `[[OZQ31 alloc] init]` chaining -- both confirmed to transpile and
-// run correctly through oz_static before this file was written. This is
-// the real oracle algorithm, not a re-derivation, so parity with the
-// Python pipeline's actual behavior is exact by construction rather than
-// by matching documented comments.
+// Uses the real `OZObject` (`common::OZOBJECT_SRC`) as the root class.
+// OZQ31 itself is transplanted verbatim from the real `src/OZQ31.m` /
+// `include/oz_sdk/Foundation/OZQ31.h` -- same helper function bodies
+// (`_oz_bits_for_mag`, `_oz_shift_for_*`, `_oz_encode_*`, `_oz_decode_*`,
+// `_oz_align_shift`, `_oz_q31_to_str`, `_oz_q31_div`), same method
+// bodies, including `other->_raw` cross-instance ivar access and
+// `[[OZQ31 alloc] init]` chaining -- both confirmed to transpile and run
+// correctly through oz_static before this file was written. This is the
+// real oracle algorithm, not a re-derivation, so parity with the Python
+// pipeline's actual behavior is exact by construction rather than by
+// matching documented comments.
 //
 // A boxed literal (`@42`, `@(expr)`, `@3.5f`) desugars to a class-method
 // call on a class literally named `OZQ31` (see
@@ -25,29 +22,14 @@
 // transpiler features beyond that desugaring; it's ordinary ObjC/C source.
 
 mod common;
-use common::{compile_and_run, OZQ31_SRC};
-
-const PREAMBLE: &str = "\
-@interface OZSRoot
-- (instancetype)init;
-- (void)dealloc;
-@end
-@implementation OZSRoot
-- (instancetype)init {
-	return self;
-}
-- (void)dealloc {
-}
-@end
-
-";
+use common::{compile_and_run, OZOBJECT_SRC as PREAMBLE, OZQ31_SRC};
 
 #[test]
 fn number_basic_boxes_int_literal() {
     // number_basic.m
     let src = format!(
         "{}{}\n\
-@interface NumTest : OZSRoot
+@interface NumTest : OZObject
 - (int)boxed;
 @end
 @implementation NumTest
@@ -76,7 +58,7 @@ fn q31_basic_roundtrip_and_arithmetic() {
     // q31_basic.m, all 13 methods.
     let src = format!(
         "{}{}\n\
-@interface FPTest : OZSRoot
+@interface FPTest : OZObject
 - (int)intFromLiteral;
 - (float)floatFromLiteral;
 - (int)intFromExpr;
@@ -239,7 +221,7 @@ static void check_str(const char *label, int32_t raw, uint8_t shift, int precisi
 	printf(\"%s=%s(%s)\\n\", label, ok ? \"ok\" : \"FAIL\", buf);
 }}
 
-@interface Q31NoStdio : OZSRoot
+@interface Q31NoStdio : OZObject
 - (float)divTenByFour;
 - (int)divByZeroRaw;
 @end

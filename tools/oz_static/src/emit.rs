@@ -1038,6 +1038,29 @@ pub fn emit(source: &str, program: &Program) -> EmitOutput {
     let mut cursor = root.walk();
     for node in root.children(&mut cursor) {
         match node.kind() {
+            "compatibility_alias_declaration" => {
+                // `@compatibility_alias NSObject OZObject;` (real
+                // Foundation headers use this so Clang accepts either
+                // name) is, like `@protocol`, never valid C -- elided to
+                // a comment rather than left to break compilation. The
+                // alias itself needs no C-level equivalent: oz_static
+                // resolves class names by their own spelling only, so
+                // code would have to say `OZObject` either way.
+                let mut cursor = node.walk();
+                let names: Vec<&str> = node
+                    .children(&mut cursor)
+                    .filter(|c| c.kind() == "identifier")
+                    .map(|c| node_text(c, source))
+                    .collect();
+                patches.push(Patch {
+                    start: node.start_byte(),
+                    end: node.end_byte(),
+                    text: format!(
+                        "/* @compatibility_alias {} -- not needed, oz_static resolves classes by their own name only */",
+                        names.join(" ")
+                    ),
+                });
+            }
             "protocol_declaration" => {
                 // A protocol is purely a compile-time contract in this
                 // design too, same as in real Objective-C -- there's no C

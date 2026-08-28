@@ -6,17 +6,7 @@
 // self/an ivar/an enclosing local -- see staticbar.rs's check_block_capture.
 
 mod common;
-use common::compile_and_run;
-
-const PREAMBLE: &str = "\
-@interface OZSRoot
-- (void)dealloc;
-@end
-@implementation OZSRoot
-- (void)dealloc {
-}
-@end
-";
+use common::{compile_and_run, OZOBJECT_SRC as PREAMBLE};
 
 /// Port of non_capturing_basic.m/_test.c: a block literal assigned to a
 /// local, capturing nothing but its own param, called through that local.
@@ -24,7 +14,7 @@ const PREAMBLE: &str = "\
 fn non_capturing_basic() {
     let src = format!(
         "{}\n\
-@interface BlockBasicTest : OZSRoot {{
+@interface BlockBasicTest : OZObject {{
 \tint _result;
 }}
 - (void)run;
@@ -70,7 +60,7 @@ fn block_with_static_var() {
         "{}\n\
 static int g_multiplier = 3;
 
-@interface StaticBlockTest : OZSRoot {{
+@interface StaticBlockTest : OZObject {{
 \tint _result;
 }}
 - (void)run;
@@ -120,7 +110,7 @@ int main(void) {{
 fn block_as_method_param() {
     let src = format!(
         "{}\n\
-@interface BlockParamTest : OZSRoot {{
+@interface BlockParamTest : OZObject {{
 \tint _computed;
 }}
 - (void)applyBlock:(int (^)(int))blk toValue:(int)v;

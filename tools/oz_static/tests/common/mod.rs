@@ -80,9 +80,8 @@ pub fn expect_reject(source: &str) -> String {
 /// function bodies and same method bodies, including `other->_raw`
 /// cross-instance ivar access and `[[OZQ31 alloc] init]` chaining -- both
 /// confirmed to transpile and run correctly through oz_static). Requires
-/// a root class in scope named `OZSRoot` with an `- (instancetype)init`
-/// that returns `self` (see e.g. behavior_foundation_q31.rs's PREAMBLE).
-/// Shared by every test file that needs OZQ31 so the ~250-line body isn't
+/// `OZObject` (`common::OZOBJECT_SRC`) in scope as the root class. Shared
+/// by every test file that needs OZQ31 so the ~250-line body isn't
 /// duplicated per file.
 pub const OZQ31_SRC: &str = "\
 #include <stdint.h>
@@ -316,7 +315,7 @@ static inline void _oz_q31_div(int32_t a_raw, uint8_t a_shift, int32_t b_raw, ui
 }
 #endif /* _OZ_Q31_HELPERS */
 
-@interface OZQ31 : OZSRoot {
+@interface OZQ31 : OZObject {
 	int32_t _raw;
 	uint8_t _shift;
 }
@@ -455,29 +454,25 @@ static inline void _oz_q31_div(int32_t a_raw, uint8_t a_shift, int32_t b_raw, ui
 @end
 ";
 
-/// OZString, the immutable-string Foundation class, transplanted from the
-/// real `src/OZString.m` / `include/oz_sdk/Foundation/OZString.h` (same
-/// method bodies, adapted only where the real header relies on
-/// infrastructure this spike doesn't have: `BOOL` -> `int` (see
-/// behavior_enum.rs's precedent), and the real `(id)anObject` param is
-/// resolved by oz_static's `render_type` to `void *` -- any object
-/// pointer converts to/from `void *` without a cast, so `self ==
-/// anObject` and the `(OZString *)anObject` cast both just work).
-/// Requires a root class named `OZSRoot` in scope, same as `OZQ31_SRC`.
+/// OZString, the immutable-string Foundation class, transplanted verbatim
+/// from the real `src/OZString.m` / `include/oz_sdk/Foundation/OZString.h`
+/// -- same method bodies, same `BOOL`/`YES`/`NO`/`nil`/`(id)anObject`
+/// throughout (all now real types/macros via `common::OZOBJECT_SRC`, not
+/// stand-ins). Requires `OZObject` in scope as the root class.
 pub const OZSTRING_SRC: &str = "\
 #include <string.h>
 
-@interface OZString : OZSRoot {
+@interface OZString : OZObject {
 	unsigned int _length;
 	unsigned int _hash;
 	const char *_data;
 }
 - (const char *)cString;
 - (unsigned int)length;
-- (int)isEqual:(id)anObject;
-- (int)isEqualToString:(OZString *)aString;
-- (int)hasPrefix:(OZString *)prefix;
-- (int)hasSuffix:(OZString *)suffix;
+- (BOOL)isEqual:(id)anObject;
+- (BOOL)isEqualToString:(OZString *)aString;
+- (BOOL)hasPrefix:(OZString *)prefix;
+- (BOOL)hasSuffix:(OZString *)suffix;
 @end
 
 @implementation OZString
@@ -490,40 +485,40 @@ pub const OZSTRING_SRC: &str = "\
 	return _length;
 }
 
-- (int)isEqual:(id)anObject {
+- (BOOL)isEqual:(id)anObject {
 	if (self == anObject) {
-		return 1;
+		return YES;
 	}
 	OZString *other = (OZString *)anObject;
 	if (_length != other->_length) {
-		return 0;
+		return NO;
 	}
 	return memcmp(_data, other->_data, _length) == 0;
 }
 
-- (int)isEqualToString:(OZString *)aString {
-	if (self == aString) {
-		return 1;
+- (BOOL)isEqualToString:(OZString *)aString {
+	if (self == (id)aString) {
+		return YES;
 	}
-	if (aString == 0) {
-		return 0;
+	if (aString == nil) {
+		return NO;
 	}
 	if (_length != aString->_length) {
-		return 0;
+		return NO;
 	}
 	return memcmp(_data, aString->_data, _length) == 0;
 }
 
-- (int)hasPrefix:(OZString *)prefix {
-	if (prefix == 0 || prefix->_length > _length) {
-		return 0;
+- (BOOL)hasPrefix:(OZString *)prefix {
+	if (prefix == nil || prefix->_length > _length) {
+		return NO;
 	}
 	return memcmp(_data, prefix->_data, prefix->_length) == 0;
 }
 
-- (int)hasSuffix:(OZString *)suffix {
-	if (suffix == 0 || suffix->_length > _length) {
-		return 0;
+- (BOOL)hasSuffix:(OZString *)suffix {
+	if (suffix == nil || suffix->_length > _length) {
+		return NO;
 	}
 	return memcmp(_data + _length - suffix->_length, suffix->_data, suffix->_length) == 0;
 }
@@ -541,13 +536,13 @@ pub const OZSTRING_SRC: &str = "\
 /// `emit::render_interface`), with no `^`-to-`*` block-declarator rewrite
 /// applied the way a local variable's declarator gets (see
 /// `emit::render_expr`'s `block_pointer_declarator` arm) -- so the ivar
-/// must already be spelled in valid plain C. Requires a root class named
-/// `OZSRoot` in scope; oz_static has no ARC (tracked separately as #189),
-/// so releasing an object holding an OZDefer ivar must call `[_cleanup
-/// release]` explicitly in that object's own `-dealloc` -- there's no
-/// automatic ivar release to rely on.
+/// must already be spelled in valid plain C. Requires `OZObject` in
+/// scope as the root class; oz_static has no ARC (tracked separately as
+/// #189), so releasing an object holding an OZDefer ivar must call
+/// `[_cleanup release]` explicitly in that object's own `-dealloc` --
+/// there's no automatic ivar release to rely on.
 pub const OZDEFER_SRC: &str = "\
-@interface OZDefer : OZSRoot {
+@interface OZDefer : OZObject {
 	id _owner;
 	void (*_block)(id);
 }
@@ -565,7 +560,7 @@ pub const OZDEFER_SRC: &str = "\
 }
 
 - (instancetype)initWithBlock:(void (^)(id))aBlock {
-	_owner = 0;
+	_owner = nil;
 	_block = aBlock;
 	return self;
 }
@@ -576,5 +571,77 @@ pub const OZDEFER_SRC: &str = "\
 	}
 }
 
+@end
+";
+
+/// OZObject, the real Foundation root class, transplanted verbatim from
+/// `include/oz_sdk/Foundation/OZObject.h` / `src/OZObject.m` -- used as
+/// the root class by every oz_static test (replacing an earlier synthetic
+/// `OZSRoot` stand-in). Two adaptations from the literal header text,
+/// both because this is inlined directly into a single generated `.m`
+/// file rather than `#import`ed (oz_static has no import/include
+/// resolution -- it parses one file's text as-is):
+/// - `#pragma once` is dropped (meaningless outside a header, and Clang
+///   warns about it in a main file).
+/// - The `#ifdef __clang__ / @compatibility_alias NSObject OZObject; /
+///   #endif` guard is unwrapped to a bare `@compatibility_alias` line --
+///   oz_static's top-level emit pass elides `compatibility_alias_declaration`
+///   nodes to a comment (see `emit.rs`), but doesn't recurse into
+///   `#ifdef`/`#endif` conditional blocks to find constructs nested
+///   inside them, so left wrapped it would pass through as invalid raw
+///   ObjC text. The `#ifdef` was only ever a compiler-portability guard
+///   in the original (this harness's `cc` always defines `__clang__`
+///   anyway), so dropping it changes nothing observable.
+pub const OZOBJECT_SRC: &str = "\
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+
+#define nil ((id)0)
+
+typedef bool BOOL;
+
+#define YES true
+
+#define NO false
+
+unsigned int __objc_refcount_get(id obj);
+
+__attribute__((objc_root_class))
+@interface OZObject
+{
+	int _refcount;
+}
++ (instancetype)alloc;
++ (instancetype)allocWithHeap:(id)heap;
++ (Class)class;
+- (instancetype)init;
+- (void)dealloc;
+- (BOOL)isEqual:(id)anObject;
+- (int)cDescription:(char *)buf maxLength:(int)maxLen;
+@end
+
+@compatibility_alias NSObject OZObject;
+
+@implementation OZObject
++ (instancetype)alloc
+{
+	return nil;
+}
+- (instancetype)init
+{
+	return self;
+}
+- (void)dealloc
+{
+}
+- (BOOL)isEqual:(id)anObject
+{
+	return self == anObject;
+}
+- (int)cDescription:(char *)buf maxLength:(int)maxLen
+{
+	return 0;
+}
 @end
 ";
