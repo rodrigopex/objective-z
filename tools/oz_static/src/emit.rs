@@ -31,47 +31,39 @@ fn one_line(text: &str) -> String {
 
 const BANNER_WIDTH: usize = 80;
 
-/// A single-line decorated banner comment: "/* {text} {stars}*/", padded
-/// to BANNER_WIDTH (never truncates -- if `text` alone is already past
-/// the width, no padding is added).
-fn banner_close(text: &str) -> String {
-    let prefix = "/* ";
-    let suffix = "*/";
-    let min_len = prefix.len() + text.len() + 1 + suffix.len();
-    let stars = BANNER_WIDTH.saturating_sub(min_len).max(1);
-    format!("{}{} {}{}", prefix, text, "*".repeat(stars), suffix)
+fn rule_fill(width: usize, fill: char) -> String {
+    fill.to_string().repeat(width)
 }
 
-/// The opening line of a multi-line banner: decorated, but with no
-/// closing `*/` yet (more original text follows on subsequent lines).
-fn banner_open(text: &str) -> String {
-    let prefix = "/*** ";
-    let min_len = prefix.len() + text.len() + 1;
-    let stars = BANNER_WIDTH.saturating_sub(min_len).max(1);
-    format!("{}{} {}", prefix, text, "*".repeat(stars))
-}
-
-/// Wrap `original` (verbatim, possibly multi-line -- e.g. an interface
-/// header through its ivars block) as a banner comment: a single-line
-/// original becomes one decorated `/* ... */` line; a multi-line original
-/// gets its first line decorated (no closing `*/` yet), the remaining
-/// lines verbatim, and `*/` appended directly to the last line.
-fn banner_wrap(original: &str) -> String {
-    let original = original.trim_end();
-    let mut lines: Vec<&str> = original.lines().collect();
-    if lines.len() <= 1 {
-        return format!("{}\n", banner_close(original));
-    }
-    let first = lines.remove(0);
-    let last = lines.pop().unwrap();
-    let mut out = format!("{}\n", banner_open(first));
-    for l in &lines {
-        out.push_str(l);
+/// A "boxed" banner opening a section: a top rule, `content` (verbatim,
+/// possibly multi-line -- e.g. an interface header through its ivars
+/// block) with every line prefixed `" * "`, and a bottom rule -- the
+/// classic C block-comment box, so a section boundary is unmistakable at
+/// a glance regardless of how much header text it wraps.
+fn banner_box(content: &str, fill: char) -> String {
+    let content = content.trim_end();
+    let mut out = format!("/* {}\n", rule_fill(BANNER_WIDTH - 3, fill));
+    for line in content.lines() {
+        out.push_str(" * ");
+        out.push_str(line);
         out.push('\n');
     }
-    out.push_str(last);
-    out.push_str("*/\n");
+    out.push_str(" * ");
+    out.push_str(&rule_fill(BANNER_WIDTH.saturating_sub(6), fill));
+    out.push_str(" */\n");
     out
+}
+
+/// A single-line centered rule closing a section: "/*== label ==*/"
+/// padded to BANNER_WIDTH. Deliberately lighter than `banner_box` -- the
+/// open announces a section and carries its source header; the close
+/// just marks where it ends.
+fn banner_rule(label: &str, fill: char) -> String {
+    let text = format!(" {} ", label);
+    let total = BANNER_WIDTH.saturating_sub(4 + text.len());
+    let left = total / 2;
+    let right = total - left;
+    format!("/*{}{}{}*/\n", rule_fill(left, fill), text, rule_fill(right, fill))
 }
 
 /// The verbatim source text of a `class_interface`/`class_implementation`
@@ -542,11 +534,13 @@ fn render_interface(node: Node, ctx: &mut EmitCtx, program: &Program) -> String 
         }
     }
     let base_field = match &info.superclass {
-        Some(sup) => format!("\tstruct {} base;\n", sup),
-        // Root class: synthesize the tracking fields every object needs
-        // (const-vtable dealloc dispatch reads oz_class_id; retain/release
-        // use oz_refcount/oz_deallocating) instead of a `base` member.
-        None => "\tuint8_t oz_class_id;\n\toz_atomic_t oz_refcount;\n\tuint8_t oz_deallocating;\n"
+        Some(sup) => format!("\tstruct {sup} base; /* synthesized: inherited from {sup} */\n", sup = sup),
+        // Root class: synthesize the tracking fields every object needs.
+        None => "\
+\tuint8_t oz_class_id; /* synthesized: which concrete class this is -- indexes the dealloc dispatch switch */
+\toz_atomic_t oz_refcount; /* synthesized: retain count */
+\tuint8_t oz_deallocating; /* synthesized: guards against re-entrant dealloc while it runs */
+"
             .to_string(),
     };
 
@@ -566,8 +560,8 @@ fn render_interface(node: Node, ctx: &mut EmitCtx, program: &Program) -> String 
     let struct_text =
         format!("struct {name} {{\n{base}{ivars}}};\n", name = name, base = base_field, ivars = ivars_text);
 
-    let open_banner = banner_wrap(&header_text(node, ctx.src, &["method_declaration"]));
-    let close_banner = format!("{}\n", banner_close(&format!("@end -- interface {}", name)));
+    let open_banner = banner_box(&header_text(node, ctx.src, &["method_declaration"]), '=');
+    let close_banner = banner_rule(&format!("end interface: {}", name), '=');
 
     // Each declared method: its own line(s) as a comment, then the
     // prototype. Any method known to the class but NOT declared in this
@@ -599,10 +593,7 @@ fn render_interface(node: Node, ctx: &mut EmitCtx, program: &Program) -> String 
         format!("{}{}{}", open_banner, decls, close_banner)
     } else {
         let root = program.root_class().unwrap_or(&name).to_string();
-        let alloc_free = format!(
-            "/* synthesized: alloc/free (not from source) */\n{}",
-            crate::companion::render_alloc_free(&name, &root)
-        );
+        let alloc_free = crate::companion::render_alloc_free(&name, &root);
         format!("{}{}\n{}\n{}{}", open_banner, struct_text, alloc_free, decls, close_banner)
     }
 }
@@ -629,8 +620,8 @@ pub(crate) fn render_prototype(class_name: &str, m: &crate::model::MethodSig) ->
 /// declared method as a `/* original */`-commented prototype.
 fn render_category_interface(node: Node, src: &str, name: &str, program: &Program) -> String {
     let info = &program.classes[name];
-    let open_banner = banner_wrap(&header_text(node, src, &["method_declaration"]));
-    let close_banner = format!("{}\n", banner_close(&format!("@end -- interface {} (category)", name)));
+    let open_banner = banner_box(&header_text(node, src, &["method_declaration"]), '=');
+    let close_banner = banner_rule(&format!("end interface: {} (category)", name), '=');
     let mut decls = String::new();
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
@@ -772,7 +763,7 @@ pub fn emit(source: &str, program: &Program) -> EmitOutput {
                     block_counter: 0,
                 };
                 let mut out = String::new();
-                out.push_str(&banner_wrap(&header_text(node, source, &["implementation_definition"])));
+                out.push_str(&banner_box(&header_text(node, source, &["implementation_definition"]), '-'));
                 out.push('\n');
                 let mut c2 = node.walk();
                 for child in node.children(&mut c2) {
@@ -812,7 +803,7 @@ pub fn emit(source: &str, program: &Program) -> EmitOutput {
                         }
                     }
                 }
-                out.push_str(&banner_close(&format!("@end -- implementation {}", name)));
+                out.push_str(&banner_rule(&format!("end implementation: {}", name), '-'));
                 out.push('\n');
                 diags.extend(ctx.diags);
                 hoisted_blocks.extend(ctx.hoisted_blocks);
