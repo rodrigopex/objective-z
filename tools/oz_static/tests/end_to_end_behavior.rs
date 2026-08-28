@@ -5,20 +5,15 @@
 // backend) and run with correct behavior.
 
 mod common;
-use common::compile_and_run;
+use common::{compile_and_run, OZOBJECT_SRC};
 
 #[test]
 fn dispatch_refcounting_super_and_ivars() {
-    let src = "\
-@interface OZSRoot
-- (void)dealloc;
-@end
-@implementation OZSRoot
-- (void)dealloc {
-}
-@end
-
-@interface Sensor : OZSRoot {
+    let src = format!(
+        "{}{}",
+        OZOBJECT_SRC,
+        "\
+@interface Sensor : OZObject {
 	int _value;
 }
 - (void)setValue:(int)v;
@@ -56,23 +51,19 @@ int main(void) {
 	[s release];
 	return 0;
 }
-";
-    let stdout = compile_and_run(src, "dispatch_refcounting_super_and_ivars");
+"
+    );
+    let stdout = compile_and_run(&src, "dispatch_refcounting_super_and_ivars");
     assert_eq!(stdout, "value=15\n");
 }
 
 #[test]
 fn class_methods_initialize_and_singleton() {
-    let src = "\
-@interface OZSRoot
-- (void)dealloc;
-@end
-@implementation OZSRoot
-- (void)dealloc {
-}
-@end
-
-@interface Counter : OZSRoot {
+    let src = format!(
+        "{}{}",
+        OZOBJECT_SRC,
+        "\
+@interface Counter : OZObject {
 	int _n;
 }
 + (void)initialize;
@@ -103,8 +94,9 @@ int main(void) {
 	printf(\"bump2=%d\\n\", [c bump]);
 	return 0;
 }
-";
-    let stdout = compile_and_run(src, "class_methods_initialize_and_singleton");
+"
+    );
+    let stdout = compile_and_run(&src, "class_methods_initialize_and_singleton");
     assert_eq!(stdout, "bump1=1\nbump2=2\n");
 }
 
@@ -112,16 +104,11 @@ int main(void) {
 fn inherited_ivar_access_through_base_chain() {
     // A subclass method reading/writing an ivar declared by an ancestor
     // (not itself) must use the correct `self->base.<name>` hop path.
-    let src = "\
-@interface OZSRoot
-- (void)dealloc;
-@end
-@implementation OZSRoot
-- (void)dealloc {
-}
-@end
-
-@interface Base : OZSRoot {
+    let src = format!(
+        "{}{}",
+        OZOBJECT_SRC,
+        "\
+@interface Base : OZObject {
 	int _count;
 }
 @end
@@ -156,7 +143,8 @@ int main(void) {
 	[l release];
 	return 0;
 }
-";
-    let stdout = compile_and_run(src, "inherited_ivar_access_through_base_chain");
+"
+    );
+    let stdout = compile_and_run(&src, "inherited_ivar_access_through_base_chain");
     assert_eq!(stdout, "count=2\n");
 }

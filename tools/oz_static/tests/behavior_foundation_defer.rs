@@ -25,17 +25,7 @@
 // ("Release triggers dealloc -> releases _cleanup ivar") implies.
 
 mod common;
-use common::{compile_and_run, OZDEFER_SRC};
-
-const PREAMBLE: &str = "\
-@interface OZSRoot
-- (void)dealloc;
-@end
-@implementation OZSRoot
-- (void)dealloc {
-}
-@end
-";
+use common::{compile_and_run, OZDEFER_SRC, OZOBJECT_SRC as PREAMBLE};
 
 #[test]
 fn defer_basic_fires_block_with_owner_on_dealloc() {
@@ -44,7 +34,7 @@ fn defer_basic_fires_block_with_owner_on_dealloc() {
 static int g_fired = 0;
 static void *g_fired_owner = 0;
 
-@interface DeferTest : OZSRoot {{
+@interface DeferTest : OZObject {{
 	struct OZDefer *_cleanup;
 	int _marker;
 }}
@@ -100,7 +90,7 @@ fn defer_with_block_only_no_owner() {
 static int g_fired = 0;
 static void *g_owner_seen = (void *)1;
 
-@interface OwnerlessTest : OZSRoot {{
+@interface OwnerlessTest : OZObject {{
 	struct OZDefer *_cleanup;
 }}
 - (void)setup;

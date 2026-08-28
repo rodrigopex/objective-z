@@ -6,8 +6,8 @@
 // Each Python fixture pairs an X.m (ObjC declarations only) with a
 // hand-written X_test.c (Unity TEST_ASSERT_* calls against the
 // Python-generated API). Here each is ported to a single self-contained
-// source using the OZSRoot preamble (oz_static has no Foundation root
-// yet) with a `main()` that printf's the values the original Unity
+// source using the real `OZObject` (`common::OZOBJECT_SRC`) as the root
+// class, with a `main()` that printf's the values the original Unity
 // asserts checked, and the Rust test asserts the exact stdout.
 //
 // All three Python fixtures declare their enum directly in the .m file
@@ -17,17 +17,7 @@
 // single-file-per-compile limitation.
 
 mod common;
-use common::compile_and_run;
-
-const PREAMBLE: &str = "\
-@interface OZSRoot
-- (void)dealloc;
-@end
-@implementation OZSRoot
-- (void)dealloc {
-}
-@end
-";
+use common::{compile_and_run, OZOBJECT_SRC as PREAMBLE};
 
 /// Ported from tests/behavior/cases/enum/enum_as_ivar.m +
 /// enum_as_ivar_test.c: an enum used as an ivar's type, set through a
@@ -43,7 +33,7 @@ enum Direction {{
 	DirectionWest = 3
 }};
 
-@interface EnumIvarTest : OZSRoot {{
+@interface EnumIvarTest : OZObject {{
 	enum Direction _dir;
 }}
 - (void)setDirection:(enum Direction)d;
@@ -80,8 +70,8 @@ int main(void) {{
 /// Ported from tests/behavior/cases/enum/enum_from_header.m +
 /// enum_from_header_test.c: an enum constant used in a method-body
 /// comparison. The original fixture's `-isHighPriority` returns `BOOL`;
-/// ported here as `int` (0/1) since oz_static has no Foundation BOOL
-/// typedef available -- the behavior under test (comparing an ivar
+/// ported here as `int` (0/1) predating `BOOL`'s availability (see
+/// `common::OZOBJECT_SRC`) -- the behavior under test (comparing an ivar
 /// against an enum constant) is unaffected by that substitution.
 #[test]
 fn enum_constant_comparison() {
@@ -93,7 +83,7 @@ enum Priority {{
 	PriorityHigh = 10
 }};
 
-@interface EnumHeaderTest : OZSRoot {{
+@interface EnumHeaderTest : OZObject {{
 	enum Priority _prio;
 }}
 - (void)setPriority:(enum Priority)p;
@@ -143,7 +133,7 @@ enum Color {{
 	ColorBlue = 2
 }};
 
-@interface EnumSwitchTest : OZSRoot {{
+@interface EnumSwitchTest : OZObject {{
 	int _result;
 }}
 - (void)classifyColor:(enum Color)c;

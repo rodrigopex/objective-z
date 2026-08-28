@@ -4,6 +4,7 @@
 // from tests/behavior/cases/foundation/string_basic.m and
 // tests/behavior/cases/inline/string_fast_access.m.
 //
+// Uses the real `OZObject` (`common::OZOBJECT_SRC`) as the root class.
 // OZString itself is transplanted from the real `src/OZString.m` (see
 // `common::OZSTRING_SRC`). The interesting part isn't the class -- it's
 // how `@"..."` boxes: unlike OZQ31 (a class-method call), the real
@@ -16,17 +17,7 @@
 // nonexistent `[OZString stringWithCString:]` class-method call instead).
 
 mod common;
-use common::{compile_and_run, OZSTRING_SRC};
-
-const PREAMBLE: &str = "\
-@interface OZSRoot
-- (void)dealloc;
-@end
-@implementation OZSRoot
-- (void)dealloc {
-}
-@end
-";
+use common::{compile_and_run, OZOBJECT_SRC as PREAMBLE, OZSTRING_SRC};
 
 #[test]
 fn string_basic_cstring_length_and_equality() {
@@ -36,7 +27,7 @@ fn string_basic_cstring_length_and_equality() {
     // does, so this also proves isEqual: compares content, not identity).
     let src = format!(
         "{}{}\n\
-@interface StringTest : OZSRoot
+@interface StringTest : OZObject
 - (const char *)getHello;
 - (unsigned int)helloLength;
 - (int)sameStringEqual;
@@ -83,7 +74,7 @@ fn string_fast_access_length_and_cstring_via_ivars() {
     // must still be correct after the fact).
     let src = format!(
         "{}{}\n\
-@interface StringAccessTest : OZSRoot {{
+@interface StringAccessTest : OZObject {{
 	unsigned int _len;
 	int _cStringValid;
 }}

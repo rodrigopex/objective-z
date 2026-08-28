@@ -7,12 +7,10 @@
 //   - tests/behavior/cases/error/release_nil_safe.m
 //   - tests/behavior/cases/error/slab_reuse_after_free.m
 //
-// oz_static has no shared Foundation root yet, so both tests declare their
-// own `OZSRoot` (dealloc as a no-op), matching the pattern in
-// end_to_end_behavior.rs / static_bar_rejects.rs.
+// Uses the real `OZObject` (`common::OZOBJECT_SRC`) as the root class.
 
 mod common;
-use common::compile_and_run;
+use common::{compile_and_run, OZOBJECT_SRC};
 
 #[test]
 fn release_and_retain_nil_are_safe() {
@@ -25,16 +23,11 @@ fn release_and_retain_nil_are_safe() {
     // retainCount accessor at all; the refcount is an internal field
     // touched only by retain/release, never surfaced as a selector or
     // function. See OZ-092 (#190).
-    let src = "\
-@interface OZSRoot
-- (void)dealloc;
-@end
-@implementation OZSRoot
-- (void)dealloc {
-}
-@end
-
-@interface Marker : OZSRoot
+    let src = format!(
+        "{}{}",
+        OZOBJECT_SRC,
+        "\
+@interface Marker : OZObject
 @end
 @implementation Marker
 @end
@@ -49,8 +42,9 @@ int main(void) {
 	printf(\"retain_nil_is_null=%d\\n\", r == 0 ? 1 : 0);
 	return 0;
 }
-";
-    let stdout = compile_and_run(src, "release_and_retain_nil_are_safe");
+"
+    );
+    let stdout = compile_and_run(&src, "release_and_retain_nil_are_safe");
     assert_eq!(stdout, "release_nil_ok=1\nretain_nil_is_null=1\n");
 }
 
@@ -68,16 +62,11 @@ fn alloc_free_alloc_yields_independent_fresh_object() {
     // `{Class}_oz_alloc` is malloc-based with no fixed capacity (see
     // companion.rs's render_alloc_free doc comment), so there is no
     // bounded pool to exhaust. See OZ-092 (#190).
-    let src = "\
-@interface OZSRoot
-- (void)dealloc;
-@end
-@implementation OZSRoot
-- (void)dealloc {
-}
-@end
-
-@interface Gadget : OZSRoot {
+    let src = format!(
+        "{}{}",
+        OZOBJECT_SRC,
+        "\
+@interface Gadget : OZObject {
 	int _tag;
 }
 - (int)tag;
@@ -107,7 +96,8 @@ int main(void) {
 	[g2 release];
 	return 0;
 }
-";
-    let stdout = compile_and_run(src, "alloc_free_alloc_yields_independent_fresh_object");
+"
+    );
+    let stdout = compile_and_run(&src, "alloc_free_alloc_yields_independent_fresh_object");
     assert_eq!(stdout, "tag1=99\ng2_not_null=1\ntag2_default=0\n");
 }

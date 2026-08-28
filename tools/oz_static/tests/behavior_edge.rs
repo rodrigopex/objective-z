@@ -10,27 +10,11 @@
 // reject tests -- @(expr) legitimately boxes an enum/float/arithmetic
 // expression/function-call result in the real Python pipeline too.
 //
-// oz_static has no shared Foundation root yet, so every test declares its
-// own `OZSRoot`, same as end_to_end_behavior.rs / static_bar_rejects.rs.
-// This file's OZSRoot also declares `init` (returning self), since OZQ31's
-// factory methods chain `[[OZQ31 alloc] init]`.
+// Uses the real `OZObject` (`common::OZOBJECT_SRC`) as the root class,
+// same as every other oz_static test file.
 
 mod common;
-use common::{compile_and_run, OZQ31_SRC};
-
-const PREAMBLE: &str = "\
-@interface OZSRoot
-- (instancetype)init;
-- (void)dealloc;
-@end
-@implementation OZSRoot
-- (instancetype)init {
-	return self;
-}
-- (void)dealloc {
-}
-@end
-";
+use common::{compile_and_run, OZOBJECT_SRC as PREAMBLE, OZQ31_SRC};
 
 #[test]
 fn multiple_args_method() {
@@ -39,7 +23,7 @@ fn multiple_args_method() {
     // against both a normal sum and a sum that nets to zero.
     let src = format!(
         "{}\n\
-@interface Calc : OZSRoot
+@interface Calc : OZObject
 - (int)addA:(int)a b:(int)b c:(int)c;
 @end
 @implementation Calc
@@ -81,8 +65,8 @@ fn nil_returns_zero() {
 #include <stdio.h>
 
 int main(void) {{
-	OZSRoot *r = 0;
-	OZSRoot *result = [r retain];
+	OZObject *r = 0;
+	OZObject *result = [r retain];
 	printf(\"retain_nil_is_null=%d\\n\", result == 0);
 	[r release];
 	printf(\"release_nil_ok\\n\");
@@ -106,7 +90,7 @@ fn empty_class_no_methods() {
     // hop since EmptyClass isn't itself the root.
     let src = format!(
         "{}\n\
-@interface EmptyClass : OZSRoot
+@interface EmptyClass : OZObject
 @end
 @implementation EmptyClass
 @end
@@ -137,7 +121,7 @@ fn deep_inheritance() {
     // exact class's own override, not an ancestor's.
     let src = format!(
         "{}\n\
-@interface Level1 : OZSRoot
+@interface Level1 : OZObject
 - (int)depth;
 @end
 @implementation Level1
@@ -203,7 +187,7 @@ fn boxed_enum_boxes_int_via_ozq31() {
     // to spare) method parameter -- boxes through OZQ31's int32 path.
     let src = format!(
         "{}{}\n\
-@interface BoxedEnumTest : OZSRoot {{
+@interface BoxedEnumTest : OZObject {{
 	struct OZQ31 *_boxed;
 }}
 - (void)boxStatus:(int)code;
@@ -242,7 +226,7 @@ fn boxed_float_boxes_float_var_via_ozq31() {
     // emit.rs) rather than the literal-token heuristic.
     let src = format!(
         "{}{}\n\
-@interface BoxedFloatTest : OZSRoot {{
+@interface BoxedFloatTest : OZObject {{
 	struct OZQ31 *_boxed;
 }}
 - (void)run;
@@ -284,7 +268,7 @@ static int triple(int x) {{
 	return x * 3;
 }}
 
-@interface BoxedTest : OZSRoot {{
+@interface BoxedTest : OZObject {{
 	struct OZQ31 *_fromVar;
 	struct OZQ31 *_fromExpr;
 	struct OZQ31 *_fromCall;
@@ -358,7 +342,7 @@ fn boxed_call_expr_boxes_function_result_via_ozq31() {
 static int computeValue(void) {{
 	return 99;
 }}
-@interface BoxedCallTest : OZSRoot {{
+@interface BoxedCallTest : OZObject {{
 	struct OZQ31 *_boxed;
 }}
 - (void)run;

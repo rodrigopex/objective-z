@@ -15,17 +15,7 @@
 // oracle's OZ_PROTOCOL_SEND_* exercises directly.
 
 mod common;
-use common::compile_and_run;
-
-const PREAMBLE: &str = "\
-@interface OZSRoot
-- (void)dealloc;
-@end
-@implementation OZSRoot
-- (void)dealloc {
-}
-@end
-";
+use common::{compile_and_run, OZOBJECT_SRC as PREAMBLE};
 
 #[test]
 fn protocol_dispatch_routes_to_correct_class() {
@@ -37,7 +27,7 @@ fn protocol_dispatch_routes_to_correct_class() {
 - (int)toggle;
 @end
 
-@interface LightSwitch : OZSRoot <Togglable> {{
+@interface LightSwitch : OZObject <Togglable> {{
 	int _state;
 }}
 @end
@@ -45,7 +35,7 @@ fn protocol_dispatch_routes_to_correct_class() {
 - (int)toggle {{ _state = !_state; return _state; }}
 @end
 
-@interface Fan : OZSRoot <Togglable> {{
+@interface Fan : OZObject <Togglable> {{
 	int _running;
 }}
 @end
@@ -55,8 +45,8 @@ fn protocol_dispatch_routes_to_correct_class() {
 
 #include <stdio.h>
 int main(void) {{
-	OZSRoot *ls = (OZSRoot *)[LightSwitch alloc];
-	OZSRoot *f = (OZSRoot *)[Fan alloc];
+	OZObject *ls = (OZObject *)[LightSwitch alloc];
+	OZObject *f = (OZObject *)[Fan alloc];
 	printf(\"light=%d fan=%d\\n\", [ls toggle], [f toggle]);
 	[ls release];
 	[f release];
@@ -83,7 +73,7 @@ fn protocol_inheritance_exposes_super_protocol_methods() {
 - (int)sprint;
 @end
 
-@interface Athlete : OZSRoot <FastRunnable>
+@interface Athlete : OZObject <FastRunnable>
 @end
 @implementation Athlete
 - (int)run {{ return 5; }}
@@ -92,7 +82,7 @@ fn protocol_inheritance_exposes_super_protocol_methods() {
 
 #include <stdio.h>
 int main(void) {{
-	OZSRoot *a = (OZSRoot *)[Athlete alloc];
+	OZObject *a = (OZObject *)[Athlete alloc];
 	printf(\"run=%d sprint=%d\\n\", [a run], [a sprint]);
 	[a release];
 	return 0;
@@ -117,7 +107,7 @@ fn multiple_protocol_conformance() {
 - (int)write;
 @end
 
-@interface Stream : OZSRoot <Readable, Writable>
+@interface Stream : OZObject <Readable, Writable>
 @end
 @implementation Stream
 - (int)read {{ return 1; }}
@@ -126,7 +116,7 @@ fn multiple_protocol_conformance() {
 
 #include <stdio.h>
 int main(void) {{
-	OZSRoot *s = (OZSRoot *)[Stream alloc];
+	OZObject *s = (OZObject *)[Stream alloc];
 	printf(\"read=%d write=%d\\n\", [s read], [s write]);
 	[s release];
 	return 0;
@@ -150,13 +140,13 @@ fn typed_protocol_var_dispatches_per_instance() {
 - (int)measure;
 @end
 
-@interface Ruler : OZSRoot <Measurable>
+@interface Ruler : OZObject <Measurable>
 @end
 @implementation Ruler
 - (int)measure {{ return 30; }}
 @end
 
-@interface Scale : OZSRoot <Measurable>
+@interface Scale : OZObject <Measurable>
 @end
 @implementation Scale
 - (int)measure {{ return 100; }}
@@ -164,8 +154,8 @@ fn typed_protocol_var_dispatches_per_instance() {
 
 #include <stdio.h>
 int main(void) {{
-	OZSRoot *r = (OZSRoot *)[Ruler alloc];
-	OZSRoot *sc = (OZSRoot *)[Scale alloc];
+	OZObject *r = (OZObject *)[Ruler alloc];
+	OZObject *sc = (OZObject *)[Scale alloc];
 	printf(\"ruler=%d scale=%d\\n\", [r measure], [sc measure]);
 	[r release];
 	[sc release];

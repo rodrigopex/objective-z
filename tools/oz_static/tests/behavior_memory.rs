@@ -3,10 +3,10 @@
 // behavior_memory.rs - OZ-092: port of the Python pipeline's
 // tests/behavior/cases/memory/ fixtures to oz_static, using the Python
 // pipeline (the oracle) as ground truth for what each fixture actually
-// verifies. Same pattern as end_to_end_behavior.rs: a synthetic OZSRoot
-// preamble (oz_static has no shared Foundation root yet), the class(es)
-// under test, and a main() that printf's the values the original Unity
-// `_test.c` asserted, checked here via an exact stdout match.
+// verifies. Same pattern as end_to_end_behavior.rs: the real `OZObject`
+// (`common::OZOBJECT_SRC`) as the root class, the class(es) under test,
+// and a main() that printf's the values the original Unity `_test.c`
+// asserted, checked here via an exact stdout match.
 //
 // tests/behavior/cases/memory/heap_alloc.m is NOT ported here: it exercises
 // the Python pipeline's `allocWithHeap:` (a heap-backed OZHeap allocation
@@ -17,17 +17,7 @@
 // Foundation-adjacent features are Phase 2.
 
 mod common;
-use common::compile_and_run;
-
-const PREAMBLE: &str = "\
-@interface OZSRoot
-- (void)dealloc;
-@end
-@implementation OZSRoot
-- (void)dealloc {
-}
-@end
-";
+use common::{compile_and_run, OZOBJECT_SRC as PREAMBLE};
 
 #[test]
 fn nested_retain_release() {
@@ -36,7 +26,7 @@ fn nested_retain_release() {
     // only on the final (third) release.
     let src = format!(
         "{}\n\
-         @interface Handle : OZSRoot\n\
+         @interface Handle : OZObject\n\
          @end\n\
          @implementation Handle\n\
          @end\n\
@@ -69,7 +59,7 @@ fn release_decrements_refcount() {
     // release drops the refcount without deallocating while rc > 1.
     let src = format!(
         "{}\n\
-         @interface Counter : OZSRoot\n\
+         @interface Counter : OZObject\n\
          @end\n\
          @implementation Counter\n\
          @end\n\
@@ -106,7 +96,7 @@ fn release_frees_at_zero() {
     // allocator (or a subsequent alloc) in a broken state.
     let src = format!(
         "{}\n\
-         @interface Token : OZSRoot\n\
+         @interface Token : OZObject\n\
          @end\n\
          @implementation Token\n\
          @end\n\
@@ -134,7 +124,7 @@ fn retain_count_query() {
     // retainCount reflects the current refcount at each step.
     let src = format!(
         "{}\n\
-         @interface Tracker : OZSRoot\n\
+         @interface Tracker : OZObject\n\
          @end\n\
          @implementation Tracker\n\
          @end\n\
@@ -164,7 +154,7 @@ fn retain_count_nil_returns_zero() {
     // is 0, not a crash.
     let src = format!(
         "{}\n\
-         @interface Tracker : OZSRoot\n\
+         @interface Tracker : OZObject\n\
          @end\n\
          @implementation Tracker\n\
          @end\n\
@@ -188,7 +178,7 @@ fn retain_increments_refcount() {
     // retain increments the refcount.
     let src = format!(
         "{}\n\
-         @interface Node : OZSRoot\n\
+         @interface Node : OZObject\n\
          @end\n\
          @implementation Node\n\
          @end\n\
