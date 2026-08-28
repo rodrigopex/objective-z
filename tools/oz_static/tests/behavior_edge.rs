@@ -1,27 +1,32 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // behavior_edge.rs - port of the Python-pipeline "edge" behavior category
-// (tests/behavior/cases/edge/) to oz_static, per OZ-092. Only 4 of the 8
-// upstream fixtures are in scope here (multiple_args_method,
-// nil_returns_zero, empty_class_no_methods, deep_inheritance); the other
-// 4 (boxed_enum, boxed_float, boxed_expression, boxed_call_expr) all use
-// ObjC `@`-boxed-literal syntax, which the static subset hard-rejects by
-// design (boxed-literal support is tracked separately as issue #190
-// Phase 2) -- those are covered below as `expect_reject` tests instead of
-// ports.
+// (tests/behavior/cases/edge/) to oz_static, per OZ-092. All 8 upstream
+// fixtures are in scope: multiple_args_method, nil_returns_zero,
+// empty_class_no_methods, deep_inheritance, plus boxed_enum, boxed_float,
+// boxed_expression, boxed_call_expr -- now that OZQ31 exists
+// (behavior_foundation_q31.rs), the 4 boxed-literal fixtures are real
+// accept+run tests against the real OZQ31 (via `common::OZQ31_SRC`), not
+// reject tests -- @(expr) legitimately boxes an enum/float/arithmetic
+// expression/function-call result in the real Python pipeline too.
 //
 // oz_static has no shared Foundation root yet, so every test declares its
-// own `OZSRoot` (dealloc as a no-op is enough), same as
-// end_to_end_behavior.rs / static_bar_rejects.rs.
+// own `OZSRoot`, same as end_to_end_behavior.rs / static_bar_rejects.rs.
+// This file's OZSRoot also declares `init` (returning self), since OZQ31's
+// factory methods chain `[[OZQ31 alloc] init]`.
 
 mod common;
-use common::{compile_and_run, expect_reject};
+use common::{compile_and_run, OZQ31_SRC};
 
 const PREAMBLE: &str = "\
 @interface OZSRoot
+- (instancetype)init;
 - (void)dealloc;
 @end
 @implementation OZSRoot
+- (instancetype)init {
+	return self;
+}
 - (void)dealloc {
 }
 @end
@@ -189,109 +194,195 @@ int main(void) {{
     assert_eq!(stdout, "level4=4\nlevel3=3\nlevel1=1\n");
 }
 
-// --- out of scope: boxed literals (issue #190 Phase 2) -----------------
-//
-// tests/behavior/cases/edge/boxed_enum.m, boxed_float.m, boxed_expression.m
-// and boxed_call_expr.m all exercise ObjC `@`-boxed-literal syntax
-// (`@(code)`, `@(f)`, `@(val + 3)`, `@(computeValue())`) to build an
-// OZQ31 via the Python pipeline's boxing machinery. The static subset has
-// no boxed-literal support and none is being added here -- instead each
-// fixture is represented by a reject test confirming the static bar
-// actually names and rejects the construct (never silently passes it
-// through as broken C).
+// --- boxed literals, via the real OZQ31 (OZ-092 Foundation work) -------
 
 #[test]
-fn boxed_enum_rejected() {
+fn boxed_enum_boxes_int_via_ozq31() {
     // boxed_enum.m: `_boxed = @(code);` where `code` is an enum-typed
-    // method parameter.
+    // (here: plain int, oz_static has no enum-in-param-position support
+    // to spare) method parameter -- boxes through OZQ31's int32 path.
     let src = format!(
-        "{}\n\
+        "{}{}\n\
 @interface BoxedEnumTest : OZSRoot {{
-	int _boxed;
+	struct OZQ31 *_boxed;
 }}
 - (void)boxStatus:(int)code;
+- (int)boxedValue;
 @end
 @implementation BoxedEnumTest
 - (void)boxStatus:(int)code {{
 	_boxed = @(code);
 }}
+- (int)boxedValue {{
+	return [_boxed int32Value];
+}}
 @end
+
+#include <stdio.h>
+int main(void) {{
+	BoxedEnumTest *t = [BoxedEnumTest alloc];
+	[t boxStatus:200];
+	printf(\"ok=%d\\n\", [t boxedValue]);
+	[t boxStatus:404];
+	printf(\"not_found=%d\\n\", [t boxedValue]);
+	return 0;
+}}
 ",
-        PREAMBLE
+        PREAMBLE, OZQ31_SRC
     );
-    let diags = expect_reject(&src);
-    assert!(diags.contains("boxed_expression"), "diagnostics: {}", diags);
+    let stdout = compile_and_run(&src, "boxed_enum_boxes_int_via_ozq31");
+    assert_eq!(stdout, "ok=200\nnot_found=404\n");
 }
 
 #[test]
-fn boxed_float_rejected() {
-    // boxed_float.m: `_boxed = @(f);` where `f` is a float local.
+fn boxed_float_boxes_float_var_via_ozq31() {
+    // boxed_float.m: `_boxed = @(f);` where `f` is a float local -- the
+    // boxed spelling (a bare identifier) carries no float hint, so this
+    // exercises render_boxed_at_expression's scope-type fallback (see
+    // emit.rs) rather than the literal-token heuristic.
     let src = format!(
-        "{}\n\
+        "{}{}\n\
 @interface BoxedFloatTest : OZSRoot {{
-	int _boxed;
+	struct OZQ31 *_boxed;
 }}
 - (void)run;
+- (float)boxedValue;
 @end
 @implementation BoxedFloatTest
 - (void)run {{
 	float f = 3.14f;
 	_boxed = @(f);
 }}
+- (float)boxedValue {{
+	return [_boxed floatValue];
+}}
 @end
+
+#include <stdio.h>
+int main(void) {{
+	BoxedFloatTest *t = [BoxedFloatTest alloc];
+	[t run];
+	float v = [t boxedValue];
+	printf(\"within_tolerance=%s\\n\", (v > 3.13f && v < 3.15f) ? \"ok\" : \"FAIL\");
+	return 0;
+}}
 ",
-        PREAMBLE
+        PREAMBLE, OZQ31_SRC
     );
-    let diags = expect_reject(&src);
-    assert!(diags.contains("boxed_expression"), "diagnostics: {}", diags);
+    let stdout = compile_and_run(&src, "boxed_float_boxes_float_var_via_ozq31");
+    assert_eq!(stdout, "within_tolerance=ok\n");
 }
 
 #[test]
-fn boxed_expression_rejected() {
-    // boxed_expression.m: `_fromExpr = @(val + 3);` -- an arithmetic
-    // expression boxed directly.
+fn boxed_expression_boxes_var_expr_call_float_uint_via_ozq31() {
+    // boxed_expression.m: boxes a bare variable, an arithmetic
+    // expression, a function-call result, a float, and an unsigned int,
+    // all via `@(...)`.
     let src = format!(
-        "{}\n\
+        "{}{}\n\
+static int triple(int x) {{
+	return x * 3;
+}}
+
 @interface BoxedTest : OZSRoot {{
-	int _fromExpr;
+	struct OZQ31 *_fromVar;
+	struct OZQ31 *_fromExpr;
+	struct OZQ31 *_fromCall;
+	struct OZQ31 *_fromFloat;
+	struct OZQ31 *_fromUint;
 }}
 - (void)run;
+- (int)fromVarValue;
+- (int)fromExprValue;
+- (int)fromCallValue;
+- (float)fromFloatValue;
+- (int)fromUintValue;
 @end
+
 @implementation BoxedTest
 - (void)run {{
 	int val = 7;
+	_fromVar = @(val);
 	_fromExpr = @(val + 3);
+	_fromCall = @(triple(val));
+	float f = 2.5f;
+	_fromFloat = @(f);
+	unsigned int u = 1000;
+	_fromUint = @(u);
+}}
+- (int)fromVarValue {{
+	return [_fromVar int32Value];
+}}
+- (int)fromExprValue {{
+	return [_fromExpr int32Value];
+}}
+- (int)fromCallValue {{
+	return [_fromCall int32Value];
+}}
+- (float)fromFloatValue {{
+	return [_fromFloat floatValue];
+}}
+- (int)fromUintValue {{
+	return [_fromUint int32Value];
 }}
 @end
+
+#include <stdio.h>
+int main(void) {{
+	BoxedTest *t = [BoxedTest alloc];
+	[t run];
+	printf(\"fromVar=%d\\n\", [t fromVarValue]);
+	printf(\"fromExpr=%d\\n\", [t fromExprValue]);
+	printf(\"fromCall=%d\\n\", [t fromCallValue]);
+	float ff = [t fromFloatValue];
+	printf(\"fromFloat=%s\\n\", (ff > 2.49f && ff < 2.51f) ? \"ok\" : \"FAIL\");
+	printf(\"fromUint=%u\\n\", (unsigned int)[t fromUintValue]);
+	return 0;
+}}
 ",
-        PREAMBLE
+        PREAMBLE, OZQ31_SRC
     );
-    let diags = expect_reject(&src);
-    assert!(diags.contains("boxed_expression"), "diagnostics: {}", diags);
+    let stdout = compile_and_run(&src, "boxed_expression_boxes_var_expr_call_float_uint_via_ozq31");
+    assert_eq!(
+        stdout,
+        "fromVar=7\nfromExpr=10\nfromCall=21\nfromFloat=ok\nfromUint=1000\n"
+    );
 }
 
 #[test]
-fn boxed_call_expr_rejected() {
+fn boxed_call_expr_boxes_function_result_via_ozq31() {
     // boxed_call_expr.m: `_boxed = @(computeValue());` -- a function
     // call's result boxed directly.
     let src = format!(
-        "{}\n\
+        "{}{}\n\
 static int computeValue(void) {{
 	return 99;
 }}
 @interface BoxedCallTest : OZSRoot {{
-	int _boxed;
+	struct OZQ31 *_boxed;
 }}
 - (void)run;
+- (int)boxedValue;
 @end
 @implementation BoxedCallTest
 - (void)run {{
 	_boxed = @(computeValue());
 }}
+- (int)boxedValue {{
+	return [_boxed int32Value];
+}}
 @end
+
+#include <stdio.h>
+int main(void) {{
+	BoxedCallTest *t = [BoxedCallTest alloc];
+	[t run];
+	printf(\"boxed=%d\\n\", [t boxedValue]);
+	return 0;
+}}
 ",
-        PREAMBLE
+        PREAMBLE, OZQ31_SRC
     );
-    let diags = expect_reject(&src);
-    assert!(diags.contains("boxed_expression"), "diagnostics: {}", diags);
+    let stdout = compile_and_run(&src, "boxed_call_expr_boxes_function_result_via_ozq31");
+    assert_eq!(stdout, "boxed=99\n");
 }
