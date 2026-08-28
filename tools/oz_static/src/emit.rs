@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// emit.rs - in-place textual substitution emitter.
-//
-// Only ObjC-specific syntax spans (interface/implementation wrappers,
-// method headers, message sends, non-capturing blocks) are replaced at
-// their original byte position; everything else is byte-identical to the
-// input. Multi-implementor dispatch (dealloc's const-vtable) and pool
-// registration are isolated into one small companion file, mirroring the
+// emit.rs - in-place textual substitution emitter, with a literate output
+// goal: every generated line should be traceable to source. ObjC-specific
+// syntax spans are replaced at their original byte position, decorated
+// with the original text as a comment (a banner for @interface/
+// @implementation boundaries, a one-line `/* ... */` above each
+// translated top-level statement/declaration/definition); anything that
+// didn't need translation stays byte-identical, no comment noise. Multi-
+// implementor dispatch (dealloc's const-vtable) and pool registration are
+// isolated into one small generated companion file, mirroring the
 // existing oz_dispatch.c/h pattern.
 
 use std::collections::HashMap;
@@ -18,6 +20,72 @@ use crate::parse::line_col;
 
 fn node_text<'a>(node: Node, src: &'a str) -> &'a str {
     &src[node.start_byte()..node.end_byte()]
+}
+
+/// Collapse whitespace (including newlines) into single spaces, for a
+/// readable one-line `/* ... */` comment out of a possibly multi-line or
+/// oddly-indented original statement.
+fn one_line(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+const BANNER_WIDTH: usize = 80;
+
+/// A single-line decorated banner comment: "/* {text} {stars}*/", padded
+/// to BANNER_WIDTH (never truncates -- if `text` alone is already past
+/// the width, no padding is added).
+fn banner_close(text: &str) -> String {
+    let prefix = "/* ";
+    let suffix = "*/";
+    let min_len = prefix.len() + text.len() + 1 + suffix.len();
+    let stars = BANNER_WIDTH.saturating_sub(min_len).max(1);
+    format!("{}{} {}{}", prefix, text, "*".repeat(stars), suffix)
+}
+
+/// The opening line of a multi-line banner: decorated, but with no
+/// closing `*/` yet (more original text follows on subsequent lines).
+fn banner_open(text: &str) -> String {
+    let prefix = "/*** ";
+    let min_len = prefix.len() + text.len() + 1;
+    let stars = BANNER_WIDTH.saturating_sub(min_len).max(1);
+    format!("{}{} {}", prefix, text, "*".repeat(stars))
+}
+
+/// Wrap `original` (verbatim, possibly multi-line -- e.g. an interface
+/// header through its ivars block) as a banner comment: a single-line
+/// original becomes one decorated `/* ... */` line; a multi-line original
+/// gets its first line decorated (no closing `*/` yet), the remaining
+/// lines verbatim, and `*/` appended directly to the last line.
+fn banner_wrap(original: &str) -> String {
+    let original = original.trim_end();
+    let mut lines: Vec<&str> = original.lines().collect();
+    if lines.len() <= 1 {
+        return format!("{}\n", banner_close(original));
+    }
+    let first = lines.remove(0);
+    let last = lines.pop().unwrap();
+    let mut out = format!("{}\n", banner_open(first));
+    for l in &lines {
+        out.push_str(l);
+        out.push('\n');
+    }
+    out.push_str(last);
+    out.push_str("*/\n");
+    out
+}
+
+/// The verbatim source text of a `class_interface`/`class_implementation`
+/// node up to (not including) its first declaration/definition/`@end` --
+/// i.e. just the header (name, superclass, category, ivars block for
+/// interfaces), trimmed of trailing whitespace.
+fn header_text(node: Node, src: &str, stop_kinds: &[&str]) -> String {
+    let mut cursor = node.walk();
+    let end = node
+        .children(&mut cursor)
+        .find(|c| stop_kinds.contains(&c.kind()) || c.kind() == "@end")
+        .map(|c| c.start_byte())
+        .unwrap_or(node.end_byte());
+    src[node.start_byte()..end].trim_end().to_string()
 }
 
 /// Pre-scan a body for every local `declaration` and record its
@@ -378,21 +446,88 @@ fn render_block(node: Node, ctx: &mut EmitCtx) -> (String, String) {
             // Block bodies use the same flat scope as their enclosing
             // method/function (a known spike simplification).
             collect_local_decls(body, ctx);
-            render_expr(body, ctx).0
+            render_body_with_comments(body, ctx)
         }
-        None => "{ }".to_string(),
+        None => "{\n}".to_string(),
     };
 
-    ctx.hoisted_blocks.push(format!("static void {}{} {}\n", name, params, body_text));
+    ctx.hoisted_blocks.push(format!(
+        "/* block at {}:{} -- synthesized static function */\nstatic void {}{} {}\n",
+        line, col, name, params, body_text
+    ));
     (name.clone(), "id".to_string())
 }
 
-/// One top-level `class_interface` (non-category) block. The struct
-/// layout is hoisted into the companion header (`ctx.hoisted_structs`) --
-/// both this class's own method definitions AND the companion's alloc/
-/// dealloc-dispatch code need the full definition, so it can't live only
-/// in this translation unit's in-place output. The prototypes stay
-/// in-place at the interface's original source location.
+/// Render a `compound_statement` body. If nothing inside needed
+/// translation, returned byte-identical to the original. Otherwise the
+/// whole body is reformatted one-statement-per-line, tab-indented: a
+/// translated statement gets its original (collapsed to one line) as a
+/// `/* ... */` comment directly above the translated line; an untouched
+/// statement is printed as-is. This trades exact preservation of the
+/// original body's own formatting (blank lines, inline comments between
+/// statements) for consistent, predictable output once a body is already
+/// being annotated -- a deliberate simplification, not an oversight.
+/// Nested statements (inside an if/for/etc) are still translated by the
+/// ordinary recursive mechanism -- they are not re-commented at every
+/// nesting level; the comment on the enclosing top-level statement is
+/// what points back to source.
+fn render_body_with_comments(body: Node, ctx: &mut EmitCtx) -> String {
+    let mut cursor = body.walk();
+    let children: Vec<Node> = body.children(&mut cursor).collect();
+    if children.len() < 2 {
+        return node_text(body, ctx.src).to_string();
+    }
+    let stmts = &children[1..children.len() - 1];
+
+    let rendered_stmts: Vec<(String, &str)> = stmts
+        .iter()
+        .map(|s| (render_expr(*s, ctx).0, node_text(*s, ctx.src)))
+        .collect();
+    if rendered_stmts.iter().all(|(rendered, original)| rendered == original) {
+        return node_text(body, ctx.src).to_string();
+    }
+
+    let mut out = String::from("{\n");
+    for (rendered, original) in &rendered_stmts {
+        if rendered == original {
+            out.push('\t');
+            out.push_str(original);
+        } else {
+            out.push_str("\t/* ");
+            out.push_str(&one_line(original));
+            out.push_str(" */\n\t");
+            out.push_str(rendered);
+        }
+        out.push('\n');
+    }
+    out.push('}');
+    out
+}
+
+/// Render one top-level statement/declaration node: byte-identical if
+/// translation changed nothing, otherwise the original (collapsed to one
+/// line) as a `/* ... */` comment followed by the translated text on its
+/// own line at `indent`.
+fn render_stmt_with_comment(node: Node, ctx: &mut EmitCtx, indent: &str) -> String {
+    let original = node_text(node, ctx.src);
+    let rendered = render_expr(node, ctx).0;
+    if rendered == original {
+        original.to_string()
+    } else {
+        format!("/* {} */\n{}{}", one_line(original), indent, rendered)
+    }
+}
+
+/// One top-level `class_interface` (non-category) block. Emits a banner
+/// comment wrapping the original header (name/superclass/ivars) verbatim,
+/// the struct definition (root only -- see below), each declared method
+/// as a `/* original */`-commented prototype, and a closing banner.
+///
+/// Only the root class's full struct is hoisted into the companion header
+/// (`ctx.hoisted_structs`) -- oz_static_retain/release/the dealloc switch
+/// need its tracking fields directly. Every other class's struct (and its
+/// alloc/free, which need it for sizeof) stays in-place right here; the
+/// companion only forward-declares it.
 fn render_interface(node: Node, ctx: &mut EmitCtx, program: &Program) -> String {
     let name = ctx.class_name.clone();
     let info = &program.classes[&name];
@@ -431,23 +566,44 @@ fn render_interface(node: Node, ctx: &mut EmitCtx, program: &Program) -> String 
     let struct_text =
         format!("struct {name} {{\n{base}{ivars}}};\n", name = name, base = base_field, ivars = ivars_text);
 
-    let mut protos = String::new();
+    let open_banner = banner_wrap(&header_text(node, ctx.src, &["method_declaration"]));
+    let close_banner = format!("{}\n", banner_close(&format!("@end -- interface {}", name)));
+
+    // Each declared method: its own line(s) as a comment, then the
+    // prototype. Any method known to the class but NOT declared in this
+    // @interface (e.g. only ever defined in @implementation) still gets
+    // a plain prototype -- just without a "from source" comment, since
+    // there's no interface declaration to show.
+    let mut declared: std::collections::HashSet<(String, bool)> = std::collections::HashSet::new();
+    let mut decls = String::new();
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.kind() == "method_declaration" {
+            let known: std::collections::HashSet<String> = program.classes.keys().cloned().collect();
+            let sig = crate::collect::extract_method_sig(child, ctx.src, &name, &known);
+            declared.insert((sig.selector.clone(), sig.is_class_method));
+            decls.push_str(&format!("/* {} */\n", one_line(node_text(child, ctx.src))));
+            decls.push_str(&render_prototype(&name, &sig));
+        }
+    }
     for m in &info.methods {
-        protos.push_str(&render_prototype(&name, m));
+        if !declared.contains(&(m.selector.clone(), m.is_class_method)) {
+            decls.push_str(&render_prototype(&name, m));
+        }
     }
 
     if info.superclass.is_none() {
-        // Root: full struct hoisted to the companion, since
-        // oz_static_retain/release/the dealloc switch need its tracking
-        // fields directly. Its alloc/free live there too.
+        // Root: full struct hoisted to the companion; only the banner +
+        // method prototypes stay in-place.
         ctx.hoisted_structs.push((name.clone(), struct_text));
-        protos
+        format!("{}{}{}", open_banner, decls, close_banner)
     } else {
-        // Every other class: struct + alloc/free (which need the full
-        // struct for sizeof) stay in-place, next to this class's own
-        // methods. The companion only forward-declares the type.
         let root = program.root_class().unwrap_or(&name).to_string();
-        format!("{}\n{}\n{}", struct_text, crate::companion::render_alloc_free(&name, &root), protos)
+        let alloc_free = format!(
+            "/* synthesized: alloc/free (not from source) */\n{}",
+            crate::companion::render_alloc_free(&name, &root)
+        );
+        format!("{}{}\n{}\n{}{}", open_banner, struct_text, alloc_free, decls, close_banner)
     }
 }
 
@@ -469,14 +625,24 @@ pub(crate) fn render_prototype(class_name: &str, m: &crate::model::MethodSig) ->
     format!("{} {}({});\n", m.return_type, fn_name, params)
 }
 
-/// One category `class_interface (Category)` block -> just prototypes.
-fn render_category_interface(name: &str, program: &Program) -> String {
+/// One category `class_interface (Category)` block -> banner + each
+/// declared method as a `/* original */`-commented prototype.
+fn render_category_interface(node: Node, src: &str, name: &str, program: &Program) -> String {
     let info = &program.classes[name];
-    let mut protos = String::new();
-    for m in &info.methods {
-        protos.push_str(&render_prototype(name, m));
+    let open_banner = banner_wrap(&header_text(node, src, &["method_declaration"]));
+    let close_banner = format!("{}\n", banner_close(&format!("@end -- interface {} (category)", name)));
+    let mut decls = String::new();
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.kind() == "method_declaration" {
+            let known: std::collections::HashSet<String> = program.classes.keys().cloned().collect();
+            let sig = crate::collect::extract_method_sig(child, src, name, &known);
+            decls.push_str(&format!("/* {} */\n", one_line(node_text(child, src))));
+            decls.push_str(&render_prototype(name, &sig));
+        }
     }
-    protos
+    let _ = info; // reserved: category-only method filtering could go here
+    format!("{}{}{}", open_banner, decls, close_banner)
 }
 
 fn render_method_definition(
@@ -518,6 +684,11 @@ fn render_method_definition(
     let mut cursor = node.walk();
     let body = node.children(&mut cursor).find(|c| c.kind() == "compound_statement");
 
+    // The header comment covers just the original signature (through
+    // the last param), not the body -- the body gets its own
+    // per-statement comments below.
+    let header = header_text(node, ctx.src, &["compound_statement"]);
+
     let body_text = match body {
         Some(body) => {
             let class_info = ctx.program.classes[class_name].clone();
@@ -529,13 +700,13 @@ fn render_method_definition(
                 node_text(body, ctx.src).to_string()
             } else {
                 collect_local_decls(body, ctx);
-                render_expr(body, ctx).0
+                render_body_with_comments(body, ctx)
             }
         }
-        None => "{ }".to_string(),
+        None => "{\n}".to_string(),
     };
 
-    format!("{} {}({})\n{}\n", ret_ty, fn_name, sig_params, body_text)
+    format!("/* {} */\n{} {}({})\n{}\n", one_line(&header), ret_ty, fn_name, sig_params, body_text)
 }
 
 pub struct EmitOutput {
@@ -564,9 +735,8 @@ pub fn emit(source: &str, program: &Program) -> EmitOutput {
         match node.kind() {
             "class_interface" => {
                 let (name, _, category) = crate::collect::class_header(node, source);
-                if let Some(cat) = category {
-                    let _ = cat;
-                    let text = render_category_interface(&name, program);
+                if category.is_some() {
+                    let text = render_category_interface(node, source, &name, program);
                     patches.push(Patch { start: node.start_byte(), end: node.end_byte(), text });
                     continue;
                 }
@@ -602,7 +772,8 @@ pub fn emit(source: &str, program: &Program) -> EmitOutput {
                     block_counter: 0,
                 };
                 let mut out = String::new();
-                out.push_str(&format!("/* @implementation {} */\n\n", name));
+                out.push_str(&banner_wrap(&header_text(node, source, &["implementation_definition"])));
+                out.push('\n');
                 let mut c2 = node.walk();
                 for child in node.children(&mut c2) {
                     if child.kind() != "implementation_definition" {
@@ -632,18 +803,17 @@ pub fn emit(source: &str, program: &Program) -> EmitOutput {
                             // Not a method: e.g. a `static Foo *g;` file-scope
                             // declaration written directly inside
                             // @implementation. Copy through (translating any
-                            // message send it happens to contain) instead of
-                            // silently dropping it.
+                            // message send it happens to contain, with a
+                            // before-comment if so) instead of silently
+                            // dropping it.
                             ctx.scope = ivars_scope.clone();
-                            if needs_translation(child) {
-                                out.push_str(&render_expr(child, &mut ctx).0);
-                            } else {
-                                out.push_str(node_text(child, ctx.src));
-                            }
+                            out.push_str(&render_stmt_with_comment(child, &mut ctx, ""));
                             out.push('\n');
                         }
                     }
                 }
+                out.push_str(&banner_close(&format!("@end -- implementation {}", name)));
+                out.push('\n');
                 diags.extend(ctx.diags);
                 hoisted_blocks.extend(ctx.hoisted_blocks);
                 hoisted_structs.extend(ctx.hoisted_structs);
@@ -669,12 +839,10 @@ pub fn emit(source: &str, program: &Program) -> EmitOutput {
                 {
                     if needs_translation(body) {
                         collect_local_decls(body, &mut ctx);
-                        let (text, _) = render_expr(body, &mut ctx);
-                        patches.push(Patch {
-                            start: body.start_byte(),
-                            end: body.end_byte(),
-                            text,
-                        });
+                        let text = render_body_with_comments(body, &mut ctx);
+                        if text != node_text(body, source) {
+                            patches.push(Patch { start: body.start_byte(), end: body.end_byte(), text });
+                        }
                     }
                 }
                 diags.extend(ctx.diags);
