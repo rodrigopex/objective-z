@@ -200,6 +200,10 @@ struct EmitCtx<'a> {
     /// file instead.
     hoisted_blocks: Vec<(String, String)>,
     hoisted_structs: Vec<(String, String)>,
+    /// (extern forward-declaration, real definition) pairs for boxed
+    /// string literals -- see `render_boxed_string_literal`. Assembled
+    /// into the primary source exactly like `hoisted_blocks`.
+    hoisted_string_literals: Vec<(String, String)>,
     block_counter: usize,
 }
 
@@ -486,36 +490,71 @@ fn is_boxed_string_literal(node: Node) -> bool {
     found
 }
 
-/// Desugars a boxed string literal `@"..."` into a class-method call on
-/// `OZString`: `stringWithCString:`, passing the string content through
-/// as a plain C string literal. A plain (non-`@`) string literal is left
-/// completely untouched -- it's already valid C.
+/// Desugars a boxed string literal `@"..."` the same way the Python
+/// pipeline's oracle does (see `tools/oz_transpile/emit.py`'s
+/// `ObjCStringLiteral` handling): NOT a class-method call -- OZString's
+/// ivars (`_length`/`_hash`/`_data`) are all compile-time-computable and
+/// its `dealloc` is a no-op (see `src/OZString.m`), so the literal
+/// desugars directly to a static, immortal `struct OZString` instance
+/// (`_hash` is always `0` -- the real pipeline never actually computes a
+/// hash for it either) plus a cast-to-pointer expression at the use site.
+/// Each unique literal gets its own instance (no dedup, unlike the Python
+/// oracle -- a spike simplification; duplicates just cost a few more
+/// bytes of `.rodata`, not correctness). A plain (non-`@`) string literal
+/// is left completely untouched -- it's already valid C.
+///
+/// Placement mirrors `render_block`'s hoisting exactly, and for the same
+/// underlying reason (a global/global-like declaration referenced by name
+/// at its use site must be visible there, but OZString's own `struct
+/// OZString` definition -- inline at OZString's `@interface`, since it's
+/// not the root class -- may appear later in the source than an earlier
+/// class's use of `@"..."`): an `extern` forward declaration goes ahead
+/// of every use site (into `ctx.hoisted_string_literals`, assembled into
+/// the *primary* source right after its `#include`, same as block
+/// prototypes), and the real definition is appended once, after every
+/// class -- by which point `struct OZString` is always already defined.
+/// The forward declaration deliberately omits `static` (which the real
+/// definition also then can't use, to avoid an extern/static linkage
+/// clash) -- internal linkage doesn't matter for a single-translation-
+/// unit generated file, so external linkage on a name this specific to
+/// its own source position is a harmless simplification.
 fn render_boxed_string_literal(node: Node, ctx: &mut EmitCtx) -> (String, String) {
     if !is_boxed_string_literal(node) {
         return (node_text(node, ctx.src).to_string(), "id".to_string());
     }
     let (line, col) = line_col(ctx.src, node.start_byte());
+    if !ctx.program.is_class("OZString") {
+        ctx.err(
+            node,
+            format!(
+                "boxed string literal at {}:{} desugars to a static 'struct OZString' instance, but no class 'OZString' is defined in this source",
+                line, col
+            ),
+        );
+        return ("0".to_string(), "int".to_string());
+    }
+
     let mut cursor = node.walk();
     let content = node
         .children(&mut cursor)
         .find(|c| c.kind() == "string_content")
         .map(|c| node_text(c, ctx.src).to_string())
         .unwrap_or_default();
+    // Matches the Python oracle's `len(raw)` exactly: the byte length of
+    // the literal's source text between the quotes, before any escape
+    // sequence is interpreted (so `"\n"` counts as length 2, not 1).
+    let byte_len = content.len();
     let c_literal = format!("\"{}\"", content);
 
-    match synthetic_class_call(ctx, "OZString", "stringWithCString:", &[c_literal]) {
-        Some((call, ret_ty)) => (call, ret_ty),
-        None => {
-            ctx.err(
-                node,
-                format!(
-                    "boxed string literal at {}:{} desugars to '[OZString stringWithCString:]', but no class 'OZString' with that class method is defined in this source",
-                    line, col
-                ),
-            );
-            ("0".to_string(), "int".to_string())
-        }
-    }
+    ctx.block_counter += 1;
+    let name = format!("_oz_str_L{}_C{}_{}", line, col, ctx.block_counter);
+    let prototype = format!("extern struct OZString {};\n", name);
+    let definition = format!(
+        "struct OZString {} = {{ .base = {{ .oz_class_id = OZ_STATIC_CLASS_OZString, .oz_refcount = 1, .oz_deallocating = 0 }}, ._length = {}, ._hash = 0, ._data = {} }};\n",
+        name, byte_len, c_literal
+    );
+    ctx.hoisted_string_literals.push((prototype, definition));
+    (format!("(struct OZString *)&{}", name), "struct OZString *".to_string())
 }
 
 fn render_message(node: Node, ctx: &mut EmitCtx) -> (String, String) {
@@ -987,6 +1026,7 @@ pub fn emit(source: &str, program: &Program) -> EmitOutput {
     let mut hoisted_blocks: Vec<(String, String)> = Vec::new();
     let mut hoisted_structs: Vec<(String, String)> = Vec::new();
     let mut hoisted_enums: Vec<String> = Vec::new();
+    let mut hoisted_string_literals: Vec<(String, String)> = Vec::new();
 
     struct Patch {
         start: usize,
@@ -1030,6 +1070,7 @@ pub fn emit(source: &str, program: &Program) -> EmitOutput {
                     diags: Vec::new(),
                     hoisted_blocks: Vec::new(),
                     hoisted_structs: Vec::new(),
+                    hoisted_string_literals: Vec::new(),
                     block_counter: 0,
                 };
                 let text = render_interface(node, &mut ctx, program);
@@ -1049,6 +1090,7 @@ pub fn emit(source: &str, program: &Program) -> EmitOutput {
                     diags: Vec::new(),
                     hoisted_blocks: Vec::new(),
                     hoisted_structs: Vec::new(),
+                    hoisted_string_literals: Vec::new(),
                     block_counter: 0,
                 };
                 let mut out = String::new();
@@ -1097,6 +1139,7 @@ pub fn emit(source: &str, program: &Program) -> EmitOutput {
                 diags.extend(ctx.diags);
                 hoisted_blocks.extend(ctx.hoisted_blocks);
                 hoisted_structs.extend(ctx.hoisted_structs);
+                hoisted_string_literals.extend(ctx.hoisted_string_literals);
                 patches.push(Patch { start: node.start_byte(), end: node.end_byte(), text: out });
             }
             "enum_specifier" => {
@@ -1132,6 +1175,7 @@ pub fn emit(source: &str, program: &Program) -> EmitOutput {
                     diags: Vec::new(),
                     hoisted_blocks: Vec::new(),
                     hoisted_structs: Vec::new(),
+                    hoisted_string_literals: Vec::new(),
                     block_counter: 0,
                 };
                 let mut c2 = node.walk();
@@ -1149,6 +1193,7 @@ pub fn emit(source: &str, program: &Program) -> EmitOutput {
                 diags.extend(ctx.diags);
                 hoisted_blocks.extend(ctx.hoisted_blocks);
                 hoisted_structs.extend(ctx.hoisted_structs);
+                hoisted_string_literals.extend(ctx.hoisted_string_literals);
             }
             _ => {}
         }
@@ -1174,6 +1219,21 @@ pub fn emit(source: &str, program: &Program) -> EmitOutput {
             prototypes.push_str(prototype);
             definitions.push_str(definition);
             definitions.push('\n');
+        }
+        prototypes.push('\n');
+    }
+
+    // Boxed string literals (`@"..."`) -- same prototype-ahead /
+    // definition-after split as blocks, for the same reason: the real
+    // definition needs `struct OZString` (defined inline at OZString's
+    // own `@interface`, which may appear later in the source than an
+    // earlier class's use of the literal) already visible.
+    if !hoisted_string_literals.is_empty() {
+        prototypes.push_str("/* boxed string literals, hoisted -- extern forward declarations (defined below, after every class) */\n");
+        definitions.push_str("\n/* boxed string literals, hoisted -- static struct OZString instances */\n");
+        for (prototype, definition) in &hoisted_string_literals {
+            prototypes.push_str(prototype);
+            definitions.push_str(definition);
         }
         prototypes.push('\n');
     }

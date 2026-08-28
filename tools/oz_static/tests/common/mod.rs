@@ -454,3 +454,127 @@ static inline void _oz_q31_div(int32_t a_raw, uint8_t a_shift, int32_t b_raw, ui
 
 @end
 ";
+
+/// OZString, the immutable-string Foundation class, transplanted from the
+/// real `src/OZString.m` / `include/oz_sdk/Foundation/OZString.h` (same
+/// method bodies, adapted only where the real header relies on
+/// infrastructure this spike doesn't have: `BOOL` -> `int` (see
+/// behavior_enum.rs's precedent), and the real `(id)anObject` param is
+/// resolved by oz_static's `render_type` to `void *` -- any object
+/// pointer converts to/from `void *` without a cast, so `self ==
+/// anObject` and the `(OZString *)anObject` cast both just work).
+/// Requires a root class named `OZSRoot` in scope, same as `OZQ31_SRC`.
+pub const OZSTRING_SRC: &str = "\
+#include <string.h>
+
+@interface OZString : OZSRoot {
+	unsigned int _length;
+	unsigned int _hash;
+	const char *_data;
+}
+- (const char *)cString;
+- (unsigned int)length;
+- (int)isEqual:(id)anObject;
+- (int)isEqualToString:(OZString *)aString;
+- (int)hasPrefix:(OZString *)prefix;
+- (int)hasSuffix:(OZString *)suffix;
+@end
+
+@implementation OZString
+
+- (const char *)cString {
+	return _data;
+}
+
+- (unsigned int)length {
+	return _length;
+}
+
+- (int)isEqual:(id)anObject {
+	if (self == anObject) {
+		return 1;
+	}
+	OZString *other = (OZString *)anObject;
+	if (_length != other->_length) {
+		return 0;
+	}
+	return memcmp(_data, other->_data, _length) == 0;
+}
+
+- (int)isEqualToString:(OZString *)aString {
+	if (self == aString) {
+		return 1;
+	}
+	if (aString == 0) {
+		return 0;
+	}
+	if (_length != aString->_length) {
+		return 0;
+	}
+	return memcmp(_data, aString->_data, _length) == 0;
+}
+
+- (int)hasPrefix:(OZString *)prefix {
+	if (prefix == 0 || prefix->_length > _length) {
+		return 0;
+	}
+	return memcmp(_data, prefix->_data, prefix->_length) == 0;
+}
+
+- (int)hasSuffix:(OZString *)suffix {
+	if (suffix == 0 || suffix->_length > _length) {
+		return 0;
+	}
+	return memcmp(_data + _length - suffix->_length, suffix->_data, suffix->_length) == 0;
+}
+
+@end
+";
+
+/// OZDefer, the deferred-cleanup Foundation class, transplanted from the
+/// real `src/OZDefer.m` / `include/oz_sdk/Foundation/OZDefer.h`: stores a
+/// non-capturing block and a non-retained owner, and fires the block with
+/// the owner when deallocated. The real header's ivars (`__unsafe_unretained
+/// id _owner; void (^_block)(id);`) are written here in their
+/// already-lowered plain-C form (`id _owner; void (*_block)(id);`) --
+/// ivar declarations are copied verbatim by oz_static (see
+/// `emit::render_interface`), with no `^`-to-`*` block-declarator rewrite
+/// applied the way a local variable's declarator gets (see
+/// `emit::render_expr`'s `block_pointer_declarator` arm) -- so the ivar
+/// must already be spelled in valid plain C. Requires a root class named
+/// `OZSRoot` in scope; oz_static has no ARC (tracked separately as #189),
+/// so releasing an object holding an OZDefer ivar must call `[_cleanup
+/// release]` explicitly in that object's own `-dealloc` -- there's no
+/// automatic ivar release to rely on.
+pub const OZDEFER_SRC: &str = "\
+@interface OZDefer : OZSRoot {
+	id _owner;
+	void (*_block)(id);
+}
+- (instancetype)initWithOwner:(id)owner block:(void (^)(id))aBlock;
+- (instancetype)initWithBlock:(void (^)(id))aBlock;
+- (void)dealloc;
+@end
+
+@implementation OZDefer
+
+- (instancetype)initWithOwner:(id)owner block:(void (^)(id))aBlock {
+	_owner = owner;
+	_block = aBlock;
+	return self;
+}
+
+- (instancetype)initWithBlock:(void (^)(id))aBlock {
+	_owner = 0;
+	_block = aBlock;
+	return self;
+}
+
+- (void)dealloc {
+	if (_block) {
+		_block(_owner);
+	}
+}
+
+@end
+";

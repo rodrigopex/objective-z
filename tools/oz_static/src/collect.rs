@@ -105,7 +105,14 @@ fn extract_protocol(node: Node, src: &str, known_classes: &HashSet<String>) -> P
 
 pub(crate) fn render_type(type_text: &str, stars: usize, known_classes: &HashSet<String>) -> String {
     if type_text == "id" {
-        return "id".to_string();
+        // "id" names no real C type, so left as-is this would emit
+        // invalid C (as opposed to "instancetype", which callers resolve
+        // to the concrete self/root class before ever reaching here).
+        // `void *` is the natural stand-in: it's the untyped "any object
+        // pointer" this spike has -- any `struct Foo *` converts to/from
+        // it without even a cast, matching how a generic `id`-typed
+        // parameter is meant to accept an instance of any class.
+        return "void *".to_string();
     }
     if known_classes.contains(type_text) {
         let stars = stars.max(1);
