@@ -116,7 +116,7 @@ fn collect_local_decls(node: Node, ctx: &mut EmitCtx) {
     }
 }
 
-fn selector_to_c(selector: &str) -> String {
+pub(crate) fn selector_to_c(selector: &str) -> String {
     selector.replace(':', "_")
 }
 
@@ -124,7 +124,7 @@ fn selector_to_c(selector: &str) -> String {
 /// style (`TYPE NAME`), but a function-pointer type needs the name embedded
 /// mid-declarator (`RET (*NAME)(ARGS)`) -- `detect_block_param_type` signals
 /// that by leaving `PARAM_NAME_PLACEHOLDER` in the type text.
-fn render_param(ptype: &str, pname: &str) -> String {
+pub(crate) fn render_param(ptype: &str, pname: &str) -> String {
     if ptype.contains(crate::collect::PARAM_NAME_PLACEHOLDER) {
         ptype.replace(crate::collect::PARAM_NAME_PLACEHOLDER, pname)
     } else {
@@ -134,7 +134,7 @@ fn render_param(ptype: &str, pname: &str) -> String {
 
 /// Class methods get a `_cls` suffix so `+foo` and `-foo` on the same
 /// class never collide on the same C function name.
-fn method_fn_name(class_name: &str, selector: &str, is_class_method: bool) -> String {
+pub(crate) fn method_fn_name(class_name: &str, selector: &str, is_class_method: bool) -> String {
     if is_class_method {
         format!("{}_{}_cls", class_name, selector_to_c(selector))
     } else {
@@ -452,6 +452,28 @@ fn render_message(node: Node, ctx: &mut EmitCtx) -> (String, String) {
                     ret_ty,
                 )
             }
+            None if ctx.program.is_protocol_selector(&parts.selector, false) => {
+                // `target` (or its superclass chain) doesn't implement
+                // this selector itself, but some protocol declares it and
+                // some class in the program does implement it -- the
+                // receiver's *static* type isn't precise enough to know
+                // which one at compile time (e.g. it's typed as the root
+                // class, standing in for "any conforming object"), so
+                // this is the one place besides dealloc that needs a
+                // runtime switch instead of a direct call.
+                let root = ctx.program.root_class().unwrap_or(&target).to_string();
+                let selc = selector_to_c(&parts.selector);
+                let mut call_args = vec![format!("(struct {} *)({})", root, recv_text)];
+                call_args.extend(arg_texts);
+                let ret_ty = ctx
+                    .program
+                    .all_protocol_methods()
+                    .into_iter()
+                    .find(|m| m.selector == parts.selector && !m.is_class_method)
+                    .map(|m| m.return_type)
+                    .unwrap_or_else(|| "void".to_string());
+                (format!("OZ_PROTOCOL_SEND_{}({})", selc, call_args.join(", ")), ret_ty)
+            }
             None => {
                 ctx.err(node, format!("class '{}' has no method matching '{}'", target, parts.selector));
                 ("0".to_string(), "int".to_string())
@@ -615,6 +637,22 @@ fn render_interface(node: Node, ctx: &mut EmitCtx, program: &Program) -> String 
                 child,
                 "@property is not supported in the static subset spike; declare an ivar and accessor methods explicitly",
             );
+        }
+    }
+    for protocol in &info.conforms {
+        for required in program.protocol_methods(protocol) {
+            let implemented = info.methods.iter().any(|m| {
+                m.selector == required.selector && m.is_class_method == required.is_class_method
+            });
+            if !implemented {
+                ctx.err(
+                    node,
+                    format!(
+                        "'{}' declares conformance to '{}' but doesn't implement '{}'",
+                        name, protocol, required.selector
+                    ),
+                );
+            }
         }
     }
     let base_field = match &info.superclass {
@@ -809,6 +847,21 @@ pub fn emit(source: &str, program: &Program) -> EmitOutput {
     let mut cursor = root.walk();
     for node in root.children(&mut cursor) {
         match node.kind() {
+            "protocol_declaration" => {
+                // A protocol is purely a compile-time contract in this
+                // design too, same as in real Objective-C -- there's no C
+                // runtime representation of it (see `companion.rs`'s
+                // `render_protocol_dispatch`, which dispatches by
+                // "who implements this selector," not by protocol
+                // identity). Its own declaration text is never valid C,
+                // so it must be replaced, not left in place.
+                let (name, _, _) = crate::collect::class_header(node, source);
+                patches.push(Patch {
+                    start: node.start_byte(),
+                    end: node.end_byte(),
+                    text: format!("/* @protocol {} -- compile-time only, see oz_static_dispatch.h/.c */", name),
+                });
+            }
             "class_interface" => {
                 let (name, _, category) = crate::collect::class_header(node, source);
                 if category.is_some() {

@@ -154,3 +154,36 @@ fn unresolvable_receiver_type_rejected() {
     let diags = expect_reject(&src);
     assert!(diags.contains("cannot statically resolve"), "diagnostics: {}", diags);
 }
+
+#[test]
+fn protocol_conformance_missing_method_rejected() {
+    // A class declaring conformance to a protocol must actually implement
+    // every method that protocol (transitively, through protocol
+    // inheritance) requires -- a compile-time contract, same as real
+    // Objective-C, checked here instead of left to silently produce a
+    // dispatch function with a hole in it.
+    let src = format!(
+        "{}\n@protocol Greeter\n- (void)greet;\n@end\n\
+         @interface Foo : OZSRoot <Greeter>\n@end\n@implementation Foo\n@end\n",
+        PREAMBLE
+    );
+    let diags = expect_reject(&src);
+    assert!(diags.contains("Foo"), "diagnostics: {}", diags);
+    assert!(diags.contains("Greeter"), "diagnostics: {}", diags);
+    assert!(diags.contains("greet"), "diagnostics: {}", diags);
+}
+
+#[test]
+fn protocol_conformance_satisfied_accepted() {
+    let src = format!(
+        "{}\n@protocol Greeter\n- (void)greet;\n@end\n\
+         @interface Foo : OZSRoot <Greeter>\n@end\n@implementation Foo\n- (void)greet {{\n}}\n@end\n",
+        PREAMBLE
+    );
+    oz_static::transpile(&src).unwrap_or_else(|diags| {
+        panic!(
+            "expected satisfied protocol conformance to be accepted, got:\n{}",
+            diags.iter().map(|d| d.to_string()).collect::<Vec<_>>().join("\n")
+        )
+    });
+}
