@@ -123,8 +123,7 @@ fn walk_for_reject(
             check_block_capture(node, src, scope, diags);
             return; // don't descend further with loop/decl context; block is opaque
         }
-        "array_literal" | "dictionary_literal" | "boxed_expression" | "selector_expression"
-        | "protocol_expression" => {
+        "array_literal" | "dictionary_literal" | "selector_expression" | "protocol_expression" => {
             err(
                 diags,
                 src,
@@ -133,6 +132,25 @@ fn walk_for_reject(
                     "'{}' is not in the static subset's accepted construct set",
                     node.kind()
                 ),
+            );
+            return;
+        }
+        // tree-sitter-objc 3.0.2 parses every `@`-prefixed boxed literal --
+        // `@42`, `@3.14f`, `@(expr)`, `@(call())` -- as a single generic
+        // `at_expression` node (there is no dedicated `boxed_expression`
+        // node kind in this grammar version). Without this arm the reject
+        // scan would silently walk past it and the emitter's catch-all
+        // would pass the `@(...)` text straight through as bogus C,
+        // violating the "never silently degrade" rule this module exists
+        // to enforce. Boxed-literal support is tracked as its own future
+        // feature (issue #190 Phase 2) -- this only makes today's
+        // rejection actually fire.
+        "at_expression" => {
+            err(
+                diags,
+                src,
+                node,
+                "'boxed_expression' (@-boxed literal syntax, e.g. '@42' or '@(expr)') is not in the static subset's accepted construct set",
             );
             return;
         }

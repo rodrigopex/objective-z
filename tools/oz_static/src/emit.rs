@@ -120,6 +120,18 @@ fn selector_to_c(selector: &str) -> String {
     selector.replace(':', "_")
 }
 
+/// Render one `(name, c_type)` parameter as C text. Most types are prefix
+/// style (`TYPE NAME`), but a function-pointer type needs the name embedded
+/// mid-declarator (`RET (*NAME)(ARGS)`) -- `detect_block_param_type` signals
+/// that by leaving `PARAM_NAME_PLACEHOLDER` in the type text.
+fn render_param(ptype: &str, pname: &str) -> String {
+    if ptype.contains(crate::collect::PARAM_NAME_PLACEHOLDER) {
+        ptype.replace(crate::collect::PARAM_NAME_PLACEHOLDER, pname)
+    } else {
+        format!("{} {}", ptype, pname)
+    }
+}
+
 /// Class methods get a `_cls` suffix so `+foo` and `-foo` on the same
 /// class never collide on the same C function name.
 fn method_fn_name(class_name: &str, selector: &str, is_class_method: bool) -> String {
@@ -180,7 +192,13 @@ struct EmitCtx<'a> {
     /// ivar of the same name, exactly like plain C/ObjC scoping.
     locals: std::collections::HashSet<String>,
     diags: Vec<Diagnostic>,
-    hoisted_blocks: Vec<String>,
+    /// (prototype, full definition) pairs for blocks hoisted out of this
+    /// class's methods -- both go into the *primary* generated source (see
+    /// `emit()`), not the companion file; the prototype goes ahead of
+    /// every call site, the definition once at the very end. See the
+    /// comment in `render_block` for why it can't live in the companion
+    /// file instead.
+    hoisted_blocks: Vec<(String, String)>,
     hoisted_structs: Vec<(String, String)>,
     block_counter: usize,
 }
@@ -272,6 +290,26 @@ fn render_expr(node: Node, ctx: &mut EmitCtx) -> (String, String) {
                 (name, "id".to_string())
             }
         }
+        "block_pointer_declarator" | "abstract_block_pointer_declarator" => {
+            // A block-typed local (`int (^square)(int) = ...;`) keeps its
+            // `^` declarator syntax verbatim from source, but its
+            // initializer -- a non-capturing block literal -- gets hoisted
+            // to a plain static C function (see `render_block`), not a
+            // real Objective-C block object. A variable declared with `^`
+            // cannot hold a plain function pointer (they're distinct,
+            // incompatible C types), so the declarator itself must be
+            // rewritten to plain function-pointer syntax (`*`) to match.
+            let text = rebuild(node, ctx, &mut |child, ctx| {
+                if child.kind() == "^" {
+                    Some("*".to_string())
+                } else if needs_translation(child) {
+                    Some(render_expr(child, ctx).0)
+                } else {
+                    None
+                }
+            });
+            (text, "id".to_string())
+        }
         "parenthesized_expression" => {
             let mut cursor = node.walk();
             let inner = node.children(&mut cursor).find(|c| c.kind() != "(" && c.kind() != ")");
@@ -351,6 +389,12 @@ fn render_message(node: Node, ctx: &mut EmitCtx) -> (String, String) {
             "void".to_string(),
         );
     }
+    if parts.selector == "retainCount" && parts.args.is_empty() {
+        return (
+            format!("oz_static_retain_count((struct {} *)({}))", root, recv_text),
+            "int".to_string(),
+        );
+    }
     if parts.selector == "alloc" && parts.args.is_empty() {
         if let Some(cls) = recv_type.strip_prefix("class:") {
             return (format!("{}_oz_alloc()", cls), format!("struct {} *", cls));
@@ -416,6 +460,33 @@ fn render_message(node: Node, ctx: &mut EmitCtx) -> (String, String) {
     }
 }
 
+/// Infer a hoisted block's C return type by scanning its body for a
+/// `return_statement` carrying a value. This spike has no general
+/// expression-type inference (an arithmetic expression elsewhere always
+/// resolves to the opaque "id" static type -- see `render_expr`'s
+/// catch-all), so any returned value is assumed `int`, true of every block
+/// in the current static-subset test suite. No return-with-value anywhere
+/// in the body -> `void`. Does not descend into a nested `block_literal`
+/// (a separate scope/function of its own).
+fn infer_block_return_type(body: Node) -> &'static str {
+    fn scan(node: Node) -> bool {
+        if node.kind() == "block_literal" {
+            return false;
+        }
+        if node.kind() == "return_statement" && node.named_child_count() > 0 {
+            return true;
+        }
+        let mut cursor = node.walk();
+        let children: Vec<Node> = node.children(&mut cursor).collect();
+        children.into_iter().any(scan)
+    }
+    if scan(body) {
+        "int"
+    } else {
+        "void"
+    }
+}
+
 /// Non-capturing block literal -> hoisted static C function; the block
 /// expression itself is replaced with a reference to that function.
 /// (Capturing blocks were already rejected by the static-bar scan.)
@@ -433,6 +504,7 @@ fn render_block(node: Node, ctx: &mut EmitCtx) -> (String, String) {
 
     let mut cursor2 = node.walk();
     let body = node.children(&mut cursor2).find(|c| c.kind() == "compound_statement");
+    let ret_ty = body.map(infer_block_return_type).unwrap_or("void");
     let body_text = match body {
         Some(body) => {
             // Block bodies use the same flat scope as their enclosing
@@ -443,10 +515,22 @@ fn render_block(node: Node, ctx: &mut EmitCtx) -> (String, String) {
         None => "{\n}".to_string(),
     };
 
-    ctx.hoisted_blocks.push(format!(
-        "/* block at {}:{} -- synthesized static function */\nstatic void {}{} {}\n",
-        line, col, name, params, body_text
-    ));
+    // Hoisted into the *primary* generated source (see `emit()`), not the
+    // companion file: a block literal can reference a file-scope
+    // static/global declared in the original source (that's not a
+    // "capture" -- see staticbar.rs -- so the static bar accepts it), and
+    // a `static` variable has internal linkage, invisible from any other
+    // translation unit. Putting the hoisted function in the companion .c
+    // instead would put it in a different translation unit from that
+    // global, and it would no longer compile. A prototype is still needed
+    // ahead of every call site (the function's own definition is
+    // appended only once, after every class), hence still tracking both.
+    let prototype = format!("{} {}{};\n", ret_ty, name, params);
+    let definition = format!(
+        "/* block at {}:{} -- synthesized function, hoisted out of its enclosing method */\n{} {}{} {}\n",
+        line, col, ret_ty, name, params, body_text
+    );
+    ctx.hoisted_blocks.push((prototype, definition));
     (name.clone(), "id".to_string())
 }
 
@@ -607,7 +691,7 @@ pub(crate) fn render_prototype(class_name: &str, m: &crate::model::MethodSig) ->
         if !params.is_empty() {
             params.push_str(", ");
         }
-        params.push_str(&format!("{} {}", ptype, pname));
+        params.push_str(&render_param(ptype, pname));
     }
     if params.is_empty() {
         params = "void".to_string();
@@ -665,7 +749,7 @@ fn render_method_definition(
         if !sig_params.is_empty() {
             sig_params.push_str(", ");
         }
-        sig_params.push_str(&format!("{} {}", ptype, pname));
+        sig_params.push_str(&render_param(ptype, pname));
     }
     if sig_params.is_empty() {
         sig_params = "void".to_string();
@@ -711,8 +795,9 @@ pub fn emit(source: &str, program: &Program) -> EmitOutput {
     let tree = crate::parse::parse(source);
     let root = tree.root_node();
     let mut diags: Vec<Diagnostic> = Vec::new();
-    let mut hoisted_blocks: Vec<String> = Vec::new();
+    let mut hoisted_blocks: Vec<(String, String)> = Vec::new();
     let mut hoisted_structs: Vec<(String, String)> = Vec::new();
+    let mut hoisted_enums: Vec<String> = Vec::new();
 
     struct Patch {
         start: usize,
@@ -810,6 +895,27 @@ pub fn emit(source: &str, program: &Program) -> EmitOutput {
                 hoisted_structs.extend(ctx.hoisted_structs);
                 patches.push(Patch { start: node.start_byte(), end: node.end_byte(), text: out });
             }
+            "enum_specifier" => {
+                // A top-level named `enum Tag { ... };` definition. Method
+                // prototypes in the companion header may reference this
+                // type by value (an enum param/return, not just a pointer),
+                // which -- unlike a class's struct -- C cannot forward-
+                // declare: the full definition must be visible before any
+                // such prototype. So this moves to the companion header
+                // (ahead of the per-class prototype sections) exactly like
+                // the root class's struct does, and is elided in-place here
+                // to avoid a duplicate-definition error.
+                let mut c = node.walk();
+                let has_body = node.children(&mut c).any(|ch| ch.kind() == "enumerator_list");
+                if has_body {
+                    hoisted_enums.push(node_text(node, source).to_string());
+                    patches.push(Patch {
+                        start: node.start_byte(),
+                        end: node.end_byte(),
+                        text: "/* enum hoisted to the companion header -- needed there before any method prototype references it by value */".to_string(),
+                    });
+                }
+            }
             "function_definition" => {
                 // Plain top-level C function (e.g. main()): may still
                 // contain message sends. No self/ivars in scope.
@@ -849,12 +955,32 @@ pub fn emit(source: &str, program: &Program) -> EmitOutput {
     for p in &patches {
         out.replace_range(p.start..p.end, &p.text);
     }
+
+    // Hoisted-block prototypes go ahead of every call site (so forward
+    // references to a not-yet-defined function still compile); the
+    // definitions are appended once, after everything else, so each one
+    // still sees whatever file-scope static/global it references,
+    // wherever in the original source that was declared.
+    let mut prototypes = String::new();
+    let mut definitions = String::new();
+    if !hoisted_blocks.is_empty() {
+        prototypes.push_str("/* non-capturing blocks, hoisted out of their enclosing methods -- prototypes (defined below, after every class) */\n");
+        definitions.push_str("\n/* non-capturing blocks, hoisted out of their enclosing methods */\n");
+        for (prototype, definition) in &hoisted_blocks {
+            prototypes.push_str(prototype);
+            definitions.push_str(definition);
+            definitions.push('\n');
+        }
+        prototypes.push('\n');
+    }
+
     out = format!(
-        "/* Auto-generated by oz_static -- do not edit */\n#include \"oz_static_dispatch.h\"\n\n{}",
-        out
+        "/* Auto-generated by oz_static -- do not edit */\n#include \"oz_static_dispatch.h\"\n\n{}{}{}",
+        prototypes, out, definitions
     );
 
-    let (companion_h, companion_c) = crate::companion::render(program, &hoisted_blocks, &hoisted_structs);
+    let (companion_h, companion_c) =
+        crate::companion::render(program, &hoisted_structs, &hoisted_enums);
 
     EmitOutput { source_c: out, companion_h, companion_c, diagnostics: diags }
 }
