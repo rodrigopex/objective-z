@@ -2,7 +2,7 @@
 //
 // model.rs - data model for the OZ-091 Track B static-subset spike.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone)]
 pub struct MethodSig {
@@ -19,12 +19,27 @@ pub struct ClassInfo {
     pub own_ivars: Vec<(String, String)>, // (name, c_type)
     pub methods: Vec<MethodSig>,
     pub has_class_initialize: bool,
+    /// Protocol names declared directly on this class's `@interface`
+    /// (`<Protocol, ...>`) -- not resolved through protocol inheritance;
+    /// use `Program::protocol_methods` for that.
+    pub conforms: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ProtocolInfo {
+    pub name: String,
+    /// Protocols this one extends (`@protocol Name <Super, ...>`).
+    pub super_protocols: Vec<String>,
+    /// Methods declared directly by this protocol -- not resolved through
+    /// `super_protocols`; use `Program::protocol_methods` for that.
+    pub methods: Vec<MethodSig>,
 }
 
 #[derive(Debug, Default)]
 pub struct Program {
     pub classes: HashMap<String, ClassInfo>,
     pub class_order: Vec<String>,
+    pub protocols: HashMap<String, ProtocolInfo>,
 }
 
 impl Program {
@@ -81,6 +96,64 @@ impl Program {
             .iter()
             .find(|n| self.classes[*n].superclass.is_none())
             .map(|s| s.as_str())
+    }
+
+    /// Every method `protocol_name` requires, resolved transitively
+    /// through `super_protocols` and deduped by (selector, is_class_method).
+    /// Real Objective-C protocols aren't a runtime dispatch mechanism --
+    /// they're a compile-time contract -- so this is used for conformance
+    /// validation and for typing a protocol-typed variable, not for
+    /// deciding which classes a generated dispatch function should route
+    /// to (that's purely "who implements this selector," see
+    /// `companion::render`).
+    pub fn protocol_methods(&self, protocol_name: &str) -> Vec<MethodSig> {
+        let mut seen: HashSet<(String, bool)> = HashSet::new();
+        let mut out = Vec::new();
+        let mut stack = vec![protocol_name.to_string()];
+        let mut visited: HashSet<String> = HashSet::new();
+        while let Some(name) = stack.pop() {
+            if !visited.insert(name.clone()) {
+                continue;
+            }
+            if let Some(p) = self.protocols.get(&name) {
+                for m in &p.methods {
+                    if seen.insert((m.selector.clone(), m.is_class_method)) {
+                        out.push(m.clone());
+                    }
+                }
+                stack.extend(p.super_protocols.clone());
+            }
+        }
+        out
+    }
+
+    /// Every method declared by any protocol in the program, transitively
+    /// resolved, deduped by (selector, is_class_method) across protocols
+    /// too. The set of selectors `OZ_PROTOCOL_SEND_*` dispatch functions
+    /// get generated for.
+    pub fn all_protocol_methods(&self) -> Vec<MethodSig> {
+        let mut seen: HashSet<(String, bool)> = HashSet::new();
+        let mut out = Vec::new();
+        for name in self.protocols.keys() {
+            for m in self.protocol_methods(name) {
+                if seen.insert((m.selector.clone(), m.is_class_method)) {
+                    out.push(m);
+                }
+            }
+        }
+        out
+    }
+
+    /// Is `selector` declared by any protocol in the program? Used as the
+    /// fallback dispatch route when a message send's receiver type is
+    /// known but doesn't itself (or via its superclass chain) implement
+    /// the selector -- e.g. a root-typed variable holding some unknown
+    /// conforming subclass, mirroring how a real ObjC protocol-typed
+    /// receiver's concrete class isn't known statically either.
+    pub fn is_protocol_selector(&self, selector: &str, is_class_method: bool) -> bool {
+        self.all_protocol_methods()
+            .iter()
+            .any(|m| m.selector == selector && m.is_class_method == is_class_method)
     }
 }
 

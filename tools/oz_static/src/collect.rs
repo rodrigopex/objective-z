@@ -8,7 +8,7 @@ use std::collections::HashSet;
 
 use tree_sitter::Node;
 
-use crate::model::{ClassInfo, MethodSig, Program};
+use crate::model::{ClassInfo, MethodSig, Program, ProtocolInfo};
 
 fn node_text<'a>(node: Node, src: &'a str) -> &'a str {
     &src[node.start_byte()..node.end_byte()]
@@ -46,6 +46,61 @@ pub(crate) fn class_header(node: Node, src: &str) -> (String, Option<String>, Op
     }
     let name = idents.first().cloned().unwrap_or_default();
     (name, superclass, category)
+}
+
+/// The protocol names in a `<Protocol, ...>` conformance/reference list --
+/// shared shape between a class's `@interface Foo : Bar <P1, P2>` (a
+/// `parameterized_arguments` node) and a protocol's own
+/// `@protocol Name <Super1, Super2>` (a `protocol_reference_list` node).
+fn extract_protocol_list(node: Node, src: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    fn walk(n: Node, src: &str, out: &mut Vec<String>) {
+        if n.kind() == "type_identifier" || (n.kind() == "identifier" && n.child_count() == 0) {
+            out.push(node_text(n, src).to_string());
+            return;
+        }
+        let mut c = n.walk();
+        for child in n.children(&mut c) {
+            walk(child, src, out);
+        }
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.kind() == "<" || child.kind() == ">" || child.kind() == "," {
+            continue;
+        }
+        walk(child, src, &mut out);
+    }
+    out
+}
+
+fn extract_conformance(node: Node, src: &str) -> Vec<String> {
+    match child_by_kind(node, "parameterized_arguments") {
+        Some(list) => extract_protocol_list(list, src),
+        None => Vec::new(),
+    }
+}
+
+/// `@protocol Name [<Super, ...>] method_declaration* @end`.
+fn extract_protocol(node: Node, src: &str, known_classes: &HashSet<String>) -> ProtocolInfo {
+    let mut cursor = node.walk();
+    let name = node
+        .children(&mut cursor)
+        .find(|c| c.kind() == "identifier")
+        .map(|n| node_text(n, src).to_string())
+        .unwrap_or_default();
+    let super_protocols = match child_by_kind(node, "protocol_reference_list") {
+        Some(list) => extract_protocol_list(list, src),
+        None => Vec::new(),
+    };
+    let mut methods = Vec::new();
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.kind() == "method_declaration" {
+            methods.push(extract_method_sig(child, src, &name, known_classes));
+        }
+    }
+    ProtocolInfo { name, super_protocols, methods }
 }
 
 pub(crate) fn render_type(type_text: &str, stars: usize, known_classes: &HashSet<String>) -> String {
@@ -235,11 +290,23 @@ pub fn collect(source: &str) -> (Program, Vec<crate::model::Diagnostic>) {
     let tree = crate::parse::parse(source);
     let root = tree.root_node();
 
-    // Pass 1: class names + hierarchy + category associations.
+    // Pass 1: class names + hierarchy + category associations, and
+    // protocol declarations (name, inheritance, own methods).
     let mut classes: std::collections::HashMap<String, ClassInfo> = std::collections::HashMap::new();
     let mut class_order = Vec::new();
+    let mut protocols: std::collections::HashMap<String, ProtocolInfo> = std::collections::HashMap::new();
     let mut cursor = root.walk();
     for node in root.children(&mut cursor) {
+        if node.kind() == "protocol_declaration" {
+            // Protocol methods don't reference class types in these
+            // fixtures; an empty known-class set is fine here since
+            // conformance/dispatch resolution happens later via selector
+            // matching, not through this parse.
+            let known: HashSet<String> = HashSet::new();
+            let info = extract_protocol(node, source, &known);
+            protocols.insert(info.name.clone(), info);
+            continue;
+        }
         if node.kind() != "class_interface" && node.kind() != "class_implementation" {
             continue;
         }
@@ -252,9 +319,15 @@ pub fn collect(source: &str) -> (Program, Vec<crate::model::Diagnostic>) {
                 name.clone(),
                 ClassInfo { name: name.clone(), superclass, ..Default::default() },
             );
-            class_order.push(name);
+            class_order.push(name.clone());
         } else if let Some(sup) = superclass {
             classes.get_mut(&name).unwrap().superclass = Some(sup);
+        }
+        if node.kind() == "class_interface" {
+            let conforms = extract_conformance(node, source);
+            if !conforms.is_empty() {
+                classes.get_mut(&name).unwrap().conforms = conforms;
+            }
         }
     }
 
@@ -311,5 +384,5 @@ pub fn collect(source: &str) -> (Program, Vec<crate::model::Diagnostic>) {
     }
 
     let diagnostics = Vec::new();
-    (Program { classes, class_order }, diagnostics)
+    (Program { classes, class_order, protocols }, diagnostics)
 }

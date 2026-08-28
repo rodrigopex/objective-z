@@ -98,6 +98,77 @@ oz_static_release, once the refcount reaches zero (not from source) */\n",
     c
 }
 
+/// `OZ_PROTOCOL_SEND_{selector}`: routes a protocol-declared selector to
+/// whichever class implements it, switching on `self->oz_class_id`. Real
+/// Objective-C dispatch doesn't check protocol conformance at the call
+/// site either -- a protocol is a compile-time contract, not a runtime
+/// filter -- so this includes every class implementing the selector,
+/// regardless of which protocol (if any) it formally conforms to.
+/// Generated once per distinct (selector, is_class_method) pair across
+/// every protocol in the program; skipped entirely if no class actually
+/// implements it (nothing to route to). Return type/params come from
+/// whichever conforming class was declared first, since a shared
+/// dispatch function needs one signature and every implementor of a
+/// given protocol method is expected to match it.
+fn render_protocol_dispatch(program: &Program, root: &str) -> (String, String) {
+    let mut h = String::new();
+    let mut c = String::new();
+    for m in program.all_protocol_methods() {
+        let implementors: Vec<&String> = program
+            .class_order
+            .iter()
+            .filter(|name| {
+                program.classes[*name]
+                    .methods
+                    .iter()
+                    .any(|mm| mm.selector == m.selector && mm.is_class_method == m.is_class_method)
+            })
+            .collect();
+        if implementors.is_empty() {
+            continue;
+        }
+        let selc = crate::emit::selector_to_c(&m.selector);
+        let fn_name = format!("OZ_PROTOCOL_SEND_{}", selc);
+        let mut params = format!("struct {} *self", root);
+        for (pname, ptype) in &m.params {
+            params.push_str(", ");
+            params.push_str(&crate::emit::render_param(ptype, pname));
+        }
+        let arg_names: Vec<&str> = m.params.iter().map(|(n, _)| n.as_str()).collect();
+
+        h.push_str(&format!(
+            "/* protocol dispatch: routes '{}' to whichever class implements it */\n",
+            m.selector
+        ));
+        h.push_str(&format!("{} {}({});\n", m.return_type, fn_name, params));
+
+        c.push_str(&format!(
+            "/* protocol dispatch: routes '{}' to whichever class implements it\n * (not from source) */\n",
+            m.selector
+        ));
+        c.push_str(&format!("{} {}({})\n{{\n\tswitch (self->oz_class_id) {{\n", m.return_type, fn_name, params));
+        for name in &implementors {
+            let target = crate::emit::method_fn_name(name, &m.selector, m.is_class_method);
+            let mut call_args = vec![format!("(struct {} *)self", name)];
+            call_args.extend(arg_names.iter().map(|a| a.to_string()));
+            let call = format!("{}({})", target, call_args.join(", "));
+            if m.return_type == "void" {
+                c.push_str(&format!("\tcase OZ_STATIC_CLASS_{}: {}; return;\n", name, call));
+            } else {
+                c.push_str(&format!("\tcase OZ_STATIC_CLASS_{}: return {};\n", name, call));
+            }
+        }
+        if m.return_type == "void" {
+            c.push_str("\tdefault: return;\n\t}\n}\n\n");
+        } else {
+            c.push_str("\tdefault: return (");
+            c.push_str(&m.return_type);
+            c.push_str(")0;\n\t}\n}\n\n");
+        }
+    }
+    (h, c)
+}
+
 fn class_label(program: &Program, name: &str, id: usize) -> String {
     match &program.classes[name].superclass {
         Some(sup) => format!("-- {} (id {}, extends {}) --", name, id, sup),
@@ -233,6 +304,12 @@ vtable\") -- never mutated at runtime. */\n",
                 name = name
             ));
         }
+    }
+
+    if let Some(root) = &root {
+        let (proto_h, proto_c) = render_protocol_dispatch(program, root);
+        h.push_str(&proto_h);
+        c.push_str(&proto_c);
     }
 
     (h, c)
