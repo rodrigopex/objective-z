@@ -232,12 +232,38 @@ fn rebuild(node: Node, ctx: &mut EmitCtx, render_child: &mut dyn FnMut(Node, &mu
 }
 
 fn needs_translation(node: Node) -> bool {
-    if matches!(node.kind(), "message_expression" | "block_literal" | "type_identifier" | "identifier") {
+    if matches!(
+        node.kind(),
+        "message_expression" | "block_literal" | "type_identifier" | "identifier" | "at_expression"
+    ) {
         return true;
+    }
+    if node.kind() == "string_literal" {
+        return is_boxed_string_literal(node);
     }
     let mut cursor = node.walk();
     let any_child = node.children(&mut cursor).any(needs_translation);
     any_child
+}
+
+/// Is `node` (an `at_expression`) shaped like a numeric/boolean boxed
+/// literal -- `@42`, `@3.5f`, `@(expr)`, `@YES`/`@NO` -- as opposed to
+/// anything else the grammar also parses as `at_expression` (a boxed call
+/// expression, `@protocol(...)`, etc.), which has no OZQ31 desugaring and
+/// must stay rejected. Used by both `staticbar.rs` (to know what's still
+/// rejected) and `render_boxed_at_expression` below (to know how to
+/// desugar what isn't).
+pub(crate) fn is_numeric_boxed_shape(node: Node, src: &str) -> bool {
+    let mut cursor = node.walk();
+    let Some(inner) = node.children(&mut cursor).find(|c| c.kind() != "@") else {
+        return false;
+    };
+    match inner.kind() {
+        "number_literal" => true,
+        "identifier" => matches!(node_text(inner, src), "YES" | "NO"),
+        "parenthesized_expression" => true,
+        _ => false,
+    }
 }
 
 /// Render `node` to C text, returning (rendered_text, static_type).
@@ -290,6 +316,8 @@ fn render_expr(node: Node, ctx: &mut EmitCtx) -> (String, String) {
                 (name, "id".to_string())
             }
         }
+        "at_expression" => render_boxed_at_expression(node, ctx),
+        "string_literal" => render_boxed_string_literal(node, ctx),
         "block_pointer_declarator" | "abstract_block_pointer_declarator" => {
             // A block-typed local (`int (^square)(int) = ...;`) keeps its
             // `^` declarator syntax verbatim from source, but its
@@ -365,6 +393,129 @@ fn parse_message<'a>(node: Node<'a>, src: &str) -> MessageParts<'a> {
         }
     }
     MessageParts { receiver, selector, args }
+}
+
+/// Build a call to `{class_name} {selector}` as a class method, the way
+/// `render_message` would for a real `[ClassName selector:arg]` send --
+/// used to desugar a boxed literal into a call on the user-defined class
+/// that must exist for the literal to mean anything (there's no built-in
+/// Foundation in this design; `OZQ31`/`OZString` are ordinary classes the
+/// static subset already knows how to compile). Returns `None` (leaving
+/// the caller to raise a clear error) if the class or the method don't
+/// exist, rather than emitting a call to a function that was never
+/// generated.
+fn synthetic_class_call(
+    ctx: &EmitCtx,
+    class_name: &str,
+    selector: &str,
+    arg_texts: &[String],
+) -> Option<(String, String)> {
+    let defining = find_defining_class(ctx.program, class_name, selector, true)?;
+    let ret_ty = method_return_type(ctx.program, &defining, selector, true)
+        .unwrap_or_else(|| "void".to_string());
+    Some((
+        format!("{}({})", method_fn_name(&defining, selector, true), arg_texts.join(", ")),
+        ret_ty,
+    ))
+}
+
+/// Desugars a numeric/boolean boxed literal (`@42`, `@3.5f`, `@(expr)`,
+/// `@YES`/`@NO` -- see `is_numeric_boxed_shape`, which gates whether the
+/// static bar even lets this node through) into a class-method call on
+/// `OZQ31`: `fixedWithInt32:` for an integer-shaped value, `fixedWithFloat:`
+/// for a float-shaped one. There's no real type-checker here to decide
+/// int vs. float for an arbitrary expression, so this uses the same
+/// heuristic Python's oracle output suggests: a literal token containing
+/// `.` (or an `f`/`F` suffix) is float-shaped; everything else -- a plain
+/// integer literal, `YES`/`NO`, or any non-literal expression like
+/// `x + 3` -- defaults to int32.
+fn render_boxed_at_expression(node: Node, ctx: &mut EmitCtx) -> (String, String) {
+    let (line, col) = line_col(ctx.src, node.start_byte());
+    let mut cursor = node.walk();
+    let Some(inner) = node.children(&mut cursor).find(|c| c.kind() != "@") else {
+        ctx.err(node, "empty '@' boxed expression");
+        return ("0".to_string(), "int".to_string());
+    };
+
+    // A literal token (`3.5f`, `@(3.5f)`) is float-shaped by its spelling.
+    // Anything else -- an identifier or a general expression like
+    // `@(f)`/`@(val + 3)` -- has no literal to inspect, so its resolved
+    // static type (from `render_expr`'s return, backed by the pre-scanned
+    // local-declaration scope) decides instead; a `float`/`double`-typed
+    // value still boxes as float even though the boxed spelling itself
+    // (a bare identifier) carries no hint.
+    let literal_is_float = match inner.kind() {
+        "parenthesized_expression" => {
+            let mut c2 = inner.walk();
+            let unwrapped = inner.children(&mut c2).find(|c| c.kind() != "(" && c.kind() != ")");
+            unwrapped.is_some_and(|n| {
+                n.kind() == "number_literal" && is_float_literal_text(node_text(n, ctx.src))
+            })
+        }
+        "number_literal" => is_float_literal_text(node_text(inner, ctx.src)),
+        _ => false,
+    };
+    let (value_text, value_ty) = render_expr(inner, ctx);
+    let is_float = literal_is_float || value_ty == "float" || value_ty == "double";
+    let selector = if is_float { "fixedWithFloat:" } else { "fixedWithInt32:" };
+
+    match synthetic_class_call(ctx, "OZQ31", selector, &[value_text]) {
+        Some((call, ret_ty)) => (call, ret_ty),
+        None => {
+            ctx.err(
+                node,
+                format!(
+                    "boxed literal at {}:{} desugars to '[OZQ31 {}]', but no class 'OZQ31' with that class method is defined in this source",
+                    line, col, selector
+                ),
+            );
+            ("0".to_string(), "int".to_string())
+        }
+    }
+}
+
+fn is_float_literal_text(text: &str) -> bool {
+    text.contains('.') || text.ends_with('f') || text.ends_with('F')
+}
+
+/// `string_literal` covers both a plain C string (`"foo"`) and a boxed
+/// ObjC one (`@"foo"`) -- distinguished only by a leading `@` child.
+fn is_boxed_string_literal(node: Node) -> bool {
+    let mut cursor = node.walk();
+    let found = node.children(&mut cursor).any(|c| c.kind() == "@");
+    found
+}
+
+/// Desugars a boxed string literal `@"..."` into a class-method call on
+/// `OZString`: `stringWithCString:`, passing the string content through
+/// as a plain C string literal. A plain (non-`@`) string literal is left
+/// completely untouched -- it's already valid C.
+fn render_boxed_string_literal(node: Node, ctx: &mut EmitCtx) -> (String, String) {
+    if !is_boxed_string_literal(node) {
+        return (node_text(node, ctx.src).to_string(), "id".to_string());
+    }
+    let (line, col) = line_col(ctx.src, node.start_byte());
+    let mut cursor = node.walk();
+    let content = node
+        .children(&mut cursor)
+        .find(|c| c.kind() == "string_content")
+        .map(|c| node_text(c, ctx.src).to_string())
+        .unwrap_or_default();
+    let c_literal = format!("\"{}\"", content);
+
+    match synthetic_class_call(ctx, "OZString", "stringWithCString:", &[c_literal]) {
+        Some((call, ret_ty)) => (call, ret_ty),
+        None => {
+            ctx.err(
+                node,
+                format!(
+                    "boxed string literal at {}:{} desugars to '[OZString stringWithCString:]', but no class 'OZString' with that class method is defined in this source",
+                    line, col
+                ),
+            );
+            ("0".to_string(), "int".to_string())
+        }
+    }
 }
 
 fn render_message(node: Node, ctx: &mut EmitCtx) -> (String, String) {

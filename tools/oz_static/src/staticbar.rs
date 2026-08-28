@@ -136,21 +136,21 @@ fn walk_for_reject(
             return;
         }
         // tree-sitter-objc 3.0.2 parses every `@`-prefixed boxed literal --
-        // `@42`, `@3.14f`, `@(expr)`, `@(call())` -- as a single generic
-        // `at_expression` node (there is no dedicated `boxed_expression`
-        // node kind in this grammar version). Without this arm the reject
-        // scan would silently walk past it and the emitter's catch-all
-        // would pass the `@(...)` text straight through as bogus C,
-        // violating the "never silently degrade" rule this module exists
-        // to enforce. Boxed-literal support is tracked as its own future
-        // feature (issue #190 Phase 2) -- this only makes today's
-        // rejection actually fire.
-        "at_expression" => {
+        // `@42`, `@3.14f`, `@(expr)`, `@YES`, `@(call())`, even
+        // `@protocol(Foo)` -- as a single generic `at_expression` node
+        // (there is no dedicated `boxed_expression` or `protocol_expression`
+        // node kind in this grammar version). A numeric/boolean-shaped one
+        // (see `emit::is_numeric_boxed_shape`) desugars to an OZQ31 class-
+        // method call, handled in `emit.rs`; anything else (a boxed call
+        // expression, `@protocol(...)`, etc.) has no such desugaring and
+        // must still be rejected here, or the emitter's catch-all would
+        // pass the raw `@(...)` text straight through as bogus C.
+        "at_expression" if !crate::emit::is_numeric_boxed_shape(node, src) => {
             err(
                 diags,
                 src,
                 node,
-                "'boxed_expression' (@-boxed literal syntax, e.g. '@42' or '@(expr)') is not in the static subset's accepted construct set",
+                "this '@'-boxed expression is not in the static subset's accepted construct set (only a numeric/boolean literal like '@42', '@3.5f', or '@YES' desugars to an OZQ31 class-method call)",
             );
             return;
         }
