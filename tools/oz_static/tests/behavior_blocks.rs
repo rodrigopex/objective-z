@@ -4,6 +4,12 @@
 // Python-pipeline oracle) to oz_static. All 3 fixtures are in scope: the
 // static bar only rejects *capturing* blocks, and none of these capture
 // self/an ivar/an enclosing local -- see staticbar.rs's check_block_capture.
+//
+// OZ-099 adds one more, non-oracle case: a `__block`-qualified local is
+// promoted to a file-scope static rather than rejected as a capture (see
+// emit.rs's `hoist_block_var`) -- self/ivar/plain-local capture is still
+// rejected, covered by static_bar_rejects.rs's capturing_block_rejected
+// and self_capturing_block_rejected.
 
 mod common;
 use common::{compile_and_run, ozobject_src as PREAMBLE};
@@ -142,4 +148,55 @@ int main(void) {{
     );
     let stdout = compile_and_run(&src, "block_as_method_param");
     assert_eq!(stdout, "computed=42\n");
+}
+
+/// OZ-099: `__block`-qualified locals, promoted to file scope (see
+/// emit.rs's `hoist_block_var`) rather than rejected as a capture --
+/// matching oz_transpile's own `__block`/BlocksAttr promotion
+/// (collect.py `_collect_block_vars`, emit.py:1179-1181). Not a port of
+/// a Python-pipeline oracle fixture (there isn't one under
+/// tests/behavior/cases/blocks/ yet), but the same pattern the repo's
+/// own samples/transpiled_blocks/src/main.m documents and relies on:
+/// a block mutating a `__block` local across repeated calls.
+#[test]
+fn block_mutates_block_qualified_var() {
+    let src = format!(
+        "{}\n\
+@interface CounterTest : OZObject {{
+\tint _result;
+}}
+- (void)run;
+- (int)result;
+@end
+
+@implementation CounterTest
+- (void)run {{
+\t__block int counter = 0;
+\tvoid (^increment)(void) = ^{{
+\t\tcounter++;
+\t}};
+\tincrement();
+\tincrement();
+\tincrement();
+\t_result = counter;
+}}
+- (int)result {{
+\treturn _result;
+}}
+@end
+
+#include <stdio.h>
+
+int main(void) {{
+\tCounterTest *t = [CounterTest alloc];
+\t[t run];
+\tprintf(\"result=%d\\n\", [t result]);
+\t[t release];
+\treturn 0;
+}}
+",
+        PREAMBLE()
+    );
+    let stdout = compile_and_run(&src, "block_mutates_block_qualified_var");
+    assert_eq!(stdout, "result=3\n");
 }
