@@ -130,15 +130,23 @@ fn walk_for_reject(
         // pairs) still get walked normally (falling through to the
         // default descent below), so an unsupported construct nested
         // inside one of them is still caught.
-        "selector_expression" | "protocol_expression" => {
+        //
+        // `selector_expression` (`@selector(...)`) is a real node kind
+        // in tree-sitter-objc 3.0.2 (confirmed against its
+        // node-types.json) and is rejected directly here.
+        // `protocol_expression` -- unlike `selector_expression` --
+        // isn't: `@protocol(Foo)` parses as a generic `at_expression`
+        // (see the `at_expression` arm below), the same class of bug
+        // already found and fixed for `boxed_expression` in #191. This
+        // match arm never fired for it; a dedicated `at_expression`
+        // sub-case now gives `@protocol(...)` its own clear message
+        // instead of relying on the generic boxed-literal one.
+        "selector_expression" => {
             err(
                 diags,
                 src,
                 node,
-                format!(
-                    "'{}' is not in the static subset's accepted construct set",
-                    node.kind()
-                ),
+                "'selector_expression' is not in the static subset's accepted construct set",
             );
             return;
         }
@@ -148,10 +156,21 @@ fn walk_for_reject(
         // (there is no dedicated `boxed_expression` or `protocol_expression`
         // node kind in this grammar version). A numeric/boolean-shaped one
         // (see `emit::is_numeric_boxed_shape`) desugars to an OZQ31 class-
-        // method call, handled in `emit.rs`; anything else (a boxed call
-        // expression, `@protocol(...)`, etc.) has no such desugaring and
-        // must still be rejected here, or the emitter's catch-all would
-        // pass the raw `@(...)` text straight through as bogus C.
+        // method call, handled in `emit.rs`; a `@protocol(Name)`-shaped one
+        // (see `emit::is_protocol_literal_shape`) gets its own message
+        // below; anything else (a boxed call expression, etc.) has no
+        // desugaring and must still be rejected here, or the emitter's
+        // catch-all would pass the raw `@(...)` text straight through as
+        // bogus C.
+        "at_expression" if crate::emit::is_protocol_literal_shape(node, src) => {
+            err(
+                diags,
+                src,
+                node,
+                "'@protocol(...)' is not in the static subset's accepted construct set",
+            );
+            return;
+        }
         "at_expression" if !crate::emit::is_numeric_boxed_shape(node, src) => {
             err(
                 diags,

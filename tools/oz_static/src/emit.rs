@@ -296,6 +296,28 @@ pub(crate) fn is_numeric_boxed_shape(node: Node, src: &str) -> bool {
     }
 }
 
+/// Is `node` (an `at_expression`) shaped like `@protocol(Name)`? There
+/// is no dedicated `protocol_expression` node kind in this grammar
+/// version (unlike real Clang's AST) -- `@protocol(Name)` parses as a
+/// generic `at_expression` wrapping what looks syntactically like an
+/// ordinary call expression to a function named `protocol`. Used only
+/// to give this one specific `at_expression` shape a clearer rejection
+/// message in `staticbar.rs`; it's still caught by the general
+/// "not a numeric/boolean boxed literal" rejection either way.
+pub(crate) fn is_protocol_literal_shape(node: Node, src: &str) -> bool {
+    let mut cursor = node.walk();
+    let Some(inner) = node.children(&mut cursor).find(|c| c.kind() != "@") else {
+        return false;
+    };
+    if inner.kind() != "call_expression" {
+        return false;
+    }
+    let mut c2 = inner.walk();
+    let found =
+        inner.children(&mut c2).find(|c| c.kind() == "identifier").is_some_and(|f| node_text(f, src) == "protocol");
+    found
+}
+
 /// Render `node` to C text, returning (rendered_text, static_type).
 /// static_type is "id" when unknown/irrelevant, or "class:Name" when the
 /// expression is a bare reference to a known class name (a class-message

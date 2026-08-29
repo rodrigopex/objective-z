@@ -177,3 +177,37 @@ fn protocol_conformance_satisfied_accepted() {
         )
     });
 }
+
+#[test]
+fn selector_expression_rejected() {
+    // '@selector(...)' is a real `selector_expression` node kind in
+    // tree-sitter-objc 3.0.2 (confirmed against its node-types.json) --
+    // rejected directly via that node kind.
+    let src = format!(
+        "{}\n@interface Foo : OZObject\n- (void)run;\n@end\n@implementation Foo\n\
+         - (void)run {{\n\tSEL s = @selector(run);\n}}\n@end\n",
+        PREAMBLE()
+    );
+    let diags = expect_reject(&src);
+    assert!(diags.contains("selector_expression"), "diagnostics: {}", diags);
+}
+
+#[test]
+fn protocol_literal_expression_rejected() {
+    // '@protocol(Name)' has no dedicated `protocol_expression` node kind
+    // in this grammar version -- unlike `@selector(...)`, it parses as a
+    // generic `at_expression` wrapping what looks like a call to a
+    // function named `protocol` (same class of bug already found and
+    // fixed for `boxed_expression` in #191: a reject check that matched
+    // a node kind the parser never actually emits). Still correctly
+    // rejected either way (see `emit::is_protocol_literal_shape`, which
+    // gives this specific shape its own clear message instead of
+    // falling through to the generic boxed-literal one).
+    let src = format!(
+        "{}\n@interface Foo : OZObject\n- (void)run;\n@end\n@implementation Foo\n\
+         - (void)run {{\n\tid p = @protocol(NSObject);\n}}\n@end\n",
+        PREAMBLE()
+    );
+    let diags = expect_reject(&src);
+    assert!(diags.contains("@protocol(...)"), "diagnostics: {}", diags);
+}
