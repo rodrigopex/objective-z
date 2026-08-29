@@ -179,6 +179,85 @@ source) */\n",
     c
 }
 
+/// OZDictionary-specific replacement for `render_alloc_free`, the same
+/// shape as `render_array_support`: alloc is identical, but free must
+/// also release every key and value and free their buffer -- OZDictionary.m
+/// (transplanted from `src/OZDictionary.m`) has no `-dealloc` of its own,
+/// same reason as OZArray. Also emits `OZDictionary_oz_initWithKeysValues`,
+/// the malloc-based builder backing the `@{...}` boxed dictionary literal
+/// desugar in `emit.rs`. Keys and values share one contiguous buffer
+/// (`_keys` pointing at its first half, `_values` at its second),
+/// mirroring the real Python pipeline's own `{Name}_initWithKeysValues`
+/// template (`tools/oz_transpile/templates/class_header.h.j2`) -- pool-
+/// backed there, malloc-based here.
+pub(crate) fn render_dict_support(name: &str, root: &str) -> String {
+    let mut c = String::new();
+    c.push_str(&format!(
+        "/* synthesized: allocates and zero-initializes a new {name} (not from source) */\n",
+        name = name
+    ));
+    c.push_str(&format!("struct {name} *{name}_oz_alloc(void)\n{{\n", name = name));
+    c.push_str(&format!(
+        "\tstruct {name} *obj = malloc(sizeof(struct {name}));\n\
+         \tif (!obj) {{\n\t\treturn (struct {name} *)0;\n\t}}\n\
+         \tmemset(obj, 0, sizeof(struct {name}));\n",
+        name = name
+    ));
+    c.push_str(&format!(
+        "\t((struct {root} *)obj)->oz_class_id = OZ_STATIC_CLASS_{name};\n\
+         \toz_atomic_init(&((struct {root} *)obj)->oz_refcount, 1);\n",
+        root = root,
+        name = name
+    ));
+    c.push_str("\treturn obj;\n}\n\n");
+
+    c.push_str(&format!(
+        "/* synthesized: releases {name}'s keys, its values, their shared\n * \
+buffer, and its own storage -- called only from oz_static_release, once\n * \
+the refcount reaches zero (not from source; OZDictionary.m has no\n * \
+-dealloc of its own) */\n",
+        name = name
+    ));
+    c.push_str(&format!(
+        "void {name}_oz_free(struct {name} *obj)\n{{\n\
+         \tfor (unsigned int i = 0; i < obj->_count; i++) {{\n\
+         \t\toz_static_release((struct {root} *)obj->_keys[i]);\n\
+         \t\toz_static_release((struct {root} *)obj->_values[i]);\n\
+         \t}}\n\
+         \tfree(obj->_keys);\n\
+         \tfree(obj);\n\
+         }}\n\n",
+        root = root,
+        name = name
+    ));
+
+    c.push_str(&format!(
+        "/* synthesized: builds a fresh {name} from parallel stack buffers of\n * \
+{root} pointers -- backs the '@{{...}}' boxed dictionary literal desugar\n * \
+(not from source) */\n",
+        name = name,
+        root = root
+    ));
+    c.push_str(&format!(
+        "struct {name} *{name}_oz_initWithKeysValues(void **keys, void **values, unsigned int count)\n{{\n\
+         \tstruct {name} *dict = {name}_oz_alloc();\n\
+         \tif (!dict) {{\n\t\treturn (struct {name} *)0;\n\t}}\n\
+         \tvoid **buf = malloc(count * 2 * sizeof(void *));\n\
+         \tif (!buf) {{\n\t\t{name}_oz_free(dict);\n\t\treturn (struct {name} *)0;\n\t}}\n\
+         \tfor (unsigned int i = 0; i < count; i++) {{\n\
+         \t\tbuf[i] = keys[i];\n\
+         \t\tbuf[count + i] = values[i];\n\
+         \t}}\n\
+         \tdict->_keys = buf;\n\
+         \tdict->_values = buf + count;\n\
+         \tdict->_count = count;\n\
+         \treturn dict;\n\
+         }}\n\n",
+        name = name
+    ));
+    c
+}
+
 /// `OZ_PROTOCOL_SEND_{selector}`: routes a dynamically-dispatched
 /// selector (see `Program::is_dynamically_dispatched` -- protocol-
 /// declared, always-polymorphic like `isEqual:`, or implemented by more

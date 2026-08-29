@@ -264,6 +264,7 @@ fn needs_translation(node: Node) -> bool {
             | "identifier"
             | "at_expression"
             | "array_literal"
+            | "dictionary_literal"
     ) {
         return true;
     }
@@ -348,6 +349,7 @@ fn render_expr(node: Node, ctx: &mut EmitCtx) -> (String, String) {
         "at_expression" => render_boxed_at_expression(node, ctx),
         "string_literal" => render_boxed_string_literal(node, ctx),
         "array_literal" => render_boxed_array_literal(node, ctx),
+        "dictionary_literal" => render_boxed_dictionary_literal(node, ctx),
         "block_pointer_declarator" | "abstract_block_pointer_declarator" => {
             // A block-typed local (`int (^square)(int) = ...;`) keeps its
             // `^` declarator syntax verbatim from source, but its
@@ -654,6 +656,64 @@ fn render_boxed_array_literal(node: Node, ctx: &mut EmitCtx) -> (String, String)
     (
         format!("(struct OZArray *)OZArray_oz_initWithItems({}, {})", buf_name, elements.len()),
         "struct OZArray *".to_string(),
+    )
+}
+
+/// Desugars a boxed dictionary literal (`@{k1: v1, k2: v2, ...}`) into a
+/// call to the malloc-based `OZDictionary_oz_initWithKeysValues` builder
+/// (see `companion::render_dict_support`) -- the dictionary counterpart
+/// of `render_boxed_array_literal` above (see its doc comment for the
+/// element-ownership rules, identical here for both keys and values).
+/// Each `dictionary_pair` child has exactly two named children (key
+/// expression, value expression) either side of a `:` token.
+fn render_boxed_dictionary_literal(node: Node, ctx: &mut EmitCtx) -> (String, String) {
+    let (line, col) = line_col(ctx.src, node.start_byte());
+    if !ctx.program.is_class("OZDictionary") {
+        ctx.err(
+            node,
+            format!(
+                "boxed dictionary literal at {}:{} desugars to an 'OZDictionary' instance, but no class 'OZDictionary' is defined in this source",
+                line, col
+            ),
+        );
+        return ("0".to_string(), "int".to_string());
+    }
+    let root = ctx.program.root_class().unwrap_or("OZDictionary").to_string();
+
+    let mut cursor = node.walk();
+    let pairs: Vec<Node> = node.children(&mut cursor).filter(|c| c.kind() == "dictionary_pair").collect();
+
+    let mut key_refs = Vec::with_capacity(pairs.len());
+    let mut value_refs = Vec::with_capacity(pairs.len());
+    for pair in &pairs {
+        let mut pc = pair.walk();
+        let exprs: Vec<Node> = pair.children(&mut pc).filter(|c| c.kind() != ":").collect();
+        let (key, value) = (exprs[0], exprs[1]);
+        for (node, refs) in [(key, &mut key_refs), (value, &mut value_refs)] {
+            let fresh = is_fresh_alloc(node, ctx.src);
+            let (text, _) = render_expr(node, ctx);
+            if fresh {
+                refs.push(format!("(void *){}", text));
+            } else {
+                refs.push(format!("(void *)oz_static_retain((struct {} *)({}))", root, text));
+            }
+        }
+    }
+
+    ctx.block_counter += 1;
+    let keys_buf = format!("_oz_dict_L{}_C{}_{}_keys", line, col, ctx.block_counter);
+    let values_buf = format!("_oz_dict_L{}_C{}_{}_values", line, col, ctx.block_counter);
+    ctx.pre_stmts.push(format!("void *{}[] = {{ {} }};", keys_buf, key_refs.join(", ")));
+    ctx.pre_stmts.push(format!("void *{}[] = {{ {} }};", values_buf, value_refs.join(", ")));
+
+    (
+        format!(
+            "(struct OZDictionary *)OZDictionary_oz_initWithKeysValues({}, {}, {})",
+            keys_buf,
+            values_buf,
+            pairs.len()
+        ),
+        "struct OZDictionary *".to_string(),
     )
 }
 
@@ -1042,6 +1102,8 @@ fn render_interface(node: Node, ctx: &mut EmitCtx, program: &Program) -> String 
         let root = program.root_class().unwrap_or(&name).to_string();
         let alloc_free = if name == "OZArray" {
             crate::companion::render_array_support(&name, &root)
+        } else if name == "OZDictionary" {
+            crate::companion::render_dict_support(&name, &root)
         } else {
             crate::companion::render_alloc_free(&name, &root)
         };

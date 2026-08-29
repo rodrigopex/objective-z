@@ -380,3 +380,52 @@ pub fn ozmutablestring_src() -> String {
         include_str!("../../../../src/OZMutableString.m"),
     )
 }
+
+/// OZDictionary, the immutable-dictionary Foundation class -- assembled
+/// from `include/oz_sdk/Foundation/OZDictionary.h` / `src/OZDictionary.m`,
+/// with the same shape of real-content cut as `ozarray_src` (generic
+/// type params, `<IteratorProtocol>` conformance, the `iterIdx` property
+/// + `@synthesize`, `iter`/`next` -- all for-in-only, and
+/// `@property`/`@synthesize` are hard-rejected regardless) and
+/// `+dictionaryWithObjects:forKeys:count:` (same reason as OZArray's
+/// `+arrayWithObjects:count:` -- synthesized at emit-time instead, see
+/// `companion::render_dict_support`'s `OZDictionary_oz_initWithKeysValues`).
+///
+/// Unlike `ozarray_src`, `cDescription:maxLength:` is kept: its body
+/// message-sends `cDescription:maxLength:` back onto bare `id`-typed
+/// locals (each key/value), which used to be unresolvable the same way
+/// OZArray's was -- fixed generally (not just for this one case) by the
+/// dynamic-dispatch generalization in `model.rs`/`companion.rs`/`emit.rs`
+/// (`cDescription:maxLength:` is one of the two selectors always
+/// dynamically dispatched, matching the real Python pipeline's own
+/// `_classify_dispatch` rule). `-objectForKey:`'s `[k isEqual:key]` --
+/// the one thing that made this fix necessary in the first place --
+/// works the same way.
+///
+/// Requires `OZObject` (`common::ozobject_src`) in scope as the root
+/// class; a boxed dictionary literal's keys/values typically also need
+/// `OZString` (`common::ozstring_src`) and `OZQ31` (`common::ozq31_src`)
+/// in scope, since `@"..."` and `@(42)` desugar to them.
+pub fn ozdictionary_src() -> String {
+    let mut header = include_str!("../../../../include/oz_sdk/Foundation/OZDictionary.h").to_string();
+    header = remove_line_containing(&header, "uint16_t _iterIdx;");
+    header = header.replace("__unsafe_unretained id *_keys;", "id *_keys;");
+    header = header.replace("__unsafe_unretained id *_values;", "id *_values;");
+    header = header.replace(
+        "@interface OZDictionary<__covariant KeyType, __covariant ObjectType> : OZObject <IteratorProtocol> {",
+        "@interface OZDictionary : OZObject {",
+    );
+    header = remove_line_containing(&header, "@property (readonly) uint16_t iterIdx;");
+    header = remove_line_range(&header, "dictionaryWithObjects:", "count:(unsigned int)count;");
+    header = remove_line_containing(&header, "struct NSFastEnumerationState;");
+    header = remove_line_range(&header, "countByEnumeratingWithState:", "count:(unsigned long)len;");
+    header = remove_line_containing(&header, "- (instancetype)iter;");
+    header = remove_line_containing(&header, "- (id)next;");
+
+    let mut implementation = include_str!("../../../../src/OZDictionary.m").to_string();
+    implementation = remove_line_containing(&implementation, "@synthesize iterIdx = _iterIdx;");
+    implementation = remove_method_body(&implementation, "- (instancetype)iter");
+    implementation = remove_method_body(&implementation, "- (id)next");
+
+    assemble(&header, &implementation)
+}
