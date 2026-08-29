@@ -98,6 +98,77 @@ oz_static_release, once the refcount reaches zero (not from source) */\n",
     c
 }
 
+/// OZArray-specific replacement for `render_alloc_free`: alloc is
+/// identical, but free must also release every held item and free the
+/// items buffer -- OZArray.m (transplanted verbatim from `src/OZArray.m`)
+/// has no `-dealloc` of its own (the real Python pipeline synthesizes this
+/// at emit-time too, via a static item-pool allocator this malloc-based
+/// spike doesn't have), so the generic dealloc dispatch would otherwise
+/// fall through to OZObject's no-op `-dealloc` and leak both. Also emits
+/// `OZArray_oz_initWithItems`, the malloc-based builder backing the
+/// `@[...]` boxed array literal desugar in `emit.rs`.
+pub(crate) fn render_array_support(name: &str, root: &str) -> String {
+    let mut c = String::new();
+    c.push_str(&format!(
+        "/* synthesized: allocates and zero-initializes a new {name} (not from source) */\n",
+        name = name
+    ));
+    c.push_str(&format!("struct {name} *{name}_oz_alloc(void)\n{{\n", name = name));
+    c.push_str(&format!(
+        "\tstruct {name} *obj = malloc(sizeof(struct {name}));\n\
+         \tif (!obj) {{\n\t\treturn (struct {name} *)0;\n\t}}\n\
+         \tmemset(obj, 0, sizeof(struct {name}));\n",
+        name = name
+    ));
+    c.push_str(&format!(
+        "\t((struct {root} *)obj)->oz_class_id = OZ_STATIC_CLASS_{name};\n\
+         \toz_atomic_init(&((struct {root} *)obj)->oz_refcount, 1);\n",
+        root = root,
+        name = name
+    ));
+    c.push_str("\treturn obj;\n}\n\n");
+
+    c.push_str(&format!(
+        "/* synthesized: releases {name}'s items, its items buffer, and its own\n * \
+storage -- called only from oz_static_release, once the refcount reaches\n * \
+zero (not from source; OZArray.m has no -dealloc of its own) */\n",
+        name = name
+    ));
+    c.push_str(&format!(
+        "void {name}_oz_free(struct {name} *obj)\n{{\n\
+         \tfor (unsigned int i = 0; i < obj->_count; i++) {{\n\
+         \t\toz_static_release((struct {root} *)obj->_items[i]);\n\
+         \t}}\n\
+         \tfree(obj->_items);\n\
+         \tfree(obj);\n\
+         }}\n\n",
+        root = root,
+        name = name
+    ));
+
+    c.push_str(&format!(
+        "/* synthesized: builds a fresh {name} from a stack buffer of {root}\n * \
+pointers -- backs the '@[...]' boxed array literal desugar (not from\n * \
+source) */\n",
+        name = name,
+        root = root
+    ));
+    c.push_str(&format!(
+        "struct {name} *{name}_oz_initWithItems(void **src, unsigned int count)\n{{\n\
+         \tstruct {name} *arr = {name}_oz_alloc();\n\
+         \tif (!arr) {{\n\t\treturn (struct {name} *)0;\n\t}}\n\
+         \tvoid **items = malloc(count * sizeof(void *));\n\
+         \tif (!items) {{\n\t\t{name}_oz_free(arr);\n\t\treturn (struct {name} *)0;\n\t}}\n\
+         \tfor (unsigned int i = 0; i < count; i++) {{\n\t\titems[i] = src[i];\n\t}}\n\
+         \tarr->_items = items;\n\
+         \tarr->_count = count;\n\
+         \treturn arr;\n\
+         }}\n\n",
+        name = name
+    ));
+    c
+}
+
 /// `OZ_PROTOCOL_SEND_{selector}`: routes a protocol-declared selector to
 /// whichever class implements it, switching on `self->oz_class_id`. Real
 /// Objective-C dispatch doesn't check protocol conformance at the call
