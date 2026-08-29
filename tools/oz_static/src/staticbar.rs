@@ -123,12 +123,14 @@ fn walk_for_reject(
             check_block_capture(node, src, scope, diags);
             return; // don't descend further with loop/decl context; block is opaque
         }
-        // `array_literal` (`@[...]`) is not rejected -- it desugars to an
-        // OZArray_oz_initWithItems call in emit.rs. Its element children
-        // still get walked normally (falling through to the default
-        // descent below), so an unsupported construct nested inside one
-        // of its elements is still caught.
-        "dictionary_literal" | "selector_expression" | "protocol_expression" => {
+        // `array_literal` (`@[...]`) and `dictionary_literal`
+        // (`@{...}`) are not rejected -- they desugar to
+        // OZArray_oz_initWithItems / OZDictionary_oz_initWithKeysValues
+        // calls in emit.rs. Their child nodes (elements; key/value
+        // pairs) still get walked normally (falling through to the
+        // default descent below), so an unsupported construct nested
+        // inside one of them is still caught.
+        "selector_expression" | "protocol_expression" => {
             err(
                 diags,
                 src,
