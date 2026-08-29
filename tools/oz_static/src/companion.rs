@@ -301,17 +301,28 @@ fn render_protocol_dispatch(program: &Program, root: &str) -> (String, String) {
         }
         let arg_names: Vec<&str> = m.params.iter().map(|(n, _)| n.as_str()).collect();
 
+        // `m.return_type` is one implementor's own resolved `instancetype`
+        // (the first one found declaring this selector), e.g. `struct
+        // OZArray *` -- fine for *that* class's own prototype, but wrong
+        // here: this one shared function also routes to every other
+        // implementor (`struct OZDictionary *`, ...), whose concrete type
+        // the caller never statically knows anyway (that's the reason
+        // this needs a runtime switch at all). `void *` is the same
+        // "any object" stand-in `render_type` already uses for a bare
+        // `id` -- every struct pointer converts to it with no cast.
+        let ret_ty = if m.returns_instancetype { "void *".to_string() } else { m.return_type.clone() };
+
         h.push_str(&format!(
             "/* protocol dispatch: routes '{}' to whichever class implements it */\n",
             m.selector
         ));
-        h.push_str(&format!("{} {}({});\n", m.return_type, fn_name, params));
+        h.push_str(&format!("{} {}({});\n", ret_ty, fn_name, params));
 
         c.push_str(&format!(
             "/* protocol dispatch: routes '{}' to whichever class implements it\n * (not from source) */\n",
             m.selector
         ));
-        c.push_str(&format!("{} {}({})\n{{\n\tswitch (self->oz_class_id) {{\n", m.return_type, fn_name, params));
+        c.push_str(&format!("{} {}({})\n{{\n\tswitch (self->oz_class_id) {{\n", ret_ty, fn_name, params));
         for (name, defining) in &routed {
             let target = crate::emit::method_fn_name(defining, &m.selector, m.is_class_method);
             let mut call_args = vec![format!("(struct {} *)self", defining)];
@@ -327,7 +338,7 @@ fn render_protocol_dispatch(program: &Program, root: &str) -> (String, String) {
             c.push_str("\tdefault: return;\n\t}\n}\n\n");
         } else {
             c.push_str("\tdefault: return (");
-            c.push_str(&m.return_type);
+            c.push_str(&ret_ty);
             c.push_str(")0;\n\t}\n}\n\n");
         }
     }
@@ -381,7 +392,15 @@ pub fn render(
     // `oz_dispatch.h.j2`'s own hardcoded line in the Python pipeline --
     // `src/OZLog.c` (linked in unconditionally by both backends) provides
     // the one real definition either way.
-    h.push_str("/* OZLog -- formatted logging with %@ object support; defined in src/OZLog.c */\nvoid OZLog(const char *fmt, ...);\n\n");
+    // `_oz_get_log_precision` is called directly by any class's own
+    // `cDescription:maxLength:` (not just through `OZLog()` itself) --
+    // same splice-visibility gap as `OZLog` above, same fix. Its one real
+    // definition is `src/OZLog.c:26`, linked in unconditionally.
+    h.push_str(
+        "/* OZLog -- formatted logging with %@ object support; defined in src/OZLog.c */\n\
+         void OZLog(const char *fmt, ...);\n\
+         int _oz_get_log_precision(void);\n\n",
+    );
 
     if !hoisted_forward_decls.is_empty() {
         h.push_str("/* forward-declared structs (no body in source), hoisted here so a\n * method prototype below referencing one as a pointer type still compiles */\n");
