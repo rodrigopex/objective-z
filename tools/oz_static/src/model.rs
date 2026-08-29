@@ -10,6 +10,13 @@ pub struct MethodSig {
     pub selector: String,
     pub return_type: String,
     pub params: Vec<(String, String)>, // (name, c_type)
+    /// Was `return_type` spelled `instancetype` in source? `return_type`
+    /// itself already resolved that to `struct {declaring_class} *` (see
+    /// `collect::extract_method_sig`) -- callers dispatching this method
+    /// through a *subclass*-typed receiver need this flag to know the
+    /// call's real result type covaries with the receiver, not with the
+    /// declaring class, and must be cast back up accordingly.
+    pub returns_instancetype: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

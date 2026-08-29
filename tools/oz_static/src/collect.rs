@@ -409,6 +409,7 @@ pub(crate) fn extract_method_sig(
     let mut children = node.children(&mut cursor).peekable();
 
     let mut return_type = String::from("void");
+    let mut returns_instancetype = false;
     let mut selector = String::new();
     let mut params = Vec::new();
 
@@ -417,6 +418,7 @@ pub(crate) fn extract_method_sig(
             "method_type" if selector.is_empty() => {
                 let (t, stars) = extract_type_and_stars(child, src);
                 return_type = if t == "instancetype" {
+                    returns_instancetype = true;
                     format!("struct {} *", self_class)
                 } else {
                     render_type(&t, stars, known_classes)
@@ -444,7 +446,7 @@ pub(crate) fn extract_method_sig(
         }
     }
 
-    MethodSig { is_class_method, selector, return_type, params }
+    MethodSig { is_class_method, selector, return_type, params, returns_instancetype }
 }
 
 pub fn collect(source: &str) -> (Program, Vec<crate::model::Diagnostic>) {
@@ -680,6 +682,7 @@ fn resolve_properties(classes: &mut std::collections::HashMap<String, ClassInfo>
                     selector: getter_sel,
                     return_type: prop.c_type.clone(),
                     params: Vec::new(),
+                    returns_instancetype: false,
                 });
             }
             if !prop.is_readonly {
@@ -690,6 +693,7 @@ fn resolve_properties(classes: &mut std::collections::HashMap<String, ClassInfo>
                         selector: setter_sel,
                         return_type: "void".to_string(),
                         params: vec![(prop.name.clone(), prop.c_type.clone())],
+                        returns_instancetype: false,
                     });
                 }
             }

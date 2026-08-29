@@ -261,15 +261,20 @@ fn find_defining_class(
     None
 }
 
+/// Returns the method's `(return_type, returns_instancetype)`. A caller
+/// dispatching this method through a receiver statically typed as a
+/// *subclass* of `class_name` must, when `returns_instancetype` is true,
+/// report and cast to the subclass's own pointer type instead of this
+/// literal `return_type` -- see `MethodSig::returns_instancetype`.
 fn method_return_type(
     program: &Program,
     class_name: &str,
     selector: &str,
     is_class_method: bool,
-) -> Option<String> {
+) -> Option<(String, bool)> {
     program.classes.get(class_name)?.methods.iter().find(|m| {
         m.selector == selector && m.is_class_method == is_class_method
-    }).map(|m| m.return_type.clone())
+    }).map(|m| (m.return_type.clone(), m.returns_instancetype))
 }
 
 struct EmitCtx<'a> {
@@ -557,6 +562,7 @@ fn synthetic_class_call(
 ) -> Option<(String, String)> {
     let defining = find_defining_class(ctx.program, class_name, selector, true)?;
     let ret_ty = method_return_type(ctx.program, &defining, selector, true)
+        .map(|(t, _)| t)
         .unwrap_or_else(|| "void".to_string());
     Some((
         format!("{}({})", method_fn_name(&defining, selector, true), arg_texts.join(", ")),
@@ -994,16 +1000,24 @@ fn render_message(node: Node, ctx: &mut EmitCtx) -> (String, String) {
         let target = target.to_string();
         return match find_defining_class(ctx.program, &target, &parts.selector, true) {
             Some(defining) => {
-                let ret_ty = method_return_type(ctx.program, &defining, &parts.selector, true)
-                    .unwrap_or_else(|| "void".to_string());
-                (
-                    format!(
-                        "{}({})",
-                        method_fn_name(&defining, &parts.selector, true),
-                        arg_texts.join(", ")
-                    ),
-                    ret_ty,
-                )
+                let (ret_ty, returns_instancetype) =
+                    method_return_type(ctx.program, &defining, &parts.selector, true)
+                        .unwrap_or_else(|| ("void".to_string(), false));
+                let call = format!(
+                    "{}({})",
+                    method_fn_name(&defining, &parts.selector, true),
+                    arg_texts.join(", ")
+                );
+                // `instancetype` covaries with the receiver, not with
+                // whichever ancestor actually defines the method -- the
+                // underlying C function still returns `defining`'s own
+                // pointer type (one function serves every subclass), so
+                // the call site casts it back up to `target`'s.
+                if returns_instancetype && defining != target {
+                    (format!("(struct {} *)({})", target, call), format!("struct {} *", target))
+                } else {
+                    (call, ret_ty)
+                }
             }
             None => {
                 ctx.err(
@@ -1038,18 +1052,24 @@ fn render_message(node: Node, ctx: &mut EmitCtx) -> (String, String) {
         }
         Some(target) => match find_defining_class(ctx.program, &target, &parts.selector, false) {
             Some(defining) => {
-                let ret_ty = method_return_type(ctx.program, &defining, &parts.selector, false)
-                    .unwrap_or_else(|| "void".to_string());
+                let (ret_ty, returns_instancetype) =
+                    method_return_type(ctx.program, &defining, &parts.selector, false)
+                        .unwrap_or_else(|| ("void".to_string(), false));
                 let mut call_args = vec![format!("(struct {} *)({})", defining, recv_text)];
                 call_args.extend(arg_texts);
-                (
-                    format!(
-                        "{}({})",
-                        method_fn_name(&defining, &parts.selector, false),
-                        call_args.join(", ")
-                    ),
-                    ret_ty,
-                )
+                let call = format!(
+                    "{}({})",
+                    method_fn_name(&defining, &parts.selector, false),
+                    call_args.join(", ")
+                );
+                // See the class-method branch above for why an
+                // `instancetype` result needs casting back up to
+                // `target`'s own pointer type here.
+                if returns_instancetype && defining != target {
+                    (format!("(struct {} *)({})", target, call), format!("struct {} *", target))
+                } else {
+                    (call, ret_ty)
+                }
             }
             None if ctx.program.is_dynamically_dispatched(&parts.selector, false) => {
                 // `target` (or its superclass chain) doesn't implement
@@ -1546,6 +1566,7 @@ fn render_method_definition(
     let defining = find_defining_class(ctx.program, class_name, &sig.selector, sig.is_class_method)
         .unwrap_or_else(|| class_name.to_string());
     let ret_ty = method_return_type(ctx.program, &defining, &sig.selector, sig.is_class_method)
+        .map(|(t, _)| t)
         .unwrap_or_else(|| sig.return_type.clone());
 
     let mut sig_params = String::new();
