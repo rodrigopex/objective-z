@@ -22,16 +22,26 @@
 
 use crate::model::Program;
 
-fn find_defining_dealloc(program: &Program, start: &str) -> Option<String> {
+/// Walks `start`'s own superclass chain looking for whichever class
+/// actually implements `selector` -- the same single-inheritance method
+/// lookup real Objective-C dispatch does, just resolved here at
+/// generation time instead of at runtime. `None` only if nothing in
+/// `start`'s chain implements it at all (dead code at every call site,
+/// which only calls this for a class already known to conform/inherit).
+fn find_defining_method(program: &Program, start: &str, selector: &str, is_class_method: bool) -> Option<String> {
     let mut cur = Some(start.to_string());
     while let Some(name) = cur {
         let info = program.classes.get(&name)?;
-        if info.methods.iter().any(|m| !m.is_class_method && m.selector == "dealloc") {
+        if info.methods.iter().any(|m| m.is_class_method == is_class_method && m.selector == selector) {
             return Some(name);
         }
         cur = info.superclass.clone();
     }
     None
+}
+
+fn find_defining_dealloc(program: &Program, start: &str) -> Option<String> {
+    find_defining_method(program, start, "dealloc", false)
 }
 
 /// Order classes so a superclass's struct always precedes its subclasses'
@@ -169,33 +179,38 @@ source) */\n",
     c
 }
 
-/// `OZ_PROTOCOL_SEND_{selector}`: routes a protocol-declared selector to
-/// whichever class implements it, switching on `self->oz_class_id`. Real
-/// Objective-C dispatch doesn't check protocol conformance at the call
-/// site either -- a protocol is a compile-time contract, not a runtime
-/// filter -- so this includes every class implementing the selector,
-/// regardless of which protocol (if any) it formally conforms to.
-/// Generated once per distinct (selector, is_class_method) pair across
-/// every protocol in the program; skipped entirely if no class actually
-/// implements it (nothing to route to). Return type/params come from
-/// whichever conforming class was declared first, since a shared
-/// dispatch function needs one signature and every implementor of a
-/// given protocol method is expected to match it.
+/// `OZ_PROTOCOL_SEND_{selector}`: routes a dynamically-dispatched
+/// selector (see `Program::is_dynamically_dispatched` -- protocol-
+/// declared, always-polymorphic like `isEqual:`, or implemented by more
+/// than one class) to whichever class implements it, switching on
+/// `self->oz_class_id`. Real Objective-C dispatch doesn't check
+/// protocol conformance at the call site either -- a protocol is a
+/// compile-time contract, not a runtime filter -- so this includes
+/// every class in the program with a `case`, not just the ones that
+/// implement the selector directly: a class that *inherits* it (no
+/// override of its own) still needs to route to whichever ancestor
+/// actually defines it (`find_defining_method`, the same single-
+/// inheritance lookup `find_defining_dealloc` already does) -- left
+/// out, its instances would silently fall through to `default` instead.
+/// Generated once per distinct (selector, is_class_method) pair;
+/// skipped entirely if nothing in the program implements it at all.
+/// Return type/params come from whichever implementing class was
+/// declared first, since a shared dispatch function needs one
+/// signature and every implementor of a given selector is expected to
+/// match it.
 fn render_protocol_dispatch(program: &Program, root: &str) -> (String, String) {
     let mut h = String::new();
     let mut c = String::new();
-    for m in program.all_protocol_methods() {
-        let implementors: Vec<&String> = program
+    for m in program.dynamic_dispatch_methods() {
+        let routed: Vec<(&String, String)> = program
             .class_order
             .iter()
-            .filter(|name| {
-                program.classes[*name]
-                    .methods
-                    .iter()
-                    .any(|mm| mm.selector == m.selector && mm.is_class_method == m.is_class_method)
+            .filter_map(|name| {
+                find_defining_method(program, name, &m.selector, m.is_class_method)
+                    .map(|defining| (name, defining))
             })
             .collect();
-        if implementors.is_empty() {
+        if routed.is_empty() {
             continue;
         }
         let selc = crate::emit::selector_to_c(&m.selector);
@@ -218,9 +233,9 @@ fn render_protocol_dispatch(program: &Program, root: &str) -> (String, String) {
             m.selector
         ));
         c.push_str(&format!("{} {}({})\n{{\n\tswitch (self->oz_class_id) {{\n", m.return_type, fn_name, params));
-        for name in &implementors {
-            let target = crate::emit::method_fn_name(name, &m.selector, m.is_class_method);
-            let mut call_args = vec![format!("(struct {} *)self", name)];
+        for (name, defining) in &routed {
+            let target = crate::emit::method_fn_name(defining, &m.selector, m.is_class_method);
+            let mut call_args = vec![format!("(struct {} *)self", defining)];
             call_args.extend(arg_names.iter().map(|a| a.to_string()));
             let call = format!("{}({})", target, call_args.join(", "));
             if m.return_type == "void" {

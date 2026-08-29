@@ -717,6 +717,16 @@ fn render_message(node: Node, ctx: &mut EmitCtx) -> (String, String) {
     }
 
     match class_name_from_type(&recv_type) {
+        None if ctx.program.is_dynamically_dispatched(&parts.selector, false) => {
+            // A bare `id` (or otherwise unresolvable) receiver -- e.g. a
+            // container's own element storage, typed `id` because it can
+            // hold any class -- calling a selector that isn't resolved
+            // to one direct function call at compile time anyway (see
+            // `Program::is_dynamically_dispatched`). No static type to
+            // even attempt a direct call against, so this is the only
+            // route available, not a fallback from a failed lookup.
+            dynamic_dispatch_call(ctx.program, &root, &parts.selector, &recv_text, &arg_texts)
+        }
         None => {
             ctx.err(
                 node,
@@ -742,27 +752,16 @@ fn render_message(node: Node, ctx: &mut EmitCtx) -> (String, String) {
                     ret_ty,
                 )
             }
-            None if ctx.program.is_protocol_selector(&parts.selector, false) => {
+            None if ctx.program.is_dynamically_dispatched(&parts.selector, false) => {
                 // `target` (or its superclass chain) doesn't implement
-                // this selector itself, but some protocol declares it and
-                // some class in the program does implement it -- the
+                // this selector itself, but it's dynamically dispatched
+                // and some class in the program does implement it -- the
                 // receiver's *static* type isn't precise enough to know
                 // which one at compile time (e.g. it's typed as the root
                 // class, standing in for "any conforming object"), so
                 // this is the one place besides dealloc that needs a
                 // runtime switch instead of a direct call.
-                let root = ctx.program.root_class().unwrap_or(&target).to_string();
-                let selc = selector_to_c(&parts.selector);
-                let mut call_args = vec![format!("(struct {} *)({})", root, recv_text)];
-                call_args.extend(arg_texts);
-                let ret_ty = ctx
-                    .program
-                    .all_protocol_methods()
-                    .into_iter()
-                    .find(|m| m.selector == parts.selector && !m.is_class_method)
-                    .map(|m| m.return_type)
-                    .unwrap_or_else(|| "void".to_string());
-                (format!("OZ_PROTOCOL_SEND_{}({})", selc, call_args.join(", ")), ret_ty)
+                dynamic_dispatch_call(ctx.program, &root, &parts.selector, &recv_text, &arg_texts)
             }
             None => {
                 ctx.err(node, format!("class '{}' has no method matching '{}'", target, parts.selector));
@@ -770,6 +769,32 @@ fn render_message(node: Node, ctx: &mut EmitCtx) -> (String, String) {
             }
         },
     }
+}
+
+/// Builds a `OZ_PROTOCOL_SEND_{selector}(...)` call (see
+/// `companion::render_protocol_dispatch`) routing a message send
+/// through the `oz_class_id` switch -- used whenever the receiver's
+/// static type doesn't pin down which class's implementation to call
+/// directly, whether because it's genuinely unresolvable (a bare `id`)
+/// or because it's typed as the root/a protocol, standing in for "any
+/// conforming object."
+fn dynamic_dispatch_call(
+    program: &Program,
+    root: &str,
+    selector: &str,
+    recv_text: &str,
+    arg_texts: &[String],
+) -> (String, String) {
+    let selc = selector_to_c(selector);
+    let mut call_args = vec![format!("(struct {} *)({})", root, recv_text)];
+    call_args.extend(arg_texts.iter().cloned());
+    let ret_ty = program
+        .dynamic_dispatch_methods()
+        .into_iter()
+        .find(|m| m.selector == selector && !m.is_class_method)
+        .map(|m| m.return_type)
+        .unwrap_or_else(|| "void".to_string());
+    (format!("OZ_PROTOCOL_SEND_{}({})", selc, call_args.join(", ")), ret_ty)
 }
 
 /// Infer a hoisted block's C return type by scanning its body for a
