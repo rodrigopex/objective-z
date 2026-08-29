@@ -205,6 +205,14 @@ struct EmitCtx<'a> {
     /// into the primary source exactly like `hoisted_blocks`.
     hoisted_string_literals: Vec<(String, String)>,
     block_counter: usize,
+    /// Statements that must precede the *current top-level statement*
+    /// (not hoisted to file scope) -- e.g. the stack buffer an array
+    /// literal builds its items into. Pushed by an expression-rendering
+    /// helper, drained and prepended by whichever statement-level
+    /// renderer (`render_body_with_comments`) is currently walking the
+    /// enclosing statement. Mirrors the Python pipeline's `ctx.pre_stmts`
+    /// (see `tools/oz_transpile/emit.py`).
+    pre_stmts: Vec<String>,
 }
 
 impl<'a> EmitCtx<'a> {
@@ -238,7 +246,12 @@ fn rebuild(node: Node, ctx: &mut EmitCtx, render_child: &mut dyn FnMut(Node, &mu
 fn needs_translation(node: Node) -> bool {
     if matches!(
         node.kind(),
-        "message_expression" | "block_literal" | "type_identifier" | "identifier" | "at_expression"
+        "message_expression"
+            | "block_literal"
+            | "type_identifier"
+            | "identifier"
+            | "at_expression"
+            | "array_literal"
     ) {
         return true;
     }
@@ -322,6 +335,7 @@ fn render_expr(node: Node, ctx: &mut EmitCtx) -> (String, String) {
         }
         "at_expression" => render_boxed_at_expression(node, ctx),
         "string_literal" => render_boxed_string_literal(node, ctx),
+        "array_literal" => render_boxed_array_literal(node, ctx),
         "block_pointer_declarator" | "abstract_block_pointer_declarator" => {
             // A block-typed local (`int (^square)(int) = ...;`) keeps its
             // `^` declarator syntax verbatim from source, but its
@@ -557,6 +571,80 @@ fn render_boxed_string_literal(node: Node, ctx: &mut EmitCtx) -> (String, String
     (format!("(struct OZString *)&{}", name), "struct OZString *".to_string())
 }
 
+/// Mirrors Python's `_is_fresh_alloc` (`tools/oz_transpile/emit.py`):
+/// does `node` produce a fresh +1 reference an array/dictionary literal
+/// can absorb without an extra retain? Only a numeric/boolean boxed
+/// literal, a boxed string literal, or a nested array/dictionary literal
+/// qualify -- everything else (a plain variable reference, a message
+/// send, even `[[Foo alloc] init]`) is treated as an existing reference
+/// that must be retained before the literal can hold onto it, exactly
+/// like the Python oracle (which draws the same line, for the same
+/// reason: it has no general-purpose ownership analysis either).
+fn is_fresh_alloc(node: Node, src: &str) -> bool {
+    match node.kind() {
+        "at_expression" => is_numeric_boxed_shape(node, src),
+        "string_literal" => is_boxed_string_literal(node),
+        "array_literal" | "dictionary_literal" => true,
+        _ => false,
+    }
+}
+
+/// Desugars a boxed array literal (`@[e1, e2, ...]`) into a call to the
+/// malloc-based `OZArray_oz_initWithItems` builder (see
+/// `companion::render_array_support`) -- the same shape as the Python
+/// pipeline's `ObjCArrayLiteral` handling, but backed by a stack buffer
+/// instead of the item-pool allocator that pipeline has and this
+/// malloc-based spike doesn't.
+///
+/// Each element is rendered, then either passed through as-is (a fresh
+/// +1 reference, see `is_fresh_alloc`) or retained first (an existing
+/// reference the array must now also own). The resulting pointers are
+/// collected into a `void *` stack buffer pushed onto `ctx.pre_stmts`, so
+/// the enclosing statement-level renderer (`render_body_with_comments`)
+/// emits it just ahead of the statement using this literal; the literal
+/// itself becomes a call taking that buffer and its length.
+fn render_boxed_array_literal(node: Node, ctx: &mut EmitCtx) -> (String, String) {
+    let (line, col) = line_col(ctx.src, node.start_byte());
+    if !ctx.program.is_class("OZArray") {
+        ctx.err(
+            node,
+            format!(
+                "boxed array literal at {}:{} desugars to an 'OZArray' instance, but no class 'OZArray' is defined in this source",
+                line, col
+            ),
+        );
+        return ("0".to_string(), "int".to_string());
+    }
+    let root = ctx.program.root_class().unwrap_or("OZArray").to_string();
+
+    let mut cursor = node.walk();
+    let elements: Vec<Node> = node
+        .children(&mut cursor)
+        .filter(|c| !matches!(c.kind(), "@" | "[" | "]" | ","))
+        .collect();
+
+    let mut elem_refs = Vec::with_capacity(elements.len());
+    for elem in &elements {
+        let fresh = is_fresh_alloc(*elem, ctx.src);
+        let (text, _) = render_expr(*elem, ctx);
+        if fresh {
+            elem_refs.push(format!("(void *){}", text));
+        } else {
+            elem_refs.push(format!("(void *)oz_static_retain((struct {} *)({}))", root, text));
+        }
+    }
+
+    ctx.block_counter += 1;
+    let buf_name = format!("_oz_arr_L{}_C{}_{}", line, col, ctx.block_counter);
+    ctx.pre_stmts
+        .push(format!("void *{}[] = {{ {} }};", buf_name, elem_refs.join(", ")));
+
+    (
+        format!("(struct OZArray *)OZArray_oz_initWithItems({}, {})", buf_name, elements.len()),
+        "struct OZArray *".to_string(),
+    )
+}
+
 fn render_message(node: Node, ctx: &mut EmitCtx) -> (String, String) {
     let parts = parse_message(node, ctx.src);
     let (recv_text, recv_type) = render_expr(parts.receiver, ctx);
@@ -769,7 +857,17 @@ fn render_body_with_comments(body: Node, ctx: &mut EmitCtx) -> String {
 
     let rendered_stmts: Vec<(String, &str)> = stmts
         .iter()
-        .map(|s| (render_expr(*s, ctx).0, node_text(*s, ctx.src)))
+        .map(|s| {
+            let rendered = render_expr(*s, ctx).0;
+            let combined = if ctx.pre_stmts.is_empty() {
+                rendered
+            } else {
+                let pre = ctx.pre_stmts.join("\n\t");
+                ctx.pre_stmts.clear();
+                format!("{}\n\t{}", pre, rendered)
+            };
+            (combined, node_text(*s, ctx.src))
+        })
         .collect();
     if rendered_stmts.iter().all(|(rendered, original)| rendered == original) {
         return node_text(body, ctx.src).to_string();
@@ -905,7 +1003,11 @@ fn render_interface(node: Node, ctx: &mut EmitCtx, program: &Program) -> String 
         format!("{}{}{}", open_banner, decls, close_banner)
     } else {
         let root = program.root_class().unwrap_or(&name).to_string();
-        let alloc_free = crate::companion::render_alloc_free(&name, &root);
+        let alloc_free = if name == "OZArray" {
+            crate::companion::render_array_support(&name, &root)
+        } else {
+            crate::companion::render_alloc_free(&name, &root)
+        };
         format!("{}{}\n{}\n{}{}", open_banner, struct_text, alloc_free, decls, close_banner)
     }
 }
@@ -1095,6 +1197,7 @@ pub fn emit(source: &str, program: &Program) -> EmitOutput {
                     hoisted_structs: Vec::new(),
                     hoisted_string_literals: Vec::new(),
                     block_counter: 0,
+                    pre_stmts: Vec::new(),
                 };
                 let text = render_interface(node, &mut ctx, program);
                 diags.extend(ctx.diags);
@@ -1115,6 +1218,7 @@ pub fn emit(source: &str, program: &Program) -> EmitOutput {
                     hoisted_structs: Vec::new(),
                     hoisted_string_literals: Vec::new(),
                     block_counter: 0,
+                    pre_stmts: Vec::new(),
                 };
                 let mut out = String::new();
                 out.push_str(&banner_box(&header_text(node, source, &["implementation_definition"]), '-'));
@@ -1200,6 +1304,7 @@ pub fn emit(source: &str, program: &Program) -> EmitOutput {
                     hoisted_structs: Vec::new(),
                     hoisted_string_literals: Vec::new(),
                     block_counter: 0,
+                    pre_stmts: Vec::new(),
                 };
                 let mut c2 = node.walk();
                 if let Some(body) =
