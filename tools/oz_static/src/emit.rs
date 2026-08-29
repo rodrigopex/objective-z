@@ -11,7 +11,8 @@
 // isolated into one small generated companion file, mirroring the
 // existing oz_dispatch.c/h pattern.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::ops::Range;
 
 use tree_sitter::Node;
 
@@ -1160,7 +1161,11 @@ fn render_stmt_with_comment(node: Node, ctx: &mut EmitCtx, indent: &str) -> Stri
 /// need its tracking fields directly. Every other class's struct (and its
 /// alloc/free, which need it for sizeof) stays in-place right here; the
 /// companion only forward-declares it.
-fn render_interface(node: Node, ctx: &mut EmitCtx, program: &Program) -> String {
+/// Returns `(header_text, alloc_free_text)` -- see the split point inside
+/// for why. `emit()` recombines both into one string; `emit_split()`
+/// (OZ-096) keeps them apart, routing them to a per-origin `.h`/`.c`
+/// respectively.
+fn render_interface(node: Node, ctx: &mut EmitCtx, program: &Program) -> (String, String) {
     let name = ctx.class_name.clone();
     let info = &program.classes[&name];
 
@@ -1260,21 +1265,46 @@ fn render_interface(node: Node, ctx: &mut EmitCtx, program: &Program) -> String 
         }
     }
 
+    // Split in two so a per-origin `.h` (OZ-096) can take just the
+    // struct-and-prototypes half -- true header content -- without the
+    // alloc/free *function bodies* the non-root branch also generates
+    // here (an existing quirk of this spike: root's own alloc/free
+    // lives in the shared companion.c, via `companion::render`, but
+    // every other class's is generated in-place, right where its own
+    // struct is visible). `emit()` (single combined file, unchanged
+    // behavior) just concatenates both parts back together; no test
+    // checks `source_c`'s exact text, only that it compiles and runs.
     if info.superclass.is_none() {
         // Root: full struct hoisted to the companion; only the banner +
         // method prototypes stay in-place.
         ctx.hoisted_structs.push((name.clone(), struct_text));
-        format!("{}{}{}", open_banner, decls, close_banner)
+        (format!("{}{}{}", open_banner, decls, close_banner), String::new())
     } else {
         let root = program.root_class().unwrap_or(&name).to_string();
-        let alloc_free = if name == "OZArray" {
-            crate::companion::render_array_support(&name, &root)
+        // `{name}_oz_alloc`/`_oz_free` already get a prototype from the
+        // shared companion header (every class does) -- but OZArray's/
+        // OZDictionary's *extra* boxed-literal builder has no prototype
+        // anywhere. That was fine when everything landed in one
+        // translation unit (define-before-use), but a caller in a
+        // different file (e.g. `main.c`'s own `@[...]` literal) needs
+        // an explicit declaration once each class gets its own file.
+        let (alloc_free, extra_proto) = if name == "OZArray" {
+            (
+                crate::companion::render_array_support(&name, &root),
+                format!("struct {name} *{name}_oz_initWithItems(void **src, unsigned int count);\n", name = name),
+            )
         } else if name == "OZDictionary" {
-            crate::companion::render_dict_support(&name, &root)
+            (
+                crate::companion::render_dict_support(&name, &root),
+                format!(
+                    "struct {name} *{name}_oz_initWithKeysValues(void **keys, void **values, unsigned int count);\n",
+                    name = name
+                ),
+            )
         } else {
-            crate::companion::render_alloc_free(&name, &root)
+            (crate::companion::render_alloc_free(&name, &root), String::new())
         };
-        format!("{}{}\n{}\n{}{}", open_banner, struct_text, alloc_free, decls, close_banner)
+        (format!("{}{}\n{}{}{}", open_banner, struct_text, extra_proto, decls, close_banner), alloc_free)
     }
 }
 
@@ -1557,7 +1587,8 @@ pub fn emit(source: &str, program: &Program) -> EmitOutput {
                     block_counter: 0,
                     pre_stmts: Vec::new(),
                 };
-                let text = render_interface(node, &mut ctx, program);
+                let (header_part, alloc_free_part) = render_interface(node, &mut ctx, program);
+                let text = format!("{}\n{}", header_part, alloc_free_part);
                 diags.extend(ctx.diags);
                 hoisted_structs.extend(ctx.hoisted_structs);
                 patches.push(Patch { start: node.start_byte(), end: node.end_byte(), text });
@@ -1763,6 +1794,387 @@ pub fn emit(source: &str, program: &Program) -> EmitOutput {
         crate::companion::render(program, &hoisted_structs, &hoisted_enums);
 
     EmitOutput { source_c: out, companion_h, companion_c, diagnostics: diags }
+}
+
+pub struct EmitSplitOutput {
+    /// One `(stem, header_h, source_c)` triple per origin file, in
+    /// first-seen (textual) order.
+    pub files: Vec<(String, String, String)>,
+    pub companion_h: String,
+    pub companion_c: String,
+    pub diagnostics: Vec<Diagnostic>,
+}
+
+fn note_stem(order: &mut Vec<String>, stem: &str) {
+    if !order.iter().any(|s| s == stem) {
+        order.push(stem.to_string());
+    }
+}
+
+/// Origin-aware sibling of `emit()` (OZ-096): instead of one combined
+/// `source_c` covering the whole (possibly multi-file,
+/// `#import`-resolved) `source`, buckets each top-level construct's
+/// already-rendered text by which `origins` range it falls in, and by
+/// whether it's interface-shaped (struct + prototypes, no bodies --
+/// exactly what `class_interface` already renders as) or
+/// implementation-shaped (method bodies -- exactly what
+/// `class_implementation` already renders as). Reuses every render_*
+/// helper `emit()` itself uses, completely unchanged; only the outer
+/// assembly differs. `emit()` itself is untouched, still used directly
+/// by every existing test via `transpile()`, which has no concept of
+/// multiple origin files.
+///
+/// `origins` is `imports::ResolvedSource::origins`: an ordered list of
+/// `(stem, byte_range)` covering every byte of `source` (the same stem
+/// may appear more than once, non-contiguously).
+pub fn emit_split(source: &str, program: &Program, origins: &[(String, Range<usize>)]) -> EmitSplitOutput {
+    let tree = crate::parse::parse(source);
+    let root = tree.root_node();
+
+    let origin_for = |byte: usize| -> String {
+        origins.iter().find(|(_, r)| r.contains(&byte)).map(|(s, _)| s.clone()).unwrap_or_else(|| "main".to_string())
+    };
+
+    // Pass 1: which stem does each class live in? Needed before pass 2
+    // so a subclass's own `.h` can `#include` a same-run superclass's
+    // `.h` when that superclass isn't the root (whose full struct is
+    // already in the shared companion header) -- `struct {super} base;`
+    // is a nested, not pointer, field, so it needs the superclass's
+    // *full* struct definition visible, not just a forward declare.
+    let mut class_to_stem: HashMap<String, String> = HashMap::new();
+    {
+        let mut cursor = root.walk();
+        for node in root.children(&mut cursor) {
+            if node.kind() != "class_interface" && node.kind() != "class_implementation" {
+                continue;
+            }
+            let (name, _, category) = crate::collect::class_header(node, source);
+            if category.is_some() {
+                continue;
+            }
+            class_to_stem.entry(name).or_insert_with(|| origin_for(node.start_byte()));
+        }
+    }
+
+    let mut diags: Vec<Diagnostic> = Vec::new();
+    let mut hoisted_structs: Vec<(String, String)> = Vec::new();
+    let mut hoisted_enums: Vec<String> = Vec::new();
+
+    let mut stem_order: Vec<String> = Vec::new();
+    let mut headers: HashMap<String, Vec<String>> = HashMap::new();
+    let mut bodies: HashMap<String, Vec<String>> = HashMap::new();
+    let mut extra_includes: HashMap<String, HashSet<String>> = HashMap::new();
+    let mut hoisted_blocks_by_stem: HashMap<String, Vec<(String, String)>> = HashMap::new();
+    let mut hoisted_strings_by_stem: HashMap<String, Vec<(String, String)>> = HashMap::new();
+
+    let mut cursor = root.walk();
+    for node in root.children(&mut cursor) {
+        let stem = origin_for(node.start_byte());
+        note_stem(&mut stem_order, &stem);
+        match node.kind() {
+            "compatibility_alias_declaration" => {
+                let mut c = node.walk();
+                let names: Vec<&str> = node
+                    .children(&mut c)
+                    .filter(|c| c.kind() == "identifier")
+                    .map(|c| node_text(c, source))
+                    .collect();
+                bodies.entry(stem.clone()).or_default().push(format!(
+                    "/* @compatibility_alias {} -- not needed, oz_static resolves classes by their own name only */",
+                    names.join(" ")
+                ));
+            }
+            "protocol_declaration" => {
+                let (name, _, _) = crate::collect::class_header(node, source);
+                bodies.entry(stem.clone()).or_default().push(format!(
+                    "/* @protocol {} -- compile-time only, see oz_static_dispatch.h/.c */",
+                    name
+                ));
+            }
+            "class_interface" => {
+                let (name, _, category) = crate::collect::class_header(node, source);
+                if category.is_some() {
+                    let text = render_category_interface(node, source, &name, program);
+                    headers.entry(stem.clone()).or_default().push(text);
+                    continue;
+                }
+                if let Some(sup) = &program.classes[&name].superclass {
+                    let sup_is_root = program.classes.get(sup).map(|s| s.superclass.is_none()).unwrap_or(false);
+                    if !sup_is_root {
+                        if let Some(sup_stem) = class_to_stem.get(sup) {
+                            if sup_stem != &stem {
+                                extra_includes.entry(stem.clone()).or_default().insert(sup_stem.clone());
+                            }
+                        }
+                    }
+                }
+                let scope = base_scope(&name, program);
+                let mut ctx = EmitCtx {
+                    src: source,
+                    program,
+                    class_name: name.clone(),
+                    scope,
+                    locals: HashSet::new(),
+                    diags: Vec::new(),
+                    hoisted_blocks: Vec::new(),
+                    hoisted_structs: Vec::new(),
+                    hoisted_string_literals: Vec::new(),
+                    block_counter: 0,
+                    pre_stmts: Vec::new(),
+                };
+                let (header_part, alloc_free_part) = render_interface(node, &mut ctx, program);
+                diags.extend(ctx.diags);
+                hoisted_structs.extend(ctx.hoisted_structs);
+                headers.entry(stem.clone()).or_default().push(header_part);
+                if !alloc_free_part.is_empty() {
+                    bodies.entry(stem.clone()).or_default().push(alloc_free_part);
+                }
+            }
+            "class_implementation" => {
+                let (name, _, _category) = crate::collect::class_header(node, source);
+                let ivars_scope = base_scope(&name, program);
+                let mut ctx = EmitCtx {
+                    src: source,
+                    program,
+                    class_name: name.clone(),
+                    scope: ivars_scope.clone(),
+                    locals: HashSet::new(),
+                    diags: Vec::new(),
+                    hoisted_blocks: Vec::new(),
+                    hoisted_structs: Vec::new(),
+                    hoisted_string_literals: Vec::new(),
+                    block_counter: 0,
+                    pre_stmts: Vec::new(),
+                };
+                let mut out = String::new();
+                out.push_str(&banner_box(&header_text(node, source, &["implementation_definition"]), '-'));
+                out.push('\n');
+                let mut defined_here: HashSet<(String, bool)> = HashSet::new();
+                let mut c2 = node.walk();
+                for child in node.children(&mut c2) {
+                    if child.kind() != "implementation_definition" {
+                        continue;
+                    }
+                    let mut c3 = child.walk();
+                    let found_def = child.children(&mut c3).find(|c| c.kind() == "method_definition");
+                    match found_def {
+                        Some(method_def) => {
+                            let known: HashSet<String> = ctx.program.classes.keys().cloned().collect();
+                            let sig = crate::collect::extract_method_sig(method_def, source, &name, &known);
+                            defined_here.insert((sig.selector, sig.is_class_method));
+                            out.push_str(&render_method_definition(method_def, &mut ctx, &name, &ivars_scope));
+                            out.push('\n');
+                        }
+                        None => {
+                            let mut c4 = child.walk();
+                            let synth = child.children(&mut c4).find(|c| c.kind() == "property_implementation");
+                            if synth.is_some() {
+                                out.push_str(&format!(
+                                    "/* {} -- synthesized accessor(s) emitted below */\n",
+                                    one_line(node_text(child, source))
+                                ));
+                                continue;
+                            }
+                            ctx.scope = ivars_scope.clone();
+                            out.push_str(&render_stmt_with_comment(child, &mut ctx, ""));
+                            out.push('\n');
+                        }
+                    }
+                }
+                if let Some(info) = program.classes.get(&name) {
+                    for prop in &info.properties {
+                        let getter_sel = prop.getter_sel.clone().unwrap_or_else(|| prop.name.clone());
+                        if !defined_here.contains(&(getter_sel, false)) {
+                            out.push_str(&render_synthesized_accessor(&name, prop, true, program));
+                            out.push('\n');
+                        }
+                        if !prop.is_readonly {
+                            let setter_sel = prop
+                                .setter_sel
+                                .clone()
+                                .unwrap_or_else(|| crate::collect::default_setter_sel(&prop.name));
+                            if !defined_here.contains(&(setter_sel, false)) {
+                                out.push_str(&render_synthesized_accessor(&name, prop, false, program));
+                                out.push('\n');
+                            }
+                        }
+                    }
+                }
+                out.push_str(&banner_rule(&format!("end implementation: {}", name), '-'));
+                diags.extend(ctx.diags);
+                hoisted_structs.extend(ctx.hoisted_structs);
+                hoisted_blocks_by_stem.entry(stem.clone()).or_default().extend(ctx.hoisted_blocks);
+                hoisted_strings_by_stem.entry(stem.clone()).or_default().extend(ctx.hoisted_string_literals);
+                bodies.entry(stem.clone()).or_default().push(out);
+            }
+            "enum_specifier" => {
+                let mut c = node.walk();
+                let has_body = node.children(&mut c).any(|ch| ch.kind() == "enumerator_list");
+                if has_body {
+                    hoisted_enums.push(node_text(node, source).to_string());
+                    headers.entry(stem.clone()).or_default().push(
+                        "/* enum hoisted to the companion header -- needed there before any method prototype references it by value */".to_string(),
+                    );
+                }
+            }
+            "function_definition" => {
+                let mut ctx = EmitCtx {
+                    src: source,
+                    program,
+                    class_name: String::new(),
+                    scope: HashMap::new(),
+                    locals: HashSet::new(),
+                    diags: Vec::new(),
+                    hoisted_blocks: Vec::new(),
+                    hoisted_structs: Vec::new(),
+                    hoisted_string_literals: Vec::new(),
+                    block_counter: 0,
+                    pre_stmts: Vec::new(),
+                };
+                let mut text = node_text(node, source).to_string();
+                let mut c2 = node.walk();
+                if let Some(body) = node.children(&mut c2).find(|c| c.kind() == "compound_statement") {
+                    if needs_translation(body) {
+                        collect_local_decls(body, &mut ctx);
+                        let rendered_body = render_body_with_comments(body, &mut ctx);
+                        if rendered_body != node_text(body, source) {
+                            let prefix = &source[node.start_byte()..body.start_byte()];
+                            text = format!("{}{}", prefix, rendered_body);
+                        }
+                    }
+                }
+                diags.extend(ctx.diags);
+                hoisted_structs.extend(ctx.hoisted_structs);
+                hoisted_blocks_by_stem.entry(stem.clone()).or_default().extend(ctx.hoisted_blocks);
+                hoisted_strings_by_stem.entry(stem.clone()).or_default().extend(ctx.hoisted_string_literals);
+                bodies.entry(stem.clone()).or_default().push(text);
+            }
+            _ => {
+                // Passthrough top-level trivia: a stray `#include`,
+                // comment, or macro (`preproc_def`/`preproc_ifdef`/...)
+                // -- keep it, attached to whichever file its own text
+                // physically sits in. Macros specifically (e.g.
+                // `OZObject.h`'s own `#define nil ((id)0)`) must land in
+                // the *header* bucket, not the body: in the single-file
+                // design any top-level `#define` was implicitly visible
+                // to every other file (one translation unit) merely by
+                // appearing earlier in the same text: split into real
+                // per-origin files, only that origin's own `.h` -- which
+                // every other file `#include`s when it needs that
+                // origin's class -- can still give it the same reach.
+                let text = node_text(node, source).trim();
+                if text.is_empty() {
+                    continue;
+                }
+                if node.kind().starts_with("preproc") {
+                    headers.entry(stem.clone()).or_default().push(text.to_string());
+                } else {
+                    bodies.entry(stem.clone()).or_default().push(text.to_string());
+                }
+            }
+        }
+    }
+
+    // The root class's own header may carry file-scope macros (e.g.
+    // `OZObject.h`'s `#define nil ((id)0)`) that every class implicitly
+    // saw in the old single-file design, just by textual order -- once
+    // split into real files, only an explicit `#include` still gives
+    // every other origin the same reach, regardless of whether it
+    // actually subclasses anything (plain top-level code, like `main`'s
+    // own `main()`, can use `nil` directly too).
+    // Same reasoning for OZArray's/OZDictionary's boxed-literal helper
+    // (`OZArray_oz_initWithItems`/`OZDictionary_oz_initWithKeysValues`):
+    // its prototype lives only in that one class's own `.h` (see
+    // `extra_proto` above), not the shared companion header -- but a
+    // `@[...]`/`@{...}` literal can appear in *any* file's plain
+    // top-level code (e.g. `main()`), not just inside another class's
+    // method body, so there's no single "subclass of" edge to hang the
+    // dependency on the way there is for a nested struct field.
+    let mut always_visible: Vec<String> = Vec::new();
+    if let Some(r) = program.root_class().and_then(|r| class_to_stem.get(r).cloned()) {
+        always_visible.push(r);
+    }
+    for helper_class in ["OZArray", "OZDictionary"] {
+        if let Some(s) = class_to_stem.get(helper_class) {
+            always_visible.push(s.clone());
+        }
+    }
+    for target_stem in &always_visible {
+        for stem in &stem_order {
+            if stem != target_stem {
+                extra_includes.entry(stem.clone()).or_default().insert(target_stem.clone());
+            }
+        }
+    }
+
+    let mut files = Vec::with_capacity(stem_order.len());
+    for stem in &stem_order {
+        let mut h = String::from(
+            "/* Auto-generated by oz_static -- do not edit */\n#pragma once\n#include \"oz_static_dispatch.h\"\n",
+        );
+        if let Some(deps) = extra_includes.get(stem) {
+            let mut deps: Vec<&String> = deps.iter().collect();
+            deps.sort();
+            for dep in deps {
+                h.push_str(&format!("#include \"{}.h\"\n", dep));
+            }
+        }
+        h.push('\n');
+        if let Some(sections) = headers.get(stem) {
+            h.push_str(&sections.join("\n"));
+            h.push('\n');
+        }
+
+        let mut c = format!(
+            "/* Auto-generated by oz_static -- do not edit */\n#include \"oz_static_dispatch.h\"\n#include \"{}.h\"\n\n",
+            stem
+        );
+        if let Some(blocks) = hoisted_blocks_by_stem.get(stem) {
+            if !blocks.is_empty() {
+                c.push_str("/* non-capturing blocks, hoisted out of their enclosing methods -- prototypes (defined below) */\n");
+                for (prototype, _) in blocks {
+                    c.push_str(prototype);
+                }
+                c.push('\n');
+            }
+        }
+        if let Some(strs) = hoisted_strings_by_stem.get(stem) {
+            if !strs.is_empty() {
+                c.push_str("/* boxed string literals, hoisted -- extern forward declarations (defined below) */\n");
+                for (prototype, _) in strs {
+                    c.push_str(prototype);
+                }
+                c.push('\n');
+            }
+        }
+        if let Some(sections) = bodies.get(stem) {
+            c.push_str(&sections.join("\n\n"));
+            c.push('\n');
+        }
+        if let Some(blocks) = hoisted_blocks_by_stem.get(stem) {
+            if !blocks.is_empty() {
+                c.push_str("\n/* non-capturing blocks, hoisted out of their enclosing methods */\n");
+                for (_, definition) in blocks {
+                    c.push_str(definition);
+                    c.push('\n');
+                }
+            }
+        }
+        if let Some(strs) = hoisted_strings_by_stem.get(stem) {
+            if !strs.is_empty() {
+                c.push_str("\n/* boxed string literals, hoisted -- static struct OZString instances */\n");
+                for (_, definition) in strs {
+                    c.push_str(definition);
+                }
+            }
+        }
+
+        files.push((stem.clone(), h, c));
+    }
+
+    let (companion_h, companion_c) = crate::companion::render(program, &hoisted_structs, &hoisted_enums);
+
+    EmitSplitOutput { files, companion_h, companion_c, diagnostics: diags }
 }
 
 fn base_scope(class_name: &str, program: &Program) -> HashMap<String, String> {

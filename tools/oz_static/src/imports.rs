@@ -9,6 +9,7 @@
 
 use std::collections::HashSet;
 use std::fs;
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 
 enum ImportTarget {
@@ -122,17 +123,37 @@ pub fn unwrap_clang_guard(src: &str) -> String {
     out
 }
 
+/// The merged, `#import`-resolved source (`resolve_imports`'s result),
+/// plus provenance: `origins` is an ordered list of `(stem, byte_range)`
+/// covering every byte of `text` with no gaps -- the same `stem` can
+/// appear more than once non-contiguously (e.g. the main file's own
+/// lines before and after an `#import`). Consumed by OZ-096's per-origin
+/// output split (`emit::emit_split`); `text` alone is exactly what
+/// OZ-094 already produced, still usable directly with `transpile()`.
+#[derive(Debug)]
+pub struct ResolvedSource {
+    pub text: String,
+    pub origins: Vec<(String, Range<usize>)>,
+    /// Stems resolved from inside `include_dirs`/`impl_dirs` (the SDK's
+    /// own Foundation headers/sources, as opposed to the caller's own
+    /// project-local files) -- lets a caller mirror the Python
+    /// pipeline's own `outdir/Foundation/` split (OZ-096) when writing
+    /// per-origin output files.
+    pub foundation_stems: HashSet<String>,
+}
+
 /// Resolve every `#import` in `source` (as if read from a file in
-/// `source_dir`), splicing each resolved header's content -- and, if
-/// one exists, its sibling `.m` implementation -- in place of the
-/// `#import` line, recursively (a resolved header may itself `#import`
-/// further headers, resolved relative to *its own* directory). A
-/// header (or implementation) already resolved earlier in the same run
-/// is elided to a comment instead of spliced again -- the same effect
-/// as its own `#pragma once`, since being pulled in by two different
-/// import paths must not double-define its class. `#pragma once`
-/// itself is dropped (meaningless once inlined). Plain `#include`
-/// lines are left completely untouched.
+/// `source_dir`, identified as `main_stem` in the returned provenance),
+/// splicing each resolved header's content -- and, if one exists, its
+/// sibling `.m` implementation -- in place of the `#import` line,
+/// recursively (a resolved header may itself `#import` further headers,
+/// resolved relative to *its own* directory). A header (or
+/// implementation) already resolved earlier in the same run is elided
+/// to a comment instead of spliced again -- the same effect as its own
+/// `#pragma once`, since being pulled in by two different import paths
+/// must not double-define its class. `#pragma once` itself is dropped
+/// (meaningless once inlined). Plain `#include` lines are left
+/// completely untouched.
 ///
 /// `include_dirs` are searched, in order, for `#import <Framework/X.h>`
 /// (mirroring `-I`); `impl_dirs` for a same-basename `.m` sibling of
@@ -144,19 +165,46 @@ pub fn resolve_imports(
     source_dir: &Path,
     include_dirs: &[PathBuf],
     impl_dirs: &[PathBuf],
-) -> Result<String, String> {
+    main_stem: &str,
+) -> Result<ResolvedSource, String> {
     let mut seen: HashSet<PathBuf> = HashSet::new();
-    resolve(source, source_dir, include_dirs, impl_dirs, &mut seen)
+    let mut text = String::new();
+    let mut origins = Vec::new();
+    let mut foundation_stems = HashSet::new();
+    resolve_into(
+        source,
+        source_dir,
+        include_dirs,
+        impl_dirs,
+        &mut seen,
+        main_stem,
+        &mut text,
+        &mut origins,
+        &mut foundation_stems,
+    )?;
+    Ok(ResolvedSource { text, origins, foundation_stems })
 }
 
-fn resolve(
+/// Writes into the single, shared `out` buffer (rather than building and
+/// returning its own local `String`, the way an earlier version of this
+/// function did) specifically so that `out.len()` at any point during
+/// the whole recursion is a true global byte offset into the final
+/// merged text -- the only way to record `origins` ranges that are
+/// still valid once every recursive call has finished contributing its
+/// own piece.
+#[allow(clippy::too_many_arguments)]
+fn resolve_into(
     source: &str,
     current_dir: &Path,
     include_dirs: &[PathBuf],
     impl_dirs: &[PathBuf],
     seen: &mut HashSet<PathBuf>,
-) -> Result<String, String> {
-    let mut out = String::new();
+    stem: &str,
+    out: &mut String,
+    origins: &mut Vec<(String, Range<usize>)>,
+    foundation_stems: &mut HashSet<String>,
+) -> Result<(), String> {
+    let mut run_start = out.len();
     for line in source.lines() {
         let trimmed = line.trim_start();
         if trimmed.starts_with("#pragma once") {
@@ -174,12 +222,32 @@ fn resolve(
             continue;
         }
 
+        // Flush `stem`'s own run so far -- everything from here until
+        // the resolved file's own recursive call returns belongs to
+        // *its* stem, not this one.
+        if out.len() > run_start {
+            origins.push((stem.to_string(), run_start..out.len()));
+        }
+
         let header_text = fs::read_to_string(&resolved_path)
             .map_err(|e| format!("cannot read '{}': {}", resolved_path.display(), e))?;
         let header_dir = resolved_path.parent().unwrap_or(current_dir).to_path_buf();
-        let expanded_header =
-            resolve(&unwrap_clang_guard(&header_text), &header_dir, include_dirs, impl_dirs, seen)?;
-        out.push_str(&expanded_header);
+        let header_stem =
+            resolved_path.file_stem().and_then(|s| s.to_str()).unwrap_or("import").to_string();
+        if include_dirs.iter().chain(impl_dirs.iter()).any(|d| resolved_path.starts_with(d)) {
+            foundation_stems.insert(header_stem.clone());
+        }
+        resolve_into(
+            &unwrap_clang_guard(&header_text),
+            &header_dir,
+            include_dirs,
+            impl_dirs,
+            seen,
+            &header_stem,
+            out,
+            origins,
+            foundation_stems,
+        )?;
         out.push('\n');
 
         if let Some(impl_path) = find_sibling_impl(&resolved_path, impl_dirs) {
@@ -188,11 +256,26 @@ fn resolve(
                 let impl_text = fs::read_to_string(&impl_path)
                     .map_err(|e| format!("cannot read '{}': {}", impl_path.display(), e))?;
                 let impl_dir = impl_path.parent().unwrap_or(current_dir).to_path_buf();
-                let expanded_impl = resolve(&impl_text, &impl_dir, include_dirs, impl_dirs, seen)?;
-                out.push_str(&expanded_impl);
+                // Same stem as its header -- one file pair, one origin.
+                resolve_into(
+                    &impl_text,
+                    &impl_dir,
+                    include_dirs,
+                    impl_dirs,
+                    seen,
+                    &header_stem,
+                    out,
+                    origins,
+                    foundation_stems,
+                )?;
                 out.push('\n');
             }
         }
+
+        run_start = out.len();
     }
-    Ok(out)
+    if out.len() > run_start {
+        origins.push((stem.to_string(), run_start..out.len()));
+    }
+    Ok(())
 }
