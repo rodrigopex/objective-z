@@ -301,24 +301,29 @@ pub fn ozdefer_src() -> String {
 }
 
 /// OZArray, the immutable-array Foundation class -- assembled from
-/// `include/oz_sdk/Foundation/OZArray.h` / `src/OZArray.m`, with real
-/// content cut (not just the two generic adaptations): the real header's
-/// generic type param (`<__covariant ObjectType>`) and `<IteratorProtocol>`
-/// conformance, `iterIdx` property (`@property (readonly) uint16_t
-/// iterIdx;` + `@synthesize iterIdx = _iterIdx;`), `enumerateObjectsUsingBlock:`,
-/// `countByEnumeratingWithState:...`, and `iter`/`next` all exist only to
-/// back for-in iteration, which is a separate, not-yet-started OZ-092
-/// checklist item -- and `@property`/`@synthesize` are unconditionally
-/// rejected by the static bar regardless (see `staticbar.rs`), so a
-/// literal full transplant wouldn't even parse. `cDescription:maxLength:`
-/// is cut too: its body message-sends `cDescription:maxLength:` right
-/// back onto a bare `id`-typed local (`_items[i]`) to recurse into each
-/// element's own description, which the static bar can't statically
-/// resolve (a bare `id` carries no declared type for compile-time
-/// dispatch, and this receiver has no protocol-typed dispatch declared
-/// for it either). All left out; add back alongside whichever later work
-/// needs them -- each cut is a named, marker-anchored removal below, so
-/// it stays visible exactly what's missing and why.
+/// `include/oz_sdk/Foundation/OZArray.h` / `src/OZArray.m`. `-iter`/
+/// `-next` (and `<IteratorProtocol>` conformance, and the `_iterIdx`
+/// ivar they need) are kept now -- they used to be cut here too, until
+/// for-in support needed them for real (see `emit::render_forin_statement`)
+/// and the dynamic-dispatch generalization (ported from the Python
+/// pipeline's `_classify_dispatch` while adding OZDictionary) made
+/// `OZ_PROTOCOL_SEND_iter`/`OZ_PROTOCOL_SEND_next` possible. Still cut,
+/// same reasons as before: the real header's generic type param
+/// (`<__covariant ObjectType>` -- untested territory, not worth the
+/// risk when dropping it changes nothing observable), the `iterIdx`
+/// *property* (`@property (readonly) uint16_t iterIdx;` +
+/// `@synthesize iterIdx = _iterIdx;` -- distinct from the `_iterIdx`
+/// ivar itself, which `-iter`/`-next` use directly; `@property`/
+/// `@synthesize` are unconditionally rejected by the static bar
+/// regardless of whether anything needs the property they'd expose),
+/// `enumerateObjectsUsingBlock:`/`countByEnumeratingWithState:` (only
+/// back Foundation's own `NSFastEnumeration`-style for-in, which this
+/// port doesn't use -- the Python oracle's own for-in desugar is
+/// `-iter`/`-next`-based too, see `_emit_forin_stmt`), and
+/// `cDescription:maxLength:` (still recurses `[elem cDescription:...]`
+/// on a bare `id` -- now dynamically dispatchable in principle, same
+/// fix as OZDictionary's, just not restored here since nothing in this
+/// port's scope needs it).
 ///
 /// `+arrayWithObjects:count:` isn't declared/implemented in the real
 /// `OZArray.m` either -- the real pipeline synthesizes it at emit-time as
@@ -332,14 +337,15 @@ pub fn ozdefer_src() -> String {
 ///
 /// Requires `OZObject` (`common::ozobject_src`) in scope as the root
 /// class; a boxed array literal's elements typically also need `OZQ31`
-/// (`common::ozq31_src`) in scope, since `@(42)` desugars to it.
+/// (`common::ozq31_src`) in scope, since `@(42)` desugars to it. For-in
+/// over an `OZArray` also needs `IteratorProtocol`
+/// (`common::iterator_protocol_src`) declared somewhere in scope.
 pub fn ozarray_src() -> String {
     let mut header = include_str!("../../../../include/oz_sdk/Foundation/OZArray.h").to_string();
-    header = remove_line_containing(&header, "uint16_t _iterIdx;");
     header = header.replace("__unsafe_unretained id *_items;", "id *_items;");
     header = header.replace(
         "@interface OZArray<__covariant ObjectType> : OZObject <IteratorProtocol> {",
-        "@interface OZArray : OZObject {",
+        "@interface OZArray : OZObject <IteratorProtocol> {",
     );
     header = remove_line_containing(&header, "@property (readonly) uint16_t iterIdx;");
     header = remove_line_containing(&header, "arrayWithObjects:");
@@ -347,14 +353,10 @@ pub fn ozarray_src() -> String {
     header = remove_line_containing(&header, "enumerateObjectsUsingBlock:");
     header = remove_line_range(&header, "countByEnumeratingWithState:", "count:(unsigned long)len;");
     header = remove_line_containing(&header, "cDescription:(char *)buf maxLength:(int)maxLen;");
-    header = remove_line_containing(&header, "- (instancetype)iter;");
-    header = remove_line_containing(&header, "- (id)next;");
 
     let mut implementation = include_str!("../../../../src/OZArray.m").to_string();
     implementation = remove_line_containing(&implementation, "@synthesize iterIdx = _iterIdx;");
     implementation = remove_method_body(&implementation, "- (void)enumerateObjectsUsingBlock:");
-    implementation = remove_method_body(&implementation, "- (instancetype)iter");
-    implementation = remove_method_body(&implementation, "- (id)next");
     implementation = remove_method_body(&implementation, "cDescription:(char *)buf maxLength:(int)maxLen");
 
     assemble(&header, &implementation)
@@ -382,50 +384,72 @@ pub fn ozmutablestring_src() -> String {
 }
 
 /// OZDictionary, the immutable-dictionary Foundation class -- assembled
-/// from `include/oz_sdk/Foundation/OZDictionary.h` / `src/OZDictionary.m`,
-/// with the same shape of real-content cut as `ozarray_src` (generic
-/// type params, `<IteratorProtocol>` conformance, the `iterIdx` property
-/// + `@synthesize`, `iter`/`next` -- all for-in-only, and
-/// `@property`/`@synthesize` are hard-rejected regardless) and
-/// `+dictionaryWithObjects:forKeys:count:` (same reason as OZArray's
-/// `+arrayWithObjects:count:` -- synthesized at emit-time instead, see
-/// `companion::render_dict_support`'s `OZDictionary_oz_initWithKeysValues`).
+/// from `include/oz_sdk/Foundation/OZDictionary.h` / `src/OZDictionary.m`.
+/// `-iter`/`-next`/`<IteratorProtocol>`/`_iterIdx` are kept (see
+/// `ozarray_src`'s doc comment -- same reasoning, now that for-in
+/// support exists). Still cut, same reasons as `ozarray_src`: the
+/// generic type params (`<__covariant KeyType, __covariant ObjectType>`),
+/// the `iterIdx` *property* (distinct from the ivar), and
+/// `countByEnumeratingWithState:` (for-in here is `-iter`/`-next`-based,
+/// matching the Python oracle's own desugar). `cDescription:maxLength:`
+/// is kept, unlike `ozarray_src`: its body message-sends
+/// `cDescription:maxLength:` back onto bare `id`-typed locals (each
+/// key/value), which is exactly the dynamic-dispatch case
+/// `model.rs`/`companion.rs`/`emit.rs` were generalized for while
+/// building this class in the first place (`-objectForKey:`'s
+/// `[k isEqual:key]` is what forced that fix).
 ///
-/// Unlike `ozarray_src`, `cDescription:maxLength:` is kept: its body
-/// message-sends `cDescription:maxLength:` back onto bare `id`-typed
-/// locals (each key/value), which used to be unresolvable the same way
-/// OZArray's was -- fixed generally (not just for this one case) by the
-/// dynamic-dispatch generalization in `model.rs`/`companion.rs`/`emit.rs`
-/// (`cDescription:maxLength:` is one of the two selectors always
-/// dynamically dispatched, matching the real Python pipeline's own
-/// `_classify_dispatch` rule). `-objectForKey:`'s `[k isEqual:key]` --
-/// the one thing that made this fix necessary in the first place --
-/// works the same way.
+/// `+dictionaryWithObjects:forKeys:count:` isn't declared/implemented
+/// in the real `OZDictionary.m` either -- same reason as OZArray's
+/// `+arrayWithObjects:count:` (synthesized at emit-time instead, see
+/// `companion::render_dict_support`'s `OZDictionary_oz_initWithKeysValues`).
 ///
 /// Requires `OZObject` (`common::ozobject_src`) in scope as the root
 /// class; a boxed dictionary literal's keys/values typically also need
 /// `OZString` (`common::ozstring_src`) and `OZQ31` (`common::ozq31_src`)
-/// in scope, since `@"..."` and `@(42)` desugar to them.
+/// in scope, since `@"..."` and `@(42)` desugar to them. For-in over an
+/// `OZDictionary` also needs `IteratorProtocol`
+/// (`common::iterator_protocol_src`) declared somewhere in scope.
 pub fn ozdictionary_src() -> String {
     let mut header = include_str!("../../../../include/oz_sdk/Foundation/OZDictionary.h").to_string();
-    header = remove_line_containing(&header, "uint16_t _iterIdx;");
     header = header.replace("__unsafe_unretained id *_keys;", "id *_keys;");
     header = header.replace("__unsafe_unretained id *_values;", "id *_values;");
     header = header.replace(
         "@interface OZDictionary<__covariant KeyType, __covariant ObjectType> : OZObject <IteratorProtocol> {",
-        "@interface OZDictionary : OZObject {",
+        "@interface OZDictionary : OZObject <IteratorProtocol> {",
     );
     header = remove_line_containing(&header, "@property (readonly) uint16_t iterIdx;");
     header = remove_line_range(&header, "dictionaryWithObjects:", "count:(unsigned int)count;");
     header = remove_line_containing(&header, "struct NSFastEnumerationState;");
     header = remove_line_range(&header, "countByEnumeratingWithState:", "count:(unsigned long)len;");
-    header = remove_line_containing(&header, "- (instancetype)iter;");
-    header = remove_line_containing(&header, "- (id)next;");
 
     let mut implementation = include_str!("../../../../src/OZDictionary.m").to_string();
     implementation = remove_line_containing(&implementation, "@synthesize iterIdx = _iterIdx;");
-    implementation = remove_method_body(&implementation, "- (instancetype)iter");
-    implementation = remove_method_body(&implementation, "- (id)next");
 
     assemble(&header, &implementation)
+}
+
+/// `IteratorProtocol`, the for-in protocol -- assembled from the real
+/// `include/oz_sdk/Foundation/Iterator+Protocol.h` verbatim, no cuts at
+/// all needed: its `@property (nonatomic, readonly) uint16_t iterIdx;`
+/// (a *protocol* requirement, not a class one) never reaches the static
+/// bar or a collision with the class-level `@property` ban -- protocol
+/// parsing (`collect::extract_protocol`) only ever extracts
+/// `method_declaration` children, silently skipping everything else,
+/// and the whole `@protocol ... @end` block is elided to a comment in
+/// the generated output regardless (see `emit.rs`'s top-level
+/// `protocol_declaration` handling) -- so its real text never has to
+/// compile as anything.
+///
+/// Declaring this protocol (with `-iter`/`-next` inside) is what makes
+/// `Program::is_dynamically_dispatched("iter"/"next", false)` true --
+/// conformance to it isn't even checked for that (see
+/// `Program::all_protocol_methods`'s doc comment: dispatch generation
+/// only cares "who implements this selector," not who formally
+/// conforms) -- so a class doesn't strictly need `<IteratorProtocol>`
+/// in its own `@interface` line for for-in to work against it, though
+/// `ozarray_src`/`ozdictionary_src` still declare it for the free
+/// conformance validation (#192) and because the real headers do too.
+pub fn iterator_protocol_src() -> String {
+    strip_import_and_pragma_lines(include_str!("../../../../include/oz_sdk/Foundation/Iterator+Protocol.h"))
 }

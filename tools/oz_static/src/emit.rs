@@ -381,6 +381,7 @@ fn render_expr(node: Node, ctx: &mut EmitCtx) -> (String, String) {
                 None => (node_text(node, ctx.src).to_string(), "id".to_string()),
             }
         }
+        "for_statement" if is_forin_shape(node) => render_forin_statement(node, ctx),
         _ => {
             if !needs_translation(node) {
                 (node_text(node, ctx.src).to_string(), "id".to_string())
@@ -714,6 +715,132 @@ fn render_boxed_dictionary_literal(node: Node, ctx: &mut EmitCtx) -> (String, St
             pairs.len()
         ),
         "struct OZDictionary *".to_string(),
+    )
+}
+
+/// Is `node` (a `for_statement`) actually an ObjC for-in loop
+/// (`for (Type *var in collection) { ... }`) rather than a classic
+/// C for loop? tree-sitter-objc parses both under the same
+/// `for_statement` node kind -- a classic for loop's clauses are
+/// `;`-separated, so the only distinguishing feature is a literal `in`
+/// token child.
+fn is_forin_shape(node: Node) -> bool {
+    let mut cursor = node.walk();
+    let found = node.children(&mut cursor).any(|c| c.kind() == "in");
+    found
+}
+
+/// (name, star_count) from a declarator -- a bare `identifier` (0
+/// stars) or a (possibly multi-level) `pointer_declarator` wrapping one.
+fn declarator_name_and_stars(node: Node, src: &str) -> (String, usize) {
+    if node.kind() != "pointer_declarator" {
+        return (node_text(node, src).to_string(), 0);
+    }
+    let mut cursor = node.walk();
+    let mut stars = 0;
+    let mut inner = None;
+    for c in node.children(&mut cursor) {
+        if c.kind() == "*" {
+            stars += 1;
+        } else {
+            inner = Some(c);
+        }
+    }
+    match inner {
+        Some(inner) => {
+            let (name, inner_stars) = declarator_name_and_stars(inner, src);
+            (name, stars + inner_stars)
+        }
+        None => (node_text(node, src).to_string(), stars),
+    }
+}
+
+/// Lowers `for (Type *var in collection) { body }` to a scoped,
+/// iterator-based C for loop -- the exact same shape the Python
+/// pipeline's oracle already uses (`tools/oz_transpile/emit.py`'s
+/// `_emit_forin_stmt`):
+///
+/// ```c
+/// {
+///     struct OZObject *_oz_iterN = (struct OZObject *)OZ_PROTOCOL_SEND_iter((struct OZObject *)(collection));
+///     struct OZObject *_oz_recvN = _oz_iterN;
+///     for (Type *var = (Type *)OZ_PROTOCOL_SEND_next(_oz_recvN); var != ((void *)0); var = (Type *)OZ_PROTOCOL_SEND_next(_oz_recvN)) { body }
+/// }
+/// ```
+///
+/// `break`/`continue`/nesting all fall out for free -- this desugars to
+/// a real C `for` loop wrapped in a block, so they mean exactly what
+/// they already mean there; nothing loop-specific to handle. `-iter`/
+/// `-next` always route through `OZ_PROTOCOL_SEND_`, matching the
+/// oracle's own unconditional choice, since `collection`'s static type
+/// might be anywhere from a concrete class to plain `id` -- never a
+/// direct call resolved from one receiver type.
+fn render_forin_statement(node: Node, ctx: &mut EmitCtx) -> (String, String) {
+    let (line, col) = line_col(ctx.src, node.start_byte());
+    if !ctx.program.is_dynamically_dispatched("iter", false)
+        || !ctx.program.is_dynamically_dispatched("next", false)
+    {
+        ctx.err(
+            node,
+            format!(
+                "for-in loop at {}:{} needs '-iter'/'-next' to be dispatchable on any collection type, but no protocol in this source declares them (declare an IteratorProtocol-style protocol with both, the same shape as the real Foundation one)",
+                line, col
+            ),
+        );
+        return (node_text(node, ctx.src).to_string(), "id".to_string());
+    }
+
+    let mut cursor = node.walk();
+    let children: Vec<Node> = node.children(&mut cursor).collect();
+    let open = children.iter().position(|c| c.kind() == "(").unwrap();
+    let in_pos = children.iter().position(|c| c.kind() == "in").unwrap();
+    let close = children.iter().position(|c| c.kind() == ")").unwrap();
+
+    let decl_nodes = &children[open + 1..in_pos];
+    let declarator = *decl_nodes.last().unwrap();
+    let type_nodes = &decl_nodes[..decl_nodes.len() - 1];
+    let type_text = type_nodes.iter().map(|n| node_text(*n, ctx.src)).collect::<Vec<_>>().join(" ");
+    let (var_name, stars) = declarator_name_and_stars(declarator, ctx.src);
+    let known: std::collections::HashSet<String> = ctx.program.classes.keys().cloned().collect();
+    let c_type = crate::collect::render_type(&type_text, stars, &known);
+
+    let collection = children[in_pos + 1];
+    let (coll_text, _) = render_expr(collection, ctx);
+    let body = children[close + 1];
+
+    let root = ctx.program.root_class().unwrap_or("OZObject").to_string();
+    ctx.block_counter += 1;
+    let iter_tmp = format!("_oz_iter_L{}_C{}_{}", line, col, ctx.block_counter);
+    let recv_tmp = format!("_oz_recv_L{}_C{}_{}", line, col, ctx.block_counter);
+    let next_call = format!("({})OZ_PROTOCOL_SEND_next({})", c_type, recv_tmp);
+
+    ctx.scope.insert(var_name.clone(), c_type.clone());
+    ctx.locals.insert(var_name.clone());
+
+    let body_text = if body.kind() == "compound_statement" {
+        render_body_with_comments(body, ctx)
+    } else {
+        let (text, _) = render_expr(body, ctx);
+        format!("{{\n\t{}\n\t}}", text)
+    };
+
+    (
+        format!(
+            "{{\n\
+             \tstruct {root} *{iter_tmp} = (struct {root} *)OZ_PROTOCOL_SEND_iter((struct {root} *)({coll_text}));\n\
+             \tstruct {root} *{recv_tmp} = {iter_tmp};\n\
+             \tfor ({c_type} {var_name} = {next_call}; {var_name} != ((void *)0); {var_name} = {next_call}) {body_text}\n\
+             }}",
+            root = root,
+            iter_tmp = iter_tmp,
+            recv_tmp = recv_tmp,
+            coll_text = coll_text,
+            c_type = c_type,
+            var_name = var_name,
+            next_call = next_call,
+            body_text = body_text,
+        ),
+        "void".to_string(),
     )
 }
 

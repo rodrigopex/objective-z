@@ -94,13 +94,35 @@ fn extract_protocol(node: Node, src: &str, known_classes: &HashSet<String>) -> P
         None => Vec::new(),
     };
     let mut methods = Vec::new();
+    collect_protocol_methods(node, src, &name, known_classes, &mut methods);
+    ProtocolInfo { name, super_protocols, methods }
+}
+
+/// `method_declaration`s directly inside a protocol body, or nested one
+/// level inside a `@required`/`@optional`-qualified sub-block
+/// (`qualified_protocol_interface_declaration`) -- tree-sitter-objc
+/// wraps everything after such a marker in its own node, so a flat
+/// direct-children scan misses them entirely. Required-vs-optional
+/// isn't tracked either way: protocols are a compile-time contract
+/// here, not a runtime filter (see `model::Program::all_protocol_methods`'s
+/// doc comment), so nothing downstream cares about the distinction.
+fn collect_protocol_methods(
+    node: Node,
+    src: &str,
+    protocol_name: &str,
+    known_classes: &HashSet<String>,
+    out: &mut Vec<MethodSig>,
+) {
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        if child.kind() == "method_declaration" {
-            methods.push(extract_method_sig(child, src, &name, known_classes));
+        match child.kind() {
+            "method_declaration" => out.push(extract_method_sig(child, src, protocol_name, known_classes)),
+            "qualified_protocol_interface_declaration" => {
+                collect_protocol_methods(child, src, protocol_name, known_classes, out)
+            }
+            _ => {}
         }
     }
-    ProtocolInfo { name, super_protocols, methods }
 }
 
 pub(crate) fn render_type(type_text: &str, stars: usize, known_classes: &HashSet<String>) -> String {
