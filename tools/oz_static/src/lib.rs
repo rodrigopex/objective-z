@@ -24,11 +24,13 @@ pub struct TranspileOutput {
 /// silently degrades: anything the static subset doesn't accept is a
 /// named, located hard error.
 pub fn transpile(source: &str) -> Result<TranspileOutput, Vec<Diagnostic>> {
-    let (program, mut diagnostics) = collect::collect(source);
-    let result = emit::emit(source, &program);
-    diagnostics.extend(result.diagnostics);
+    let (program, diagnostics) = collect::collect(source);
     if !diagnostics.is_empty() {
         return Err(diagnostics);
+    }
+    let result = emit::emit(source, &program);
+    if !result.diagnostics.is_empty() {
+        return Err(result.diagnostics);
     }
     Ok(TranspileOutput {
         source_c: result.source_c,
