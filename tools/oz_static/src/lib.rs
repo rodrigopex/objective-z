@@ -6,6 +6,7 @@
 pub mod collect;
 pub mod companion;
 pub mod emit;
+pub mod imports;
 pub mod model;
 pub mod parse;
 pub mod staticbar;

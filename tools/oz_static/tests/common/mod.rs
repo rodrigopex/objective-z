@@ -123,36 +123,16 @@ fn strip_import_and_pragma_lines(src: &str) -> String {
         .join("\n")
 }
 
-/// Unwrap a `#ifdef __clang__` / ... / `#endif` guard to just its middle
-/// line(s) -- see the module-level doc comment above for why. Only
-/// strips the first such pair (every header that has one has exactly
-/// one, always at the very end, with nothing else nested inside it).
-fn unwrap_clang_guard(src: &str) -> String {
-    let mut out = String::new();
-    let mut skip_next_endif = false;
-    for line in src.lines() {
-        let t = line.trim();
-        if t == "#ifdef __clang__" {
-            skip_next_endif = true;
-            continue;
-        }
-        if skip_next_endif && t == "#endif" {
-            skip_next_endif = false;
-            continue;
-        }
-        out.push_str(line);
-        out.push('\n');
-    }
-    out
-}
-
 /// Join a class's real header + implementation into one translation
 /// unit, applying only the two generic, meaning-preserving adaptations
-/// every class needs (see module doc comment).
+/// every class needs (see module doc comment). The `#ifdef __clang__`
+/// guard unwrap is shared with `oz_static::imports` (OZ-094's real
+/// `#import` resolver hits the exact same headers) rather than
+/// duplicated here.
 fn assemble(header: &str, implementation: &str) -> String {
     format!(
         "{}\n{}\n",
-        strip_import_and_pragma_lines(&unwrap_clang_guard(header)),
+        strip_import_and_pragma_lines(&oz_static::imports::unwrap_clang_guard(header)),
         strip_import_and_pragma_lines(implementation)
     )
 }
