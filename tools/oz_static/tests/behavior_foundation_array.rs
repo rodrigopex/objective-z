@@ -4,9 +4,9 @@
 // from tests/behavior/cases/foundation/array_basic.m and
 // tests/behavior/cases/inline/array_fast_access.m.
 //
-// Uses the real `OZObject` (`common::OZOBJECT_SRC`) as the root class,
-// `OZQ31` (`common::OZQ31_SRC`) for the boxed integer elements, and
-// `OZArray` (`common::OZARRAY_SRC`, a partial port -- see its doc comment
+// Uses the real `OZObject` (`common::ozobject_src`) as the root class,
+// `OZQ31` (`common::ozq31_src`) for the boxed integer elements, and
+// `OZArray` (`common::ozarray_src`, a partial port -- see its doc comment
 // for what's deliberately left out and why). The interesting part isn't
 // the class -- it's how `@[...]` desugars: `emit::render_boxed_array_literal`
 // builds a `void *` stack buffer from the (retained-or-fresh, per
@@ -17,7 +17,7 @@
 // for-in loops are separate, not-yet-started OZ-092 checklist items.
 
 mod common;
-use common::{compile_and_run, OZARRAY_SRC, OZOBJECT_SRC as PREAMBLE, OZQ31_SRC};
+use common::{compile_and_run, ozarray_src, ozobject_src as PREAMBLE, ozq31_src};
 
 #[test]
 fn array_basic_literal_count_first_element_and_out_of_bounds() {
@@ -60,7 +60,7 @@ int main(void) {{
 	return 0;
 }}
 ",
-        PREAMBLE, OZQ31_SRC, OZARRAY_SRC
+        PREAMBLE(), ozq31_src(), ozarray_src()
     );
     let stdout = compile_and_run(&src, "array_basic_literal_count_first_element_and_out_of_bounds");
     assert_eq!(stdout, "count=3\nfirst=42\noob=1\n");
@@ -107,7 +107,7 @@ int main(void) {{
 	return 0;
 }}
 ",
-        PREAMBLE, OZQ31_SRC, OZARRAY_SRC
+        PREAMBLE(), ozq31_src(), ozarray_src()
     );
     let stdout = compile_and_run(&src, "array_fast_access_count_and_first_val");
     assert_eq!(stdout, "count=3\nfirst=100\n");

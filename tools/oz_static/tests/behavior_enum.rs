@@ -6,7 +6,7 @@
 // Each Python fixture pairs an X.m (ObjC declarations only) with a
 // hand-written X_test.c (Unity TEST_ASSERT_* calls against the
 // Python-generated API). Here each is ported to a single self-contained
-// source using the real `OZObject` (`common::OZOBJECT_SRC`) as the root
+// source using the real `OZObject` (`common::ozobject_src`) as the root
 // class, with a `main()` that printf's the values the original Unity
 // asserts checked, and the Rust test asserts the exact stdout.
 //
@@ -17,7 +17,7 @@
 // single-file-per-compile limitation.
 
 mod common;
-use common::{compile_and_run, OZOBJECT_SRC as PREAMBLE};
+use common::{compile_and_run, ozobject_src as PREAMBLE};
 
 /// Ported from tests/behavior/cases/enum/enum_as_ivar.m +
 /// enum_as_ivar_test.c: an enum used as an ivar's type, set through a
@@ -61,7 +61,7 @@ int main(void) {{
 	return 0;
 }}
 ",
-        PREAMBLE
+        PREAMBLE()
     );
     let stdout = compile_and_run(&src, "enum_as_ivar");
     assert_eq!(stdout, "dir1=2\ndir2=0\n");
@@ -71,7 +71,7 @@ int main(void) {{
 /// enum_from_header_test.c: an enum constant used in a method-body
 /// comparison. The original fixture's `-isHighPriority` returns `BOOL`;
 /// ported here as `int` (0/1) predating `BOOL`'s availability (see
-/// `common::OZOBJECT_SRC`) -- the behavior under test (comparing an ivar
+/// `common::ozobject_src`) -- the behavior under test (comparing an ivar
 /// against an enum constant) is unaffected by that substitution.
 #[test]
 fn enum_constant_comparison() {
@@ -114,7 +114,7 @@ int main(void) {{
 	return 0;
 }}
 ",
-        PREAMBLE
+        PREAMBLE()
     );
     let stdout = compile_and_run(&src, "enum_constant_comparison");
     assert_eq!(stdout, "high=1\nlow=0\n");
@@ -179,7 +179,7 @@ int main(void) {{
 	return 0;
 }}
 ",
-        PREAMBLE
+        PREAMBLE()
     );
     let stdout = compile_and_run(&src, "enum_in_switch");
     assert_eq!(stdout, "red=10\ngreen=20\nblue=30\n");

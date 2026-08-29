@@ -4,7 +4,7 @@
 // OZQ31, the fixed-point number Foundation class, ported from
 // tests/behavior/cases/foundation/{number_basic,q31_basic,q31_stdio_free}.m.
 //
-// Uses the real `OZObject` (`common::OZOBJECT_SRC`) as the root class.
+// Uses the real `OZObject` (`common::ozobject_src`) as the root class.
 // OZQ31 itself is transplanted verbatim from the real `src/OZQ31.m` /
 // `include/oz_sdk/Foundation/OZQ31.h` -- same helper function bodies
 // (`_oz_bits_for_mag`, `_oz_shift_for_*`, `_oz_encode_*`, `_oz_decode_*`,
@@ -22,7 +22,7 @@
 // transpiler features beyond that desugaring; it's ordinary ObjC/C source.
 
 mod common;
-use common::{compile_and_run, OZOBJECT_SRC as PREAMBLE, OZQ31_SRC};
+use common::{compile_and_run, ozobject_src as PREAMBLE, ozq31_src};
 
 #[test]
 fn number_basic_boxes_int_literal() {
@@ -47,7 +47,7 @@ int main(void) {{
 	return 0;
 }}
 ",
-        PREAMBLE, OZQ31_SRC
+        PREAMBLE(), ozq31_src()
     );
     let stdout = compile_and_run(&src, "number_basic_boxes_int_literal");
     assert_eq!(stdout, "boxed=42\n");
@@ -170,7 +170,7 @@ int main(void) {{
 	return 0;
 }}
 ",
-        PREAMBLE, OZQ31_SRC
+        PREAMBLE(), ozq31_src()
     );
     let stdout = compile_and_run(&src, "q31_basic_roundtrip_and_arithmetic");
     assert_eq!(
@@ -304,7 +304,7 @@ int main(void) {{
 	return 0;
 }}
 ",
-        PREAMBLE, OZQ31_SRC
+        PREAMBLE(), ozq31_src()
     );
     let stdout = compile_and_run(&src, "q31_stdio_free_to_str_and_div_helpers");
     for line in stdout.lines() {

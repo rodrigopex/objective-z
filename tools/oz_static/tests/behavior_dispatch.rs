@@ -7,7 +7,7 @@
 // directly; here the class declarations and the assertions are folded
 // into one source string with a `main()` that `printf`s the values under
 // test, and the Rust test asserts the exact stdout -- same shape as
-// end_to_end_behavior.rs. Uses the real `OZObject` (`common::OZOBJECT_SRC`)
+// end_to_end_behavior.rs. Uses the real `OZObject` (`common::ozobject_src`)
 // as the root class, and `alloc`/`init`/inherited or overridden methods
 // are exercised through ordinary `[receiver selector]` sends -- the
 // static bar resolves the receiver's declared type and dispatches to the
@@ -15,7 +15,7 @@
 // reproduce the oracle's raw `(struct Parent *)` casts by hand.
 
 mod common;
-use common::{compile_and_run, OZOBJECT_SRC};
+use common::{compile_and_run, ozobject_src};
 
 #[test]
 fn class_method_dispatch() {
@@ -24,7 +24,7 @@ fn class_method_dispatch() {
     // returns its value, with no instance ever created.
     let src = format!(
         "{}{}",
-        OZOBJECT_SRC,
+        ozobject_src(),
         "\
 @interface Factory : OZObject
 + (int)version;
@@ -55,7 +55,7 @@ fn inherited_method_dispatch() {
     // hierarchy to Vehicle's implementation.
     let src = format!(
         "{}{}",
-        OZOBJECT_SRC,
+        ozobject_src(),
         "\
 @interface Vehicle : OZObject {
 	int _speed;
@@ -102,7 +102,7 @@ fn method_override_dispatch() {
     // instances must be unaffected by the subclass's override.
     let src = format!(
         "{}{}",
-        OZOBJECT_SRC,
+        ozobject_src(),
         "\
 @interface Animal : OZObject
 - (int)sound;
@@ -148,7 +148,7 @@ fn send_routes_correct_dispatch() {
     // storage, so `_spoken` starts at 0 with no explicit init needed.
     let src = format!(
         "{}{}",
-        OZOBJECT_SRC,
+        ozobject_src(),
         "\
 @interface Speaker : OZObject {
 	int _spoken;
@@ -189,7 +189,7 @@ fn super_calls_parent_dispatch() {
     // level setting its own ivar -- both must be observable afterward.
     let src = format!(
         "{}{}",
-        OZOBJECT_SRC,
+        ozobject_src(),
         "\
 @interface Base : OZObject {
 	int _baseVal;

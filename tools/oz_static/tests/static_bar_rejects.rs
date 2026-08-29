@@ -4,14 +4,14 @@
 // subset must be a named, located hard error -- never a silent skip.
 
 mod common;
-use common::{expect_reject, OZOBJECT_SRC as PREAMBLE};
+use common::{expect_reject, ozobject_src as PREAMBLE};
 
 #[test]
 fn try_catch_rejected() {
     let src = format!(
         "{}\n@interface Foo : OZObject\n- (void)test;\n@end\n@implementation Foo\n\
          - (void)test {{\n    @try {{\n        int x = 1;\n    }} @catch (id e) {{\n    }}\n}}\n@end\n",
-        PREAMBLE
+        PREAMBLE()
     );
     let diags = expect_reject(&src);
     assert!(diags.contains("@try/@catch"), "diagnostics: {}", diags);
@@ -22,7 +22,7 @@ fn synchronized_rejected() {
     let src = format!(
         "{}\n@interface Foo : OZObject\n- (void)test;\n@end\n@implementation Foo\n\
          - (void)test {{\n    @synchronized(self) {{\n    }}\n}}\n@end\n",
-        PREAMBLE
+        PREAMBLE()
     );
     let diags = expect_reject(&src);
     assert!(diags.contains("@synchronized"), "diagnostics: {}", diags);
@@ -33,7 +33,7 @@ fn property_rejected() {
     let src = format!(
         "{}\n@interface Foo : OZObject\n@property (nonatomic) int count;\n@end\n\
          @implementation Foo\n@synthesize count = _count;\n@end\n",
-        PREAMBLE
+        PREAMBLE()
     );
     let diags = expect_reject(&src);
     assert!(diags.contains("@property") || diags.contains("@synthesize"), "diagnostics: {}", diags);
@@ -44,7 +44,7 @@ fn reflection_selector_rejected() {
     let src = format!(
         "{}\n@interface Foo : OZObject\n- (void)test;\n@end\n@implementation Foo\n\
          - (void)test {{\n    if ([self respondsToSelector:0]) {{\n    }}\n}}\n@end\n",
-        PREAMBLE
+        PREAMBLE()
     );
     let diags = expect_reject(&src);
     assert!(diags.contains("respondsToSelector:"), "diagnostics: {}", diags);
@@ -56,7 +56,7 @@ fn is_kind_of_class_rejected() {
     let src = format!(
         "{}\n@interface Foo : OZObject\n- (void)test;\n@end\n@implementation Foo\n\
          - (void)test {{\n    if ([self isKindOfClass:0]) {{\n    }}\n}}\n@end\n",
-        PREAMBLE
+        PREAMBLE()
     );
     let diags = expect_reject(&src);
     assert!(diags.contains("isKindOfClass:"), "diagnostics: {}", diags);
@@ -67,7 +67,7 @@ fn capturing_block_rejected() {
     let src = format!(
         "{}\n@interface Foo : OZObject\n- (void)test;\n@end\n@implementation Foo\n\
          - (void)test {{\n    int local = 5;\n    void (^blk)(void) = ^{{\n        local;\n    }};\n}}\n@end\n",
-        PREAMBLE
+        PREAMBLE()
     );
     let diags = expect_reject(&src);
     assert!(diags.contains("captures 'local'"), "diagnostics: {}", diags);
@@ -78,7 +78,7 @@ fn self_capturing_block_rejected() {
     let src = format!(
         "{}\n@interface Foo : OZObject {{\n    int _x;\n}}\n- (void)test;\n@end\n\
          @implementation Foo\n- (void)test {{\n    void (^blk)(void) = ^{{\n        _x;\n    }};\n}}\n@end\n",
-        PREAMBLE
+        PREAMBLE()
     );
     let diags = expect_reject(&src);
     assert!(diags.contains("captures"), "diagnostics: {}", diags);
@@ -89,7 +89,7 @@ fn non_capturing_block_accepted() {
     let src = format!(
         "{}\n@interface Foo : OZObject\n- (void)test;\n@end\n@implementation Foo\n\
          - (void)test {{\n    void (^blk)(void) = ^{{\n        int y = 1;\n    }};\n}}\n@end\n",
-        PREAMBLE
+        PREAMBLE()
     );
     oz_static::transpile(&src).unwrap_or_else(|diags| {
         panic!(
@@ -106,7 +106,7 @@ fn escaping_alloc_in_loop_rejected() {
          @interface Foo : OZObject {{\n    Item *_cached;\n}}\n- (void)test;\n@end\n\
          @implementation Foo\n- (void)test {{\n    int i;\n    for (i = 0; i < 3; i++) {{\n\
          \x20       _cached = [Item alloc];\n    }}\n}}\n@end\n",
-        PREAMBLE
+        PREAMBLE()
     );
     let diags = expect_reject(&src);
     assert!(diags.contains("Item"), "diagnostics: {}", diags);
@@ -121,7 +121,7 @@ fn fresh_local_alloc_in_loop_accepted() {
          @interface Foo : OZObject\n- (void)test;\n@end\n@implementation Foo\n\
          - (void)test {{\n    int i;\n    for (i = 0; i < 3; i++) {{\n\
          \x20       Item *it = [Item alloc];\n        [it ping];\n        [it release];\n    }}\n}}\n@end\n",
-        PREAMBLE
+        PREAMBLE()
     );
     oz_static::transpile(&src).unwrap_or_else(|diags| {
         panic!(
@@ -139,7 +139,7 @@ fn unresolvable_receiver_type_rejected() {
     let src = format!(
         "{}\n@interface Foo : OZObject\n- (void)test:(id)obj;\n@end\n@implementation Foo\n\
          - (void)test:(id)obj {{\n    [obj ping];\n}}\n@end\n",
-        PREAMBLE
+        PREAMBLE()
     );
     let diags = expect_reject(&src);
     assert!(diags.contains("cannot statically resolve"), "diagnostics: {}", diags);
@@ -155,7 +155,7 @@ fn protocol_conformance_missing_method_rejected() {
     let src = format!(
         "{}\n@protocol Greeter\n- (void)greet;\n@end\n\
          @interface Foo : OZObject <Greeter>\n@end\n@implementation Foo\n@end\n",
-        PREAMBLE
+        PREAMBLE()
     );
     let diags = expect_reject(&src);
     assert!(diags.contains("Foo"), "diagnostics: {}", diags);
@@ -168,7 +168,7 @@ fn protocol_conformance_satisfied_accepted() {
     let src = format!(
         "{}\n@protocol Greeter\n- (void)greet;\n@end\n\
          @interface Foo : OZObject <Greeter>\n@end\n@implementation Foo\n- (void)greet {{\n}}\n@end\n",
-        PREAMBLE
+        PREAMBLE()
     );
     oz_static::transpile(&src).unwrap_or_else(|diags| {
         panic!(

@@ -6,15 +6,15 @@
 // empty_class_no_methods, deep_inheritance, plus boxed_enum, boxed_float,
 // boxed_expression, boxed_call_expr -- now that OZQ31 exists
 // (behavior_foundation_q31.rs), the 4 boxed-literal fixtures are real
-// accept+run tests against the real OZQ31 (via `common::OZQ31_SRC`), not
+// accept+run tests against the real OZQ31 (via `common::ozq31_src`), not
 // reject tests -- @(expr) legitimately boxes an enum/float/arithmetic
 // expression/function-call result in the real Python pipeline too.
 //
-// Uses the real `OZObject` (`common::OZOBJECT_SRC`) as the root class,
+// Uses the real `OZObject` (`common::ozobject_src`) as the root class,
 // same as every other oz_static test file.
 
 mod common;
-use common::{compile_and_run, OZOBJECT_SRC as PREAMBLE, OZQ31_SRC};
+use common::{compile_and_run, ozobject_src as PREAMBLE, ozq31_src};
 
 #[test]
 fn multiple_args_method() {
@@ -42,7 +42,7 @@ int main(void) {{
 	return 0;
 }}
 ",
-        PREAMBLE
+        PREAMBLE()
     );
     let stdout = compile_and_run(&src, "multiple_args_method");
     assert_eq!(stdout, "sum=60\nsum2=0\n");
@@ -73,7 +73,7 @@ int main(void) {{
 	return 0;
 }}
 ",
-        PREAMBLE
+        PREAMBLE()
     );
     let stdout = compile_and_run(&src, "nil_returns_zero");
     assert_eq!(stdout, "retain_nil_is_null=1\nrelease_nil_ok\n");
@@ -106,7 +106,7 @@ int main(void) {{
 	return 0;
 }}
 ",
-        PREAMBLE
+        PREAMBLE()
     );
     let stdout = compile_and_run(&src, "empty_class_no_methods");
     assert_eq!(stdout, "nonnull=1\nclass_id=1\nrefcount=1\n");
@@ -172,7 +172,7 @@ int main(void) {{
 	return 0;
 }}
 ",
-        PREAMBLE
+        PREAMBLE()
     );
     let stdout = compile_and_run(&src, "deep_inheritance");
     assert_eq!(stdout, "level4=4\nlevel3=3\nlevel1=1\n");
@@ -212,7 +212,7 @@ int main(void) {{
 	return 0;
 }}
 ",
-        PREAMBLE, OZQ31_SRC
+        PREAMBLE(), ozq31_src()
     );
     let stdout = compile_and_run(&src, "boxed_enum_boxes_int_via_ozq31");
     assert_eq!(stdout, "ok=200\nnot_found=404\n");
@@ -251,7 +251,7 @@ int main(void) {{
 	return 0;
 }}
 ",
-        PREAMBLE, OZQ31_SRC
+        PREAMBLE(), ozq31_src()
     );
     let stdout = compile_and_run(&src, "boxed_float_boxes_float_var_via_ozq31");
     assert_eq!(stdout, "within_tolerance=ok\n");
@@ -324,7 +324,7 @@ int main(void) {{
 	return 0;
 }}
 ",
-        PREAMBLE, OZQ31_SRC
+        PREAMBLE(), ozq31_src()
     );
     let stdout = compile_and_run(&src, "boxed_expression_boxes_var_expr_call_float_uint_via_ozq31");
     assert_eq!(
@@ -365,7 +365,7 @@ int main(void) {{
 	return 0;
 }}
 ",
-        PREAMBLE, OZQ31_SRC
+        PREAMBLE(), ozq31_src()
     );
     let stdout = compile_and_run(&src, "boxed_call_expr_boxes_function_result_via_ozq31");
     assert_eq!(stdout, "boxed=99\n");

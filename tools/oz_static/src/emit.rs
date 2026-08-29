@@ -24,9 +24,13 @@ fn node_text<'a>(node: Node, src: &'a str) -> &'a str {
 
 /// Collapse whitespace (including newlines) into single spaces, for a
 /// readable one-line `/* ... */` comment out of a possibly multi-line or
-/// oddly-indented original statement.
+/// oddly-indented original statement. Every caller wraps the result in
+/// `/* ... */`, so any embedded `*/` in the original text (a real inline
+/// comment, or even a string/char literal containing those two
+/// characters) is neutralized to `* /` here too -- C block comments
+/// don't nest, so left as-is it would close the wrapping comment early.
 fn one_line(text: &str) -> String {
-    text.split_whitespace().collect::<Vec<_>>().join(" ")
+    text.split_whitespace().collect::<Vec<_>>().join(" ").replace("*/", "* /")
 }
 
 const BANNER_WIDTH: usize = 80;
@@ -40,8 +44,16 @@ fn rule_fill(width: usize, fill: char) -> String {
 /// block) with every line prefixed `" * "`, and a bottom rule -- the
 /// classic C block-comment box, so a section boundary is unmistakable at
 /// a glance regardless of how much header text it wraps.
+///
+/// `content` is real source text and may itself contain a `/* ... */`
+/// comment (e.g. an ivar's own inline doc comment) -- C block comments
+/// don't nest, so an embedded `*/` would otherwise close this banner
+/// early, leaving the rest of it (and whatever real code follows) to be
+/// parsed as live C. Every `*/` inside `content` is neutralized to `* /`
+/// before wrapping, the standard escape for exactly this case; cosmetic
+/// only, since this text is documentation either way.
 fn banner_box(content: &str, fill: char) -> String {
-    let content = content.trim_end();
+    let content = content.trim_end().replace("*/", "* /");
     let mut out = format!("/* {}\n", rule_fill(BANNER_WIDTH - 3, fill));
     for line in content.lines() {
         out.push_str(" * ");

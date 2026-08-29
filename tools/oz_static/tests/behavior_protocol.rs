@@ -15,7 +15,7 @@
 // oracle's OZ_PROTOCOL_SEND_* exercises directly.
 
 mod common;
-use common::{compile_and_run, OZOBJECT_SRC as PREAMBLE};
+use common::{compile_and_run, ozobject_src as PREAMBLE};
 
 #[test]
 fn protocol_dispatch_routes_to_correct_class() {
@@ -53,7 +53,7 @@ int main(void) {{
 	return 0;
 }}
 ",
-        PREAMBLE
+        PREAMBLE()
     );
     let stdout = compile_and_run(&src, "protocol_dispatch_routes_to_correct_class");
     assert_eq!(stdout, "light=1 fan=11\n");
@@ -88,7 +88,7 @@ int main(void) {{
 	return 0;
 }}
 ",
-        PREAMBLE
+        PREAMBLE()
     );
     let stdout = compile_and_run(&src, "protocol_inheritance_exposes_super_protocol_methods");
     assert_eq!(stdout, "run=5 sprint=10\n");
@@ -122,7 +122,7 @@ int main(void) {{
 	return 0;
 }}
 ",
-        PREAMBLE
+        PREAMBLE()
     );
     let stdout = compile_and_run(&src, "multiple_protocol_conformance");
     assert_eq!(stdout, "read=1 write=2\n");
@@ -162,7 +162,7 @@ int main(void) {{
 	return 0;
 }}
 ",
-        PREAMBLE
+        PREAMBLE()
     );
     let stdout = compile_and_run(&src, "typed_protocol_var_dispatches_per_instance");
     assert_eq!(stdout, "ruler=30 scale=100\n");
