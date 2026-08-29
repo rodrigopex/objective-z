@@ -129,6 +129,84 @@ fn collect_local_decls(node: Node, ctx: &mut EmitCtx) {
     }
 }
 
+/// Does `node` (a `declaration`) carry a `__block` `type_qualifier` child?
+/// tree-sitter-objc has no dedicated node kind for `__block` -- confirmed
+/// against the vendored 3.0.2 grammar, it's one of the string choices
+/// inside the `type_qualifier` rule -- so it shows up as an ordinary
+/// `type_qualifier` child whose text happens to be `__block`. Same test
+/// `staticbar.rs`'s capture check uses to exempt these locals.
+fn is_block_qualified_declaration(node: Node, src: &str) -> bool {
+    let mut cursor = node.walk();
+    let found = node.children(&mut cursor).any(|c| c.kind() == "type_qualifier" && node_text(c, src) == "__block");
+    found
+}
+
+/// Promote a `__block`-qualified local to a file-scope static, mirroring
+/// oz_transpile's collect.py `_collect_block_vars`/emit.py:1179-1181: the
+/// local declaration is skipped entirely (its statement renders to an
+/// empty string -- see the `render_expr` "declaration" arm) and a
+/// `static TYPE name [= init];` line is queued in `ctx.hoisted_statics`
+/// for `emit()`/`emit_split()` to splice in at file scope, right beside
+/// the other hoisted-* vectors. Every reference to `name`, inside the
+/// block or out, resolves to the same static via plain C lexical scoping
+/// -- no renaming needed.
+///
+/// Only a simple literal initializer (`_extract_init_value`'s Python
+/// equivalent) is preserved; anything else is dropped and the static is
+/// declared uninitialized, exactly like the Python oracle.
+fn hoist_block_var(node: Node, ctx: &mut EmitCtx) {
+    let known: std::collections::HashSet<String> = ctx.program.classes.keys().cloned().collect();
+    let (type_text, stars) = crate::collect::extract_type_and_stars(node, ctx.src);
+    let c_type = crate::collect::render_type(&type_text, stars, &known);
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.kind() != "init_declarator" && child.kind() != "identifier" {
+            continue;
+        }
+        let name = crate::collect::find_declared_name(child, ctx.src);
+        if name.is_empty() {
+            continue;
+        }
+        let decl_str = format!("{} {}", c_type, name);
+        let init = child.child_by_field_name("value").and_then(|v| simple_literal_text(v, ctx.src));
+        let decl = match init {
+            Some(init_text) => format!("static {} = {};", decl_str, init_text),
+            None => format!("static {};", decl_str),
+        };
+        ctx.hoisted_statics.push((name, decl));
+    }
+}
+
+/// Mirrors collect.py's `_extract_init_value`: only a bare number literal
+/// (optionally negated) or a null pointer constant survives the promotion
+/// to a file-scope static initializer. Anything more complex (a call, an
+/// identifier, an arithmetic expression) is dropped, same as the Python
+/// oracle -- the static ends up declared with no initializer at all.
+fn simple_literal_text(node: Node, src: &str) -> Option<String> {
+    match node.kind() {
+        "number_literal" => Some(node_text(node, src).to_string()),
+        "unary_expression" => {
+            let mut cursor = node.walk();
+            let children: Vec<Node> = node.children(&mut cursor).collect();
+            if !children.iter().any(|c| c.kind() == "-") {
+                return None;
+            }
+            let operand = children.into_iter().find(|c| c.kind() == "number_literal")?;
+            Some(format!("-{}", node_text(operand, src)))
+        }
+        "parenthesized_expression" => {
+            let mut cursor = node.walk();
+            let inner = node.children(&mut cursor).find(|c| c.kind() != "(" && c.kind() != ")")?;
+            simple_literal_text(inner, src)
+        }
+        "identifier" if matches!(node_text(node, src), "NULL" | "nil" | "Nil") => {
+            Some("NULL".to_string())
+        }
+        _ => None,
+    }
+}
+
 pub(crate) fn selector_to_c(selector: &str) -> String {
     selector.replace(':', "_")
 }
@@ -217,6 +295,13 @@ struct EmitCtx<'a> {
     /// string literals -- see `render_boxed_string_literal`. Assembled
     /// into the primary source exactly like `hoisted_blocks`.
     hoisted_string_literals: Vec<(String, String)>,
+    /// (name, full `static TYPE name [= init];` declaration) pairs for
+    /// `__block`-qualified locals -- promoted to file scope exactly like
+    /// oz_transpile's collect.py `_collect_block_vars` (see
+    /// `hoist_block_var`), so a block can reference them without being a
+    /// real capture. Assembled into the primary source like
+    /// `hoisted_blocks`.
+    hoisted_statics: Vec<(String, String)>,
     block_counter: usize,
     /// Statements that must precede the *current top-level statement*
     /// (not hoisted to file scope) -- e.g. the stack buffer an array
@@ -405,6 +490,10 @@ fn render_expr(node: Node, ctx: &mut EmitCtx) -> (String, String) {
             }
         }
         "for_statement" if is_forin_shape(node) => render_forin_statement(node, ctx),
+        "declaration" if is_block_qualified_declaration(node, ctx.src) => {
+            hoist_block_var(node, ctx);
+            (String::new(), "id".to_string())
+        }
         _ => {
             if !needs_translation(node) {
                 (node_text(node, ctx.src).to_string(), "id".to_string())
@@ -1518,6 +1607,7 @@ pub fn emit(source: &str, program: &Program) -> EmitOutput {
     let mut hoisted_enums: Vec<String> = Vec::new();
     let mut hoisted_forward_decls: Vec<String> = Vec::new();
     let mut hoisted_string_literals: Vec<(String, String)> = Vec::new();
+    let mut hoisted_statics: Vec<(String, String)> = Vec::new();
 
     struct Patch {
         start: usize,
@@ -1585,6 +1675,7 @@ pub fn emit(source: &str, program: &Program) -> EmitOutput {
                     hoisted_blocks: Vec::new(),
                     hoisted_structs: Vec::new(),
                     hoisted_string_literals: Vec::new(),
+                    hoisted_statics: Vec::new(),
                     block_counter: 0,
                     pre_stmts: Vec::new(),
                 };
@@ -1607,6 +1698,7 @@ pub fn emit(source: &str, program: &Program) -> EmitOutput {
                     hoisted_blocks: Vec::new(),
                     hoisted_structs: Vec::new(),
                     hoisted_string_literals: Vec::new(),
+                    hoisted_statics: Vec::new(),
                     block_counter: 0,
                     pre_stmts: Vec::new(),
                 };
@@ -1687,6 +1779,7 @@ pub fn emit(source: &str, program: &Program) -> EmitOutput {
                 hoisted_blocks.extend(ctx.hoisted_blocks);
                 hoisted_structs.extend(ctx.hoisted_structs);
                 hoisted_string_literals.extend(ctx.hoisted_string_literals);
+                hoisted_statics.extend(ctx.hoisted_statics);
                 patches.push(Patch { start: node.start_byte(), end: node.end_byte(), text: out });
             }
             "enum_specifier" => {
@@ -1751,6 +1844,7 @@ pub fn emit(source: &str, program: &Program) -> EmitOutput {
                     hoisted_blocks: Vec::new(),
                     hoisted_structs: Vec::new(),
                     hoisted_string_literals: Vec::new(),
+                    hoisted_statics: Vec::new(),
                     block_counter: 0,
                     pre_stmts: Vec::new(),
                 };
@@ -1770,6 +1864,7 @@ pub fn emit(source: &str, program: &Program) -> EmitOutput {
                 hoisted_blocks.extend(ctx.hoisted_blocks);
                 hoisted_structs.extend(ctx.hoisted_structs);
                 hoisted_string_literals.extend(ctx.hoisted_string_literals);
+                hoisted_statics.extend(ctx.hoisted_statics);
             }
             _ => {}
         }
@@ -1788,6 +1883,24 @@ pub fn emit(source: &str, program: &Program) -> EmitOutput {
     // wherever in the original source that was declared.
     let mut prototypes = String::new();
     let mut definitions = String::new();
+
+    // `__block`-qualified locals, promoted to file-scope statics (see
+    // `hoist_block_var`) -- fully self-contained (only a simple literal
+    // initializer survives the promotion), so unlike blocks/string
+    // literals below there's no separate prototype/definition split:
+    // the whole `static TYPE name [= init];` line just needs to precede
+    // every reference to it, guaranteed by living in `prototypes`, ahead
+    // of the class code in `out` and of the hoisted block definitions
+    // that may reference it.
+    if !hoisted_statics.is_empty() {
+        prototypes.push_str("/* __block-qualified locals, promoted to file scope */\n");
+        for (_, decl) in &hoisted_statics {
+            prototypes.push_str(decl);
+            prototypes.push('\n');
+        }
+        prototypes.push('\n');
+    }
+
     if !hoisted_blocks.is_empty() {
         prototypes.push_str("/* non-capturing blocks, hoisted out of their enclosing methods -- prototypes (defined below, after every class) */\n");
         definitions.push_str("\n/* non-capturing blocks, hoisted out of their enclosing methods */\n");
@@ -1896,6 +2009,7 @@ pub fn emit_split(source: &str, program: &Program, origins: &[(String, Range<usi
     let mut extra_includes: HashMap<String, HashSet<String>> = HashMap::new();
     let mut hoisted_blocks_by_stem: HashMap<String, Vec<(String, String)>> = HashMap::new();
     let mut hoisted_strings_by_stem: HashMap<String, Vec<(String, String)>> = HashMap::new();
+    let mut hoisted_statics_by_stem: HashMap<String, Vec<(String, String)>> = HashMap::new();
 
     let mut cursor = root.walk();
     for node in root.children(&mut cursor) {
@@ -1949,6 +2063,7 @@ pub fn emit_split(source: &str, program: &Program, origins: &[(String, Range<usi
                     hoisted_blocks: Vec::new(),
                     hoisted_structs: Vec::new(),
                     hoisted_string_literals: Vec::new(),
+                    hoisted_statics: Vec::new(),
                     block_counter: 0,
                     pre_stmts: Vec::new(),
                 };
@@ -1973,6 +2088,7 @@ pub fn emit_split(source: &str, program: &Program, origins: &[(String, Range<usi
                     hoisted_blocks: Vec::new(),
                     hoisted_structs: Vec::new(),
                     hoisted_string_literals: Vec::new(),
+                    hoisted_statics: Vec::new(),
                     block_counter: 0,
                     pre_stmts: Vec::new(),
                 };
@@ -2035,6 +2151,7 @@ pub fn emit_split(source: &str, program: &Program, origins: &[(String, Range<usi
                 hoisted_structs.extend(ctx.hoisted_structs);
                 hoisted_blocks_by_stem.entry(stem.clone()).or_default().extend(ctx.hoisted_blocks);
                 hoisted_strings_by_stem.entry(stem.clone()).or_default().extend(ctx.hoisted_string_literals);
+                hoisted_statics_by_stem.entry(stem.clone()).or_default().extend(ctx.hoisted_statics);
                 bodies.entry(stem.clone()).or_default().push(out);
             }
             "enum_specifier" => {
@@ -2075,6 +2192,7 @@ pub fn emit_split(source: &str, program: &Program, origins: &[(String, Range<usi
                     hoisted_blocks: Vec::new(),
                     hoisted_structs: Vec::new(),
                     hoisted_string_literals: Vec::new(),
+                    hoisted_statics: Vec::new(),
                     block_counter: 0,
                     pre_stmts: Vec::new(),
                 };
@@ -2094,6 +2212,7 @@ pub fn emit_split(source: &str, program: &Program, origins: &[(String, Range<usi
                 hoisted_structs.extend(ctx.hoisted_structs);
                 hoisted_blocks_by_stem.entry(stem.clone()).or_default().extend(ctx.hoisted_blocks);
                 hoisted_strings_by_stem.entry(stem.clone()).or_default().extend(ctx.hoisted_string_literals);
+                hoisted_statics_by_stem.entry(stem.clone()).or_default().extend(ctx.hoisted_statics);
                 bodies.entry(stem.clone()).or_default().push(text);
             }
             _ => {
@@ -2176,6 +2295,16 @@ pub fn emit_split(source: &str, program: &Program, origins: &[(String, Range<usi
             "/* Auto-generated by oz_static -- do not edit */\n#include \"oz_static_dispatch.h\"\n#include \"{}.h\"\n\n",
             stem
         );
+        if let Some(statics) = hoisted_statics_by_stem.get(stem) {
+            if !statics.is_empty() {
+                c.push_str("/* __block-qualified locals, promoted to file scope */\n");
+                for (_, decl) in statics {
+                    c.push_str(decl);
+                    c.push('\n');
+                }
+                c.push('\n');
+            }
+        }
         if let Some(blocks) = hoisted_blocks_by_stem.get(stem) {
             if !blocks.is_empty() {
                 c.push_str("/* non-capturing blocks, hoisted out of their enclosing methods -- prototypes (defined below) */\n");

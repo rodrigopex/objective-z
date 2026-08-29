@@ -72,6 +72,14 @@ fn message_selector(node: Node, src: &str) -> String {
 struct MethodScope<'a> {
     class_ivars: &'a HashSet<String>,
     locals: HashSet<String>,
+    /// `__block`-qualified locals (tree-sitter-objc parses `__block` as a
+    /// `type_qualifier` child of the `declaration` node -- confirmed
+    /// against the vendored grammar, there is no dedicated node kind for
+    /// it). Mirrors oz_transpile's BlocksAttr promotion-to-static: these
+    /// are exempt from the capture check in `find_capture` below, since
+    /// emit.rs hoists them to file-scope statics rather than leaving them
+    /// as real stack locals a block would need to close over.
+    block_locals: HashSet<String>,
 }
 
 fn walk_for_reject(
@@ -188,12 +196,22 @@ fn walk_for_reject(
     if node.kind() == "declaration" {
         // A declaration's own init_declarator initializer is "fresh" only
         // when the declaration itself sits directly in a loop body.
+        let is_block_qualified = {
+            let mut cursor = node.walk();
+            let found = node
+                .children(&mut cursor)
+                .any(|c| c.kind() == "type_qualifier" && node_text(c, src) == "__block");
+            found
+        };
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
             if child.kind() == "init_declarator" {
                 // record the declared name as a local
                 if let Some(name) = find_first_identifier_before_eq(child, src) {
-                    scope.locals.insert(name);
+                    scope.locals.insert(name.clone());
+                    if is_block_qualified {
+                        scope.block_locals.insert(name);
+                    }
                 }
                 let mut c2 = child.walk();
                 for gc in child.children(&mut c2) {
@@ -284,7 +302,7 @@ fn find_capture(
 ) {
     if node.kind() == "identifier" {
         let name = node_text(node, src);
-        if own_names.contains(name) {
+        if own_names.contains(name) || scope.block_locals.contains(name) {
             return;
         }
         if name == "self" || scope.class_ivars.contains(name) || scope.locals.contains(name) {
@@ -316,7 +334,8 @@ pub fn check_method_body(
     let mut diags = Vec::new();
     let ivar_names: HashSet<String> =
         program.all_ivars(&class_info.name).into_iter().map(|(n, _)| n).collect();
-    let mut scope = MethodScope { class_ivars: &ivar_names, locals: HashSet::new() };
+    let mut scope =
+        MethodScope { class_ivars: &ivar_names, locals: HashSet::new(), block_locals: HashSet::new() };
     for (name, _) in params {
         scope.locals.insert(name.clone());
     }
