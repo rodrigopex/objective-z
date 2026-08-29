@@ -12,6 +12,41 @@ pub struct MethodSig {
     pub params: Vec<(String, String)>, // (name, c_type)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Ownership {
+    #[default]
+    Strong,
+    Assign,
+    UnsafeUnretained,
+}
+
+/// A `@property` declaration, resolved against its `@synthesize` (explicit,
+/// implicit-bare, or absent entirely) by the end of `collect::collect` --
+/// `ivar_name` is only `None` transiently, between parsing the
+/// `@property` and the property-resolution pass running (see
+/// `collect::resolve_properties`). Mirrors the Python pipeline's
+/// `OZProperty` (`tools/oz_transpile/model.py`).
+#[derive(Debug, Clone)]
+pub struct PropertyInfo {
+    pub name: String,
+    pub c_type: String,
+    /// Whether `c_type` is an object pointer (a known class, or `id`/`void
+    /// *`) -- only object properties get retain/release in a synthesized
+    /// strong setter.
+    pub is_object: bool,
+    pub is_readonly: bool,
+    pub is_nonatomic: bool,
+    pub ownership: Ownership,
+    pub getter_sel: Option<String>,
+    pub setter_sel: Option<String>,
+    pub ivar_name: Option<String>,
+    /// Source location of the `@property` declaration itself, for
+    /// diagnostics raised during property resolution (after parsing has
+    /// moved past the original `Node`).
+    pub decl_line: usize,
+    pub decl_col: usize,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct ClassInfo {
     pub name: String,
@@ -23,6 +58,7 @@ pub struct ClassInfo {
     /// (`<Protocol, ...>`) -- not resolved through protocol inheritance;
     /// use `Program::protocol_methods` for that.
     pub conforms: Vec<String>,
+    pub properties: Vec<PropertyInfo>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -89,6 +125,13 @@ impl Program {
     /// the dealloc const-vtable — never mutated at runtime.
     pub fn class_id(&self, name: &str) -> Option<usize> {
         self.class_order.iter().position(|n| n == name)
+    }
+
+    /// Does any class in the program declare an atomic (non-`nonatomic`)
+    /// property? Determines whether the root struct needs an
+    /// `oz_prop_lock` field at all -- see `collect::resolve_properties`.
+    pub fn has_atomic_property(&self) -> bool {
+        self.classes.values().any(|c| c.properties.iter().any(|p| !p.is_nonatomic))
     }
 
     pub fn root_class(&self) -> Option<&str> {
