@@ -10,6 +10,7 @@
 include_guard(GLOBAL)
 
 include(${ZEPHYR_OBJZ_MODULE_DIR}/cmake/ObjcClang.cmake)
+include(${ZEPHYR_OBJZ_MODULE_DIR}/cmake/oz_static.cmake)
 
 # ─── Public API ───────────────────────────────────────────────────────
 #
@@ -23,6 +24,11 @@ include(${ZEPHYR_OBJZ_MODULE_DIR}/cmake/ObjcClang.cmake)
 # ${CMAKE_CURRENT_BINARY_DIR}/oz_generated.
 #
 function(objz_transpile_sources target)
+    if(CONFIG_OBJZ_BACKEND_STATIC)
+        objz_transpile_sources_static(${target} ${ARGN})
+        return()
+    endif()
+
     cmake_parse_arguments(OZT "" "ROOT_CLASS;POOL_SIZES" "INCLUDE_DIRS" ${ARGN})
 
     set(_mod ${ZEPHYR_OBJZ_MODULE_DIR})

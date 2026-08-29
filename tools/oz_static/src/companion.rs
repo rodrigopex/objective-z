@@ -374,6 +374,15 @@ pub fn render(
     // method still compiles.
     h.push_str("typedef void *id;\ntypedef void *Class;\ntypedef bool BOOL;\n\n");
 
+    // Hardcoded rather than pulled from the real `Foundation/OZLog.h` via
+    // `#import` splicing: that header has no class/protocol node for
+    // `emit.rs`'s per-origin split to hang it on, so its spliced-in text
+    // lands in an origin nothing else `#include`s. Mirrors
+    // `oz_dispatch.h.j2`'s own hardcoded line in the Python pipeline --
+    // `src/OZLog.c` (linked in unconditionally by both backends) provides
+    // the one real definition either way.
+    h.push_str("/* OZLog -- formatted logging with %@ object support; defined in src/OZLog.c */\nvoid OZLog(const char *fmt, ...);\n\n");
+
     if !hoisted_forward_decls.is_empty() {
         h.push_str("/* forward-declared structs (no body in source), hoisted here so a\n * method prototype below referencing one as a pointer type still compiles */\n");
         for d in hoisted_forward_decls {
