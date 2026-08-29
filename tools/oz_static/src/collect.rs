@@ -151,7 +151,13 @@ pub(crate) fn extract_type_and_stars(node: Node, src: &str) -> (String, usize) {
     let mut cursor = node.walk();
     fn walk(n: Node, src: &str, type_text: &mut String, stars: &mut usize) {
         match n.kind() {
-            "primitive_type" | "type_identifier" | "typedefed_specifier" => {
+            // `sized_type_specifier` is a multi-keyword primitive type
+            // (`unsigned long`, `long long`, `unsigned char`, ...) --
+            // tree-sitter-objc gives it its own node kind, distinct from
+            // a single-keyword `primitive_type` (`int`, `char`, ...),
+            // but the whole node's own text is exactly the desired type
+            // text either way.
+            "primitive_type" | "sized_type_specifier" | "type_identifier" | "typedefed_specifier" => {
                 if type_text.is_empty() {
                     *type_text = node_text(n, src).to_string();
                 }
@@ -171,6 +177,26 @@ pub(crate) fn extract_type_and_stars(node: Node, src: &str) -> (String, usize) {
                         // supported by this spike -- there's no name to
                         // reference the type by outside its own declaration.
                         None => "enum".to_string(),
+                    };
+                }
+            }
+            "struct_specifier" => {
+                // Same reasoning as `enum_specifier` just above, for a
+                // plain `struct Name` type reference (e.g. a parameter
+                // typed `struct NSFastEnumerationState *`) -- the "struct"
+                // keyword isn't a separate node either, so without this,
+                // the generic recursive fallback below would find just
+                // the tag name's own `type_identifier` child and use it
+                // bare (`NSFastEnumerationState *`), which C rejects: an
+                // incomplete (forward-declared, no body) struct type has
+                // no typedef, so it can only ever be spelled with the
+                // `struct` keyword, not bare.
+                if type_text.is_empty() {
+                    let mut c = n.walk();
+                    let found = n.children(&mut c).find(|ch| ch.kind() == "type_identifier");
+                    *type_text = match found {
+                        Some(name) => format!("struct {}", node_text(name, src)),
+                        None => "struct".to_string(),
                     };
                 }
             }

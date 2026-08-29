@@ -1516,6 +1516,7 @@ pub fn emit(source: &str, program: &Program) -> EmitOutput {
     let mut hoisted_blocks: Vec<(String, String)> = Vec::new();
     let mut hoisted_structs: Vec<(String, String)> = Vec::new();
     let mut hoisted_enums: Vec<String> = Vec::new();
+    let mut hoisted_forward_decls: Vec<String> = Vec::new();
     let mut hoisted_string_literals: Vec<(String, String)> = Vec::new();
 
     struct Patch {
@@ -1709,6 +1710,34 @@ pub fn emit(source: &str, program: &Program) -> EmitOutput {
                     });
                 }
             }
+            "struct_specifier" => {
+                // A top-level `struct Tag;` forward-declaration (no
+                // `field_declaration_list` body -- a real, full `struct
+                // Tag { ... };` definition, if this spike ever needs to
+                // support one, isn't this case). Real Foundation headers
+                // use this for a type only ever referenced by pointer in
+                // a method signature (e.g. `NSFastEnumerationState` in
+                // `countByEnumeratingWithState:`), letting Clang parse
+                // the AST without the real type -- but the *generated*
+                // method prototype needs that forward declare visible
+                // too, and not just wherever this text happened to sit
+                // in the original source: the shared companion header
+                // (OZ-091) unconditionally declares every class's every
+                // method prototype, `NSFastEnumerationState` included,
+                // regardless of which file's `source_c` this text landed
+                // in. Same fix and same hoist-to-companion-header
+                // mechanism as `enum_specifier` just above.
+                let mut c = node.walk();
+                let has_body = node.children(&mut c).any(|ch| ch.kind() == "field_declaration_list");
+                if !has_body {
+                    hoisted_forward_decls.push(node_text(node, source).to_string());
+                    patches.push(Patch {
+                        start: node.start_byte(),
+                        end: node.end_byte(),
+                        text: "/* forward-declared struct hoisted to the companion header -- needed there before any method prototype references it by pointer */".to_string(),
+                    });
+                }
+            }
             "function_definition" => {
                 // Plain top-level C function (e.g. main()): may still
                 // contain message sends. No self/ivars in scope.
@@ -1791,7 +1820,7 @@ pub fn emit(source: &str, program: &Program) -> EmitOutput {
     );
 
     let (companion_h, companion_c) =
-        crate::companion::render(program, &hoisted_structs, &hoisted_enums);
+        crate::companion::render(program, &hoisted_structs, &hoisted_enums, &hoisted_forward_decls);
 
     EmitOutput { source_c: out, companion_h, companion_c, diagnostics: diags }
 }
@@ -1859,6 +1888,7 @@ pub fn emit_split(source: &str, program: &Program, origins: &[(String, Range<usi
     let mut diags: Vec<Diagnostic> = Vec::new();
     let mut hoisted_structs: Vec<(String, String)> = Vec::new();
     let mut hoisted_enums: Vec<String> = Vec::new();
+    let mut hoisted_forward_decls: Vec<String> = Vec::new();
 
     let mut stem_order: Vec<String> = Vec::new();
     let mut headers: HashMap<String, Vec<String>> = HashMap::new();
@@ -2017,6 +2047,23 @@ pub fn emit_split(source: &str, program: &Program, origins: &[(String, Range<usi
                     );
                 }
             }
+            "struct_specifier" => {
+                // See the matching arm in `emit()` for why this hoists
+                // to the shared companion header rather than staying in
+                // this origin's own `.h`: the header a real method
+                // prototype needing it actually lands in is
+                // `oz_static_dispatch.h`, unconditionally, regardless of
+                // which origin's source text this forward-declare itself
+                // came from.
+                let mut c = node.walk();
+                let has_body = node.children(&mut c).any(|ch| ch.kind() == "field_declaration_list");
+                if !has_body {
+                    hoisted_forward_decls.push(node_text(node, source).to_string());
+                    headers.entry(stem.clone()).or_default().push(
+                        "/* forward-declared struct hoisted to the companion header -- needed there before any method prototype references it by pointer */".to_string(),
+                    );
+                }
+            }
             "function_definition" => {
                 let mut ctx = EmitCtx {
                     src: source,
@@ -2172,7 +2219,8 @@ pub fn emit_split(source: &str, program: &Program, origins: &[(String, Range<usi
         files.push((stem.clone(), h, c));
     }
 
-    let (companion_h, companion_c) = crate::companion::render(program, &hoisted_structs, &hoisted_enums);
+    let (companion_h, companion_c) =
+        crate::companion::render(program, &hoisted_structs, &hoisted_enums, &hoisted_forward_decls);
 
     EmitSplitOutput { files, companion_h, companion_c, diagnostics: diags }
 }

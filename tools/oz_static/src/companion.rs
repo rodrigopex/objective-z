@@ -345,6 +345,7 @@ pub fn render(
     program: &Program,
     hoisted_structs: &[(String, String)],
     hoisted_enums: &[String],
+    hoisted_forward_decls: &[String],
 ) -> (String, String) {
     let root = program.root_class().map(|s| s.to_string());
     // The root class always terminates the [super dealloc] chain. If the
@@ -372,6 +373,15 @@ pub fn render(
     // just a placeholder so a declared-but-uncalled `+ (Class)class`-style
     // method still compiles.
     h.push_str("typedef void *id;\ntypedef void *Class;\ntypedef bool BOOL;\n\n");
+
+    if !hoisted_forward_decls.is_empty() {
+        h.push_str("/* forward-declared structs (no body in source), hoisted here so a\n * method prototype below referencing one as a pointer type still compiles */\n");
+        for d in hoisted_forward_decls {
+            h.push_str(d);
+            h.push_str(";\n");
+        }
+        h.push('\n');
+    }
 
     if !hoisted_enums.is_empty() {
         h.push_str("/* enum definitions, hoisted here from source so they're complete\n * before any method prototype below references one by value */\n");
