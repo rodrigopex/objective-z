@@ -239,8 +239,11 @@ pub fn ozq31_src() -> String {
     format!(
         "/* synthesized stub (not from source): the real _oz_get_log_precision\n * \
 lives in src/OZLog.c, which needs Zephyr's printk plus the Python\n * \
-pipeline's own generated dispatch headers -- neither available on host. */\n\
-static inline int _oz_get_log_precision(void) {{ return -1; }}\n\n{}",
+pipeline's own generated dispatch headers -- neither available on host.\n * \
+Plain (not static/inline): oz_static's own companion header now declares\n * \
+this symbol too (see companion.rs), and a static definition can't follow\n * \
+a non-static declaration. */\n\
+int _oz_get_log_precision(void) {{ return -1; }}\n\n{}",
         assembled
     )
 }

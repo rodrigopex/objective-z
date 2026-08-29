@@ -129,6 +129,16 @@ function(objz_transpile_sources_static target)
     target_include_directories(${target} PRIVATE ${_mod}/include)
     target_compile_definitions(${target} PRIVATE OZ_PLATFORM_ZEPHYR)
 
+    # Real oz_sdk headers keep ARC ownership qualifiers (__unsafe_unretained,
+    # etc.) for the Python pipeline's Clang-AST analysis, which genuinely
+    # needs them -- oz_static preserves ivar declarations verbatim from
+    # source rather than re-synthesizing them (its "literate" design), so
+    # those qualifiers reach the final GCC compile unchanged. They're a
+    # true no-op here: oz_static has no ARC, so plain pointers are all
+    # there is either way. -D as empty rather than editing the shared
+    # headers or oz_static's verbatim copy.
+    target_compile_definitions(${target} PRIVATE __unsafe_unretained=)
+
     # Add OZLog support (pure C, matches the prototype hardcoded into
     # oz_static's own generated companion header -- see companion.rs)
     target_sources(${target} PRIVATE ${_mod}/src/OZLog.c)

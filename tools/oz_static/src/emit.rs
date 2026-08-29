@@ -1062,11 +1062,25 @@ fn render_message(node: Node, ctx: &mut EmitCtx) -> (String, String) {
                     method_fn_name(&defining, &parts.selector, false),
                     call_args.join(", ")
                 );
-                // See the class-method branch above for why an
-                // `instancetype` result needs casting back up to
-                // `target`'s own pointer type here.
-                if returns_instancetype && defining != target {
-                    (format!("(struct {} *)({})", target, call), format!("struct {} *", target))
+                // `[super init]`-style sends: `render_expr`'s "super"
+                // case reports `recv_type` as the *superclass*'s own
+                // pointer type (needed so the call argument above casts
+                // correctly) -- but the real, dynamic receiver is still
+                // `self`, i.e. `ctx.class_name`'s own type, not
+                // `target`'s. An `instancetype` result covaries with
+                // that real receiver, so it needs casting up to
+                // `ctx.class_name` here, not to `target` (which for a
+                // super-send just *is* the defining class already,
+                // masking the mismatch the class-message/plain-receiver
+                // branch above catches via `defining != target`).
+                let is_super = parts.receiver.kind() == "identifier"
+                    && node_text(parts.receiver, ctx.src) == "super";
+                let covariant_target = if is_super { ctx.class_name.clone() } else { target.clone() };
+                if returns_instancetype && defining != covariant_target {
+                    (
+                        format!("(struct {} *)({})", covariant_target, call),
+                        format!("struct {} *", covariant_target),
+                    )
                 } else {
                     (call, ret_ty)
                 }
@@ -1111,7 +1125,13 @@ fn dynamic_dispatch_call(
         .dynamic_dispatch_methods()
         .into_iter()
         .find(|m| m.selector == selector && !m.is_class_method)
-        .map(|m| m.return_type)
+        // Must agree with `companion::render_protocol_dispatch`'s own
+        // choice of this function's real C return type: an
+        // `instancetype` selector routes to several classes each
+        // returning their *own* struct pointer, so the shared function
+        // (and this call expression) can only be typed `void *`, not
+        // whichever implementor's type happened to be found first.
+        .map(|m| if m.returns_instancetype { "void *".to_string() } else { m.return_type })
         .unwrap_or_else(|| "void".to_string());
     (format!("OZ_PROTOCOL_SEND_{}({})", selc, call_args.join(", ")), ret_ty)
 }
