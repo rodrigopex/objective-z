@@ -456,6 +456,10 @@ pub fn collect(source: &str) -> (Program, Vec<crate::model::Diagnostic>) {
     let mut classes: std::collections::HashMap<String, ClassInfo> = std::collections::HashMap::new();
     let mut class_order = Vec::new();
     let mut protocols: std::collections::HashMap<String, ProtocolInfo> = std::collections::HashMap::new();
+    // First-seen (line, col) per class, kept only for the
+    // superclass-resolution diagnostic below -- not part of `ClassInfo`
+    // itself, since nothing downstream needs it.
+    let mut first_seen: std::collections::HashMap<String, (usize, usize)> = std::collections::HashMap::new();
     let mut cursor = root.walk();
     for node in root.children(&mut cursor) {
         if node.kind() == "protocol_declaration" {
@@ -476,6 +480,7 @@ pub fn collect(source: &str) -> (Program, Vec<crate::model::Diagnostic>) {
             continue; // category: doesn't declare a new class
         }
         if !classes.contains_key(&name) {
+            first_seen.insert(name.clone(), crate::parse::line_col(source, node.start_byte()));
             classes.insert(
                 name.clone(),
                 ClassInfo { name: name.clone(), superclass, ..Default::default() },
@@ -494,6 +499,31 @@ pub fn collect(source: &str) -> (Program, Vec<crate::model::Diagnostic>) {
 
     let known_classes: HashSet<String> = classes.keys().cloned().collect();
     let mut diagnostics: Vec<crate::model::Diagnostic> = Vec::new();
+
+    // A `superclass` reference that doesn't resolve to a class actually
+    // collected above (e.g. a real Foundation class only ever pulled in
+    // via `#import <Foundation/Foundation.h>` -- oz_static has no import
+    // resolution of its own, so it's genuinely undefined in this
+    // translation unit) must be a named, located hard error here, not a
+    // downstream panic: every later pass -- `companion::topological_order`
+    // in particular -- assumes every `superclass` string is itself a key
+    // in `classes`, and indexes it directly (`program.classes[name]`,
+    // which panics on a miss) rather than through a fallible lookup.
+    for name in &class_order {
+        let Some(sup) = &classes[name].superclass else { continue };
+        if !known_classes.contains(sup) {
+            let (line, col) = first_seen[name];
+            diagnostics.push(crate::model::Diagnostic::new(
+                format!(
+                    "class '{}' extends '{}', but no class '{}' is defined in this source \
+(oz_static has no #import resolution -- provide a single, self-contained translation unit)",
+                    name, sup, sup
+                ),
+                line,
+                col,
+            ));
+        }
+    }
 
     // Pass 2: ivars (from interfaces) + method signatures (from
     // declarations and definitions, category included).

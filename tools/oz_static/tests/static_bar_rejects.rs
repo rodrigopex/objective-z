@@ -194,6 +194,22 @@ fn selector_expression_rejected() {
 }
 
 #[test]
+fn undefined_superclass_rejected() {
+    // OZ-093: a class extending a superclass never declared in this
+    // translation unit (e.g. a real Foundation class only ever pulled in
+    // via `#import <Foundation/Foundation.h>`, which oz_static doesn't
+    // resolve) must be a named, located diagnostic -- not the raw panic
+    // this used to produce in `companion::topological_order`. Deliberately
+    // doesn't use `PREAMBLE`: the whole point is that `OZObject` is never
+    // declared anywhere in this source.
+    let src = "@interface MyFirstObject : OZObject\n- (void)greet;\n@end\n\
+               @implementation MyFirstObject\n- (void)greet {\n}\n@end\n";
+    let diags = expect_reject(src);
+    assert!(diags.contains("MyFirstObject"), "diagnostics: {}", diags);
+    assert!(diags.contains("no class 'OZObject' is defined"), "diagnostics: {}", diags);
+}
+
+#[test]
 fn protocol_literal_expression_rejected() {
     // '@protocol(Name)' has no dedicated `protocol_expression` node kind
     // in this grammar version -- unlike `@selector(...)`, it parses as a
