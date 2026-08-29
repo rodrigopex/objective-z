@@ -1164,15 +1164,6 @@ fn render_interface(node: Node, ctx: &mut EmitCtx, program: &Program) -> String 
     let name = ctx.class_name.clone();
     let info = &program.classes[&name];
 
-    let mut cursor0 = node.walk();
-    for child in node.children(&mut cursor0) {
-        if child.kind() == "property_declaration" {
-            ctx.err(
-                child,
-                "@property is not supported in the static subset spike; declare an ivar and accessor methods explicitly",
-            );
-        }
-    }
     for protocol in &info.conforms {
         for required in program.protocol_methods(protocol) {
             let implemented = info.methods.iter().any(|m| {
@@ -1192,12 +1183,22 @@ fn render_interface(node: Node, ctx: &mut EmitCtx, program: &Program) -> String 
     let base_field = match &info.superclass {
         Some(sup) => format!("\tstruct {sup} base; /* synthesized: inherited from {sup} */\n", sup = sup),
         // Root class: synthesize the tracking fields every object needs.
-        None => "\
-\tuint8_t oz_class_id; /* synthesized: which concrete class this is -- indexes the dealloc dispatch switch */
-\toz_atomic_t oz_refcount; /* synthesized: retain count */
-\tuint8_t oz_deallocating; /* synthesized: guards against re-entrant dealloc while it runs */
-"
-            .to_string(),
+        None => {
+            let mut f = String::from(
+                "\tuint8_t oz_class_id; /* synthesized: which concrete class this is -- indexes the dealloc dispatch switch */\n\
+                 \toz_atomic_t oz_refcount; /* synthesized: retain count */\n\
+                 \tuint8_t oz_deallocating; /* synthesized: guards against re-entrant dealloc while it runs */\n",
+            );
+            // Shared lock for every atomic property in the program --
+            // reached from any class via `Program::ivar_access_path`'s
+            // ordinary "base." hop-chain, same as any inherited ivar.
+            if program.has_atomic_property() {
+                f.push_str(
+                    "\toz_spinlock_t oz_prop_lock; /* synthesized: guards atomic property access */\n",
+                );
+            }
+            f
+        }
     };
 
     let mut ivars_text = String::new();
@@ -1209,6 +1210,23 @@ fn render_interface(node: Node, ctx: &mut EmitCtx, program: &Program) -> String 
                 ivars_text.push('\t');
                 ivars_text.push_str(node_text(child, ctx.src));
                 ivars_text.push('\n');
+            }
+        }
+    }
+    // A property's backing ivar usually is one of the ones just copied
+    // above (both real Foundation classes declare theirs explicitly) --
+    // but if a property's ivar isn't declared anywhere in source (fully
+    // implicit synthesis), the struct still needs a field for it.
+    let known: std::collections::HashSet<String> = program.classes.keys().cloned().collect();
+    let raw_ivar_names: std::collections::HashSet<String> =
+        crate::collect::extract_ivars(node, ctx.src, &known).into_iter().map(|(n, _)| n).collect();
+    for prop in &info.properties {
+        if let Some(ivar) = &prop.ivar_name {
+            if !raw_ivar_names.contains(ivar) {
+                ivars_text.push_str(&format!(
+                    "\t{} {}; /* synthesized: backs property '{}' */\n",
+                    prop.c_type, ivar, prop.name
+                ));
             }
         }
     }
@@ -1296,6 +1314,98 @@ fn render_category_interface(node: Node, src: &str, name: &str, program: &Progra
     }
     let _ = info; // reserved: category-only method filtering could go here
     format!("{}{}{}", open_banner, decls, close_banner)
+}
+
+/// A synthesized property getter (`is_getter`) or setter -- ported 1:1
+/// from the Python pipeline's `emit.py::_emit_synthesized_accessor`:
+/// atomic (the default unless `nonatomic`) wraps the ivar access in
+/// `OZ_SPINLOCK` on the shared root `oz_prop_lock` field (a real
+/// spinlock on Zephyr, a no-op `if` on host -- see
+/// `platform/oz_platform_{zephyr,host}.h`); a strong object setter also
+/// retains the incoming value and releases the old one, via this
+/// codebase's own `oz_static_retain`/`oz_static_release` (not Python's
+/// `{root}_retain`, which doesn't exist here -- see `render_message`'s
+/// `-retain`/`-release` translation for the same pattern).
+fn render_synthesized_accessor(
+    class_name: &str,
+    prop: &crate::model::PropertyInfo,
+    is_getter: bool,
+    program: &Program,
+) -> String {
+    let ivar = prop.ivar_name.as_deref().unwrap_or(&prop.name);
+    let ivar_path = program.ivar_access_path(class_name, ivar).unwrap_or_else(|| ivar.to_string());
+    let is_atomic = !prop.is_nonatomic;
+    let lock_path =
+        if is_atomic { program.ivar_access_path(class_name, "oz_prop_lock") } else { None }
+            .map(|p| format!("self->{}", p));
+    let c_type = &prop.c_type;
+
+    let (selector, ret_ty, params_decl) = if is_getter {
+        let sel = prop.getter_sel.clone().unwrap_or_else(|| prop.name.clone());
+        (sel, c_type.clone(), format!("struct {} *self", class_name))
+    } else {
+        let sel = prop.setter_sel.clone().unwrap_or_else(|| crate::collect::default_setter_sel(&prop.name));
+        (sel, "void".to_string(), format!("struct {} *self, {}", class_name, render_param(c_type, &prop.name)))
+    };
+    let fn_name = method_fn_name(class_name, &selector, false);
+
+    let mut body = String::from("{\n");
+    if is_getter {
+        if let Some(lock) = &lock_path {
+            body.push_str(&format!(
+                "\t{ty} val = {{0}};\n\tOZ_SPINLOCK(&{lock}) {{\n\t\tval = self->{ivar};\n\t}}\n\treturn val;\n",
+                ty = c_type,
+                lock = lock,
+                ivar = ivar_path
+            ));
+        } else {
+            body.push_str(&format!("\treturn self->{};\n", ivar_path));
+        }
+    } else {
+        let param_name = &prop.name;
+        let is_strong_obj = prop.is_object && prop.ownership == crate::model::Ownership::Strong;
+        let root = program.root_class().unwrap_or("OZSRoot").to_string();
+        if is_strong_obj {
+            if let Some(lock) = &lock_path {
+                body.push_str(&format!(
+                    "\t{ty} old = {{0}};\n\toz_static_retain((struct {root} *){param});\n\tOZ_SPINLOCK(&{lock}) {{\n\t\told = self->{ivar};\n\t\tself->{ivar} = {param};\n\t}}\n\toz_static_release((struct {root} *)old);\n",
+                    ty = c_type,
+                    root = root,
+                    param = param_name,
+                    lock = lock,
+                    ivar = ivar_path
+                ));
+            } else {
+                body.push_str(&format!(
+                    "\t{ty} old = self->{ivar};\n\tself->{ivar} = {param};\n\toz_static_retain((struct {root} *){param});\n\toz_static_release((struct {root} *)old);\n",
+                    ty = c_type,
+                    ivar = ivar_path,
+                    param = param_name,
+                    root = root
+                ));
+            }
+        } else if let Some(lock) = &lock_path {
+            body.push_str(&format!(
+                "\tOZ_SPINLOCK(&{lock}) {{\n\t\tself->{ivar} = {param};\n\t}}\n",
+                lock = lock,
+                ivar = ivar_path,
+                param = param_name
+            ));
+        } else {
+            body.push_str(&format!("\tself->{} = {};\n", ivar_path, param_name));
+        }
+    }
+    body.push('}');
+
+    format!(
+        "/* synthesized {} for property '{}' */\n{} {}({})\n{}\n",
+        if is_getter { "getter" } else { "setter" },
+        prop.name,
+        ret_ty,
+        fn_name,
+        params_decl,
+        body
+    )
 }
 
 fn render_method_definition(
@@ -1471,6 +1581,14 @@ pub fn emit(source: &str, program: &Program) -> EmitOutput {
                 let mut out = String::new();
                 out.push_str(&banner_box(&header_text(node, source, &["implementation_definition"]), '-'));
                 out.push('\n');
+                // Selectors with a real hand-written body somewhere in
+                // *this* @implementation -- a property's getter/setter
+                // is only synthesized below if it isn't one of these,
+                // regardless of what collect.rs decided when populating
+                // `info.methods` (that bookkeeping is for dispatch
+                // classification, not for "does this need a body").
+                let mut defined_here: std::collections::HashSet<(String, bool)> =
+                    std::collections::HashSet::new();
                 let mut c2 = node.walk();
                 for child in node.children(&mut c2) {
                     if child.kind() != "implementation_definition" {
@@ -1480,6 +1598,10 @@ pub fn emit(source: &str, program: &Program) -> EmitOutput {
                     let found_def = child.children(&mut c3).find(|c| c.kind() == "method_definition");
                     match found_def {
                         Some(method_def) => {
+                            let known: std::collections::HashSet<String> =
+                                ctx.program.classes.keys().cloned().collect();
+                            let sig = crate::collect::extract_method_sig(method_def, source, &name, &known);
+                            defined_here.insert((sig.selector, sig.is_class_method));
                             out.push_str(&render_method_definition(
                                 method_def, &mut ctx, &name, &ivars_scope,
                             ));
@@ -1487,14 +1609,13 @@ pub fn emit(source: &str, program: &Program) -> EmitOutput {
                         }
                         None => {
                             let mut c4 = child.walk();
-                            let is_synthesize = child
-                                .children(&mut c4)
-                                .any(|c| c.kind() == "property_implementation");
-                            if is_synthesize {
-                                ctx.err(
-                                    child,
-                                    "@synthesize is not supported in the static subset spike; declare an ivar and accessor methods explicitly",
-                                );
+                            let synth =
+                                child.children(&mut c4).find(|c| c.kind() == "property_implementation");
+                            if synth.is_some() {
+                                out.push_str(&format!(
+                                    "/* {} -- synthesized accessor(s) emitted below */\n",
+                                    one_line(node_text(child, source))
+                                ));
                                 continue;
                             }
                             // Not a method: e.g. a `static Foo *g;` file-scope
@@ -1506,6 +1627,25 @@ pub fn emit(source: &str, program: &Program) -> EmitOutput {
                             ctx.scope = ivars_scope.clone();
                             out.push_str(&render_stmt_with_comment(child, &mut ctx, ""));
                             out.push('\n');
+                        }
+                    }
+                }
+                if let Some(info) = program.classes.get(&name) {
+                    for prop in &info.properties {
+                        let getter_sel = prop.getter_sel.clone().unwrap_or_else(|| prop.name.clone());
+                        if !defined_here.contains(&(getter_sel, false)) {
+                            out.push_str(&render_synthesized_accessor(&name, prop, true, program));
+                            out.push('\n');
+                        }
+                        if !prop.is_readonly {
+                            let setter_sel = prop
+                                .setter_sel
+                                .clone()
+                                .unwrap_or_else(|| crate::collect::default_setter_sel(&prop.name));
+                            if !defined_here.contains(&(setter_sel, false)) {
+                                out.push_str(&render_synthesized_accessor(&name, prop, false, program));
+                                out.push('\n');
+                            }
                         }
                     }
                 }

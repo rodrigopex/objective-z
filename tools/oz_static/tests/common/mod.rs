@@ -287,15 +287,14 @@ pub fn ozdefer_src() -> String {
 /// for-in support needed them for real (see `emit::render_forin_statement`)
 /// and the dynamic-dispatch generalization (ported from the Python
 /// pipeline's `_classify_dispatch` while adding OZDictionary) made
-/// `OZ_PROTOCOL_SEND_iter`/`OZ_PROTOCOL_SEND_next` possible. Still cut,
-/// same reasons as before: the real header's generic type param
-/// (`<__covariant ObjectType>` -- untested territory, not worth the
-/// risk when dropping it changes nothing observable), the `iterIdx`
-/// *property* (`@property (readonly) uint16_t iterIdx;` +
+/// `OZ_PROTOCOL_SEND_iter`/`OZ_PROTOCOL_SEND_next` possible. The
+/// `iterIdx` *property* (`@property (readonly) uint16_t iterIdx;` +
 /// `@synthesize iterIdx = _iterIdx;` -- distinct from the `_iterIdx`
-/// ivar itself, which `-iter`/`-next` use directly; `@property`/
-/// `@synthesize` are unconditionally rejected by the static bar
-/// regardless of whether anything needs the property they'd expose),
+/// ivar itself, which `-iter`/`-next` use directly) is kept too, now
+/// that OZ-095 added `@property`/`@synthesize` support. Still cut, same
+/// reasons as before: the real header's generic type param
+/// (`<__covariant ObjectType>` -- untested territory, not worth the
+/// risk when dropping it changes nothing observable) and
 /// `enumerateObjectsUsingBlock:`/`countByEnumeratingWithState:` (only
 /// back Foundation's own `NSFastEnumeration`-style for-in, which this
 /// port doesn't use -- the Python oracle's own for-in desugar is
@@ -327,7 +326,6 @@ pub fn ozarray_src() -> String {
         "@interface OZArray<__covariant ObjectType> : OZObject <IteratorProtocol> {",
         "@interface OZArray : OZObject <IteratorProtocol> {",
     );
-    header = remove_line_containing(&header, "@property (readonly) uint16_t iterIdx;");
     header = remove_line_containing(&header, "arrayWithObjects:");
     header = remove_line_containing(&header, "struct NSFastEnumerationState;");
     header = remove_line_containing(&header, "enumerateObjectsUsingBlock:");
@@ -335,7 +333,6 @@ pub fn ozarray_src() -> String {
     header = remove_line_containing(&header, "cDescription:(char *)buf maxLength:(int)maxLen;");
 
     let mut implementation = include_str!("../../../../src/OZArray.m").to_string();
-    implementation = remove_line_containing(&implementation, "@synthesize iterIdx = _iterIdx;");
     implementation = remove_method_body(&implementation, "- (void)enumerateObjectsUsingBlock:");
     implementation = remove_method_body(&implementation, "cDescription:(char *)buf maxLength:(int)maxLen");
 
@@ -367,9 +364,10 @@ pub fn ozmutablestring_src() -> String {
 /// from `include/oz_sdk/Foundation/OZDictionary.h` / `src/OZDictionary.m`.
 /// `-iter`/`-next`/`<IteratorProtocol>`/`_iterIdx` are kept (see
 /// `ozarray_src`'s doc comment -- same reasoning, now that for-in
-/// support exists). Still cut, same reasons as `ozarray_src`: the
-/// generic type params (`<__covariant KeyType, __covariant ObjectType>`),
-/// the `iterIdx` *property* (distinct from the ivar), and
+/// support exists), and so is the `iterIdx` *property* (distinct from
+/// the ivar), now that OZ-095 added `@property`/`@synthesize` support.
+/// Still cut, same reasons as `ozarray_src`: the generic type params
+/// (`<__covariant KeyType, __covariant ObjectType>`) and
 /// `countByEnumeratingWithState:` (for-in here is `-iter`/`-next`-based,
 /// matching the Python oracle's own desugar). `cDescription:maxLength:`
 /// is kept, unlike `ozarray_src`: its body message-sends
@@ -398,13 +396,11 @@ pub fn ozdictionary_src() -> String {
         "@interface OZDictionary<__covariant KeyType, __covariant ObjectType> : OZObject <IteratorProtocol> {",
         "@interface OZDictionary : OZObject <IteratorProtocol> {",
     );
-    header = remove_line_containing(&header, "@property (readonly) uint16_t iterIdx;");
     header = remove_line_range(&header, "dictionaryWithObjects:", "count:(unsigned int)count;");
     header = remove_line_containing(&header, "struct NSFastEnumerationState;");
     header = remove_line_range(&header, "countByEnumeratingWithState:", "count:(unsigned long)len;");
 
-    let mut implementation = include_str!("../../../../src/OZDictionary.m").to_string();
-    implementation = remove_line_containing(&implementation, "@synthesize iterIdx = _iterIdx;");
+    let implementation = include_str!("../../../../src/OZDictionary.m").to_string();
 
     assemble(&header, &implementation)
 }

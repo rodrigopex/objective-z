@@ -29,14 +29,15 @@ fn synchronized_rejected() {
 }
 
 #[test]
-fn property_rejected() {
+fn weak_property_rejected() {
     let src = format!(
-        "{}\n@interface Foo : OZObject\n@property (nonatomic) int count;\n@end\n\
-         @implementation Foo\n@synthesize count = _count;\n@end\n",
+        "{}\n@interface Foo : OZObject\n@property (weak) id delegate;\n@end\n\
+         @implementation Foo\n@end\n",
         PREAMBLE()
     );
     let diags = expect_reject(&src);
-    assert!(diags.contains("@property") || diags.contains("@synthesize"), "diagnostics: {}", diags);
+    assert!(diags.contains("'weak' property 'delegate'"), "diagnostics: {}", diags);
+    assert!(diags.contains("unsafe_unretained"), "diagnostics: {}", diags);
 }
 
 #[test]

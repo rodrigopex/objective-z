@@ -94,13 +94,12 @@ fn unwraps_clang_guard_in_resolved_header() {
 /// Real-file regression test for OZ-094's motivating case: resolving
 /// samples/hello_world/src/main.m's own `#import <Foundation/Foundation.h>`
 /// against the real project layout no longer panics (the original bug,
-/// #205/OZ-093) -- it now reaches the real, accepted, still-outstanding
-/// limitation instead: the umbrella eagerly pulls in OZArray/OZDictionary,
-/// whose real @property/@synthesize are unconditionally hard-rejected
-/// (property support is a separate, larger, not-yet-scoped gap -- see
-/// OZ-094's issue body).
+/// #205/OZ-093). The umbrella eagerly pulls in OZArray/OZDictionary, whose
+/// real `@property (readonly) uint16_t iterIdx;` + `@synthesize iterIdx =
+/// _iterIdx;` used to be a hard-rejected, separate, accepted limitation --
+/// OZ-095 closed that gap, so this now transpiles cleanly end to end.
 #[test]
-fn hello_world_sample_resolves_to_the_known_property_limitation() {
+fn hello_world_sample_transpiles_successfully() {
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let sample_path = repo_root.join("samples/hello_world/src/main.m");
     let source = fs::read_to_string(&sample_path).unwrap();
@@ -111,14 +110,12 @@ fn hello_world_sample_resolves_to_the_known_property_limitation() {
     let resolved = resolve_imports(&source, &source_dir, &include_dirs, &impl_dirs)
         .unwrap_or_else(|e| panic!("expected resolution to succeed, got: {}", e));
 
-    match oz_static::transpile(&resolved) {
-        Ok(_) => panic!("expected the known @property limitation, but transpile succeeded"),
-        Err(diags) => {
-            let joined = diags.iter().map(|d| d.to_string()).collect::<Vec<_>>().join("\n");
-            assert!(joined.contains("@property"), "diagnostics: {}", joined);
-            assert!(!joined.contains("no entry found for key"), "diagnostics: {}", joined);
-        }
-    }
+    oz_static::transpile(&resolved).unwrap_or_else(|diags| {
+        panic!(
+            "expected the real hello_world sample to transpile cleanly, got:\n{}",
+            diags.iter().map(|d| d.to_string()).collect::<Vec<_>>().join("\n")
+        )
+    });
 }
 
 /// Companion to the above: importing a single Foundation class directly
