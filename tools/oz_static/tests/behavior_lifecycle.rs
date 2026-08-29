@@ -8,10 +8,10 @@
 // original Unity assertions checked, and an exact-stdout assertion in the
 // Rust test (see tests/end_to_end_behavior.rs for the established pattern).
 //
-// Uses the real `OZObject` (`common::OZOBJECT_SRC`) as the root class.
+// Uses the real `OZObject` (`common::ozobject_src`) as the root class.
 
 mod common;
-use common::{compile_and_run, OZOBJECT_SRC};
+use common::{compile_and_run, ozobject_src};
 
 // tests/behavior/cases/lifecycle/alloc_failure_enomem.{m,_test.c} is not
 // ported here: it declares a pool of size 1 (`/* oz-pool: Box=1 */`) and
@@ -37,7 +37,7 @@ use common::{compile_and_run, OZOBJECT_SRC};
 fn alloc_returns_valid_pointer_class_id_and_refcount() {
     let src = format!(
         "{}{}",
-        OZOBJECT_SRC,
+        ozobject_src(),
         "\
 @interface Widget : OZObject {
 	int _tag;
@@ -84,7 +84,7 @@ int main(void) {
 fn release_then_realloc_succeeds() {
     let src = format!(
         "{}{}",
-        OZOBJECT_SRC,
+        ozobject_src(),
         "\
 @interface Slot : OZObject
 @end
@@ -122,7 +122,7 @@ int main(void) {
 fn dealloc_reentrant_guard() {
     let src = format!(
         "{}{}",
-        OZOBJECT_SRC,
+        ozobject_src(),
         "\
 @interface Probe : OZObject
 - (void)dealloc;
@@ -163,7 +163,7 @@ int main(void) {
 fn release_completes_without_crash() {
     let src = format!(
         "{}{}",
-        OZOBJECT_SRC,
+        ozobject_src(),
         "\
 @interface Item : OZObject
 @end
@@ -196,7 +196,7 @@ int main(void) {
 fn init_sets_fields() {
     let src = format!(
         "{}{}",
-        OZOBJECT_SRC,
+        ozobject_src(),
         "\
 @interface Gadget : OZObject {
 	int _value;

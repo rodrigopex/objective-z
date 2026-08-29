@@ -6,7 +6,7 @@
 // self/an ivar/an enclosing local -- see staticbar.rs's check_block_capture.
 
 mod common;
-use common::{compile_and_run, OZOBJECT_SRC as PREAMBLE};
+use common::{compile_and_run, ozobject_src as PREAMBLE};
 
 /// Port of non_capturing_basic.m/_test.c: a block literal assigned to a
 /// local, capturing nothing but its own param, called through that local.
@@ -43,7 +43,7 @@ int main(void) {{
 \treturn 0;
 }}
 ",
-        PREAMBLE
+        PREAMBLE()
     );
     let stdout = compile_and_run(&src, "non_capturing_basic");
     assert_eq!(stdout, "result=49\n");
@@ -89,7 +89,7 @@ int main(void) {{
 \treturn 0;
 }}
 ",
-        PREAMBLE
+        PREAMBLE()
     );
     let stdout = compile_and_run(&src, "block_with_static_var");
     assert_eq!(stdout, "result=15\n");
@@ -138,7 +138,7 @@ int main(void) {{
 \treturn 0;
 }}
 ",
-        PREAMBLE
+        PREAMBLE()
     );
     let stdout = compile_and_run(&src, "block_as_method_param");
     assert_eq!(stdout, "computed=42\n");

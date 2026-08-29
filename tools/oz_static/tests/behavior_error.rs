@@ -7,10 +7,10 @@
 //   - tests/behavior/cases/error/release_nil_safe.m
 //   - tests/behavior/cases/error/slab_reuse_after_free.m
 //
-// Uses the real `OZObject` (`common::OZOBJECT_SRC`) as the root class.
+// Uses the real `OZObject` (`common::ozobject_src`) as the root class.
 
 mod common;
-use common::{compile_and_run, OZOBJECT_SRC};
+use common::{compile_and_run, ozobject_src};
 
 #[test]
 fn release_and_retain_nil_are_safe() {
@@ -25,7 +25,7 @@ fn release_and_retain_nil_are_safe() {
     // function. See OZ-092 (#190).
     let src = format!(
         "{}{}",
-        OZOBJECT_SRC,
+        ozobject_src(),
         "\
 @interface Marker : OZObject
 @end
@@ -64,7 +64,7 @@ fn alloc_free_alloc_yields_independent_fresh_object() {
     // bounded pool to exhaust. See OZ-092 (#190).
     let src = format!(
         "{}{}",
-        OZOBJECT_SRC,
+        ozobject_src(),
         "\
 @interface Gadget : OZObject {
 	int _tag;

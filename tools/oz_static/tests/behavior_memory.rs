@@ -4,7 +4,7 @@
 // tests/behavior/cases/memory/ fixtures to oz_static, using the Python
 // pipeline (the oracle) as ground truth for what each fixture actually
 // verifies. Same pattern as end_to_end_behavior.rs: the real `OZObject`
-// (`common::OZOBJECT_SRC`) as the root class, the class(es) under test,
+// (`common::ozobject_src`) as the root class, the class(es) under test,
 // and a main() that printf's the values the original Unity `_test.c`
 // asserted, checked here via an exact stdout match.
 //
@@ -17,7 +17,7 @@
 // Foundation-adjacent features are Phase 2.
 
 mod common;
-use common::{compile_and_run, OZOBJECT_SRC as PREAMBLE};
+use common::{compile_and_run, ozobject_src as PREAMBLE};
 
 #[test]
 fn nested_retain_release() {
@@ -47,7 +47,7 @@ fn nested_retain_release() {
          \t[h release];\n\
          \treturn 0;\n\
          }}\n",
-        PREAMBLE
+        PREAMBLE()
     );
     let stdout = compile_and_run(&src, "nested_retain_release");
     assert_eq!(stdout, "rc1=1\nrc2=2\nrc3=3\nrc4=2\nrc5=1\n");
@@ -78,7 +78,7 @@ fn release_decrements_refcount() {
          \t[c release];\n\
          \treturn 0;\n\
          }}\n",
-        PREAMBLE
+        PREAMBLE()
     );
     let stdout = compile_and_run(&src, "release_decrements_refcount");
     assert_eq!(stdout, "rc1=3\nrc2=2\nrc3=1\n");
@@ -112,7 +112,7 @@ fn release_frees_at_zero() {
          \t[t2 release];\n\
          \treturn 0;\n\
          }}\n",
-        PREAMBLE
+        PREAMBLE()
     );
     let stdout = compile_and_run(&src, "release_frees_at_zero");
     assert_eq!(stdout, "t1_nonnull=1\nt2_nonnull=1\n");
@@ -141,7 +141,7 @@ fn retain_count_query() {
          \t[t release];\n\
          \treturn 0;\n\
          }}\n",
-        PREAMBLE
+        PREAMBLE()
     );
     let stdout = compile_and_run(&src, "retain_count_query");
     assert_eq!(stdout, "rc1=1\nrc2=2\nrc3=1\n");
@@ -166,7 +166,7 @@ fn retain_count_nil_returns_zero() {
          \tprintf(\"nil_rc=%d\\n\", [nilT retainCount]);\n\
          \treturn 0;\n\
          }}\n",
-        PREAMBLE
+        PREAMBLE()
     );
     let stdout = compile_and_run(&src, "retain_count_nil_returns_zero");
     assert_eq!(stdout, "nil_rc=0\n");
@@ -197,7 +197,7 @@ fn retain_increments_refcount() {
          \t[n release];\n\
          \treturn 0;\n\
          }}\n",
-        PREAMBLE
+        PREAMBLE()
     );
     let stdout = compile_and_run(&src, "retain_increments_refcount");
     assert_eq!(stdout, "rc1=1\nrc2=2\nrc3=3\n");

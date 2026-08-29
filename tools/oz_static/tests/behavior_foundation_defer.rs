@@ -4,7 +4,7 @@
 // from tests/behavior/cases/foundation/defer_basic.m.
 //
 // OZDefer itself is transplanted from the real `src/OZDefer.m` (see
-// `common::OZDEFER_SRC`). Unlike the real oracle test (which only checks
+// `common::ozdefer_src`). Unlike the real oracle test (which only checks
 // "no crash" on release, since the Python pipeline's ARC would otherwise
 // make the block-firing timing hard to observe directly), this adds an
 // explicit global flag the deferred block flips, so dealloc-time firing
@@ -15,7 +15,7 @@
 // Python-pipeline-specific bug (a block ivar's `^`-to-`*` C conversion
 // once emitted invalid declarator syntax). That bug class can't recur in
 // oz_static by construction -- ivar declarations are copied verbatim
-// (see `common::OZDEFER_SRC`'s doc comment), so an ivar is only ever
+// (see `common::ozdefer_src`'s doc comment), so an ivar is only ever
 // valid C because it was written that way in source, never because a
 // declarator-rewrite pass got it right -- so it isn't ported.
 //
@@ -25,7 +25,7 @@
 // ("Release triggers dealloc -> releases _cleanup ivar") implies.
 
 mod common;
-use common::{compile_and_run, OZDEFER_SRC, OZOBJECT_SRC as PREAMBLE};
+use common::{compile_and_run, ozdefer_src, ozobject_src as PREAMBLE};
 
 #[test]
 fn defer_basic_fires_block_with_owner_on_dealloc() {
@@ -72,7 +72,7 @@ int main(void) {{
 	return 0;
 }}
 ",
-        PREAMBLE, OZDEFER_SRC
+        PREAMBLE(), ozdefer_src()
     );
     let stdout = compile_and_run(&src, "defer_basic_fires_block_with_owner_on_dealloc");
     assert_eq!(
@@ -119,7 +119,7 @@ int main(void) {{
 	return 0;
 }}
 ",
-        PREAMBLE, OZDEFER_SRC
+        PREAMBLE(), ozdefer_src()
     );
     let stdout = compile_and_run(&src, "defer_with_block_only_no_owner");
     assert_eq!(stdout, "fired=1\nowner_is_null=1\n");

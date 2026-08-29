@@ -4,9 +4,9 @@
 // from tests/behavior/cases/foundation/string_basic.m and
 // tests/behavior/cases/inline/string_fast_access.m.
 //
-// Uses the real `OZObject` (`common::OZOBJECT_SRC`) as the root class.
+// Uses the real `OZObject` (`common::ozobject_src`) as the root class.
 // OZString itself is transplanted from the real `src/OZString.m` (see
-// `common::OZSTRING_SRC`). The interesting part isn't the class -- it's
+// `common::ozstring_src`). The interesting part isn't the class -- it's
 // how `@"..."` boxes: unlike OZQ31 (a class-method call), the real
 // pipeline (`tools/oz_transpile/emit.py`'s `ObjCStringLiteral` handling)
 // desugars a boxed string literal directly to a static, immortal `struct
@@ -17,7 +17,7 @@
 // nonexistent `[OZString stringWithCString:]` class-method call instead).
 
 mod common;
-use common::{compile_and_run, OZOBJECT_SRC as PREAMBLE, OZSTRING_SRC};
+use common::{compile_and_run, ozobject_src as PREAMBLE, ozstring_src};
 
 #[test]
 fn string_basic_cstring_length_and_equality() {
@@ -58,7 +58,7 @@ int main(void) {{
 	return 0;
 }}
 ",
-        PREAMBLE, OZSTRING_SRC
+        PREAMBLE(), ozstring_src()
     );
     let stdout = compile_and_run(&src, "string_basic_cstring_length_and_equality");
     assert_eq!(stdout, "cstr=hello\nlen=5\neq=1\n");
@@ -107,7 +107,7 @@ int main(void) {{
 	return 0;
 }}
 ",
-        PREAMBLE, OZSTRING_SRC
+        PREAMBLE(), ozstring_src()
     );
     let stdout = compile_and_run(&src, "string_fast_access_length_and_cstring_via_ivars");
     assert_eq!(stdout, "len=5\nvalid=1\n");

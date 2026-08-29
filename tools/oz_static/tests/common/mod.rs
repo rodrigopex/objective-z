@@ -75,647 +75,308 @@ pub fn expect_reject(source: &str) -> String {
     }
 }
 
-/// OZQ31, the fixed-point Foundation class, transplanted verbatim from the
-/// real `src/OZQ31.m` / `include/oz_sdk/Foundation/OZQ31.h` (same helper
-/// function bodies and same method bodies, including `other->_raw`
-/// cross-instance ivar access and `[[OZQ31 alloc] init]` chaining -- both
-/// confirmed to transpile and run correctly through oz_static). Requires
-/// `OZObject` (`common::OZOBJECT_SRC`) in scope as the root class. Shared
-/// by every test file that needs OZQ31 so the ~250-line body isn't
-/// duplicated per file.
-pub const OZQ31_SRC: &str = "\
-#include <stdint.h>
+// ---------------------------------------------------------------------------
+// Foundation class fixtures -- derived from the real source, not hand-copied
+// ---------------------------------------------------------------------------
+//
+// Every fixture below is assembled at test-run time from the actual
+// `src/*.m` / `include/oz_sdk/Foundation/*.h` files via `include_str!` --
+// the same files clangd and the Python pipeline use -- instead of being
+// retyped into a Rust string literal. That guarantees these fixtures can
+// never silently drift from the real Foundation classes: if a class's
+// real source changes, its test fixture picks up the change automatically
+// (or the corresponding cut-list marker below stops matching and panics
+// loudly, telling us exactly what needs updating).
+//
+// oz_static has no `#import`/`#include` resolution -- it parses one
+// file's text as-is -- so a class's header and implementation still need
+// to be combined into a single translation unit. `assemble` below does
+// only that mechanical join, plus stripping the two lines that only make
+// sense across multiple files (`#pragma once`, `#import ...`) and
+// unwrapping the `#ifdef __clang__ / @compatibility_alias .../ #endif`
+// guard some headers use (oz_static's top-level emit pass elides a bare
+// `compatibility_alias_declaration` to a comment, but doesn't recurse
+// into `#ifdef`/`#endif` conditionals to find one nested inside, so left
+// wrapped it would pass through as invalid raw ObjC text -- and the
+// `#ifdef` was only ever a compiler-portability guard in the original
+// anyway, since this harness's `cc` always defines `__clang__`).
+//
+// A few classes (OZArray; OZQ31 for one method) need real content
+// removed or added on top of that, because they use something oz_static
+// can't yet resolve or a cross-file dependency this host harness can't
+// pull in. Those cuts are done as small, named, marker-anchored
+// transforms (`remove_line_containing`/`remove_line_range`/
+// `remove_method_body`) over the real included text -- so they still
+// track the real file for everything else, and panic loudly (rather than
+// silently no-op) if a marker stops matching a future edit to that file.
 
-#ifndef _OZ_Q31_HELPERS
-#define _OZ_Q31_HELPERS
-
-static inline uint8_t _oz_bits_for_mag(uint32_t mag) {
-	if (mag == 0) {
-		return 0;
-	}
-	int bits = 0;
-	while (mag > 0) {
-		mag >>= 1;
-		bits++;
-	}
-	return (bits > 31) ? 31 : (uint8_t)bits;
+/// Drop `#pragma once` and `#import ...` lines -- meaningless once this
+/// is inlined into a single generated translation unit rather than
+/// `#import`ed (oz_static has no import/include resolution at all).
+fn strip_import_and_pragma_lines(src: &str) -> String {
+    src.lines()
+        .filter(|line| {
+            let t = line.trim_start();
+            !(t.starts_with("#pragma once") || t.starts_with("#import "))
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
-static inline uint8_t _oz_shift_for_float(float value) {
-	if (value == 0.0f) {
-		return 0;
-	}
-	float mag = (value < 0.0f) ? -value : value;
-	return _oz_bits_for_mag((uint32_t)mag);
+/// Unwrap a `#ifdef __clang__` / ... / `#endif` guard to just its middle
+/// line(s) -- see the module-level doc comment above for why. Only
+/// strips the first such pair (every header that has one has exactly
+/// one, always at the very end, with nothing else nested inside it).
+fn unwrap_clang_guard(src: &str) -> String {
+    let mut out = String::new();
+    let mut skip_next_endif = false;
+    for line in src.lines() {
+        let t = line.trim();
+        if t == "#ifdef __clang__" {
+            skip_next_endif = true;
+            continue;
+        }
+        if skip_next_endif && t == "#endif" {
+            skip_next_endif = false;
+            continue;
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
 }
 
-static inline uint8_t _oz_shift_for_int32(int32_t value) {
-	if (value == 0) {
-		return 0;
-	}
-	uint32_t mag = (value < 0) ? (uint32_t)(-(int64_t)value) : (uint32_t)value;
-	return _oz_bits_for_mag(mag);
+/// Join a class's real header + implementation into one translation
+/// unit, applying only the two generic, meaning-preserving adaptations
+/// every class needs (see module doc comment).
+fn assemble(header: &str, implementation: &str) -> String {
+    format!(
+        "{}\n{}\n",
+        strip_import_and_pragma_lines(&unwrap_clang_guard(header)),
+        strip_import_and_pragma_lines(implementation)
+    )
 }
 
-static inline int32_t _oz_encode_float(float value, uint8_t shift) {
-	if (shift >= 31) {
-		return (int32_t)(value * 0.5f);
-	}
-	return (int32_t)(value * (float)(1UL << (31 - shift)));
+/// Remove every line containing `marker`. Panics if none matched, so a
+/// cut list that stops applying (the real file changed) fails loudly
+/// instead of silently leaving stale content in place.
+fn remove_line_containing(src: &str, marker: &str) -> String {
+    let mut found = false;
+    let kept: Vec<&str> = src
+        .lines()
+        .filter(|l| {
+            let matches = l.contains(marker);
+            found |= matches;
+            !matches
+        })
+        .collect();
+    assert!(found, "remove_line_containing: marker {:?} not found", marker);
+    kept.join("\n") + "\n"
 }
 
-static inline int32_t _oz_encode_int32(int32_t value, uint8_t shift) {
-	return value << (31 - shift);
+/// Remove every line from the first line containing `start_marker`
+/// through the next line containing `end_marker` (inclusive of both).
+/// For a multi-line declaration/signature with no braces to balance.
+fn remove_line_range(src: &str, start_marker: &str, end_marker: &str) -> String {
+    let lines: Vec<&str> = src.lines().collect();
+    let start = lines
+        .iter()
+        .position(|l| l.contains(start_marker))
+        .unwrap_or_else(|| panic!("remove_line_range: start marker {:?} not found", start_marker));
+    let end = lines[start..]
+        .iter()
+        .position(|l| l.contains(end_marker))
+        .map(|i| start + i)
+        .unwrap_or_else(|| {
+            panic!("remove_line_range: end marker {:?} not found after start", end_marker)
+        });
+    let mut out: Vec<&str> = lines[..start].to_vec();
+    out.extend_from_slice(&lines[end + 1..]);
+    out.join("\n") + "\n"
 }
 
-static inline float _oz_decode_float(int32_t raw, uint8_t shift) {
-	if (shift >= 31) {
-		return (float)raw;
-	}
-	return (float)raw / (float)(1UL << (31 - shift));
+/// Remove a whole method (signature through its matching closing brace)
+/// starting from the line containing `signature_marker`, by counting
+/// brace depth -- robust to the signature's `{` being on the same line
+/// or its own line.
+fn remove_method_body(src: &str, signature_marker: &str) -> String {
+    let lines: Vec<&str> = src.lines().collect();
+    let start = lines.iter().position(|l| l.contains(signature_marker)).unwrap_or_else(|| {
+        panic!("remove_method_body: signature marker {:?} not found", signature_marker)
+    });
+    let mut depth: i32 = 0;
+    let mut seen_open = false;
+    let mut end = start;
+    for (i, line) in lines[start..].iter().enumerate() {
+        for ch in line.chars() {
+            match ch {
+                '{' => {
+                    depth += 1;
+                    seen_open = true;
+                }
+                '}' => depth -= 1,
+                _ => {}
+            }
+        }
+        if seen_open && depth == 0 {
+            end = start + i;
+            break;
+        }
+    }
+    assert!(seen_open && depth == 0, "remove_method_body: no matching closing brace for {:?}", signature_marker);
+    let mut out: Vec<&str> = lines[..start].to_vec();
+    out.extend_from_slice(&lines[end + 1..]);
+    out.join("\n") + "\n"
 }
 
-static inline int32_t _oz_decode_int32(int32_t raw, uint8_t shift) {
-	if (shift >= 31) {
-		return raw;
-	}
-	return raw >> (31 - shift);
+/// OZObject, the real Foundation root class -- assembled from
+/// `include/oz_sdk/Foundation/OZObject.h` / `src/OZObject.m` verbatim
+/// (only the two generic adaptations from the module doc comment).
+pub fn ozobject_src() -> String {
+    assemble(
+        include_str!("../../../../include/oz_sdk/Foundation/OZObject.h"),
+        include_str!("../../../../src/OZObject.m"),
+    )
 }
 
-static inline void _oz_align_shift(int32_t *raw_a, uint8_t shift_a, int32_t *raw_b,
-				    uint8_t shift_b, uint8_t *out_shift) {
-	if (shift_a == shift_b) {
-		*out_shift = shift_a;
-		return;
-	}
-	if (shift_a > shift_b) {
-		*raw_b = *raw_b >> (shift_a - shift_b);
-		*out_shift = shift_a;
-	} else {
-		*raw_a = *raw_a >> (shift_b - shift_a);
-		*out_shift = shift_b;
-	}
+/// OZQ31, the fixed-point Foundation class -- assembled from
+/// `include/oz_sdk/Foundation/OZQ31.h` / `src/OZQ31.m` verbatim (same
+/// helper function bodies and method bodies, including `other->_raw`
+/// cross-instance ivar access and `[[OZQ31 alloc] init]` chaining), with
+/// one addition: the real `-cDescription:maxLength:` calls
+/// `_oz_get_log_precision()`, defined in `src/OZLog.c` -- which needs
+/// Zephyr's `printk` and the Python pipeline's own generated dispatch
+/// headers, neither available on host. A small stub supplies it (always
+/// -1, i.e. `-cDescription:maxLength:`'s default 14-digit precision), so
+/// log-precision-specific behavior (`%.N@` format specifiers) isn't
+/// exercised by any test here. Requires `OZObject` (`common::ozobject_src`)
+/// in scope as the root class.
+pub fn ozq31_src() -> String {
+    let assembled = assemble(
+        include_str!("../../../../include/oz_sdk/Foundation/OZQ31.h"),
+        include_str!("../../../../src/OZQ31.m"),
+    );
+    format!(
+        "/* synthesized stub (not from source): the real _oz_get_log_precision\n * \
+lives in src/OZLog.c, which needs Zephyr's printk plus the Python\n * \
+pipeline's own generated dispatch headers -- neither available on host. */\n\
+static inline int _oz_get_log_precision(void) {{ return -1; }}\n\n{}",
+        assembled
+    )
 }
 
-/*
- * Integer-only Q31-to-string with configurable decimal precision.
- * No stdio, no float -- pure integer math. Trailing zero removal.
- * precision: number of fractional digits (clamped to 0..14).
- */
-static inline int _oz_q31_to_str(int32_t raw, uint8_t shift, char *buf, int maxLen,
-				  int precision) {
-	if (maxLen <= 0) {
-		return 0;
-	}
-
-	if (precision < 0) {
-		precision = 0;
-	} else if (precision > 14) {
-		precision = 14;
-	}
-
-	int pos = 0;
-
-	if (raw == 0) {
-		if (pos < maxLen) {
-			buf[pos++] = '0';
-		}
-		return pos;
-	}
-
-	int neg = (raw < 0);
-	uint32_t abs_raw = neg ? (uint32_t)(-(int64_t)raw) : (uint32_t)raw;
-
-	uint8_t frac_bits = (shift >= 31) ? 0 : (31 - shift);
-	uint32_t int_part = abs_raw >> frac_bits;
-	uint32_t frac_mask = frac_bits ? (((uint32_t)1 << frac_bits) - 1) : 0;
-	uint32_t frac_part = abs_raw & frac_mask;
-
-	char frac_digits[15] = {0};
-	int n_digits = precision + 1;
-	if (n_digits > 15) {
-		n_digits = 15;
-	}
-	uint64_t frac = (uint64_t)frac_part;
-	if (frac_bits > 0) {
-		for (int i = 0; i < n_digits; i++) {
-			frac *= 10;
-			frac_digits[i] = (char)(frac >> frac_bits);
-			frac &= ((uint64_t)1 << frac_bits) - 1;
-		}
-	}
-
-	if (precision > 0 && frac_digits[precision] >= 5) {
-		int carry = 1;
-		for (int i = precision - 1; i >= 0 && carry; i--) {
-			int d = frac_digits[i] + carry;
-			if (d >= 10) {
-				frac_digits[i] = 0;
-			} else {
-				frac_digits[i] = (char)d;
-				carry = 0;
-			}
-		}
-		if (carry) {
-			int_part++;
-		}
-	}
-
-	int last_frac = -1;
-	for (int i = precision - 1; i >= 0; i--) {
-		if (frac_digits[i] != 0) {
-			last_frac = i;
-			break;
-		}
-	}
-
-	if (neg && pos < maxLen) {
-		buf[pos++] = '-';
-	}
-
-	char int_buf[12];
-	int int_len = 0;
-	if (int_part == 0) {
-		int_buf[int_len++] = '0';
-	} else {
-		uint32_t tmp = int_part;
-		while (tmp > 0) {
-			int_buf[int_len++] = '0' + (char)(tmp % 10);
-			tmp /= 10;
-		}
-	}
-	for (int i = int_len - 1; i >= 0 && pos < maxLen; i--) {
-		buf[pos++] = int_buf[i];
-	}
-
-	if (last_frac >= 0) {
-		if (pos < maxLen) {
-			buf[pos++] = '.';
-		}
-		for (int i = 0; i <= last_frac && pos < maxLen; i++) {
-			buf[pos++] = '0' + frac_digits[i];
-		}
-	}
-
-	return pos;
+/// OZString, the immutable-string Foundation class -- assembled from
+/// `include/oz_sdk/Foundation/OZString.h` / `src/OZString.m` verbatim
+/// (only the two generic adaptations). Requires `OZObject`
+/// (`common::ozobject_src`) in scope as the root class.
+pub fn ozstring_src() -> String {
+    assemble(
+        include_str!("../../../../include/oz_sdk/Foundation/OZString.h"),
+        include_str!("../../../../src/OZString.m"),
+    )
 }
 
-/*
- * Integer-only Q31 division using 64-bit long division.
- * No float decode/encode -- works entirely in Q31 domain.
- */
-static inline void _oz_q31_div(int32_t a_raw, uint8_t a_shift, int32_t b_raw, uint8_t b_shift,
-				int32_t *out_raw, uint8_t *out_shift) {
-	if (b_raw == 0) {
-		*out_raw = 0;
-		*out_shift = 0;
-		return;
-	}
-
-	int neg = ((a_raw ^ b_raw) < 0) ? 1 : 0;
-	uint64_t a = (a_raw < 0) ? (uint64_t)(-(int64_t)a_raw) : (uint64_t)a_raw;
-	uint64_t b = (b_raw < 0) ? (uint64_t)(-(int64_t)b_raw) : (uint64_t)b_raw;
-
-	uint64_t a_norm = a << a_shift;
-	uint64_t b_norm = b << b_shift;
-
-	uint64_t q_int = a_norm / b_norm;
-	uint64_t q_rem = a_norm % b_norm;
-
-	if (q_int > (uint64_t)INT32_MAX) {
-		*out_raw = neg ? INT32_MIN : INT32_MAX;
-		*out_shift = 31;
-		return;
-	}
-
-	uint8_t result_shift = _oz_bits_for_mag((uint32_t)q_int);
-	uint8_t frac_bits = 31 - result_shift;
-
-	uint64_t result = q_int << frac_bits;
-
-	for (int i = (int)frac_bits - 1; i >= 0; i--) {
-		q_rem <<= 1;
-		if (q_rem >= b_norm) {
-			result |= ((uint64_t)1 << i);
-			q_rem -= b_norm;
-		}
-	}
-
-	q_rem <<= 1;
-	if (q_rem >= b_norm) {
-		result++;
-	}
-
-	if (result > (uint64_t)INT32_MAX) {
-		result = INT32_MAX;
-	}
-
-	*out_raw = neg ? -(int32_t)result : (int32_t)result;
-	*out_shift = result_shift;
-}
-#endif /* _OZ_Q31_HELPERS */
-
-@interface OZQ31 : OZObject {
-	int32_t _raw;
-	uint8_t _shift;
-}
-+ (instancetype)fixedWithFloat:(float)value;
-+ (instancetype)fixedWithInt32:(int32_t)value;
-+ (instancetype)fixedWithRaw:(int32_t)raw shift:(uint8_t)shift;
-
-- (int8_t)int8Value;
-- (uint16_t)uint16Value;
-- (int32_t)int32Value;
-- (float)floatValue;
-- (int)boolValue;
-- (int)intValue;
-
-- (int32_t)rawValue;
-- (uint8_t)shift;
-
-- (instancetype)add:(OZQ31 *)other;
-- (instancetype)sub:(OZQ31 *)other;
-- (instancetype)mul:(OZQ31 *)other;
-- (instancetype)div:(OZQ31 *)other;
-@end
-
-@implementation OZQ31
-
-+ (instancetype)fixedWithFloat:(float)value {
-	OZQ31 *fp = [[OZQ31 alloc] init];
-	fp->_shift = _oz_shift_for_float(value);
-	fp->_raw = _oz_encode_float(value, fp->_shift);
-	return fp;
-}
-
-+ (instancetype)fixedWithInt32:(int32_t)value {
-	OZQ31 *fp = [[OZQ31 alloc] init];
-	fp->_shift = _oz_shift_for_int32(value);
-	fp->_raw = _oz_encode_int32(value, fp->_shift);
-	return fp;
-}
-
-+ (instancetype)fixedWithRaw:(int32_t)raw shift:(uint8_t)shift {
-	OZQ31 *fp = [[OZQ31 alloc] init];
-	fp->_raw = raw;
-	fp->_shift = shift;
-	return fp;
-}
-
-- (int8_t)int8Value {
-	return (int8_t)_oz_decode_int32(_raw, _shift);
-}
-
-- (uint16_t)uint16Value {
-	return (uint16_t)_oz_decode_int32(_raw, _shift);
-}
-
-- (int32_t)int32Value {
-	return _oz_decode_int32(_raw, _shift);
-}
-
-- (float)floatValue {
-	return _oz_decode_float(_raw, _shift);
-}
-
-- (int)boolValue {
-	return _raw != 0;
-}
-
-- (int)intValue {
-	return (int)_oz_decode_int32(_raw, _shift);
-}
-
-- (int32_t)rawValue {
-	return _raw;
-}
-
-- (uint8_t)shift {
-	return _shift;
-}
-
-- (instancetype)add:(OZQ31 *)other {
-	int32_t a = _raw;
-	int32_t b = other->_raw;
-	uint8_t s;
-	_oz_align_shift(&a, _shift, &b, other->_shift, &s);
-
-	int64_t sum = (int64_t)a + (int64_t)b;
-	while ((sum > INT32_MAX || sum < INT32_MIN) && s < 31) {
-		sum >>= 1;
-		s++;
-	}
-	if (sum > INT32_MAX) {
-		sum = INT32_MAX;
-	}
-	if (sum < INT32_MIN) {
-		sum = INT32_MIN;
-	}
-	return [OZQ31 fixedWithRaw:(int32_t)sum shift:s];
-}
-
-- (instancetype)sub:(OZQ31 *)other {
-	int32_t a = _raw;
-	int32_t b = other->_raw;
-	uint8_t s;
-	_oz_align_shift(&a, _shift, &b, other->_shift, &s);
-
-	int64_t diff = (int64_t)a - (int64_t)b;
-	while ((diff > INT32_MAX || diff < INT32_MIN) && s < 31) {
-		diff >>= 1;
-		s++;
-	}
-	if (diff > INT32_MAX) {
-		diff = INT32_MAX;
-	}
-	if (diff < INT32_MIN) {
-		diff = INT32_MIN;
-	}
-	return [OZQ31 fixedWithRaw:(int32_t)diff shift:s];
-}
-
-- (instancetype)mul:(OZQ31 *)other {
-	int64_t product = (int64_t)_raw * (int64_t)other->_raw;
-	int32_t result_raw = (int32_t)(product >> 31);
-	uint8_t result_shift = _shift + other->_shift;
-	if (result_shift > 31) {
-		result_shift = 31;
-	}
-	return [OZQ31 fixedWithRaw:result_raw shift:result_shift];
-}
-
-- (instancetype)div:(OZQ31 *)other {
-	int32_t r_raw;
-	uint8_t r_shift;
-	_oz_q31_div(_raw, _shift, other->_raw, other->_shift, &r_raw, &r_shift);
-	return [OZQ31 fixedWithRaw:r_raw shift:r_shift];
-}
-
-@end
-";
-
-/// OZString, the immutable-string Foundation class, transplanted verbatim
-/// from the real `src/OZString.m` / `include/oz_sdk/Foundation/OZString.h`
-/// -- same method bodies, same `BOOL`/`YES`/`NO`/`nil`/`(id)anObject`
-/// throughout (all now real types/macros via `common::OZOBJECT_SRC`, not
-/// stand-ins). Requires `OZObject` in scope as the root class.
-pub const OZSTRING_SRC: &str = "\
-#include <string.h>
-
-@interface OZString : OZObject {
-	unsigned int _length;
-	unsigned int _hash;
-	const char *_data;
-}
-- (const char *)cString;
-- (unsigned int)length;
-- (BOOL)isEqual:(id)anObject;
-- (BOOL)isEqualToString:(OZString *)aString;
-- (BOOL)hasPrefix:(OZString *)prefix;
-- (BOOL)hasSuffix:(OZString *)suffix;
-@end
-
-@implementation OZString
-
-- (const char *)cString {
-	return _data;
-}
-
-- (unsigned int)length {
-	return _length;
-}
-
-- (BOOL)isEqual:(id)anObject {
-	if (self == anObject) {
-		return YES;
-	}
-	OZString *other = (OZString *)anObject;
-	if (_length != other->_length) {
-		return NO;
-	}
-	return memcmp(_data, other->_data, _length) == 0;
-}
-
-- (BOOL)isEqualToString:(OZString *)aString {
-	if (self == (id)aString) {
-		return YES;
-	}
-	if (aString == nil) {
-		return NO;
-	}
-	if (_length != aString->_length) {
-		return NO;
-	}
-	return memcmp(_data, aString->_data, _length) == 0;
-}
-
-- (BOOL)hasPrefix:(OZString *)prefix {
-	if (prefix == nil || prefix->_length > _length) {
-		return NO;
-	}
-	return memcmp(_data, prefix->_data, prefix->_length) == 0;
-}
-
-- (BOOL)hasSuffix:(OZString *)suffix {
-	if (suffix == nil || suffix->_length > _length) {
-		return NO;
-	}
-	return memcmp(_data + _length - suffix->_length, suffix->_data, suffix->_length) == 0;
-}
-
-@end
-";
-
-/// OZDefer, the deferred-cleanup Foundation class, transplanted from the
-/// real `src/OZDefer.m` / `include/oz_sdk/Foundation/OZDefer.h`: stores a
-/// non-capturing block and a non-retained owner, and fires the block with
-/// the owner when deallocated. The real header's ivars (`__unsafe_unretained
-/// id _owner; void (^_block)(id);`) are written here in their
-/// already-lowered plain-C form (`id _owner; void (*_block)(id);`) --
+/// OZDefer, the deferred-cleanup Foundation class -- assembled from
+/// `include/oz_sdk/Foundation/OZDefer.h` / `src/OZDefer.m` verbatim (the
+/// two generic adaptations), plus lowering the real header's ivars
+/// (`__unsafe_unretained id _owner; void (^_block)(id);`) to their
+/// already-valid plain-C form (`id _owner; void (*_block)(id);`) --
 /// ivar declarations are copied verbatim by oz_static (see
-/// `emit::render_interface`), with no `^`-to-`*` block-declarator rewrite
-/// applied the way a local variable's declarator gets (see
-/// `emit::render_expr`'s `block_pointer_declarator` arm) -- so the ivar
-/// must already be spelled in valid plain C. Requires `OZObject` in
-/// scope as the root class; oz_static has no ARC (tracked separately as
-/// #189), so releasing an object holding an OZDefer ivar must call
-/// `[_cleanup release]` explicitly in that object's own `-dealloc` --
-/// there's no automatic ivar release to rely on.
-pub const OZDEFER_SRC: &str = "\
-@interface OZDefer : OZObject {
-	id _owner;
-	void (*_block)(id);
-}
-- (instancetype)initWithOwner:(id)owner block:(void (^)(id))aBlock;
-- (instancetype)initWithBlock:(void (^)(id))aBlock;
-- (void)dealloc;
-@end
-
-@implementation OZDefer
-
-- (instancetype)initWithOwner:(id)owner block:(void (^)(id))aBlock {
-	_owner = owner;
-	_block = aBlock;
-	return self;
+/// `emit::render_interface`), with no `^`-to-`*` block-declarator
+/// rewrite applied the way a local variable's declarator gets (see
+/// `emit::render_expr`'s `block_pointer_declarator` arm), so the ivar
+/// must already be spelled in valid plain C. Requires `OZObject`
+/// (`common::ozobject_src`) in scope as the root class; oz_static has no
+/// ARC (tracked separately as #189), so releasing an object holding an
+/// OZDefer ivar must call `[_cleanup release]` explicitly in that
+/// object's own `-dealloc` -- there's no automatic ivar release to rely
+/// on.
+pub fn ozdefer_src() -> String {
+    assemble(
+        include_str!("../../../../include/oz_sdk/Foundation/OZDefer.h"),
+        include_str!("../../../../src/OZDefer.m"),
+    )
+    .replace("__unsafe_unretained id _owner;", "id _owner;")
+    .replace("void (^_block)(id);", "void (*_block)(id);")
 }
 
-- (instancetype)initWithBlock:(void (^)(id))aBlock {
-	_owner = nil;
-	_block = aBlock;
-	return self;
-}
-
-- (void)dealloc {
-	if (_block) {
-		_block(_owner);
-	}
-}
-
-@end
-";
-
-/// OZObject, the real Foundation root class, transplanted verbatim from
-/// `include/oz_sdk/Foundation/OZObject.h` / `src/OZObject.m` -- used as
-/// the root class by every oz_static test (replacing an earlier synthetic
-/// `OZSRoot` stand-in). Two adaptations from the literal header text,
-/// both because this is inlined directly into a single generated `.m`
-/// file rather than `#import`ed (oz_static has no import/include
-/// resolution -- it parses one file's text as-is):
-/// - `#pragma once` is dropped (meaningless outside a header, and Clang
-///   warns about it in a main file).
-/// - The `#ifdef __clang__ / @compatibility_alias NSObject OZObject; /
-///   #endif` guard is unwrapped to a bare `@compatibility_alias` line --
-///   oz_static's top-level emit pass elides `compatibility_alias_declaration`
-///   nodes to a comment (see `emit.rs`), but doesn't recurse into
-///   `#ifdef`/`#endif` conditional blocks to find constructs nested
-///   inside them, so left wrapped it would pass through as invalid raw
-///   ObjC text. The `#ifdef` was only ever a compiler-portability guard
-///   in the original (this harness's `cc` always defines `__clang__`
-///   anyway), so dropping it changes nothing observable.
-pub const OZOBJECT_SRC: &str = "\
-#include <stdbool.h>
-#include <stddef.h>
-#include <stdint.h>
-
-#define nil ((id)0)
-
-typedef bool BOOL;
-
-#define YES true
-
-#define NO false
-
-unsigned int __objc_refcount_get(id obj);
-
-__attribute__((objc_root_class))
-@interface OZObject
-{
-	int _refcount;
-}
-+ (instancetype)alloc;
-+ (instancetype)allocWithHeap:(id)heap;
-+ (Class)class;
-- (instancetype)init;
-- (void)dealloc;
-- (BOOL)isEqual:(id)anObject;
-- (int)cDescription:(char *)buf maxLength:(int)maxLen;
-@end
-
-@compatibility_alias NSObject OZObject;
-
-@implementation OZObject
-+ (instancetype)alloc
-{
-	return nil;
-}
-- (instancetype)init
-{
-	return self;
-}
-- (void)dealloc
-{
-}
-- (BOOL)isEqual:(id)anObject
-{
-	return self == anObject;
-}
-- (int)cDescription:(char *)buf maxLength:(int)maxLen
-{
-	return 0;
-}
-@end
-";
-
-/// OZArray, the immutable-array Foundation class, ported from the real
-/// `src/OZArray.m` / `include/oz_sdk/Foundation/OZArray.h` -- `count`,
-/// `objectAtIndex:`, and `objectAtIndexedSubscript:` are copied verbatim.
-/// NOT a full transplant like `OZQ31_SRC`/`OZSTRING_SRC`/`OZDEFER_SRC`,
-/// though: the real header's `iterIdx` property
-/// (`@property (readonly) uint16_t iterIdx;` + `@synthesize iterIdx =
-/// _iterIdx;`), `enumerateObjectsUsingBlock:`,
+/// OZArray, the immutable-array Foundation class -- assembled from
+/// `include/oz_sdk/Foundation/OZArray.h` / `src/OZArray.m`, with real
+/// content cut (not just the two generic adaptations): the real header's
+/// generic type param (`<__covariant ObjectType>`) and `<IteratorProtocol>`
+/// conformance, `iterIdx` property (`@property (readonly) uint16_t
+/// iterIdx;` + `@synthesize iterIdx = _iterIdx;`), `enumerateObjectsUsingBlock:`,
 /// `countByEnumeratingWithState:...`, and `iter`/`next` all exist only to
-/// back for-in iteration (`<IteratorProtocol>`/`NSFastEnumerationState`),
-/// which is a separate, not-yet-started OZ-092 checklist item -- and
-/// `@property`/`@synthesize` are unconditionally rejected by the static
-/// bar regardless (see `staticbar.rs`), so a literal full transplant
-/// wouldn't even parse. `cDescription:maxLength:` is left out too: its
-/// body message-sends `cDescription:maxLength:` right back onto a bare
-/// `id`-typed local (`_items[i]`) to recurse into each element's own
-/// description, which the static bar can't statically resolve (a bare
-/// `id` carries no declared type for compile-time dispatch, and this
-/// receiver has no protocol-typed dispatch declared for it either) --
-/// out of scope here since neither ported fixture calls it. All left
-/// out here; add back alongside whichever later work needs them.
+/// back for-in iteration, which is a separate, not-yet-started OZ-092
+/// checklist item -- and `@property`/`@synthesize` are unconditionally
+/// rejected by the static bar regardless (see `staticbar.rs`), so a
+/// literal full transplant wouldn't even parse. `cDescription:maxLength:`
+/// is cut too: its body message-sends `cDescription:maxLength:` right
+/// back onto a bare `id`-typed local (`_items[i]`) to recurse into each
+/// element's own description, which the static bar can't statically
+/// resolve (a bare `id` carries no declared type for compile-time
+/// dispatch, and this receiver has no protocol-typed dispatch declared
+/// for it either). All left out; add back alongside whichever later work
+/// needs them -- each cut is a named, marker-anchored removal below, so
+/// it stays visible exactly what's missing and why.
 ///
-/// `+arrayWithObjects:count:` also isn't declared/implemented here: the
-/// real pipeline doesn't implement it in `OZArray.m` either -- it's
-/// synthesized at emit-time as `{Name}_initWithItems` (a template-
-/// generated, item-pool-backed `static inline`, see
-/// `tools/oz_transpile/templates/class_header.h.j2`). oz_static's
-/// equivalent is `OZArray_oz_initWithItems`, generated by
-/// `companion::render_array_support` (malloc-based instead of pool-
-/// based) and never written to ObjC source at all -- it backs the
+/// `+arrayWithObjects:count:` isn't declared/implemented in the real
+/// `OZArray.m` either -- the real pipeline synthesizes it at emit-time as
+/// `{Name}_initWithItems` (a template-generated, item-pool-backed
+/// `static inline`, see `tools/oz_transpile/templates/class_header.h.j2`).
+/// oz_static's equivalent, `OZArray_oz_initWithItems`, is generated by
+/// `companion::render_array_support` (malloc-based instead of
+/// pool-based) and never written to ObjC source at all -- it backs the
 /// `@[...]` boxed array literal desugar in `emit.rs`, the same way
 /// `OZQ31`'s class methods back `@42`.
 ///
-/// Requires `OZObject` (`common::OZOBJECT_SRC`) in scope as the root
+/// Requires `OZObject` (`common::ozobject_src`) in scope as the root
 /// class; a boxed array literal's elements typically also need `OZQ31`
-/// (`common::OZQ31_SRC`) in scope, since `@(42)` desugars to it.
-///
-/// `_items`'s real declaration (`__unsafe_unretained id *_items;`) is
-/// written here without the qualifier, same lowering as `OZDEFER_SRC`'s
-/// ivars above -- `__unsafe_unretained` is a real-Foundation ARC
-/// qualifier this harness never defines, and ivar declarations are
-/// copied verbatim with no macro handling.
-pub const OZARRAY_SRC: &str = "\
-@interface OZArray : OZObject {
-	id *_items;
-	unsigned int _count;
-}
-- (unsigned int)count;
-- (id)objectAtIndex:(unsigned int)index;
-- (id)objectAtIndexedSubscript:(unsigned int)index;
-@end
+/// (`common::ozq31_src`) in scope, since `@(42)` desugars to it.
+pub fn ozarray_src() -> String {
+    let mut header = include_str!("../../../../include/oz_sdk/Foundation/OZArray.h").to_string();
+    header = remove_line_containing(&header, "uint16_t _iterIdx;");
+    header = header.replace("__unsafe_unretained id *_items;", "id *_items;");
+    header = header.replace(
+        "@interface OZArray<__covariant ObjectType> : OZObject <IteratorProtocol> {",
+        "@interface OZArray : OZObject {",
+    );
+    header = remove_line_containing(&header, "@property (readonly) uint16_t iterIdx;");
+    header = remove_line_containing(&header, "arrayWithObjects:");
+    header = remove_line_containing(&header, "struct NSFastEnumerationState;");
+    header = remove_line_containing(&header, "enumerateObjectsUsingBlock:");
+    header = remove_line_range(&header, "countByEnumeratingWithState:", "count:(unsigned long)len;");
+    header = remove_line_containing(&header, "cDescription:(char *)buf maxLength:(int)maxLen;");
+    header = remove_line_containing(&header, "- (instancetype)iter;");
+    header = remove_line_containing(&header, "- (id)next;");
 
-@implementation OZArray
+    let mut implementation = include_str!("../../../../src/OZArray.m").to_string();
+    implementation = remove_line_containing(&implementation, "@synthesize iterIdx = _iterIdx;");
+    implementation = remove_method_body(&implementation, "- (void)enumerateObjectsUsingBlock:");
+    implementation = remove_method_body(&implementation, "- (instancetype)iter");
+    implementation = remove_method_body(&implementation, "- (id)next");
+    implementation = remove_method_body(&implementation, "cDescription:(char *)buf maxLength:(int)maxLen");
 
-- (unsigned int)count
-{
-	return _count;
-}
-
-- (id)objectAtIndex:(unsigned int)index
-{
-	if (index >= _count) {
-		return nil;
-	}
-	return _items[index];
+    assemble(&header, &implementation)
 }
 
-- (id)objectAtIndexedSubscript:(unsigned int)index
-{
-	return [self objectAtIndex:index];
+/// OZMutableString, the growable-string Foundation class -- assembled
+/// from `include/oz_sdk/Foundation/OZMutableString.h` / `src/OZMutableString.m`
+/// verbatim (only the two generic adaptations), including its own
+/// `malloc`/`free` for the growable `_data` buffer (real string-growth
+/// logic already present in the source, unrelated to the object's own
+/// alloc/free machinery oz_static synthesizes -- see #199 for that
+/// separate, Zephyr-only concern). Subclasses `OZString`
+/// (`common::ozstring_src`), inheriting `_data`/`_length`/`_hash` and
+/// overriding `-dealloc` to free `_data` (correct without an explicit
+/// `[super dealloc]`: `OZString` has none of its own to chain to -- only
+/// boxed literals ever produce an `OZString` instance in this port, and
+/// those are static, not heap-allocated). Requires `OZObject`
+/// (`common::ozobject_src`) and `OZString` (`common::ozstring_src`) in
+/// scope.
+pub fn ozmutablestring_src() -> String {
+    assemble(
+        include_str!("../../../../include/oz_sdk/Foundation/OZMutableString.h"),
+        include_str!("../../../../src/OZMutableString.m"),
+    )
 }
-
-@end
-";

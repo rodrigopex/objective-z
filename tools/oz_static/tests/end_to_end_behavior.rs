@@ -5,13 +5,13 @@
 // backend) and run with correct behavior.
 
 mod common;
-use common::{compile_and_run, OZOBJECT_SRC};
+use common::{compile_and_run, ozobject_src};
 
 #[test]
 fn dispatch_refcounting_super_and_ivars() {
     let src = format!(
         "{}{}",
-        OZOBJECT_SRC,
+        ozobject_src(),
         "\
 @interface Sensor : OZObject {
 	int _value;
@@ -61,7 +61,7 @@ int main(void) {
 fn class_methods_initialize_and_singleton() {
     let src = format!(
         "{}{}",
-        OZOBJECT_SRC,
+        ozobject_src(),
         "\
 @interface Counter : OZObject {
 	int _n;
@@ -106,7 +106,7 @@ fn inherited_ivar_access_through_base_chain() {
     // (not itself) must use the correct `self->base.<name>` hop path.
     let src = format!(
         "{}{}",
-        OZOBJECT_SRC,
+        ozobject_src(),
         "\
 @interface Base : OZObject {
 	int _count;
