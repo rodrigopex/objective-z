@@ -10,7 +10,7 @@ name = "oz_static"
 path = "src/lib.rs"
 
 [[bin]]
-name = "ozc"
+name = "ozcc"
 path = "src/main.rs"
 
 [dependencies]
