@@ -129,8 +129,9 @@ impl Program {
 
     /// Every method declared by any protocol in the program, transitively
     /// resolved, deduped by (selector, is_class_method) across protocols
-    /// too. The set of selectors `OZ_PROTOCOL_SEND_*` dispatch functions
-    /// get generated for.
+    /// too. One input to `dynamic_dispatch_methods` below, which is the
+    /// actual set `OZ_PROTOCOL_SEND_*` dispatch functions get generated
+    /// for (protocol-declared selectors are only part of that set).
     pub fn all_protocol_methods(&self) -> Vec<MethodSig> {
         let mut seen: HashSet<(String, bool)> = HashSet::new();
         let mut out = Vec::new();
@@ -154,6 +155,63 @@ impl Program {
         self.all_protocol_methods()
             .iter()
             .any(|m| m.selector == selector && m.is_class_method == is_class_method)
+    }
+
+    /// Mirrors the Python pipeline's `_classify_dispatch` (see
+    /// `tools/oz_transpile/resolve.py`) exactly: an instance selector
+    /// needs dynamic (`class_id`-switch) dispatch -- not a direct
+    /// function call resolved from one static receiver type -- when
+    /// it's protocol-declared, when it's one of a fixed set of
+    /// selectors that are always polymorphic by design (meaningful only
+    /// via whatever the receiver's *actual* class overrides -- an
+    /// object's own `-isEqual:`/`-cDescription:maxLength:`), or when
+    /// more than one class in the program implements it (so the
+    /// selector name alone doesn't pin down which implementation runs).
+    /// Class methods are never dynamically dispatched -- a class-method
+    /// receiver is always a literal class name, always statically known.
+    pub fn is_dynamically_dispatched(&self, selector: &str, is_class_method: bool) -> bool {
+        const ALWAYS_DYNAMIC: &[&str] = &["isEqual:", "cDescription:maxLength:"];
+        if is_class_method {
+            return false;
+        }
+        if self.is_protocol_selector(selector, false) {
+            return true;
+        }
+        if ALWAYS_DYNAMIC.contains(&selector) {
+            return true;
+        }
+        self.class_order
+            .iter()
+            .filter(|name| {
+                self.classes[*name].methods.iter().any(|m| m.selector == selector && !m.is_class_method)
+            })
+            .count()
+            > 1
+    }
+
+    /// Every distinct dynamically-dispatched instance selector in the
+    /// program (see `is_dynamically_dispatched`), each with a
+    /// representative signature (params/return type) taken from
+    /// whichever class declares it first in source order -- callers
+    /// only need the signature to render one dispatch function per
+    /// selector, not to know every implementor (see
+    /// `companion::render_protocol_dispatch`, which looks up
+    /// implementors itself).
+    pub fn dynamic_dispatch_methods(&self) -> Vec<MethodSig> {
+        let mut seen: HashSet<String> = HashSet::new();
+        let mut out = Vec::new();
+        for name in &self.class_order {
+            for m in &self.classes[name].methods {
+                if m.is_class_method || seen.contains(&m.selector) {
+                    continue;
+                }
+                if self.is_dynamically_dispatched(&m.selector, false) {
+                    seen.insert(m.selector.clone());
+                    out.push(m.clone());
+                }
+            }
+        }
+        out
     }
 }
 
