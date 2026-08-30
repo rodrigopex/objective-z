@@ -185,6 +185,65 @@ pub fn resolve_imports(
     Ok(ResolvedSource { text, origins, foundation_stems })
 }
 
+/// `resolve_imports` for several entry `.m` files at once, merged into
+/// one translation unit -- what a build system hands over, since a
+/// sample's CMakeLists.txt lists every `.m` it owns (see
+/// `cmake/oz_static.cmake`).
+///
+/// One translation unit rather than one run per file, because the whole
+/// design is whole-program: `collect` rejects a class whose superclass it
+/// cannot see, a category's methods merge into the class it extends, and
+/// exactly one companion file carries the shared dispatch tables. Running
+/// per file would break all three.
+///
+/// The `seen` set is shared across entries, so a file already pulled in
+/// transitively by an earlier entry (`main.m` importing `App.h`, whose
+/// sibling `App.m` gets spliced with it) is not spliced again when its own
+/// turn comes -- the same `#pragma once` effect `resolve_imports` already
+/// applies within a single run. That makes the result independent of the
+/// order the build system happens to list files in, and never silently
+/// drops one it did list: an entry reachable transitively contributes
+/// once, and one that isn't reachable at all still contributes.
+///
+/// An entry file's own stem is never recorded in `foundation_stems`:
+/// these are the caller's project-local files by definition, even though
+/// their directory is typically also an `impl_dir` (which is how sibling
+/// `.m` lookup finds them). Only files reached *through* an `#import` get
+/// classified, inside `resolve_into`.
+pub fn resolve_entry_files(
+    entry_paths: &[PathBuf],
+    include_dirs: &[PathBuf],
+    impl_dirs: &[PathBuf],
+) -> Result<ResolvedSource, String> {
+    let mut seen: HashSet<PathBuf> = HashSet::new();
+    let mut text = String::new();
+    let mut origins = Vec::new();
+    let mut foundation_stems = HashSet::new();
+
+    for path in entry_paths {
+        let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
+        if !seen.insert(canonical) {
+            continue;
+        }
+        let source = fs::read_to_string(path)
+            .map_err(|e| format!("cannot read '{}': {}", path.display(), e))?;
+        let dir = path.parent().unwrap_or(Path::new(".")).to_path_buf();
+        let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("out").to_string();
+        resolve_into(
+            &source,
+            &dir,
+            include_dirs,
+            impl_dirs,
+            &mut seen,
+            &stem,
+            &mut text,
+            &mut origins,
+            &mut foundation_stems,
+        )?;
+    }
+    Ok(ResolvedSource { text, origins, foundation_stems })
+}
+
 /// Writes into the single, shared `out` buffer (rather than building and
 /// returning its own local `String`, the way an earlier version of this
 /// function did) specifically so that `out.len()` at any point during

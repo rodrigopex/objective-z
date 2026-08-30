@@ -71,21 +71,46 @@ fn topological_order(program: &Program) -> Vec<String> {
     order
 }
 
-/// `{name}_oz_alloc`/`{name}_oz_free`: malloc-based (host-testable; not
-/// slab-integrated -- this crate isn't wired into the embedded build
-/// yet). `root` is whichever class has no superclass; alloc always needs
-/// it to set the tracking fields regardless of which class is being
-/// allocated.
-pub(crate) fn render_alloc_free(name: &str, root: &str) -> String {
-    let mut c = String::new();
+/// The per-class slab definition plus the `extern` a split output needs to
+/// reach it, mirroring the oracle's own emission (`emit.py`:
+/// `OZ_SLAB_DEFINE(oz_slab_{name}, sizeof(struct {name}), {count}, 4)`,
+/// with `extern oz_slab_t oz_slab_{name};` in the header).
+///
+/// `OZ_SLAB_DEFINE` is a real definition, so it must appear exactly once
+/// per class; it is emitted immediately ahead of that class's alloc
+/// function, which also guarantees it is in scope there without relying on
+/// the `extern`.
+fn render_slab_define(name: &str, slots: usize) -> String {
+    format!(
+        "/* synthesized: backing storage for every {name} instance -- {slots} slot(s), \
+         sized from this translation unit's allocation sites (override with --pool-sizes) */\n\
+         OZ_SLAB_DEFINE(oz_slab_{name}, sizeof(struct {name}), {slots}, {align});\n\n",
+        name = name,
+        slots = slots,
+        align = crate::pools::SLAB_ALIGNMENT
+    )
+}
+
+/// `{name}_oz_alloc`/`{name}_oz_free`, backed by the PAL slab allocator
+/// (`oz_slab_alloc`/`oz_slab_free`) rather than malloc: a real
+/// `k_mem_slab` on Zephyr, and on host a malloc-backed slab that still
+/// enforces the block count, so pool exhaustion is observable in host
+/// tests instead of only on hardware
+/// (`platform/oz_platform_{zephyr,host}.h`).
+///
+/// `root` is whichever class has no superclass; alloc always needs it to
+/// set the tracking fields regardless of which class is being allocated.
+pub(crate) fn render_alloc_free(name: &str, root: &str, slots: usize) -> String {
+    let mut c = render_slab_define(name, slots);
     c.push_str(&format!(
         "/* synthesized: allocates and zero-initializes a new {name} (not from source) */\n",
         name = name
     ));
     c.push_str(&format!("struct {name} *{name}_oz_alloc(void)\n{{\n", name = name));
     c.push_str(&format!(
-        "\tstruct {name} *obj = malloc(sizeof(struct {name}));\n\
-         \tif (!obj) {{\n\t\treturn (struct {name} *)0;\n\t}}\n\
+        "\tstruct {name} *obj;\n\
+         \tif (oz_slab_alloc(&oz_slab_{name}, (void **)&obj) != 0) {{\n\
+         \t\treturn (struct {name} *)0;\n\t}}\n\
          \tmemset(obj, 0, sizeof(struct {name}));\n",
         name = name
     ));
@@ -97,12 +122,13 @@ pub(crate) fn render_alloc_free(name: &str, root: &str) -> String {
     ));
     c.push_str("\treturn obj;\n}\n\n");
     c.push_str(&format!(
-        "/* synthesized: releases {name}'s storage -- called only from\n * \
+        "/* synthesized: returns {name}'s slot to its slab -- called only from\n * \
 oz_static_release, once the refcount reaches zero (not from source) */\n",
         name = name
     ));
     c.push_str(&format!(
-        "void {name}_oz_free(struct {name} *obj)\n{{\n\tfree(obj);\n}}\n\n",
+        "void {name}_oz_free(struct {name} *obj)\n{{\n\
+         \toz_slab_free(&oz_slab_{name}, (void *)obj);\n}}\n\n",
         name = name
     ));
     c
@@ -117,16 +143,17 @@ oz_static_release, once the refcount reaches zero (not from source) */\n",
 /// fall through to OZObject's no-op `-dealloc` and leak both. Also emits
 /// `OZArray_oz_initWithItems`, the malloc-based builder backing the
 /// `@[...]` boxed array literal desugar in `emit.rs`.
-pub(crate) fn render_array_support(name: &str, root: &str) -> String {
-    let mut c = String::new();
+pub(crate) fn render_array_support(name: &str, root: &str, slots: usize) -> String {
+    let mut c = render_slab_define(name, slots);
     c.push_str(&format!(
         "/* synthesized: allocates and zero-initializes a new {name} (not from source) */\n",
         name = name
     ));
     c.push_str(&format!("struct {name} *{name}_oz_alloc(void)\n{{\n", name = name));
     c.push_str(&format!(
-        "\tstruct {name} *obj = malloc(sizeof(struct {name}));\n\
-         \tif (!obj) {{\n\t\treturn (struct {name} *)0;\n\t}}\n\
+        "\tstruct {name} *obj;\n\
+         \tif (oz_slab_alloc(&oz_slab_{name}, (void **)&obj) != 0) {{\n\
+         \t\treturn (struct {name} *)0;\n\t}}\n\
          \tmemset(obj, 0, sizeof(struct {name}));\n",
         name = name
     ));
@@ -150,7 +177,7 @@ zero (not from source; OZArray.m has no -dealloc of its own) */\n",
          \t\toz_static_release((struct {root} *)obj->_items[i]);\n\
          \t}}\n\
          \tfree(obj->_items);\n\
-         \tfree(obj);\n\
+         \toz_slab_free(&oz_slab_{name}, (void *)obj);\n\
          }}\n\n",
         root = root,
         name = name
@@ -190,16 +217,17 @@ source) */\n",
 /// mirroring the real Python pipeline's own `{Name}_initWithKeysValues`
 /// template (`tools/oz_transpile/templates/class_header.h.j2`) -- pool-
 /// backed there, malloc-based here.
-pub(crate) fn render_dict_support(name: &str, root: &str) -> String {
-    let mut c = String::new();
+pub(crate) fn render_dict_support(name: &str, root: &str, slots: usize) -> String {
+    let mut c = render_slab_define(name, slots);
     c.push_str(&format!(
         "/* synthesized: allocates and zero-initializes a new {name} (not from source) */\n",
         name = name
     ));
     c.push_str(&format!("struct {name} *{name}_oz_alloc(void)\n{{\n", name = name));
     c.push_str(&format!(
-        "\tstruct {name} *obj = malloc(sizeof(struct {name}));\n\
-         \tif (!obj) {{\n\t\treturn (struct {name} *)0;\n\t}}\n\
+        "\tstruct {name} *obj;\n\
+         \tif (oz_slab_alloc(&oz_slab_{name}, (void **)&obj) != 0) {{\n\
+         \t\treturn (struct {name} *)0;\n\t}}\n\
          \tmemset(obj, 0, sizeof(struct {name}));\n",
         name = name
     ));
@@ -225,7 +253,7 @@ the refcount reaches zero (not from source; OZDictionary.m has no\n * \
          \t\toz_static_release((struct {root} *)obj->_values[i]);\n\
          \t}}\n\
          \tfree(obj->_keys);\n\
-         \tfree(obj);\n\
+         \toz_slab_free(&oz_slab_{name}, (void *)obj);\n\
          }}\n\n",
         root = root,
         name = name
@@ -357,6 +385,7 @@ pub fn render(
     hoisted_structs: &[(String, String)],
     hoisted_enums: &[String],
     hoisted_forward_decls: &[String],
+    pools: &crate::pools::PoolSizes,
 ) -> (String, String) {
     let root = program.root_class().map(|s| s.to_string());
     // The root class always terminates the [super dealloc] chain. If the
@@ -457,7 +486,7 @@ pub fn render(
     c.push_str("/* Auto-generated by oz_static -- do not edit */\n#include \"oz_static_dispatch.h\"\n\n");
 
     if let Some(root) = &root {
-        c.push_str(&render_alloc_free(root, root));
+        c.push_str(&render_alloc_free(root, root, pools.for_class(root)));
 
         if root_needs_synthetic_dealloc {
             c.push_str(&format!(

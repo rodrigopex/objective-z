@@ -56,8 +56,21 @@ int main(void) {{
 #[test]
 fn q31_basic_roundtrip_and_arithmetic() {
     // q31_basic.m, all 13 methods.
+    //
+    // The `oz-pool` directive is needed because every Q31 here comes from
+    // a single `[OZQ31 alloc]` site inside a factory method, so counting
+    // sites sizes the slab at 1 while the test needs many live at once.
+    // The oracle's own case carries `OZQ31=16` for exactly that reason.
+    //
+    // The count here is higher than the oracle's, though, and that gap is
+    // structural rather than a tuning choice: the oracle has scope-based
+    // ARC, so each temporary Q31 is released at the end of the method
+    // that made it and 16 slots recirculate. oz_static has no ARC (#189),
+    // so nothing releases these temporaries and every one allocated over
+    // the whole run stays live. Any pool size ported from an oracle case
+    // has to be raised for the same reason until ARC lands.
     let src = format!(
-        "{}{}\n\
+        "/* oz-pool: OZObject=1,OZQ31=64 */\n{}{}\n\
 @interface FPTest : OZObject
 - (int)intFromLiteral;
 - (float)floatFromLiteral;

@@ -606,6 +606,11 @@ pub fn collect(source: &str) -> (Program, Vec<crate::model::Diagnostic>) {
         }
     }
 
+    // Every `@synthesize` seen in pass 2, as (class name, node), resolved
+    // against the collected properties only once the pass is done -- see
+    // where they are pushed for why it cannot happen inline.
+    let mut synthesizes: Vec<(String, Node)> = Vec::new();
+
     // Pass 2: ivars (from interfaces) + method signatures (from
     // declarations and definitions, category included).
     let mut cursor = root.walk();
@@ -681,31 +686,46 @@ pub fn collect(source: &str) -> (Program, Vec<crate::model::Diagnostic>) {
                         continue;
                     }
                     if let Some(prop_impl) = child_by_kind(impl_def, "property_implementation") {
-                        let (prop_name, ivar) = extract_synthesize(prop_impl, source);
-                        let info = classes.get_mut(&name).unwrap();
-                        let matched = info.properties.iter_mut().find(|p| p.name == prop_name);
-                        match matched {
-                            Some(prop) => {
-                                if let Some(iv) = ivar {
-                                    prop.ivar_name = Some(iv);
-                                }
-                            }
-                            None => {
-                                let (line, col) = crate::parse::line_col(source, prop_impl.start_byte());
-                                diagnostics.push(crate::model::Diagnostic::new(
-                                    format!(
-                                        "'@synthesize {}' but no '@property {}' is declared on '{}'",
-                                        prop_name, prop_name, name
-                                    ),
-                                    line,
-                                    col,
-                                ));
-                            }
-                        }
+                        // Recorded, not resolved: the matching @property
+                        // may not be collected yet. This loop walks the
+                        // translation unit in source order, and an
+                        // @implementation can precede its own @interface
+                        // there -- which happens for real, not just in
+                        // contrived input: a class whose .m uses
+                        // `#include "Car.h"` rather than `#import` has its
+                        // header spliced in later, by whichever file
+                        // imports it. Resolving inline made the outcome
+                        // depend on the order entry files were listed in.
+                        synthesizes.push((name.clone(), prop_impl));
                     }
                 }
             }
             _ => {}
+        }
+    }
+
+    for (name, prop_impl) in synthesizes {
+        let (prop_name, ivar) = extract_synthesize(prop_impl, source);
+        let Some(info) = classes.get_mut(&name) else {
+            continue;
+        };
+        match info.properties.iter_mut().find(|p| p.name == prop_name) {
+            Some(prop) => {
+                if let Some(iv) = ivar {
+                    prop.ivar_name = Some(iv);
+                }
+            }
+            None => {
+                let (line, col) = crate::parse::line_col(source, prop_impl.start_byte());
+                diagnostics.push(crate::model::Diagnostic::new(
+                    format!(
+                        "'@synthesize {}' but no '@property {}' is declared on '{}'",
+                        prop_name, prop_name, name
+                    ),
+                    line,
+                    col,
+                ));
+            }
         }
     }
 
