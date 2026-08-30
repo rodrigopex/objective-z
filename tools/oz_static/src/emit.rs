@@ -774,8 +774,18 @@ fn render_boxed_string_literal(node: Node, ctx: &mut EmitCtx) -> (String, String
     ctx.block_counter += 1;
     let name = format!("_oz_str_L{}_C{}_{}", line, col, ctx.block_counter);
     let prototype = format!("extern struct OZString {};\n", name);
+    // `oz_deallocating = 1` from birth is what makes this literal
+    // immortal. It lives in static storage, so `free()`-ing it aborts --
+    // and something does try: `companion`'s release path runs
+    // `{class}_oz_free` once a refcount hits zero, and a literal's
+    // refcount does reach zero, because a collection that absorbed it
+    // (`@[ @"a" ]`, or a dictionary key) releases its elements when it is
+    // itself deallocated. `oz_static_release` checks this flag before the
+    // free switch, so setting it up front makes release a no-op at zero
+    // instead of a crash, matching the real `OZString.m`'s own `-dealloc`
+    // ("compile-time constant, never freed").
     let definition = format!(
-        "struct OZString {} = {{ .base = {{ .oz_class_id = OZ_STATIC_CLASS_OZString, .oz_refcount = 1, .oz_deallocating = 0 }}, ._length = {}, ._hash = 0, ._data = {} }};\n",
+        "struct OZString {} = {{ .base = {{ .oz_class_id = OZ_STATIC_CLASS_OZString, .oz_refcount = 1, .oz_deallocating = 1 }}, ._length = {}, ._hash = 0, ._data = {} }};\n",
         name, byte_len, c_literal
     );
     ctx.hoisted_string_literals.push((prototype, definition));
