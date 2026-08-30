@@ -17,7 +17,9 @@
 // command line.
 
 mod common;
-use common::{compile_and_run, ozobject_src};
+use common::{
+    compile_and_run, ozarray_src, ozdictionary_src, ozobject_src, ozq31_src,
+};
 
 /// A one-slot pool serves one *simultaneously live* object; the next
 /// request returns nil rather than corrupting anything.
@@ -230,4 +232,252 @@ int main(void) {
     );
     let stdout = compile_and_run(&src, "never_allocated_class_still_gets_a_slot");
     assert_eq!(stdout, "ran=1\n");
+}
+
+
+// ---------------------------------------------------------------------
+// The shared element pool (OZ-098)
+//
+// `@[...]` and `@{...}` need a buffer of `id` slots beyond the collection
+// object itself. Those buffers used to come from plain `malloc`, which is
+// exactly what the per-class slab work removed everywhere else, so on a
+// no-heap Zephyr target a literal still reached libc. They now come from
+// one shared `OZ_MEM_BLOCKS_DEFINE(oz_item_pool, ...)` through the PAL --
+// `sys_mem_blocks` on Zephyr, a count-enforcing malloc wrapper on host.
+//
+// As with the slabs above, it is that host-side count enforcement that
+// makes exhaustion observable here rather than only on hardware.
+// ---------------------------------------------------------------------
+
+/// Two literals, five elements between them, so the pool holds five.
+/// Element counts are the point: the object slots are counted separately
+/// (one per literal), and conflating the two would size the pool at two.
+#[test]
+fn item_pool_is_sized_from_literal_element_counts() {
+    let src = format!(
+        "{}{}{}{}",
+        ozobject_src(),
+        ozq31_src(),
+        ozarray_src(),
+        "\
+@interface Lits : OZObject
+- (unsigned int)run;
+@end
+@implementation Lits
+- (unsigned int)run {
+	OZArray *three = @[@(1), @(2), @(3)];
+	OZArray *two = @[@(4), @(5)];
+	return [three count] + [two count];
+}
+@end
+
+int main(void) { return 0; }
+"
+    );
+    let out = oz_static::transpile(&src).expect("should transpile");
+    assert!(
+        out.companion_c
+            .contains("OZ_MEM_BLOCKS_DEFINE(oz_item_pool, sizeof(struct OZObject *), 5, 4)"),
+        "expected a five-slot item pool; got:\n{}",
+        out.companion_c
+    );
+    assert!(
+        out.companion_h.contains("extern oz_mem_blocks_t oz_item_pool;"),
+        "expected the pool to be declared in the shared header; got:\n{}",
+        out.companion_h
+    );
+}
+
+/// A dictionary literal takes two slots per pair, not one: keys and values
+/// share one contiguous run, `_keys` pointing at its first half and
+/// `_values` at its second (`companion::render_dict_support`). Sizing it
+/// per pair would hand back half the buffer the builder writes into.
+#[test]
+fn dictionary_literal_reserves_two_slots_per_pair() {
+    let src = format!(
+        "{}{}{}{}",
+        ozobject_src(),
+        ozq31_src(),
+        ozdictionary_src(),
+        "\
+@interface Dicts : OZObject
+- (unsigned int)run;
+@end
+@implementation Dicts
+- (unsigned int)run {
+	OZDictionary *d = @{@(1): @(10), @(2): @(20)};
+	return [d count];
+}
+@end
+
+int main(void) { return 0; }
+"
+    );
+    let out = oz_static::transpile(&src).expect("should transpile");
+    assert!(
+        out.companion_c
+            .contains("OZ_MEM_BLOCKS_DEFINE(oz_item_pool, sizeof(struct OZObject *), 4, 4)"),
+        "expected two pairs to reserve four slots; got:\n{}",
+        out.companion_c
+    );
+}
+
+/// No literals, no pool -- not a zero-sized one. `SYS_MEM_BLOCKS_DEFINE`
+/// with a zero block count is not a usable pool, and nothing would draw
+/// from it anyway.
+#[test]
+fn no_item_pool_is_emitted_when_nothing_needs_one() {
+    let src = format!(
+        "{}{}",
+        ozobject_src(),
+        "\
+@interface Plain : OZObject
+@end
+@implementation Plain
+@end
+
+int main(void) { return 0; }
+"
+    );
+    let out = oz_static::transpile(&src).expect("should transpile");
+    let all = format!("{}{}{}", out.source_c, out.companion_h, out.companion_c);
+    assert!(
+        !all.contains("oz_item_pool"),
+        "expected no item pool at all; got:\n{}",
+        all
+    );
+}
+
+/// The `oz-item-pool:` directive overrides the counted size, the same way
+/// `oz-pool:` does for class slabs.
+#[test]
+fn item_pool_directive_raises_the_bound() {
+    let src = format!(
+        "/* oz-item-pool: 16 */\n{}{}{}{}",
+        ozobject_src(),
+        ozq31_src(),
+        ozarray_src(),
+        "\
+@interface Lits : OZObject
+- (unsigned int)run;
+@end
+@implementation Lits
+- (unsigned int)run {
+	OZArray *a = @[@(1)];
+	return [a count];
+}
+@end
+
+int main(void) { return 0; }
+"
+    );
+    let out = oz_static::transpile(&src).expect("should transpile");
+    assert!(
+        out.companion_c
+            .contains("OZ_MEM_BLOCKS_DEFINE(oz_item_pool, sizeof(struct OZObject *), 16, 4)"),
+        "expected the directive to win over the counted size of 1; got:\n{}",
+        out.companion_c
+    );
+}
+
+/// The two directives are scanned with separate keys and must not read
+/// each other's numbers. `"oz-pool:"` does not occur inside
+/// `"oz-item-pool:"` -- after `oz-` comes `item-` -- so neither `find`
+/// can match the other, and this pins that down against a future rename.
+#[test]
+fn item_pool_directive_does_not_disturb_the_class_pool_directive() {
+    let src = format!(
+        "/* oz-item-pool: 9 */\n/* oz-pool: Lits=5 */\n{}{}{}{}",
+        ozobject_src(),
+        ozq31_src(),
+        ozarray_src(),
+        "\
+@interface Lits : OZObject
+- (unsigned int)run;
+@end
+@implementation Lits
+- (unsigned int)run {
+	OZArray *a = @[@(1)];
+	return [a count];
+}
+@end
+
+int main(void) { return 0; }
+"
+    );
+    let out = oz_static::transpile(&src).expect("should transpile");
+    let all = format!("{}{}", out.source_c, out.companion_c);
+    assert!(
+        all.contains("OZ_MEM_BLOCKS_DEFINE(oz_item_pool, sizeof(struct OZObject *), 9, 4)"),
+        "item pool should be 9; got:\n{}",
+        all
+    );
+    assert!(
+        all.contains("OZ_SLAB_DEFINE(oz_slab_Lits, sizeof(struct Lits), 5, 4)"),
+        "class slab should still be 5; got:\n{}",
+        all
+    );
+}
+
+/// The buffers really are bounded now: a pool with room for three slots
+/// serves a three-element literal and then fails, and the builder answers
+/// nil rather than handing back a half-built array.
+///
+/// Two separate live locals rather than a loop, for the reason
+/// `pool_bound_is_enforced_and_exhaustion_returns_nil` above documents --
+/// scope-based ARC recycles a loop-local's slot, so a loop would prove
+/// nothing. (A literal in a loop that *isn't* a fresh local is now a hard
+/// error anyway: see
+/// `static_bar_rejects::array_literal_escaping_a_loop_rejected`.)
+#[test]
+fn item_pool_bound_is_enforced_and_exhaustion_returns_nil() {
+    let src = format!(
+        "/* oz-item-pool: 3 */\n{}{}{}{}",
+        ozobject_src(),
+        ozq31_src(),
+        ozarray_src(),
+        "\
+#include <stdio.h>
+int main(void) {
+	OZArray *first = @[@(1), @(2), @(3)];
+	OZArray *second = @[@(4), @(5), @(6)];
+	printf(\"first=%d\\n\", first != 0);
+	printf(\"second=%d\\n\", second != 0);
+	return 0;
+}
+"
+    );
+    let stdout = compile_and_run(&src, "item_pool_bound_is_enforced_and_exhaustion_returns_nil");
+    assert_eq!(stdout, "first=1\nsecond=0\n");
+}
+
+/// Releasing a collection returns its element slots, so a pool sized for
+/// one literal serves any number of non-overlapping ones. This is the
+/// half `free_contiguous` is responsible for; without it the first test
+/// above would still pass while the pool leaked every buffer.
+#[test]
+fn item_slots_return_to_the_pool_when_the_collection_is_released() {
+    let src = format!(
+        "/* oz-item-pool: 2 */\n{}{}{}{}",
+        ozobject_src(),
+        ozq31_src(),
+        ozarray_src(),
+        "\
+#include <stdio.h>
+int main(void) {
+	int ok = 1;
+	for (int i = 0; i < 5; i++) {
+		OZArray *a = @[@(1), @(2)];
+		if (a == 0) {
+			ok = 0;
+		}
+	}
+	printf(\"all=%d\\n\", ok);
+	return 0;
+}
+"
+    );
+    let stdout =
+        compile_and_run(&src, "item_slots_return_to_the_pool_when_the_collection_is_released");
+    assert_eq!(stdout, "all=1\n");
 }
