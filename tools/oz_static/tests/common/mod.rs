@@ -287,15 +287,12 @@ pub fn ozstring_src() -> String {
 }
 
 /// OZDefer, the deferred-cleanup Foundation class -- assembled from
-/// `include/oz_sdk/Foundation/OZDefer.h` / `src/OZDefer.m` verbatim (the
-/// two generic adaptations), plus lowering the real header's ivars
-/// (`__unsafe_unretained id _owner; void (^_block)(id);`) to their
-/// already-valid plain-C form (`id _owner; void (*_block)(id);`) --
-/// ivar declarations are copied verbatim by oz_static (see
-/// `emit::render_interface`), with no `^`-to-`*` block-declarator
-/// rewrite applied the way a local variable's declarator gets (see
-/// `emit::render_expr`'s `block_pointer_declarator` arm), so the ivar
-/// must already be spelled in valid plain C. Requires `OZObject`
+/// `include/oz_sdk/Foundation/OZDefer.h` / `src/OZDefer.m` verbatim, no
+/// cuts. Its ivars (`__unsafe_unretained id _owner; void (^_block)(id);`)
+/// used to be rewritten to plain C here, because ivar declarations were
+/// copied through verbatim; `emit::lower_ivar_decl` now strips the ARC
+/// qualifier and turns the block declarator into a function pointer, so
+/// the real header's spelling goes through untouched. Requires `OZObject`
 /// (`common::ozobject_src`) in scope as the root class; oz_static has no
 /// ARC (tracked separately as #189), so releasing an object holding an
 /// OZDefer ivar must call `[_cleanup release]` explicitly in that
@@ -306,8 +303,6 @@ pub fn ozdefer_src() -> String {
         include_str!("../../../../include/oz_sdk/Foundation/OZDefer.h"),
         include_str!("../../../../src/OZDefer.m"),
     )
-    .replace("__unsafe_unretained id _owner;", "id _owner;")
-    .replace("void (^_block)(id);", "void (*_block)(id);")
 }
 
 /// OZArray, the immutable-array Foundation class -- assembled from

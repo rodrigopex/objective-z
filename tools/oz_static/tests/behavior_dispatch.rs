@@ -242,3 +242,89 @@ int main(void) {
     let stdout = compile_and_run(&src, "super_calls_parent_dispatch");
     assert_eq!(stdout, "baseVal=10\nchildVal=20\n");
 }
+
+/// The gap `method_override_dispatch` above leaves open: there, every
+/// receiver's declared type already *is* its concrete class, so binding
+/// the call to the declared type happens to be right. A declared type is
+/// only an upper bound, though -- here `b` is declared `Base *` but holds
+/// a `Sub`, so calling `Base`'s implementation directly would silently run
+/// the wrong method instead of failing loudly.
+///
+/// The Python pipeline forces `{dealloc, init, isEqual:,
+/// cDescription:maxLength:}` to protocol dispatch and otherwise
+/// devirtualizes only when it can infer the receiver's *concrete* class
+/// (`_try_infer_concrete_class`). oz_static decides by class hierarchy
+/// analysis instead (`Program::has_overriding_subclass`): it sees the
+/// whole program, so a direct call is kept exactly when no subclass
+/// overrides the selector and routed through the class_id switch when one
+/// does. `init` needs no special-casing under that rule -- an overridden
+/// `init` is covered like any other selector, which the `tag` assertions
+/// below check.
+#[test]
+fn override_through_base_typed_receiver_dispatches_dynamically() {
+    let src = format!(
+        "{}{}",
+        ozobject_src(),
+        "\
+@interface Base : OZObject {
+	int _tag;
+}
+- (instancetype)init;
+- (int)speak;
+- (int)tag;
+@end
+@implementation Base
+- (instancetype)init {
+	_tag = 10;
+	return self;
+}
+- (int)speak {
+	return 1;
+}
+- (int)tag {
+	return _tag;
+}
+@end
+
+@interface Sub : Base
+- (instancetype)init;
+- (int)speak;
+@end
+@implementation Sub
+- (instancetype)init {
+	[super init];
+	_tag = 20;
+	return self;
+}
+- (int)speak {
+	return 2;
+}
+@end
+
+#include <stdio.h>
+
+int main(void) {
+	/* Declared Base *, actually a Sub: the overrides must win. */
+	Base *b = (Base *)[Sub alloc];
+	[b init];
+	printf(\"speak_through_base=%d\\n\", [b speak]);
+	printf(\"tag_through_base=%d\\n\", [b tag]);
+	[b release];
+
+	/* A real Base is unaffected by the subclass's overrides. */
+	Base *plain = [Base alloc];
+	[plain init];
+	printf(\"speak_plain=%d\\n\", [plain speak]);
+	printf(\"tag_plain=%d\\n\", [plain tag]);
+	[plain release];
+	return 0;
+}
+"
+    );
+    let stdout =
+        compile_and_run(&src, "override_through_base_typed_receiver_dispatches_dynamically");
+    assert_eq!(
+        stdout,
+        "speak_through_base=2\ntag_through_base=20\nspeak_plain=1\ntag_plain=10\n"
+    );
+}
