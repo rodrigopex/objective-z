@@ -509,21 +509,22 @@ pub fn iterator_protocol_src() -> String {
 }
 
 /// OZHeap, the `allocWithHeap:` backing store -- assembled from
-/// `include/oz_sdk/Foundation/OZHeap.h` / `src/OZHeap.m`, with one cut:
-/// the header's own `struct oz_heap_inner` definition.
+/// `include/oz_sdk/Foundation/OZHeap.h` / `src/OZHeap.m` verbatim, no
+/// cuts and no rewrites.
 ///
-/// That cut is required, not a convenience. The header guards its stubs
-/// with `#ifndef OZ_HEAP_INNER_DEFINED`, but so does
-/// `platform/oz_platform.h`, and *neither* ever defines that macro --
-/// only `oz_platform_{host,zephyr}.h` do, behind `OZ_HEAP_SUPPORT`. This
-/// harness compiles with `-DOZ_PLATFORM_HOST` and no `-DOZ_HEAP_SUPPORT`,
-/// so both fallback blocks fire and the generated C fails with
-/// `error: redefinition of 'oz_heap_inner'`. The PAL's fallback wins
-/// (the companion header includes it); the header's is dropped here. The
-/// two `static inline` stubs are kept, because the PAL supplies no
-/// `oz_heap_init`/`oz_heap_used_bytes` at this configuration.
+/// The header's own `struct oz_heap_inner` definition used to need
+/// cutting here: it is guarded by `#ifndef OZ_HEAP_INNER_DEFINED`, and
+/// so is `platform/oz_platform.h`'s fallback, but *neither* set that
+/// macro -- only `oz_platform_{host,zephyr}.h` did, behind
+/// `OZ_HEAP_SUPPORT`. This harness compiles with `-DOZ_PLATFORM_HOST`
+/// and no `-DOZ_HEAP_SUPPORT`, so both blocks fired and the generated C
+/// failed with `error: redefinition of 'oz_heap_inner'`. Both now
+/// define the macro (`OZHeap.h:21`, `oz_platform.h:27`), and
+/// `oz_platform.h`'s fallback carries its own `oz_heap_init` /
+/// `oz_heap_used_bytes`, so whichever is seen first wins and the real
+/// header can be used as-is.
 ///
-/// Consequence for the tests: the linked stubs are no-ops, so
+/// Consequence for the tests: the PAL's fallback stubs are no-ops, so
 /// `-usedBytes` answers 0 by construction and nothing below reads it as
 /// a measurement. What is genuinely exercised is the transpile -- a
 /// value-typed ivar of an externally-declared struct, `self = [super
@@ -531,8 +532,7 @@ pub fn iterator_protocol_src() -> String {
 /// address-of-ivar passing. Requires `OZObject`
 /// (`common::ozobject_src`) in scope as the root class.
 pub fn ozheap_src() -> String {
-    let mut header = include_str!("../../../../include/oz_sdk/Foundation/OZHeap.h").to_string();
-    header = remove_line_range(&header, "struct oz_heap_inner {", "};");
+    let header = include_str!("../../../../include/oz_sdk/Foundation/OZHeap.h").to_string();
     assemble(&header, include_str!("../../../../src/OZHeap.m"))
 }
 

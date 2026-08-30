@@ -672,16 +672,20 @@ driven through oz_static by `tools/oz_static/tests/corpus_parity.rs`
 rather than being re-implemented as separate fixtures.
 
 - **73 of 73 transpile.** Enforced with no allowlist.
-- **72 of 73 produce compiling C.** The one exception is listed in that
-  file's `KNOWN_CC_FAILURES` with its cause: `memory/heap_alloc.m`, where
-  `struct oz_heap_inner` is defined by both `OZHeap.h` and
-  `platform/oz_platform.h` — each guarded on `OZ_HEAP_INNER_DEFINED`,
-  which neither defines outside `OZ_HEAP_SUPPORT` — and which also needs
-  the `allocWithHeap:` path oz_static does not emit.
+- **73 of 73 produce compiling C.** `KNOWN_CC_FAILURES` is now empty
+  (`corpus_parity.rs:43`). Its last entry was `memory/heap_alloc.m`,
+  which failed for two reasons, both since fixed: `struct oz_heap_inner`
+  was defined by both `OZHeap.h` and `platform/oz_platform.h` — each
+  guarded on `OZ_HEAP_INNER_DEFINED`, which neither then defined — and it
+  needed the `allocWithHeap:` path, now emitted under `--heap-support`.
+  Note the corpus compiles with `-DOZ_PLATFORM_HOST` and *no*
+  `-DOZ_HEAP_SUPPORT` (`corpus_parity.rs:128`), so the guard fix carries
+  it, not the heap configuration.
 
-That allowlist asserts the listed case *still* fails, so fixing it without
-updating the list also fails the test; it cannot decay into silently
-skipped cases.
+That allowlist asserts each listed case *still* fails, so fixing one
+without updating the list also fails the test; it cannot decay into
+silently skipped cases. Empty is therefore a stronger statement than a
+passing suite with entries.
 
 Rust test suite: 183 passing, 0 failing.
 
@@ -814,14 +818,18 @@ Clang discards. The AST also cannot become oz_static's parse tree at all,
 being post-preprocessor, while in-place textual substitution needs the
 original text; it stays an oracle for facts.
 
-### The compile check needs `-DOZ_HEAP_SUPPORT`
+### The compile check used to need `-DOZ_HEAP_SUPPORT`
 
 Without it, five otherwise-fine samples hit the same
 `redefinition of 'oz_heap_inner'` described above, because
-`Foundation.h` pulls in `OZHeap.h`. The generated header contains exactly
-one definition — the collision is between SDK header content and the PAL,
+`Foundation.h` pulls in `OZHeap.h`. The generated header contained exactly
+one definition — the collision was between SDK header content and the PAL,
 not something oz_static emits. Worth knowing before reading a bare
 `cc` failure as a codegen bug.
+
+Superseded by the guard fix (defect 1 above): every site now sets
+`OZ_HEAP_INNER_DEFINED`, so the first one seen wins and the flag is no
+longer needed to avoid the collision.
 
 ## The static backend is now the default
 
