@@ -17,7 +17,7 @@
 // single-file-per-compile limitation.
 
 mod common;
-use common::{compile_and_run, ozobject_src as PREAMBLE};
+use common::{compile_and_run, expect_reject, ozobject_src as PREAMBLE};
 
 /// Ported from tests/behavior/cases/enum/enum_as_ivar.m +
 /// enum_as_ivar_test.c: an enum used as an ivar's type, set through a
@@ -196,16 +196,14 @@ int main(void) {{
 /// and an anonymous enum's enumerators are ordinary identifiers usable
 /// anywhere an `int` constant is, tag or no tag -- the same as in real C.
 ///
-/// A real, narrower gap does exist a level down, in
-/// `collect::extract_type_and_stars`'s `enum_specifier` arm: an anonymous
-/// enum used *inline as a value type* (a method parameter/ivar/return
-/// declared with the enum's definition instead of a name, e.g.
-/// `- (enum { A, B })foo;`) degrades to the bare word `enum` with no
-/// body, which is not valid C on its own. That's a different construct
-/// from the one exercised here -- this test's enum is defined once at
-/// file scope and every use of it is by its *enumerator constants*
-/// (plain `int`s), never by naming the anonymous type itself -- and
-/// fixing it needs a change in `collect.rs`, out of scope here.
+/// A separate, narrower construct -- an anonymous aggregate used *inline
+/// as a method's value type*, e.g. `- (enum { A, B })foo;` -- used to
+/// degrade to the bare word `enum` and is now rejected outright by
+/// `collect::reject_inline_anonymous_aggregates`; see
+/// `inline_anonymous_enum_as_return_type_rejected` and friends below.
+/// That shape is unrelated to the one exercised here: this test's enum is
+/// defined once at file scope and every use of it is by its *enumerator
+/// constants* (plain `int`s), never by naming the anonymous type itself.
 #[test]
 fn anonymous_enum_constants_usable() {
     let src = format!(
@@ -241,4 +239,194 @@ int main(void) {{
     );
     let stdout = compile_and_run(&src, "anonymous_enum_constants_usable");
     assert_eq!(stdout, "red=0\npick=1\nblue=2\n");
+}
+
+// ---------------------------------------------------------------------------
+// Inline anonymous aggregates as method value types -- rejected
+// ---------------------------------------------------------------------------
+//
+// New coverage, no oracle counterpart: every case in
+// tests/behavior/cases/enum/ declares a *named* file-scope enum and refers
+// to it by tag, and the oracle's own `_collect_enum_def` keys on the enum's
+// name, so an untagged one has no defined behavior there either.
+//
+// These shapes used to be accepted and emit broken C -- `enum Foo_ret(struct
+// Foo *self)` for a return type, `enum v` for a parameter -- while an inline
+// anonymous *union* was worse still, silently lowering to its first member's
+// type (`int u`), which compiles and quietly passes the wrong type. All are
+// hard, located errors now.
+
+/// `- (enum { A, B })sel;` -- used to emit `enum Foo_ret(struct Foo *self)`.
+#[test]
+fn inline_anonymous_enum_as_return_type_rejected() {
+    let src = format!(
+        "{}
+@interface AnonRet : OZObject
+- (enum {{ RET_A, RET_B }})ret;
+@end
+@implementation AnonRet
+- (enum {{ RET_A, RET_B }})ret {{
+	return RET_A;
+}}
+@end
+",
+        PREAMBLE()
+    );
+    let diags = expect_reject(&src);
+    assert!(diags.contains("inline anonymous 'enum'"), "diagnostics: {}", diags);
+    assert!(diags.contains("enum Tag { ... }"), "diagnostics: {}", diags);
+}
+
+/// `- (void)take:(enum { A, B })v;` -- used to emit a parameter typed `enum v`.
+#[test]
+fn inline_anonymous_enum_as_parameter_rejected() {
+    let src = format!(
+        "{}
+@interface AnonParam : OZObject
+- (void)take:(enum {{ PAR_A, PAR_B }})v;
+@end
+@implementation AnonParam
+- (void)take:(enum {{ PAR_A, PAR_B }})v {{
+	(void)v;
+}}
+@end
+",
+        PREAMBLE()
+    );
+    let diags = expect_reject(&src);
+    assert!(diags.contains("inline anonymous 'enum'"), "diagnostics: {}", diags);
+}
+
+#[test]
+fn inline_anonymous_struct_as_parameter_rejected() {
+    let src = format!(
+        "{}
+@interface AnonStruct : OZObject
+- (void)takePt:(struct {{ int x; }})p;
+@end
+@implementation AnonStruct
+- (void)takePt:(struct {{ int x; }})p {{
+	(void)p;
+}}
+@end
+",
+        PREAMBLE()
+    );
+    let diags = expect_reject(&src);
+    assert!(diags.contains("inline anonymous 'struct'"), "diagnostics: {}", diags);
+    assert!(diags.contains("struct Tag { ... }"), "diagnostics: {}", diags);
+}
+
+/// The worst of the family: this one used to *compile*, with the parameter
+/// silently typed `int` (the union's first member) instead of the union.
+#[test]
+fn inline_anonymous_union_as_parameter_rejected() {
+    let src = format!(
+        "{}
+@interface AnonUnion : OZObject
+- (void)takeU:(union {{ int a; float b; }})u;
+@end
+@implementation AnonUnion
+- (void)takeU:(union {{ int a; float b; }})u {{
+	(void)u;
+}}
+@end
+",
+        PREAMBLE()
+    );
+    let diags = expect_reject(&src);
+    assert!(diags.contains("inline anonymous 'union'"), "diagnostics: {}", diags);
+}
+
+/// The accepted counterpart, and the shape the rejection message points at:
+/// a named file-scope enum referred to by tag in both positions. This is
+/// what every oracle enum case does.
+#[test]
+fn named_file_scope_enum_as_return_and_parameter_accepted() {
+    let src = format!(
+        "{}
+enum Level {{
+	LevelLow = 1,
+	LevelHigh = 9
+}};
+
+@interface NamedLevel : OZObject {{
+	enum Level _level;
+}}
+- (void)setLevel:(enum Level)l;
+- (enum Level)level;
+@end
+
+@implementation NamedLevel
+- (void)setLevel:(enum Level)l {{
+	_level = l;
+}}
+- (enum Level)level {{
+	return _level;
+}}
+@end
+
+#include <stdio.h>
+
+int main(void) {{
+	NamedLevel *n = [NamedLevel alloc];
+	[n setLevel:LevelHigh];
+	printf(\"level=%d\\n\", (int)[n level]);
+	[n setLevel:LevelLow];
+	printf(\"level2=%d\\n\", (int)[n level]);
+	[n release];
+	return 0;
+}}
+",
+        PREAMBLE()
+    );
+    let stdout = compile_and_run(&src, "named_file_scope_enum_as_return_and_parameter");
+    assert_eq!(stdout, "level=9\nlevel2=1\n");
+}
+
+/// An anonymous aggregate is still fine as an *ivar*: nothing needs to name
+/// the type, because `emit::lower_ivar_decl` copies the declaration through
+/// with its body intact. Pins the boundary the rejection is scoped to, so a
+/// future broadening of it fails here rather than silently.
+#[test]
+fn inline_anonymous_enum_as_ivar_still_accepted() {
+    let src = format!(
+        "{}
+@interface AnonIvar : OZObject {{
+	enum {{ ModeIdle, ModeBusy }} _mode;
+	struct {{ int x; }} _pt;
+}}
+- (void)setup;
+- (int)mode;
+- (int)px;
+@end
+
+@implementation AnonIvar
+- (void)setup {{
+	_mode = ModeBusy;
+	_pt.x = 42;
+}}
+- (int)mode {{
+	return (int)_mode;
+}}
+- (int)px {{
+	return _pt.x;
+}}
+@end
+
+#include <stdio.h>
+
+int main(void) {{
+	AnonIvar *a = [AnonIvar alloc];
+	[a setup];
+	printf(\"mode=%d\\n\", [a mode]);
+	printf(\"px=%d\\n\", [a px]);
+	[a release];
+	return 0;
+}}
+",
+        PREAMBLE()
+    );
+    let stdout = compile_and_run(&src, "inline_anonymous_enum_as_ivar_still_accepted");
+    assert_eq!(stdout, "mode=1\npx=42\n");
 }

@@ -245,9 +245,16 @@ pub(crate) fn extract_type_and_stars(node: Node, src: &str) -> (String, usize) {
                     let found = n.children(&mut c).find(|ch| ch.kind() == "type_identifier");
                     *type_text = match found {
                         Some(name) => format!("enum {}", node_text(name, src)),
-                        // Anonymous `enum { ... }` (no tag name): not
-                        // supported by this spike -- there's no name to
-                        // reference the type by outside its own declaration.
+                        // Anonymous `enum { ... }` (no tag name): nothing
+                        // can name this type in the generated C, so the
+                        // bare keyword is the most that can be reported.
+                        // Only reachable for an *ivar*, whose declaration
+                        // `emit::lower_ivar_decl` copies through with its
+                        // body intact -- in a method signature the shape
+                        // is rejected outright by
+                        // `reject_inline_anonymous_aggregates`, since
+                        // there the bare keyword would reach codegen as
+                        // invalid C.
                         None => "enum".to_string(),
                     };
                 }
@@ -704,7 +711,94 @@ pub fn collect(source: &str) -> (Program, Vec<crate::model::Diagnostic>) {
 
     resolve_properties(&mut classes, &class_order);
 
+    reject_inline_anonymous_aggregates(root, source, &mut diagnostics);
+
     (Program { classes, class_order, protocols }, diagnostics)
+}
+
+/// An inline anonymous aggregate -- `enum { A, B }`, `struct { int x; }`,
+/// `union { ... }` written directly as a method's return or parameter type
+/// -- has no tag to spell the type by anywhere outside its own
+/// declaration, so `extract_type_and_stars` has nothing to hand back but
+/// the bare keyword. That reaches codegen as `enum Foo_ret(struct Foo *)`
+/// / `struct p`, which is not valid C; for a `union` it is worse, because
+/// the generic recursive fallback descends into the body and picks up the
+/// first member's type, silently emitting `int u` for a union-typed
+/// parameter. Both are exactly the silent degradation this backend is not
+/// allowed to do, so they are rejected here instead.
+///
+/// This is not a parity gap: no oracle case uses the shape (every enum
+/// case in `tests/behavior/cases/enum/` declares a *named* top-level enum
+/// and refers to it by tag), and the oracle's own `_collect_enum_def`
+/// (`tools/oz_transpile/collect.py`) keys its reconstruction on the enum's
+/// name, degenerating to `"enum "` when there isn't one. Supporting the
+/// shape would also mean giving the *same* logical type a stable
+/// synthesized tag across two syntactically distinct anonymous
+/// declarations -- the `@interface` prototype's and the
+/// `@implementation` definition's -- which C itself treats as two
+/// unrelated types, so there is nothing well-formed to aim at.
+///
+/// Scoped to `method_type` (the wrapper the grammar puts around both a
+/// return type and each parameter type) on purpose: the same anonymous
+/// aggregate is fine as an *ivar*, where `emit::lower_ivar_decl` copies
+/// the declaration through with its body intact.
+fn reject_inline_anonymous_aggregates(
+    root: Node,
+    src: &str,
+    diagnostics: &mut Vec<crate::model::Diagnostic>,
+) {
+    fn anonymous_aggregate_keyword(node: Node) -> Option<&'static str> {
+        let (keyword, body_kind) = match node.kind() {
+            "enum_specifier" => ("enum", "enumerator_list"),
+            "struct_specifier" => ("struct", "field_declaration_list"),
+            "union_specifier" => ("union", "field_declaration_list"),
+            _ => return None,
+        };
+        let mut cursor = node.walk();
+        let children: Vec<Node> = node.children(&mut cursor).collect();
+        // A tag makes the type nameable; a body is what makes this a
+        // definition rather than a reference to one declared elsewhere.
+        let tagged = children.iter().any(|c| c.kind() == "type_identifier");
+        let has_body = children.iter().any(|c| c.kind() == body_kind);
+        if !tagged && has_body {
+            Some(keyword)
+        } else {
+            None
+        }
+    }
+
+    fn walk(
+        node: Node,
+        src: &str,
+        in_method_type: bool,
+        diagnostics: &mut Vec<crate::model::Diagnostic>,
+    ) {
+        if in_method_type {
+            if let Some(keyword) = anonymous_aggregate_keyword(node) {
+                let (line, col) = crate::parse::line_col(src, node.start_byte());
+                diagnostics.push(crate::model::Diagnostic::new(
+                    format!(
+                        "an inline anonymous '{kw}' is not supported as a method return or \
+                         parameter type -- it has no tag to name the type by in the generated C -- \
+                         declare a named '{kw} Tag {{ ... }}' at file scope and refer to it as \
+                         '{kw} Tag' here",
+                        kw = keyword
+                    ),
+                    line,
+                    col,
+                ));
+                return;
+            }
+        }
+        let entering = in_method_type || node.kind() == "method_type";
+        let mut cursor = node.walk();
+        let children: Vec<Node> = node.children(&mut cursor).collect();
+        for child in children {
+            walk(child, src, entering, diagnostics);
+        }
+    }
+
+    walk(root, src, false, diagnostics);
 }
 
 /// Pass 3: resolve every collected `@property` against its (explicit,
