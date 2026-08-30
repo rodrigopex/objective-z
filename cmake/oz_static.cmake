@@ -3,16 +3,27 @@
 # oz_static.cmake — Transpile Objective-C (.m) to plain C via the OZ-091
 # Rust spike (`oz2c`) instead of the Python AST-based pipeline.
 #
-# Pilot scope only: a single entry `.m` file (sibling `.m`s are pulled in
-# automatically via `#import`, see tools/oz_static/src/imports.rs), no
-# POOL_SIZES, no CONFIG_OBJZ_HEAP — oz_static's allocator is always plain
-# malloc/free, no PAL slab/heap integration yet.
+# Supported: any number of entry `.m` files (all merged into one
+# translation unit, with further `.m`s pulled in automatically via
+# `#import` — see tools/oz_static/src/imports.rs), INCLUDE_DIRS,
+# ROOT_CLASS as a cross-check, and POOL_SIZES.
+#
+# Objects come from a per-class PAL slab (`OZ_SLAB_DEFINE`), sized by
+# counting allocation sites and overridable per class — see
+# tools/oz_static/src/pools.rs. A size can also be stated in the source
+# itself as `/* oz-pool: Class=N,... */`, the same directive the Python
+# backend's own test harness reads; POOL_SIZES here wins for the classes
+# it names.
+#
+# Not yet supported, a hard error below rather than silent divergence:
+# CONFIG_OBJZ_HEAP. oz_static emits no `allocWithHeap:` variant, so an
+# object cannot be placed in a caller-supplied heap.
 
 include_guard(GLOBAL)
 
 # ─── Public API ───────────────────────────────────────────────────────
 #
-# objz_transpile_sources_static(<target> <src.m>
+# objz_transpile_sources_static(<target> <src.m> [<src2.m> ...]
 #   [ROOT_CLASS <name>]
 #   [POOL_SIZES <Class1=N,Class2=M,...>]
 #   [INCLUDE_DIRS <dir1> [dir2 ...]]
@@ -27,20 +38,15 @@ function(objz_transpile_sources_static target)
     set(_mod ${ZEPHYR_OBJZ_MODULE_DIR})
     set(_sources ${OZT_UNPARSED_ARGUMENTS})
 
-    if(OZT_POOL_SIZES)
-        message(FATAL_ERROR
-            "objz_transpile_sources_static: POOL_SIZES not supported yet (OZ-091 -- "
-            "oz_static's allocator is always malloc/free, no PAL slab integration)")
-    endif()
     if(CONFIG_OBJZ_HEAP)
         message(FATAL_ERROR
-            "objz_transpile_sources_static: CONFIG_OBJZ_HEAP not supported yet (OZ-091)")
+            "objz_transpile_sources_static: CONFIG_OBJZ_HEAP is not supported by the "
+            "static backend yet -- it emits no allocWithHeap: variant. Build this "
+            "sample with CONFIG_OBJZ_BACKEND_PYTHON, or disable CONFIG_OBJZ_HEAP.")
     endif()
-    list(LENGTH _sources _n_sources)
-    if(NOT _n_sources EQUAL 1)
+    if(NOT _sources)
         message(FATAL_ERROR
-            "objz_transpile_sources_static: exactly one entry .m file is supported "
-            "(sibling .m files are pulled in automatically via #import)")
+            "objz_transpile_sources_static: no .m source files given")
     endif()
 
     # ── Build oz2c once (debug profile: configure-time compile speed
@@ -61,13 +67,40 @@ function(objz_transpile_sources_static target)
         message(FATAL_ERROR "objz_transpile_sources_static: cargo build of oz2c failed")
     endif()
 
-    get_filename_component(_src_abs ${_sources} ABSOLUTE)
-    get_filename_component(_src_dir ${_src_abs} DIRECTORY)
+    # Every listed `.m` becomes one entry file, and every directory they
+    # live in becomes an `--impl-dir` so `#import "X.h"` can find its
+    # sibling `X.m` there (oz2c never searches a header's own directory
+    # for that -- see imports.rs::find_sibling_impl).
+    set(_src_abs_list "")
+    set(_src_dirs "")
+    foreach(_src ${_sources})
+        get_filename_component(_one_abs ${_src} ABSOLUTE)
+        get_filename_component(_one_dir ${_one_abs} DIRECTORY)
+        list(APPEND _src_abs_list ${_one_abs})
+        list(APPEND _src_dirs ${_one_dir})
+    endforeach()
+    list(REMOVE_DUPLICATES _src_dirs)
 
-    set(_oz2c_flags -I ${_mod}/include/oz_sdk --impl-dir ${_src_dir})
+    set(_oz2c_flags -I ${_mod}/include/oz_sdk)
+    foreach(_dir ${_src_dirs})
+        list(APPEND _oz2c_flags --impl-dir ${_dir})
+    endforeach()
     foreach(_dir ${OZT_INCLUDE_DIRS})
         list(APPEND _oz2c_flags -I ${_dir})
     endforeach()
+    # A root class is inferred, not configured (imports/collect find the
+    # one class with no superclass), so pass ROOT_CLASS only when the
+    # caller stated one -- oz2c then verifies it matches, turning a
+    # mis-stated root into an error instead of a silently different
+    # program. Costs an extra collect pass, hence only when asked.
+    if(OZT_ROOT_CLASS)
+        list(APPEND _oz2c_flags --root-class ${OZT_ROOT_CLASS})
+    endif()
+    # Same spelling as the Python backend's flag, so a sample states its
+    # pool sizes once and either backend honours them.
+    if(OZT_POOL_SIZES)
+        list(APPEND _oz2c_flags --pool-sizes ${OZT_POOL_SIZES})
+    endif()
     get_target_property(_target_incs ${target} INCLUDE_DIRECTORIES)
     if(_target_incs)
         foreach(_dir ${_target_incs})
@@ -94,7 +127,7 @@ function(objz_transpile_sources_static target)
 
     # ── Configure-time: run once to discover output files ─────────────
     execute_process(
-        COMMAND ${_oz2c} ${_oz2c_flags} ${_src_abs} ${_outdir} --manifest ${_manifest}
+        COMMAND ${_oz2c} ${_oz2c_flags} ${_src_abs_list} ${_outdir} --manifest ${_manifest}
         RESULT_VARIABLE _rc
     )
     if(NOT _rc EQUAL 0)
@@ -108,8 +141,8 @@ function(objz_transpile_sources_static target)
         COMMAND ${CMAKE_COMMAND} -E env --unset=CC --unset=CXX --unset=CFLAGS --unset=CXXFLAGS
                 --unset=LDFLAGS --unset=AR --unset=RANLIB --unset=NM
                 cargo build --manifest-path ${_oz_static_dir}/Cargo.toml
-        COMMAND ${_oz2c} ${_oz2c_flags} ${_src_abs} ${_outdir} --manifest ${_manifest}
-        DEPENDS ${_src_abs}
+        COMMAND ${_oz2c} ${_oz2c_flags} ${_src_abs_list} ${_outdir} --manifest ${_manifest}
+        DEPENDS ${_src_abs_list}
         COMMENT "oz_static: generating C from ObjC (oz2c)"
     )
 

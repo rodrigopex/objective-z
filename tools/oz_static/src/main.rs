@@ -12,7 +12,8 @@ use std::process::ExitCode;
 
 fn usage() -> ExitCode {
     eprintln!(
-        "usage: oz2c [-I <dir>]... [--impl-dir <dir>]... [--manifest <path>] <input.m> <outdir>"
+        "usage: oz2c [-I <dir>]... [--impl-dir <dir>]... [--manifest <path>] \
+         [--root-class <name>] [--pool-sizes <Class=N,...>] <input.m>... <outdir>"
     );
     ExitCode::FAILURE
 }
@@ -22,6 +23,8 @@ fn main() -> ExitCode {
     let mut extra_include_dirs: Vec<PathBuf> = Vec::new();
     let mut extra_impl_dirs: Vec<PathBuf> = Vec::new();
     let mut manifest_path: Option<PathBuf> = None;
+    let mut expected_root: Option<String> = None;
+    let mut pool_overrides = oz_static::PoolOverrides::new();
     let mut positional: Vec<String> = Vec::new();
 
     let mut i = 0;
@@ -42,25 +45,52 @@ fn main() -> ExitCode {
                 manifest_path = Some(PathBuf::from(path));
                 i += 2;
             }
+            "--root-class" => {
+                let Some(name) = args.get(i + 1) else { return usage() };
+                expected_root = Some(name.clone());
+                i += 2;
+            }
+            // Same spelling and meaning as the Python backend's flag, so a
+            // sample's CMakeLists.txt needs no per-backend variant. Also
+            // accepted as an `/* oz-pool: ... */` comment in the source
+            // itself, which is what the oracle's own behavior cases use;
+            // this flag wins for the classes it names (see
+            // `pools::PoolSizes::set_overrides`).
+            "--pool-sizes" => {
+                let Some(spec) = args.get(i + 1) else { return usage() };
+                match oz_static::pools::parse_pool_sizes(spec) {
+                    Ok(sizes) => pool_overrides.extend(sizes),
+                    Err(why) => {
+                        eprintln!("oz_static: error: --pool-sizes: {}", why);
+                        return ExitCode::FAILURE;
+                    }
+                }
+                i += 2;
+            }
             arg => {
                 positional.push(arg.to_string());
                 i += 1;
             }
         }
     }
-    if positional.len() != 2 {
+    // Every positional but the last is an entry `.m`; the last is the
+    // output directory. A build system lists every `.m` a target owns
+    // (see `cmake/oz_static.cmake`), and all of them become one
+    // translation unit -- see `imports::resolve_entry_files` for why one
+    // unit rather than one run per file.
+    if positional.len() < 2 {
         return usage();
     }
-    let input_path = &positional[0];
-    let outdir = Path::new(&positional[1]);
+    let outdir = Path::new(positional.last().unwrap());
+    let entry_paths: Vec<PathBuf> =
+        positional[..positional.len() - 1].iter().map(PathBuf::from).collect();
 
-    let source = match fs::read_to_string(input_path) {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("oz_static: error: cannot read '{}': {}", input_path, e);
+    for path in &entry_paths {
+        if !path.is_file() {
+            eprintln!("oz_static: error: no such input file: '{}'", path.display());
             return ExitCode::FAILURE;
         }
-    };
+    }
 
     // `#import` resolution needs a real filesystem, so it lives outside
     // the core (pure, filesystem-free) `transpile()`/`transpile_split()`
@@ -71,15 +101,13 @@ fn main() -> ExitCode {
     // headers -- mirroring gcc's `-I`, plus a second flag because
     // `find_sibling_impl` (imports.rs) only searches `impl_dirs`, never
     // a header's own directory.
-    let source_dir = Path::new(input_path).parent().unwrap_or(Path::new(".")).to_path_buf();
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let mut include_dirs = vec![repo_root.join("include/oz_sdk")];
     include_dirs.extend(extra_include_dirs);
     let mut impl_dirs = vec![repo_root.join("src")];
     impl_dirs.extend(extra_impl_dirs);
-    let stem = Path::new(input_path).file_stem().and_then(|s| s.to_str()).unwrap_or("out");
     let resolved =
-        match oz_static::imports::resolve_imports(&source, &source_dir, &include_dirs, &impl_dirs, stem) {
+        match oz_static::imports::resolve_entry_files(&entry_paths, &include_dirs, &impl_dirs) {
             Ok(r) => r,
             Err(e) => {
                 eprintln!("oz_static: error: {}", e);
@@ -87,7 +115,41 @@ fn main() -> ExitCode {
             }
         };
 
-    match oz_static::transpile_split(&resolved.text, &resolved.origins) {
+    // oz_static infers the root class (the one class with no superclass)
+    // rather than being told it, so `--root-class` is a cross-check on the
+    // build system's expectation, not an input to codegen: it catches a
+    // target configured for a root that isn't actually the root, which
+    // would otherwise produce a working-but-differently-rooted program.
+    // Only paid for when the flag is passed, since it needs its own
+    // `collect` pass.
+    if let Some(expected) = &expected_root {
+        let (program, _) = oz_static::collect::collect(&resolved.text);
+        match program.root_class() {
+            Some(actual) if actual == expected => {}
+            Some(actual) => {
+                eprintln!(
+                    "oz_static: error: --root-class '{}' does not match this program's root class \
+                     '{}' (the root is inferred as the class with no superclass, not configured)",
+                    expected, actual
+                );
+                return ExitCode::FAILURE;
+            }
+            None => {
+                eprintln!(
+                    "oz_static: error: --root-class '{}' was requested but this program declares \
+                     no root class (every class has a superclass)",
+                    expected
+                );
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+
+    match oz_static::transpile_split_with_pool_sizes(
+        &resolved.text,
+        &resolved.origins,
+        &pool_overrides,
+    ) {
         Ok(out) => {
             // Foundation/SDK-origin files land in their own subdirectory,
             // matching the Python pipeline's own `outdir/Foundation/`

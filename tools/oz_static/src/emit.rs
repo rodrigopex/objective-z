@@ -324,6 +324,8 @@ struct EmitCtx<'a> {
     /// C return type of the method being rendered, needed to declare the
     /// temporary a `return` inside `@synchronized` evaluates into.
     method_return_type: String,
+    /// Slots to reserve in each class's slab -- see `pools`.
+    pools: &'a crate::pools::PoolSizes,
 }
 
 impl<'a> EmitCtx<'a> {
@@ -2015,21 +2017,22 @@ fn render_interface(node: Node, ctx: &mut EmitCtx, program: &Program) -> (String
         // translation unit (define-before-use), but a caller in a
         // different file (e.g. `main.c`'s own `@[...]` literal) needs
         // an explicit declaration once each class gets its own file.
+        let slots = ctx.pools.for_class(&name);
         let (alloc_free, extra_proto) = if name == "OZArray" {
             (
-                crate::companion::render_array_support(&name, &root),
+                crate::companion::render_array_support(&name, &root, slots),
                 format!("struct {name} *{name}_oz_initWithItems(void **src, unsigned int count);\n", name = name),
             )
         } else if name == "OZDictionary" {
             (
-                crate::companion::render_dict_support(&name, &root),
+                crate::companion::render_dict_support(&name, &root, slots),
                 format!(
                     "struct {name} *{name}_oz_initWithKeysValues(void **keys, void **values, unsigned int count);\n",
                     name = name
                 ),
             )
         } else {
-            (crate::companion::render_alloc_free(&name, &root), String::new())
+            (crate::companion::render_alloc_free(&name, &root, slots), String::new())
         };
         (format!("{}{}\n{}{}{}", open_banner, struct_text, extra_proto, decls, close_banner), alloc_free)
     }
@@ -2241,7 +2244,7 @@ pub struct EmitOutput {
     pub diagnostics: Vec<Diagnostic>,
 }
 
-pub fn emit(source: &str, program: &Program) -> EmitOutput {
+pub fn emit(source: &str, program: &Program, pools: &crate::pools::PoolSizes) -> EmitOutput {
     let tree = crate::parse::parse(source);
     let root = tree.root_node();
     let mut diags: Vec<Diagnostic> = Vec::new();
@@ -2323,6 +2326,7 @@ pub fn emit(source: &str, program: &Program) -> EmitOutput {
                     pre_stmts: Vec::new(),
                     sync_cleanups: Vec::new(),
                     method_return_type: "int".to_string(),
+                    pools,
                 };
                 let (header_part, alloc_free_part) = render_interface(node, &mut ctx, program);
                 let text = format!("{}\n{}", header_part, alloc_free_part);
@@ -2349,6 +2353,7 @@ pub fn emit(source: &str, program: &Program) -> EmitOutput {
                     pre_stmts: Vec::new(),
                     sync_cleanups: Vec::new(),
                     method_return_type: "int".to_string(),
+                    pools,
                 };
                 let mut out = String::new();
                 out.push_str(&banner_box(&header_text(node, source, &["implementation_definition"]), '-'));
@@ -2502,6 +2507,7 @@ pub fn emit(source: &str, program: &Program) -> EmitOutput {
                     pre_stmts: Vec::new(),
                     sync_cleanups: Vec::new(),
                     method_return_type: "int".to_string(),
+                    pools,
                 };
                 let mut c2 = node.walk();
                 if let Some(body) =
@@ -2588,7 +2594,7 @@ pub fn emit(source: &str, program: &Program) -> EmitOutput {
     );
 
     let (companion_h, companion_c) =
-        crate::companion::render(program, &hoisted_structs, &hoisted_enums, &hoisted_forward_decls);
+        crate::companion::render(program, &hoisted_structs, &hoisted_enums, &hoisted_forward_decls, pools);
 
     EmitOutput { source_c: out, companion_h, companion_c, diagnostics: diags }
 }
@@ -2624,7 +2630,12 @@ fn note_stem(order: &mut Vec<String>, stem: &str) {
 /// `origins` is `imports::ResolvedSource::origins`: an ordered list of
 /// `(stem, byte_range)` covering every byte of `source` (the same stem
 /// may appear more than once, non-contiguously).
-pub fn emit_split(source: &str, program: &Program, origins: &[(String, Range<usize>)]) -> EmitSplitOutput {
+pub fn emit_split(
+    source: &str,
+    program: &Program,
+    origins: &[(String, Range<usize>)],
+    pools: &crate::pools::PoolSizes,
+) -> EmitSplitOutput {
     let tree = crate::parse::parse(source);
     let root = tree.root_node();
 
@@ -2723,6 +2734,7 @@ pub fn emit_split(source: &str, program: &Program, origins: &[(String, Range<usi
                     pre_stmts: Vec::new(),
                     sync_cleanups: Vec::new(),
                     method_return_type: "int".to_string(),
+                    pools,
                 };
                 let (header_part, alloc_free_part) = render_interface(node, &mut ctx, program);
                 diags.extend(ctx.diags);
@@ -2751,6 +2763,7 @@ pub fn emit_split(source: &str, program: &Program, origins: &[(String, Range<usi
                     pre_stmts: Vec::new(),
                     sync_cleanups: Vec::new(),
                     method_return_type: "int".to_string(),
+                    pools,
                 };
                 let mut out = String::new();
                 out.push_str(&banner_box(&header_text(node, source, &["implementation_definition"]), '-'));
@@ -2862,6 +2875,7 @@ pub fn emit_split(source: &str, program: &Program, origins: &[(String, Range<usi
                     pre_stmts: Vec::new(),
                     sync_cleanups: Vec::new(),
                     method_return_type: "int".to_string(),
+                    pools,
                 };
                 let mut text = node_text(node, source).to_string();
                 let mut c2 = node.walk();
@@ -3016,7 +3030,7 @@ pub fn emit_split(source: &str, program: &Program, origins: &[(String, Range<usi
     }
 
     let (companion_h, companion_c) =
-        crate::companion::render(program, &hoisted_structs, &hoisted_enums, &hoisted_forward_decls);
+        crate::companion::render(program, &hoisted_structs, &hoisted_enums, &hoisted_forward_decls, pools);
 
     EmitSplitOutput { files, companion_h, companion_c, diagnostics: diags }
 }
