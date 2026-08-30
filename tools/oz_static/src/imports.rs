@@ -292,6 +292,19 @@ pub struct ResolvedSource {
     /// for these; see `reaches_objc` for why, and `main.rs` for where the
     /// pair is skipped.
     pub pure_c_stems: HashSet<String>,
+    /// Byte ranges of `text` that came from a *header* rather than an
+    /// implementation file.
+    ///
+    /// What a header holds is meant to be visible to every file that
+    /// includes it, so pass-through C from one belongs in the generated
+    /// header -- not in the generated `.c`, where only that one translation
+    /// unit can see it. A bare top-level macro invocation is the case that
+    /// forced this: `samples/zbus_service`'s header has
+    /// `ZBUS_CHAN_DECLARE(chan_temperature_service_invoke, ...)`, which
+    /// landed in the generated `.c` and left `main` with
+    /// "'chan_temperature_service_report' undeclared". It is a common Zephyr
+    /// shape (`LOG_MODULE_DECLARE`, `DEVICE_DT_DECLARE`).
+    pub header_ranges: Vec<Range<usize>>,
 }
 
 /// Resolve every `#import` in `source` (as if read from a file in
@@ -324,6 +337,7 @@ pub fn resolve_imports(
     let mut origins = Vec::new();
     let mut foundation_stems = HashSet::new();
     let mut pure_c_stems = HashSet::new();
+    let mut header_ranges = Vec::new();
     let mut objc_memo = HashMap::new();
     resolve_into(
         source,
@@ -336,9 +350,12 @@ pub fn resolve_imports(
         &mut origins,
         &mut foundation_stems,
         &mut pure_c_stems,
+        &mut header_ranges,
+        // The entry text is the caller's own source, an implementation.
+        false,
         &mut objc_memo,
     )?;
-    Ok(ResolvedSource { text, origins, foundation_stems, pure_c_stems })
+    Ok(ResolvedSource { text, origins, foundation_stems, pure_c_stems, header_ranges })
 }
 
 /// `resolve_imports` for several entry `.m` files at once, merged into
@@ -376,6 +393,7 @@ pub fn resolve_entry_files(
     let mut origins = Vec::new();
     let mut foundation_stems = HashSet::new();
     let mut pure_c_stems = HashSet::new();
+    let mut header_ranges = Vec::new();
     let mut objc_memo = HashMap::new();
 
     for path in entry_paths {
@@ -398,10 +416,13 @@ pub fn resolve_entry_files(
             &mut origins,
             &mut foundation_stems,
             &mut pure_c_stems,
+            &mut header_ranges,
+            // Entry files are the `.m` sources a build system lists.
+            false,
             &mut objc_memo,
         )?;
     }
-    Ok(ResolvedSource { text, origins, foundation_stems, pure_c_stems })
+    Ok(ResolvedSource { text, origins, foundation_stems, pure_c_stems, header_ranges })
 }
 
 /// Writes into the single, shared `out` buffer (rather than building and
@@ -423,6 +444,8 @@ fn resolve_into(
     origins: &mut Vec<(String, Range<usize>)>,
     foundation_stems: &mut HashSet<String>,
     pure_c_stems: &mut HashSet<String>,
+    header_ranges: &mut Vec<Range<usize>>,
+    is_header: bool,
     objc_memo: &mut HashMap<PathBuf, bool>,
 ) -> Result<(), String> {
     let mut run_start = out.len();
@@ -488,6 +511,9 @@ fn resolve_into(
         // *its* stem, not this one.
         if out.len() > run_start {
             origins.push((stem.to_string(), run_start..out.len()));
+            if is_header {
+                header_ranges.push(run_start..out.len());
+            }
         }
 
         let header_text = fs::read_to_string(&resolved_path)
@@ -512,6 +538,11 @@ fn resolve_into(
             origins,
             foundation_stems,
             pure_c_stems,
+            header_ranges,
+            // A `.m` reached through an `#import` is an implementation, not
+            // a header -- the behaviour corpus's base header does
+            // `#import "OZObject.m"` precisely to pull one in.
+            resolved_path.extension().and_then(|e| e.to_str()) != Some("m"),
             objc_memo,
         )?;
         out.push('\n');
@@ -534,6 +565,8 @@ fn resolve_into(
                     origins,
                     foundation_stems,
                     pure_c_stems,
+                    header_ranges,
+                    false,
                     objc_memo,
                 )?;
                 out.push('\n');
@@ -544,6 +577,9 @@ fn resolve_into(
     }
     if out.len() > run_start {
         origins.push((stem.to_string(), run_start..out.len()));
+        if is_header {
+            header_ranges.push(run_start..out.len());
+        }
     }
     Ok(())
 }

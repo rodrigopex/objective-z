@@ -3574,11 +3574,17 @@ pub fn emit_split(
     program: &Program,
     origins: &[(String, Range<usize>)],
     pools: &crate::pools::PoolSizes,
+    header_ranges: &[Range<usize>],
 ) -> EmitSplitOutput {
     let tree = crate::parse::parse(source);
     let root = tree.root_node();
     let file_vars = file_scope_vars(root, source, program);
 
+    // Did this byte come from a header? See
+    // `imports::ResolvedSource::header_ranges` for why it matters.
+    let from_header = |byte: usize| -> bool {
+        header_ranges.iter().any(|r| r.contains(&byte))
+    };
     let origin_for = |byte: usize| -> String {
         origins.iter().find(|(_, r)| r.contains(&byte)).map(|(s, _)| s.clone()).unwrap_or_else(|| "main".to_string())
     };
@@ -3901,7 +3907,7 @@ pub fn emit_split(
                 // and break outright if it touched a file-scope static
                 // that stayed behind in the body, and a non-static one
                 // would be a duplicate symbol at link time.
-                if is_static_inline(node, source) {
+                if from_header(node.start_byte()) || is_static_inline(node, source) {
                     headers.entry(stem.clone()).or_default().push(text);
                 } else {
                     bodies.entry(stem.clone()).or_default().push(text);
@@ -3934,7 +3940,18 @@ pub fn emit_split(
                 if text.is_empty() {
                     continue;
                 }
-                if node.kind().starts_with("preproc") {
+                // Provenance first: anything a *header* contributed belongs in
+                // the generated header, because that is what a header is for
+                // -- every file including it should see it. A bare top-level
+                // macro invocation is the shape that forced this
+                // (`ZBUS_CHAN_DECLARE` in `samples/zbus_service`'s header,
+                // which is neither a `preproc` node nor a declaration, so it
+                // fell to the body and no other origin could see it).
+                //
+                // The `preproc` test stays as a fallback for a macro defined
+                // in an implementation file, which the single-file design
+                // made implicitly visible to everything after it.
+                if from_header(node.start_byte()) || node.kind().starts_with("preproc") {
                     headers.entry(stem.clone()).or_default().push(text.to_string());
                 } else {
                     bodies.entry(stem.clone()).or_default().push(text.to_string());

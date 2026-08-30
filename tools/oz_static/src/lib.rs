@@ -52,6 +52,12 @@ pub struct Options {
     /// and the branch it adds to every free are only worth paying for if
     /// something actually allocates from a heap.
     pub heap_support: bool,
+    /// Byte ranges of the source that came from a header rather than an
+    /// implementation file -- `imports::ResolvedSource::header_ranges`.
+    /// Pass-through C from a header goes into the generated header, so every
+    /// file that includes it sees it. Empty for the pure `transpile()` form,
+    /// which has one output file and no such distinction to make.
+    pub header_ranges: Vec<std::ops::Range<usize>>,
 }
 
 /// Full pipeline: parse -> collect -> emit. Returns Ok on success, or the
@@ -158,7 +164,8 @@ pub fn transpile_split_with_options(
     if !diagnostics.is_empty() {
         return Err(diagnostics);
     }
-    let mut result = emit::emit_split(source, &program, origins, &pools);
+    let mut result =
+        emit::emit_split(source, &program, origins, &pools, &options.header_ranges);
     diagnostics.extend(std::mem::take(&mut result.diagnostics));
     if !diagnostics.is_empty() {
         return Err(diagnostics);
