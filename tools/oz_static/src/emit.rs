@@ -2522,6 +2522,7 @@ pub struct EmitOutput {
 pub fn emit(source: &str, program: &Program, pools: &crate::pools::PoolSizes) -> EmitOutput {
     let tree = crate::parse::parse(source);
     let root = tree.root_node();
+    let file_vars = file_scope_vars(root, source, program);
     let mut diags: Vec<Diagnostic> = Vec::new();
     let mut hoisted_blocks: Vec<(String, String)> = Vec::new();
     let mut hoisted_structs: Vec<(String, String)> = Vec::new();
@@ -2613,7 +2614,12 @@ pub fn emit(source: &str, program: &Program, pools: &crate::pools::PoolSizes) ->
             "class_implementation" => {
                 let (name, _, category) = crate::collect::class_header(node, source);
                 let is_category_impl = category.is_some();
-                let ivars_scope = base_scope(&name, program);
+                let mut ivars_scope = base_scope(&name, program);
+        // File-scope statics are visible inside every method too, and an
+        // ivar of the same name shadows one, so these go in first.
+        for (var, ty) in &file_vars {
+            ivars_scope.entry(var.clone()).or_insert_with(|| ty.clone());
+        }
                 let mut ctx = EmitCtx {
                     src: source,
                     program,
@@ -2773,7 +2779,11 @@ pub fn emit(source: &str, program: &Program, pools: &crate::pools::PoolSizes) ->
                     src: source,
                     program,
                     class_name: String::new(),
-                    scope: HashMap::new(),
+                    // No self or ivars here, but a file-scope object
+                    // variable is in scope for a top-level function just as
+                    // much as for a method -- `samples/gpio_demo`'s
+                    // `[led toggle]` sits in `main()`.
+                    scope: file_vars.clone(),
                     locals: std::collections::HashSet::new(),
                     diags: Vec::new(),
                     hoisted_blocks: Vec::new(),
@@ -2923,6 +2933,7 @@ pub fn emit_split(
 ) -> EmitSplitOutput {
     let tree = crate::parse::parse(source);
     let root = tree.root_node();
+    let file_vars = file_scope_vars(root, source, program);
 
     let origin_for = |byte: usize| -> String {
         origins.iter().find(|(_, r)| r.contains(&byte)).map(|(s, _)| s.clone()).unwrap_or_else(|| "main".to_string())
@@ -3033,7 +3044,12 @@ pub fn emit_split(
             "class_implementation" => {
                 let (name, _, category) = crate::collect::class_header(node, source);
                 let is_category_impl = category.is_some();
-                let ivars_scope = base_scope(&name, program);
+                let mut ivars_scope = base_scope(&name, program);
+        // File-scope statics are visible inside every method too, and an
+        // ivar of the same name shadows one, so these go in first.
+        for (var, ty) in &file_vars {
+            ivars_scope.entry(var.clone()).or_insert_with(|| ty.clone());
+        }
                 let mut ctx = EmitCtx {
                     src: source,
                     program,
@@ -3151,7 +3167,11 @@ pub fn emit_split(
                     src: source,
                     program,
                     class_name: String::new(),
-                    scope: HashMap::new(),
+                    // No self or ivars here, but a file-scope object
+                    // variable is in scope for a top-level function just as
+                    // much as for a method -- `samples/gpio_demo`'s
+                    // `[led toggle]` sits in `main()`.
+                    scope: file_vars.clone(),
                     locals: HashSet::new(),
                     diags: Vec::new(),
                     hoisted_blocks: Vec::new(),
@@ -3165,16 +3185,21 @@ pub fn emit_split(
                     pools,
                     arc_scopes: Vec::new(),
                 };
-                let mut text = node_text(node, source).to_string();
+                let sig_edits = class_tag_edits(node, source, program);
+                let mut text = apply_edits(source, node.start_byte(), node.end_byte(), &sig_edits);
                 let mut c2 = node.walk();
                 if let Some(body) = node.children(&mut c2).find(|c| c.kind() == "compound_statement") {
+                    // The signature is tagged either way; the body is
+                    // rendered by the ordinary machinery, which already
+                    // resolves types properly.
+                    let prefix =
+                        apply_edits(source, node.start_byte(), body.start_byte(), &sig_edits);
                     if needs_translation(body) {
                         collect_local_decls(body, &mut ctx);
                         let rendered_body = render_body_with_comments(body, &mut ctx);
-                        if rendered_body != node_text(body, source) {
-                            let prefix = &source[node.start_byte()..body.start_byte()];
-                            text = format!("{}{}", prefix, rendered_body);
-                        }
+                        text = format!("{}{}", prefix, rendered_body);
+                    } else {
+                        text = format!("{}{}", prefix, node_text(body, source));
                     }
                 }
                 diags.extend(ctx.diags);
@@ -3197,7 +3222,17 @@ pub fn emit_split(
                 // per-origin files, only that origin's own `.h` -- which
                 // every other file `#include`s when it needs that
                 // origin's class -- can still give it the same reach.
-                let text = node_text(node, source).trim();
+                // A plain top-level declaration still needs its class
+                // names tagged -- `static OZHeap *sHeap;` is not valid C
+                // (see `class_tag_edits`). Everything else here is trivia
+                // and passes through untouched.
+                let owned_text = if node.kind() == "declaration" {
+                    let edits = class_tag_edits(node, source, program);
+                    apply_edits(source, node.start_byte(), node.end_byte(), &edits)
+                } else {
+                    node_text(node, source).to_string()
+                };
+                let text = owned_text.trim();
                 if text.is_empty() {
                     continue;
                 }
@@ -3375,6 +3410,106 @@ pub fn emit_split(
     EmitSplitOutput { files, companion_h, companion_c, diagnostics: diags }
 }
 
+/// Byte-range edits that give every bare class name in `node` its `struct`
+/// tag, as absolute offsets into the source.
+///
+/// A class generates `struct Name`, never a typedef, so any type position
+/// that keeps the ObjC spelling is invalid C: `error: must use 'struct' tag
+/// to refer to type 'Sensor'`. Method signatures, ivars, locals and casts
+/// all route through `collect::render_type` already; the two positions that
+/// did not were a plain top-level declaration (`samples/heap_alloc`'s
+/// `static OZHeap *sHeap;`) and a free function's own signature
+/// (`samples/arc_demo`'s `static Sensor *createSensor(int v)`), because both
+/// were copied through verbatim.
+///
+/// A name already under a `struct_specifier` is skipped, so an
+/// already-tagged `struct OZHeap *` is left alone rather than becoming
+/// `struct struct OZHeap *`.
+fn class_tag_edits(node: Node, src: &str, program: &Program) -> Vec<(Range<usize>, String)> {
+    fn walk(
+        node: Node,
+        src: &str,
+        program: &Program,
+        out: &mut Vec<(Range<usize>, String)>,
+    ) {
+        // Inside a struct_specifier the tag is already present, and a
+        // generic_specifier's arguments are erased rather than tagged.
+        if matches!(node.kind(), "struct_specifier" | "generic_specifier") {
+            return;
+        }
+        if node.kind() == "type_identifier" {
+            let name = &src[node.byte_range()];
+            if program.is_class(name) {
+                out.push((node.byte_range(), format!("struct {}", name)));
+                return;
+            }
+        }
+        let mut cursor = node.walk();
+        let children: Vec<Node> = node.children(&mut cursor).collect();
+        for child in children {
+            walk(child, src, program, out);
+        }
+    }
+    let mut out = Vec::new();
+    walk(node, src, program, &mut out);
+    out
+}
+
+/// Apply `edits` (absolute source offsets) to the text of `start..end`.
+fn apply_edits(src: &str, start: usize, end: usize, edits: &[(Range<usize>, String)]) -> String {
+    let mut text = src[start..end].to_string();
+    let mut relevant: Vec<&(Range<usize>, String)> =
+        edits.iter().filter(|(r, _)| r.start >= start && r.end <= end).collect();
+    // Back to front, so earlier offsets stay valid.
+    relevant.sort_by_key(|(r, _)| std::cmp::Reverse(r.start));
+    for (range, replacement) in relevant {
+        text.replace_range(range.start - start..range.end - start, replacement);
+    }
+    text
+}
+
 fn base_scope(class_name: &str, program: &Program) -> HashMap<String, String> {
     program.all_ivars(class_name).into_iter().collect()
+}
+
+/// File-scope object variables, as `name -> C type`.
+///
+/// A `static Widget *g_widget;` at translation-unit scope is visible to every
+/// method body and to plain top-level functions, but nothing collected it, so
+/// a send to it reported the receiver type as `id` and was rejected:
+/// "cannot statically resolve the receiver type for selector 'toggle'".
+/// `samples/gpio_demo` (`static GPIOOutput *led;`) and `samples/heap_alloc`
+/// (`static OZHeap *sHeap;`) are both that shape, and the oracle collects
+/// file-scope statics for the same reason (`collect.py`).
+///
+/// Only declarations at the top level are considered; anything nested is a
+/// local and is already handled by `collect_local_decls`.
+fn file_scope_vars(root: Node, ctx_src: &str, program: &Program) -> HashMap<String, String> {
+    let known: HashSet<String> = program.classes.keys().cloned().collect();
+    let mut out = HashMap::new();
+    let mut cursor = root.walk();
+    let children: Vec<Node> = root.children(&mut cursor).collect();
+    for child in children {
+        if child.kind() != "declaration" {
+            continue;
+        }
+        let (type_text, stars) = crate::collect::extract_type_and_stars(child, ctx_src);
+        if stars == 0 || !known.contains(&type_text) {
+            continue;
+        }
+        let c_type = crate::collect::render_type(&type_text, stars, &known);
+        let mut c2 = child.walk();
+        let declarators: Vec<Node> = child.children(&mut c2).collect();
+        for declarator in declarators {
+            if !matches!(declarator.kind(), "init_declarator" | "identifier" | "pointer_declarator")
+            {
+                continue;
+            }
+            let name = crate::collect::find_declared_name(declarator, ctx_src);
+            if !name.is_empty() {
+                out.insert(name, c_type.clone());
+            }
+        }
+    }
+    out
 }

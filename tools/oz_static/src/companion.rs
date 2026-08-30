@@ -664,7 +664,13 @@ below naming a type one of them declares sees the real definition */\n",
             h.push_str(&format!(
                 "struct {root} *oz_static_retain(struct {root} *self);\n\
                  void oz_static_release(struct {root} *self);\n\
-                 int oz_static_retain_count(struct {root} *self);\n",
+                 int oz_static_retain_count(struct {root} *self);\n\
+                 /* Refcount introspection under the name the legacy runtime used, so\n \
+                 * source written against it keeps compiling (samples/mem_demo). A\n \
+                 * function rather than the oracle's macro, because the real\n \
+                 * src/OZObject.m already declares it as one -- a macro of the same\n \
+                 * name would be expanded in that declaration and break it. */\n\
+                 unsigned int __objc_refcount_get(id obj);\n",
                 root = name
             ));
             if root_needs_synthetic_dealloc {
@@ -714,6 +720,13 @@ not tied to one (not from source) */\n",
         c.push_str(&format!(
             "struct {root} *oz_static_retain(struct {root} *self)\n{{\n\
              \tif (self) {{\n\t\toz_atomic_inc(&self->oz_refcount);\n\t}}\n\treturn self;\n}}\n\n",
+            root = root
+        ));
+        c.push_str(&format!(
+            "/* Refcount introspection under the legacy runtime's name -- see the\n * \
+declaration in the companion header for why this is a function. */\n\
+             unsigned int __objc_refcount_get(id obj)\n{{\n\
+             \treturn (unsigned int)oz_static_retain_count((struct {root} *)obj);\n}}\n\n",
             root = root
         ));
 
