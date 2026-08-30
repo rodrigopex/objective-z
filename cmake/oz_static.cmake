@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # oz_static.cmake — Transpile Objective-C (.m) to plain C via the OZ-091
-# Rust spike (`ozcc`) instead of the Python AST-based pipeline.
+# Rust spike (`oz2c`) instead of the Python AST-based pipeline.
 #
 # Pilot scope only: a single entry `.m` file (sibling `.m`s are pulled in
 # automatically via `#import`, see tools/oz_static/src/imports.rs), no
@@ -43,14 +43,14 @@ function(objz_transpile_sources_static target)
             "(sibling .m files are pulled in automatically via #import)")
     endif()
 
-    # ── Build ozcc once (debug profile: configure-time compile speed
+    # ── Build oz2c once (debug profile: configure-time compile speed
     #    matters here, not the transpiler's own runtime speed) ────────
     set(_oz_static_dir ${_mod}/tools/oz_static)
-    set(_ozcc ${_oz_static_dir}/target/debug/ozcc)
+    set(_oz2c ${_oz_static_dir}/target/debug/oz2c)
     # Zephyr's own toolchain cmake exports CC/CFLAGS (the ARM
     # cross-compiler) into ENV, which cc-rs (tree-sitter-objc's C parser
     # build script) would otherwise inherit -- unset them so cargo builds
-    # ozcc, a host tool, with the host's own native compiler.
+    # oz2c, a host tool, with the host's own native compiler.
     execute_process(
         COMMAND ${CMAKE_COMMAND} -E env --unset=CC --unset=CXX --unset=CFLAGS --unset=CXXFLAGS
                 --unset=LDFLAGS --unset=AR --unset=RANLIB --unset=NM
@@ -58,22 +58,22 @@ function(objz_transpile_sources_static target)
         RESULT_VARIABLE _cargo_rc
     )
     if(NOT _cargo_rc EQUAL 0)
-        message(FATAL_ERROR "objz_transpile_sources_static: cargo build of ozcc failed")
+        message(FATAL_ERROR "objz_transpile_sources_static: cargo build of oz2c failed")
     endif()
 
     get_filename_component(_src_abs ${_sources} ABSOLUTE)
     get_filename_component(_src_dir ${_src_abs} DIRECTORY)
 
-    set(_ozcc_flags -I ${_mod}/include/oz_sdk --impl-dir ${_src_dir})
+    set(_oz2c_flags -I ${_mod}/include/oz_sdk --impl-dir ${_src_dir})
     foreach(_dir ${OZT_INCLUDE_DIRS})
-        list(APPEND _ozcc_flags -I ${_dir})
+        list(APPEND _oz2c_flags -I ${_dir})
     endforeach()
     get_target_property(_target_incs ${target} INCLUDE_DIRECTORIES)
     if(_target_incs)
         foreach(_dir ${_target_incs})
             string(FIND "${_dir}" "$<" _is_genexpr)
             if(_is_genexpr EQUAL -1)
-                list(APPEND _ozcc_flags -I ${_dir})
+                list(APPEND _oz2c_flags -I ${_dir})
             endif()
         endforeach()
     endif()
@@ -94,11 +94,11 @@ function(objz_transpile_sources_static target)
 
     # ── Configure-time: run once to discover output files ─────────────
     execute_process(
-        COMMAND ${_ozcc} ${_ozcc_flags} ${_src_abs} ${_outdir} --manifest ${_manifest}
+        COMMAND ${_oz2c} ${_oz2c_flags} ${_src_abs} ${_outdir} --manifest ${_manifest}
         RESULT_VARIABLE _rc
     )
     if(NOT _rc EQUAL 0)
-        message(FATAL_ERROR "objz_transpile_sources_static: ozcc failed at configure time")
+        message(FATAL_ERROR "objz_transpile_sources_static: oz2c failed at configure time")
     endif()
     file(STRINGS ${_manifest} _gen_files)
 
@@ -108,9 +108,9 @@ function(objz_transpile_sources_static target)
         COMMAND ${CMAKE_COMMAND} -E env --unset=CC --unset=CXX --unset=CFLAGS --unset=CXXFLAGS
                 --unset=LDFLAGS --unset=AR --unset=RANLIB --unset=NM
                 cargo build --manifest-path ${_oz_static_dir}/Cargo.toml
-        COMMAND ${_ozcc} ${_ozcc_flags} ${_src_abs} ${_outdir} --manifest ${_manifest}
+        COMMAND ${_oz2c} ${_oz2c_flags} ${_src_abs} ${_outdir} --manifest ${_manifest}
         DEPENDS ${_src_abs}
-        COMMENT "oz_static: generating C from ObjC (ozcc)"
+        COMMENT "oz_static: generating C from ObjC (oz2c)"
     )
 
     add_custom_target(oz_static_transpile_gen DEPENDS ${_gen_files})

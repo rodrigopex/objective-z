@@ -12,7 +12,7 @@ use std::process::ExitCode;
 
 fn usage() -> ExitCode {
     eprintln!(
-        "usage: ozcc [-I <dir>]... [--impl-dir <dir>]... [--manifest <path>] <input.m> <outdir>"
+        "usage: oz2c [-I <dir>]... [--impl-dir <dir>]... [--manifest <path>] <input.m> <outdir>"
     );
     ExitCode::FAILURE
 }
