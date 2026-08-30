@@ -226,10 +226,24 @@ function(objz_transpile_sources_static target)
             target_sources(${target} PRIVATE ${_f})
         endif()
     endforeach()
-    target_include_directories(${target} PRIVATE ${_outdir} ${_outdir}/Foundation)
+    # BEFORE, not appended: a generated header is the translation of the
+    # source header it was made from and carries the same basename, so both
+    # can be on the include path at once. A sample that does
+    # `target_include_directories(app PRIVATE include)` gets its own
+    # directory searched first, and `#include "Car.h"` from generated C then
+    # found `samples/*/include/Car.h` -- the Objective-C original, whose
+    # `#import <objc/objc.h>` the ARM compiler cannot resolve. The generated
+    # translation has to win.
+    target_include_directories(${target} BEFORE PRIVATE ${_outdir} ${_outdir}/Foundation)
 
     # PAL: select Zephyr backend and provide include path
     target_include_directories(${target} PRIVATE ${_mod}/include)
+    # oz_sdk too, for the SDK headers oz2c resolves but deliberately does
+    # not splice: a header that reaches no Objective-C is left as the
+    # ordinary `#include` it was, so the path it names has to resolve at
+    # compile time as well. `samples/zbus_service` has
+    # `#include <Foundation/OZLog.h>`, which lives only here.
+    target_include_directories(${target} PRIVATE ${_mod}/include/oz_sdk)
     target_compile_definitions(${target} PRIVATE OZ_PLATFORM_ZEPHYR)
     if(CONFIG_OBJZ_HEAP)
         target_compile_definitions(${target} PRIVATE OZ_HEAP_SUPPORT)

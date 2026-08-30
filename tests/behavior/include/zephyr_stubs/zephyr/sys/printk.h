@@ -9,7 +9,7 @@
  * `printk` is a *prototype*, not a macro, and its definition lives in
  * `zephyr_stubs.c` for a caller to link. A macro would collide with
  * transpiled sources that declare the function themselves --
- * `samples/pool_demo/src/main.m` writes `int printk(const char *fmt, ...);`
+ * `samples/pool_demo/src/main.m` writes `void printk(const char *fmt, ...);`
  * so its Clang AST dump resolves without Zephyr headers -- whereas an
  * identical redeclaration of a prototype is simply legal C.
  *
@@ -23,7 +23,7 @@
 #include <stdarg.h>
 #include <stdio.h>
 
-int printk(const char *fmt, ...);
+void printk(const char *fmt, ...);
 
 #define snprintk(buf, sz, ...)   snprintf((buf), (sz), __VA_ARGS__)
 #define vsnprintk(buf, sz, f, a) vsnprintf((buf), (sz), (f), (a))

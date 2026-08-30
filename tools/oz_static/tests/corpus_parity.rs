@@ -21,28 +21,26 @@
 //      an allowlist rather than a skip, so anything new fails loudly and
 //      fixing one of these fails too, forcing the list to be updated.
 //
-// Not covered here: *running* the cases. Each has a Unity `_test.c`
-// driver, and wiring those up (plus a generated test main) is the
-// cross-backend behavioral comparison this does not yet do. Compiling is
-// the strongest check available without that harness, and it is
-// deliberately not described as behavioral equivalence.
+// Not covered here: *running* the cases. That is
+// `tests/tools/cross_backend.py`'s job -- it drives each case through both
+// backends over the same Unity driver and diffs the results. This file's
+// claim is narrower on purpose: the input was understood and the output is
+// real C, which is not the same as behavioural equivalence.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// Cases whose generated C does not compile yet, each with the reason.
 /// The cause is understood; it is not a mystery.
-const KNOWN_CC_FAILURES: &[(&str, &str)] = &[
-    // Two headers define `struct oz_heap_inner` -- OZHeap.h and
-    // platform/oz_platform.h -- both guarded on OZ_HEAP_INNER_DEFINED,
-    // which neither defines (only oz_platform_{host,zephyr}.h do, behind
-    // OZ_HEAP_SUPPORT), so both fire. That is a defect in the SDK headers
-    // rather than in what oz_static emits: the generated header contains
-    // exactly one definition. Reaching a working build here also needs
-    // the heap-support path (`allocWithHeap:`), which oz_static does not
-    // emit at all.
-    ("memory/heap_alloc.m", "oz_heap_inner redefinition in SDK headers; no allocWithHeap: support"),
-];
+///
+/// Empty, and the test asserts that a listed case *still* fails -- so this
+/// cannot quietly decay into skipped cases, and emptying it was forced
+/// rather than chosen. The last entry was `memory/heap_alloc.m`, which
+/// needed two things that have since landed: `+allocWithHeap:` support, and
+/// a fix to the SDK headers where both `OZHeap.h` and
+/// `platform/oz_platform.h` defined `struct oz_heap_inner` under a guard
+/// neither of them set.
+const KNOWN_CC_FAILURES: &[(&str, &str)] = &[];
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")

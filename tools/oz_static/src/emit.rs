@@ -228,12 +228,47 @@ pub(crate) fn selector_to_c(selector: &str) -> String {
 /// style (`TYPE NAME`), but a function-pointer type needs the name embedded
 /// mid-declarator (`RET (*NAME)(ARGS)`) -- `detect_block_param_type` signals
 /// that by leaving `PARAM_NAME_PLACEHOLDER` in the type text.
-pub(crate) fn render_param(ptype: &str, pname: &str) -> String {
+pub(crate) fn render_param(ptype: &str, pname: &str, root: Option<&str>) -> String {
     if ptype.contains(crate::collect::PARAM_NAME_PLACEHOLDER) {
-        ptype.replace(crate::collect::PARAM_NAME_PLACEHOLDER, pname)
-    } else {
-        format!("{} {}", ptype, pname)
+        // A function-pointer parameter: its own parameter list came through
+        // verbatim from source (`collect::detect_block_param_type`), so an
+        // `id` in it is still spelled `id`. It has to become the root class
+        // pointer, for the same reason a function-pointer *ivar*'s does --
+        // see `collect_ivar_lowering_edits`. The two must agree: an
+        // `-initWithBlock:` parameter is assigned straight into the matching
+        // field, and with only the field lowered the assignment itself
+        // stopped compiling.
+        let rendered = ptype.replace(crate::collect::PARAM_NAME_PLACEHOLDER, pname);
+        return match root {
+            Some(root) => replace_bare_id(&rendered, &format!("struct {} *", root)),
+            None => rendered,
+        };
     }
+    format!("{} {}", ptype, pname)
+}
+
+/// Replace `id` where it stands as a whole word, leaving `id`-containing
+/// identifiers (`idx`, `valid`, a parameter actually named `id`) alone.
+fn replace_bare_id(text: &str, replacement: &str) -> String {
+    let is_ident = |c: char| c.is_ascii_alphanumeric() || c == '_';
+    let mut out = String::with_capacity(text.len());
+    let bytes: Vec<char> = text.chars().collect();
+    let mut i = 0;
+    while i < bytes.len() {
+        let at_word = bytes[i] == 'i'
+            && i + 1 < bytes.len()
+            && bytes[i + 1] == 'd'
+            && (i == 0 || !is_ident(bytes[i - 1]))
+            && (i + 2 >= bytes.len() || !is_ident(bytes[i + 2]));
+        if at_word {
+            out.push_str(replacement);
+            i += 2;
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    out
 }
 
 /// Class methods get a `_cls` suffix so `+foo` and `-foo` on the same
@@ -2121,7 +2156,20 @@ fn render_block(node: Node, ctx: &mut EmitCtx) -> (String, String) {
     let mut cursor = node.walk();
     let found_plist = node.children(&mut cursor).find(|c| c.kind() == "parameter_list");
     let params = match found_plist {
-        Some(plist) => node_text(plist, ctx.src).to_string(),
+        // An `id` parameter is spelled as the root class pointer, matching
+        // the function-pointer *type* this block will be assigned or passed
+        // to (see `collect_ivar_lowering_edits` and `render_param`). The
+        // three have to agree: `samples/transpiled_generics` passes
+        // `^(id obj, unsigned int idx, BOOL *stop) { ... }` to
+        // `-enumerateObjectsUsingBlock:`, and with only the parameter type
+        // lowered the call stopped compiling on the function pointer's type.
+        Some(plist) => {
+            let text = node_text(plist, ctx.src).to_string();
+            match ctx.program.root_class() {
+                Some(root) => replace_bare_id(&text, &format!("struct {} *", root)),
+                None => text,
+            }
+        }
         None => "(void)".to_string(),
     };
 
@@ -2549,6 +2597,44 @@ fn lower_ivar_decl(instance_variable: Node, ctx: &mut EmitCtx) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ").replace(" ;", ";")
 }
 
+/// Every `parameter_list` under `node`.
+fn find_parameter_lists<'a>(node: Node<'a>, out: &mut Vec<Node<'a>>) {
+    if node.kind() == "parameter_list" {
+        out.push(node);
+        return;
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        find_parameter_lists(child, out);
+    }
+}
+
+/// Rewrite every bare `id` type name under `node` to `replacement`.
+///
+/// Both node kinds a bare `id` can appear as are handled: `type_identifier`
+/// where the grammar reads it as an ordinary type name, and
+/// `typedefed_specifier` where it reads it as a typedef reference. A
+/// declarator's own `*` is a separate token and is left alone, so `id *`
+/// becomes `struct Root **` as it should.
+fn rewrite_id_types(
+    node: Node,
+    src: &str,
+    origin: usize,
+    replacement: &str,
+    edits: &mut Vec<(Range<usize>, String)>,
+) {
+    if matches!(node.kind(), "type_identifier" | "typedefed_specifier")
+        && node_text(node, src).trim() == "id"
+    {
+        edits.push((node.start_byte() - origin..node.end_byte() - origin, replacement.to_string()));
+        return;
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        rewrite_id_types(child, src, origin, replacement, edits);
+    }
+}
+
 fn collect_ivar_lowering_edits(
     node: Node,
     ctx: &mut EmitCtx,
@@ -2569,6 +2655,41 @@ fn collect_ivar_lowering_edits(
                     range.start - origin..range.end - origin,
                     format!("struct {}", name),
                 ));
+            }
+        }
+
+        // A function-pointer ivar's own parameter list: an `id` there is
+        // spelled as the root class pointer rather than left to the `id`
+        // typedef.
+        //
+        // The field's type is what external C code has to match when it
+        // assigns to the field, so it has to be the honest one. `OZDefer`'s
+        // ivar is `void (^_block)(id)`, and with `id` left as a typedef for
+        // `void *` the field came out `void (*)(void *)` -- so assigning an
+        // ordinary `void (*)(struct OZObject *)` function to it was
+        // "incompatible function pointer types", which is exactly what
+        // `tests/behavior/cases/foundation/defer_block_ivar`'s driver does.
+        // The Python backend's field type is `void (*)(struct OZObject *)`
+        // too, since its own `id` typedef is `struct OZObject *`.
+        //
+        // Not in `collect::render_type`, which keeps resolving a *method's*
+        // `id` to `void *`: a method's arguments pass through oz_static's own
+        // casts at every call site, and `void *` is what lets a concrete
+        // class pointer reach an `id` parameter without one. Making `id`
+        // itself the root pointer everywhere was tried and is worse -- it
+        // turns the ordinary Objective-C idiom of passing `Foo *` where `id`
+        // is expected into a warning, in code that has no call site to cast
+        // at either.
+        //
+        // The parameter list hangs off this declaration, not off the
+        // `block_pointer_declarator`, whose only children are the `^` and
+        // the field name.
+        if let Some(root) = ctx.program.root_class() {
+            let replacement = format!("struct {} *", root);
+            let mut lists = Vec::new();
+            find_parameter_lists(node, &mut lists);
+            for list in lists {
+                rewrite_id_types(list, ctx.src, origin, &replacement, edits);
             }
         }
     }
@@ -2750,12 +2871,12 @@ fn render_interface(node: Node, ctx: &mut EmitCtx, program: &Program) -> (String
             let sig = crate::collect::extract_method_sig(child, ctx.src, &name, &known);
             declared.insert((sig.selector.clone(), sig.is_class_method));
             decls.push_str(&format!("/* {} */\n", one_line(node_text(child, ctx.src))));
-            decls.push_str(&render_prototype(&name, &sig));
+            decls.push_str(&render_prototype(&name, &sig, ctx.program.root_class()));
         }
     }
     for m in &info.methods {
         if !declared.contains(&(m.selector.clone(), m.is_class_method)) {
-            decls.push_str(&render_prototype(&name, m));
+            decls.push_str(&render_prototype(&name, m, ctx.program.root_class()));
         }
     }
 
@@ -2825,7 +2946,11 @@ fn render_interface(node: Node, ctx: &mut EmitCtx, program: &Program) -> (String
     }
 }
 
-pub(crate) fn render_prototype(class_name: &str, m: &crate::model::MethodSig) -> String {
+pub(crate) fn render_prototype(
+    class_name: &str,
+    m: &crate::model::MethodSig,
+    root: Option<&str>,
+) -> String {
     let mut params = String::new();
     if !m.is_class_method {
         params.push_str(&format!("struct {} *self", class_name));
@@ -2834,7 +2959,7 @@ pub(crate) fn render_prototype(class_name: &str, m: &crate::model::MethodSig) ->
         if !params.is_empty() {
             params.push_str(", ");
         }
-        params.push_str(&render_param(ptype, pname));
+        params.push_str(&render_param(ptype, pname, root));
     }
     if params.is_empty() {
         params = "void".to_string();
@@ -2856,7 +2981,7 @@ fn render_category_interface(node: Node, src: &str, name: &str, program: &Progra
             let known: std::collections::HashSet<String> = program.classes.keys().cloned().collect();
             let sig = crate::collect::extract_method_sig(child, src, name, &known);
             decls.push_str(&format!("/* {} */\n", one_line(node_text(child, src))));
-            decls.push_str(&render_prototype(name, &sig));
+            decls.push_str(&render_prototype(name, &sig, program.root_class()));
         }
     }
     let _ = info; // reserved: category-only method filtering could go here
@@ -2892,7 +3017,7 @@ fn render_synthesized_accessor(
         (sel, c_type.clone(), format!("struct {} *self", class_name))
     } else {
         let sel = prop.setter_sel.clone().unwrap_or_else(|| crate::collect::default_setter_sel(&prop.name));
-        (sel, "void".to_string(), format!("struct {} *self, {}", class_name, render_param(c_type, &prop.name)))
+        (sel, "void".to_string(), format!("struct {} *self, {}", class_name, render_param(c_type, &prop.name, program.root_class())))
     };
     let fn_name = method_fn_name(class_name, &selector, false);
 
@@ -2985,7 +3110,7 @@ fn render_method_definition(
         if !sig_params.is_empty() {
             sig_params.push_str(", ");
         }
-        sig_params.push_str(&render_param(ptype, pname));
+        sig_params.push_str(&render_param(ptype, pname, ctx.program.root_class()));
     }
     if sig_params.is_empty() {
         sig_params = "void".to_string();

@@ -31,7 +31,7 @@ struct msg_temperature_service_report {
 
 ZBUS_CHAN_DECLARE(chan_temperature_service_invoke, chan_temperature_service_report);
 
-@interface TemperatureService: Object <SingletonProtocol>
+@interface TemperatureService: OZObject <SingletonProtocol>
 
 @property (nonatomic, readonly, unsafe_unretained) const struct zbus_channel *invokeChannel;
 @property (nonatomic, readonly, unsafe_unretained) const struct zbus_channel *reportChannel;

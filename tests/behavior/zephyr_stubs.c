@@ -12,13 +12,11 @@
 
 /* Declared by <zephyr/sys/printk.h>, and often redeclared by transpiled
  * sources themselves so their Clang AST dump resolves without Zephyr. */
-int printk(const char *fmt, ...)
+void printk(const char *fmt, ...)
 {
 	va_list args;
-	int written;
 
 	va_start(args, fmt);
-	written = vprintf(fmt, args);
+	(void)vprintf(fmt, args);
 	va_end(args);
-	return written;
 }

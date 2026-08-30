@@ -2,7 +2,7 @@
 
 #import "OZLed.h"
 
-int printk(const char *fmt, ...);
+void printk(const char *fmt, ...);
 
 @implementation OZHelper
 - (instancetype)initWithValue:(int)value andHelper:(OZHelper *)helper

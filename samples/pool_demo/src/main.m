@@ -13,7 +13,7 @@
 /* printk declared here so Clang AST dump works without Zephyr generated
  * headers.  The transpiler emits the real #include <zephyr/sys/printk.h>
  * in the generated C output. */
-int printk(const char *fmt, ...);
+void printk(const char *fmt, ...);
 
 /* ── Sensor class ─────────────────────────────────────────────────── */
 

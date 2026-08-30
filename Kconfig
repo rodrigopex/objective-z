@@ -11,19 +11,34 @@ if OBJZ
 
 choice OBJZ_BACKEND
 	prompt "Transpiler backend"
-	default OBJZ_BACKEND_PYTHON
+	default OBJZ_BACKEND_STATIC
 	help
 	  Selects which .m -> C transpiler generates sources for this
-	  target: the mature Python pipeline (oz_transpile) or the OZ-091
-	  Rust spike (oz_static). Only the Python backend currently
-	  supports POOL_SIZES, heap-support, and multi-include-dir
-	  samples.
+	  target: the Rust pipeline (oz_static / oz2c) or the older Python
+	  one (oz_transpile). Both support POOL_SIZES, heap allocation
+	  (CONFIG_OBJZ_HEAP), multiple entry files and multiple include
+	  directories.
 
-config OBJZ_BACKEND_PYTHON
-	bool "Python (oz_transpile) - default, full feature support"
+	  The two are compared case by case against the shared behaviour
+	  corpus by tests/tools/cross_backend.py, which runs each of its 73
+	  cases through both and diffs the results; see
+	  tools/oz_static/PARITY.md for what that measures and what it does
+	  not. Note in particular that the Rust backend's on-target
+	  behaviour is not covered by that harness, which is a host
+	  comparison.
 
 config OBJZ_BACKEND_STATIC
-	bool "Rust (oz_static) - OZ-091 spike, single-entry-file samples only"
+	bool "Rust (oz_static)"
+	help
+	  Rejects anything outside its supported subset with a located
+	  error rather than emitting code that misbehaves. Reflection and
+	  @selector are the notable exclusions -- see issues/OZ-101.md.
+
+config OBJZ_BACKEND_PYTHON
+	bool "Python (oz_transpile)"
+	help
+	  The original pipeline. Reads a Clang AST dump directly and emits
+	  from templates.
 
 endchoice
 
