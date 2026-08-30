@@ -1,0 +1,32 @@
+sample:
+  description: Request/report service over zbus, driven from Objective-C
+  name: ObjZ zbus Service
+common:
+  tags: objz zbus
+  platform_allow:
+    - mps2/an385
+  integration_platforms:
+    - mps2/an385
+  harness: console
+  harness_config:
+    type: multi_line
+    ordered: true
+    # One full request cycle. The temperature values are random
+    # (CONFIG_TEST_RANDOM_GENERATOR), so only their shape is asserted --
+    # pinning them would make the check depend on the RNG.
+    #
+    # All three reporting paths appear, which is what the sample exists to
+    # show: the zbus listener observing the report channel, the synchronous
+    # -requestTemperatureWithRef:andTimeout:, and the block-callback variant.
+    # The program then loops forever, so the harness matches on the first
+    # cycle.
+    regex:
+      - "Requesting temperature:"
+      - "enable observe report channel"
+      - "\\+ \\[listener\\] Temperature: [0-9]+"
+      - "disable observe report channel"
+      - "\\+ \\[main\\] Temperature: [0-9]+"
+      - "\\+ \\[block\\] Temperature: [0-9]+"
+tests:
+  sample.objz.zbus_service:
+    tags: objz zbus

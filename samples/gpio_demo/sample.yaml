@@ -1,0 +1,29 @@
+sample:
+  description: GPIO output/input wrappers over the Zephyr driver API
+  name: ObjZ GPIO Demo
+common:
+  tags: objz gpio
+  platform_allow:
+    - mps2/an385
+  integration_platforms:
+    - mps2/an385
+  harness: console
+  harness_config:
+    type: multi_line
+    ordered: true
+    # The LED path only. mps2/an385's GPIO driver has no interrupt support,
+    # so `gpio_add_callback_dt` returns -ENOTSUP and "Button configured"
+    # never prints on this board -- the board's limitation, not the sample's.
+    # Asserting the failure instead would be worse: it would hold only while
+    # GPIO interrupts stay unsupported, and would mask the button path
+    # regressing on a board that does support them.
+    regex:
+      - "=== GPIO Demo ==="
+      - "LED configured"
+      - "LED on"
+      - "LED off"
+      - "LED toggled"
+      - "=== GPIO Demo complete ==="
+tests:
+  sample.objz.gpio_demo:
+    tags: objz gpio

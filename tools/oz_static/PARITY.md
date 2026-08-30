@@ -548,14 +548,27 @@ than exit status.
 **All 13 samples build for ARM**, and `arc_demo`'s output under QEMU is
 byte-identical to the Python backend's.
 
-**11 of 11 twister configurations pass** — every sample that has a
-`sample.yaml`, built, run and output-checked. The other two build but carry
-no `sample.yaml`, so twister does not cover them: `gpio_demo` wants real
-GPIO, and `zbus_service` has none.
+**13 of 13 twister configurations pass** — every sample, built, run under
+QEMU and output-checked. `gpio_demo` and `zbus_service` had no `sample.yaml`
+at all and so were invisible to the harness; both have one now.
 
-Which backend each build actually used was verified rather than assumed: all
-11 resolve `CONFIG_OBJZ_BACKEND_STATIC=y`, produce `oz_static_generated/`,
-and mention `oz_transpile` nowhere in their build logs.
+- `gpio_demo` asserts the LED path only. mps2/an385's GPIO driver has no
+  interrupt support, so `gpio_add_callback_dt` returns `-ENOTSUP` and
+  "Button configured" never prints on this board. Asserting that failure
+  would be worse than omitting it: the check would hold only while GPIO
+  interrupts stay unsupported, and would mask the button path regressing on
+  a board that has them.
+- `zbus_service` asserts one full request cycle across all three reporting
+  paths — the zbus listener, the synchronous
+  `-requestTemperatureWithRef:andTimeout:`, and the block-callback variant.
+  Temperature values are random (`CONFIG_TEST_RANDOM_GENERATOR`), so only
+  their shape is matched; pinning them would make the check depend on the
+  RNG.
+
+Which backend each build actually used was verified rather than assumed:
+every one resolves `CONFIG_OBJZ_BACKEND_STATIC=y`, produces
+`oz_static_generated/`, and mentions `oz_transpile` nowhere in its build
+log.
 
 Twister found two things a plain `west build` of the same samples did not:
 
@@ -635,6 +648,22 @@ staleness, four of them nothing to do with any backend.
 | `ZBUS_CHAN_DECLARE(...)` in a header did not reach other origins | yes — gap P |
 
 It builds now.
+
+## The Python backend still passes its own suites
+
+Making oz_static the default changed shared files -- `platform/oz_platform.h`
+and its two backends, `oz_sdk/Foundation/OZHeap.h`, the host Zephyr stubs,
+and four sample sources. Those are the Python pipeline's inputs too, so its
+own suites were re-run rather than assumed unaffected:
+
+| Suite | Result |
+| --- | --- |
+| `just test-transpiler` (`tools/oz_transpile/tests/`) | 539 passed |
+| `just test-behavior` (`tests/behavior/`) | 73 passed |
+| `just test-adapted` (`tests/adapted/`) | 40 passed |
+
+All three green, so nothing in the shared surface regressed for that
+backend.
 
 ## Behavior corpus (73 cases)
 
