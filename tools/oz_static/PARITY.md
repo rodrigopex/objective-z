@@ -539,6 +539,23 @@ say the Zephyr path has not been exercised at all:
   function on the other), so the incompatibility is the two `#include`
   lines and nothing more. No sample selects `CONFIG_OBJZ_BACKEND_STATIC`,
   which is why this has gone unnoticed; it is not fixed here.
+
+  Making the file a `.m` and letting each backend transpile it would give
+  oz_static exactly what it needs -- a transpiled file already includes its
+  own dispatch header, so both stale includes could go -- but it does not
+  work for the Python backend today. That backend *does* model top-level C
+  functions (`collect.py::_collect_function`), yet it takes their parameters
+  from `ParmVarDecl` nodes alone and has no variadic support anywhere: no
+  `isVariadic`, no `...`, and every signature is built as
+  `", ".join(p.oz_type.c_param_decl(p.name) for p in func.params)`
+  (`emit.py:567`, `:795`, `:858`). `void OZLog(const char *fmt, ...)` would
+  silently lose its varargs, leaving the body's `va_start(args, fmt)`
+  undefined. OZLog is the one file least suited to the conversion, being
+  inherently variadic.
+
+  The cheap fix, if this is worth closing: make the two includes conditional
+  on a macro `cmake/oz_static.cmake` defines. Five lines in one shared file,
+  no emitter change on either side, one implementation.
 - **`cmake/oz_static.cmake` passes no `--ast`.** So the production build
   path gets none of the Clang ownership facts, and `--ast` support is
   exercised only by the corpus harness and the sample sweep. Since
