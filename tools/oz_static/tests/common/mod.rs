@@ -21,6 +21,23 @@ fn include_dir() -> PathBuf {
 /// the real PAL (host backend), link, run, and return captured stdout.
 /// Panics with full diagnostics/compiler output on any failure.
 pub fn compile_and_run(source: &str, stem: &str) -> String {
+    compile_and_run_with_flags(source, stem, &[])
+}
+
+/// Same as `compile_and_run`, but with extra flags on the two `-c`
+/// compiles of the generated output (not the final link). Used by
+/// regression tests that need `-Werror=incompatible-pointer-types` to
+/// actually fail on a wrong-struct-pointer-type bug -- plain `cc` here
+/// (Apple clang) only warns on that by default, unlike the real
+/// embedded GCC toolchain (Zephyr build), which errors on it, so
+/// `compile_and_run` alone would silently pass a regression of e.g.
+/// OZ-100's `[super init]`/protocol-dispatch instancetype-covariance
+/// bugs.
+pub fn compile_and_run_strict(source: &str, stem: &str) -> String {
+    compile_and_run_with_flags(source, stem, &["-Werror=incompatible-pointer-types"])
+}
+
+fn compile_and_run_with_flags(source: &str, stem: &str, extra_cc_flags: &[&str]) -> String {
     let out = oz_static::transpile(source).unwrap_or_else(|diags| {
         panic!(
             "transpile('{}') was expected to succeed but produced diagnostics:\n{}",
@@ -43,10 +60,20 @@ pub fn compile_and_run(source: &str, stem: &str) -> String {
     let dispatch_o = dir.join("dispatch.o");
     let bin = dir.join("bin");
 
-    cc(&["-DOZ_PLATFORM_HOST", "-I", include_dir().to_str().unwrap(), "-I",
-         dir.to_str().unwrap(), "-c", main_c.to_str().unwrap(), "-o", main_o.to_str().unwrap()]);
-    cc(&["-DOZ_PLATFORM_HOST", "-I", include_dir().to_str().unwrap(), "-I",
-         dir.to_str().unwrap(), "-c", dispatch_c.to_str().unwrap(), "-o", dispatch_o.to_str().unwrap()]);
+    let include = include_dir();
+    let include = include.to_str().unwrap();
+    let dir_str = dir.to_str().unwrap();
+
+    let mut main_args = vec!["-DOZ_PLATFORM_HOST", "-I", include, "-I", dir_str];
+    main_args.extend_from_slice(extra_cc_flags);
+    main_args.extend(["-c", main_c.to_str().unwrap(), "-o", main_o.to_str().unwrap()]);
+    cc(&main_args);
+
+    let mut dispatch_args = vec!["-DOZ_PLATFORM_HOST", "-I", include, "-I", dir_str];
+    dispatch_args.extend_from_slice(extra_cc_flags);
+    dispatch_args.extend(["-c", dispatch_c.to_str().unwrap(), "-o", dispatch_o.to_str().unwrap()]);
+    cc(&dispatch_args);
+
     cc(&[main_o.to_str().unwrap(), dispatch_o.to_str().unwrap(), "-o", bin.to_str().unwrap()]);
 
     let run = Command::new(&bin).output().unwrap_or_else(|e| panic!("failed to run binary: {}", e));
