@@ -28,8 +28,8 @@ use common::{compile_and_run_with_zephyr_stubs, oztimer_src, ozobject_src as PRE
 /// Ported from timer_basic_test.c's `test_timer_init_and_userdata` plus
 /// `test_timer_expiry_fires_block`: the expiry block recovers its target
 /// from timer userdata and mutates it, exactly the shape the oracle's
-/// case uses (there via a `__bridge` cast; here the cast is plain, since
-/// `common::oztimer_src` strips `__bridge` -- see its doc comment).
+/// case uses, `__bridge` cast included -- `emit::render_cast_expression`
+/// drops the qualifier, so `common::oztimer_src` needs no rewrite.
 #[test]
 fn timer_userdata_round_trips_and_expiry_block_fires() {
     let src = format!(
