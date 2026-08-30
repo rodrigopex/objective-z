@@ -464,10 +464,11 @@ fn render_protocol_dispatch(program: &Program, root: &str) -> (String, String) {
             })
             // A selector declared but never defined is not a callable
             // function, so routing to it emits a call that fails at link
-            // time with an undefined symbol. `Program::method_is_defined`
-            // can only tell with a Clang AST supplied; without one every
-            // method is assumed defined, as before.
-            .filter(|(_, defining)| program.method_is_defined(defining, &m.selector))
+            // time with an undefined symbol -- see
+            // `Program::method_is_defined` for the concrete case.
+            .filter(|(_, defining)| {
+                program.method_is_defined(defining, &m.selector, m.is_class_method)
+            })
             .collect();
         if routed.is_empty() {
             continue;

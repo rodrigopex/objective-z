@@ -233,6 +233,10 @@ pub(crate) fn method_fn_name(class_name: &str, selector: &str, is_class_method: 
     }
 }
 
+/// Note this is purely a spelling transform: it says nothing about whether
+/// the name is a *class*. Every plain C struct type is spelled `struct Foo`
+/// too, so a caller about to treat the result as a class must ask
+/// `Program::is_class` as well.
 fn class_name_from_type(t: &str) -> Option<String> {
     let t = t.trim();
     let rest = t.strip_prefix("struct ")?;
@@ -581,6 +585,8 @@ fn render_expr(node: Node, ctx: &mut EmitCtx) -> (String, String) {
             }
         }
         "subscript_expression" => render_subscript_expression(node, ctx),
+        "field_expression" => render_field_expression(node, ctx),
+        "assignment_expression" => render_assignment_expression(node, ctx),
         "cast_expression" => render_cast_expression(node, ctx),
         "for_statement" if is_forin_shape(node) => render_forin_statement(node, ctx),
         "synchronized_statement" => render_synchronized_statement(node, ctx),
@@ -1059,8 +1065,14 @@ fn render_subscript_expression(node: Node, ctx: &mut EmitCtx) -> (String, String
     };
 
     let (recv_text, recv_type) = render_expr(recv_node, ctx);
-    let Some(class) = class_name_from_type(&recv_type) else {
-        return pass_through(ctx);
+    // Indexing a C array of plain structs is ordinary C, and its element
+    // type is spelled `struct Foo` just like a class's -- so the name has
+    // to be checked against the program, or `points[0]` on a
+    // `struct point points[3]` would be reported as a class that "does not
+    // support subscripting".
+    let class = match class_name_from_type(&recv_type) {
+        Some(class) if ctx.program.is_class(&class) => class,
+        _ => return pass_through(ctx),
     };
 
     const INDEXED: &str = "objectAtIndexedSubscript:";
@@ -1084,7 +1096,219 @@ fn render_subscript_expression(node: Node, ctx: &mut EmitCtx) -> (String, String
     };
 
     let (index_text, _) = render_expr(index_node, ctx);
-    send_to_resolved_class(ctx, &class, selector, &recv_text, &[index_text])
+    // `super[i]` has no meaning to reach for: a subscript's receiver is a
+    // collection, and `super` is not one.
+    send_to_resolved_class(ctx, &class, selector, &recv_text, &[index_text], false)
+}
+
+/// Is `node` the literal `super`? `render_expr` renders `super` to `self`
+/// (the receiver really is `self`; only the dispatch target differs), so
+/// this has to be asked of the node, before that.
+fn is_super_identifier(node: Node, src: &str) -> bool {
+    node.kind() == "identifier" && node_text(node, src) == "super"
+}
+
+/// Splits a `field_expression` into (object, field name), but only when it
+/// is dot syntax on an Objective-C object -- `None` for anything that is
+/// ordinary C member access and must pass through untouched.
+///
+/// Two things disqualify it. `a->b` is direct ivar access, which is already
+/// valid C against the generated struct and means exactly what it says. And
+/// `a.b` where `a` is a plain C struct *value* is ordinary member access --
+/// `samples/hello_category`'s `struct color`, or the `struct sensor_msg` in
+/// `tests/behavior/cases/regression/issue_090_header_preservation.m`. Only
+/// an object-typed left side makes the `.` Objective-C's: in C, `.` on a
+/// pointer is not legal at all, so there is no ambiguity left to resolve.
+fn dot_syntax_parts<'a>(
+    node: Node<'a>,
+    ctx: &mut EmitCtx,
+) -> Option<(Node<'a>, String, String, String)> {
+    let mut cursor = node.walk();
+    let children: Vec<Node<'a>> = node.children(&mut cursor).collect();
+    if !children.iter().any(|c| c.kind() == ".") {
+        return None;
+    }
+    let object = *children.first()?;
+    let field = *children.last()?;
+    if field.kind() != "field_identifier" {
+        return None;
+    }
+    let field_name = node_text(field, ctx.src).to_string();
+    let (obj_text, obj_type) = render_expr(object, ctx);
+    let class = class_name_from_type(&obj_type)?;
+    // `struct point` and `struct Widget` are spelled identically; only the
+    // program says which is a class. Without this a plain C struct's member
+    // access was read as dot syntax and rejected as "'point' has no
+    // property or getter named 'x'".
+    if !ctx.program.is_class(&class) {
+        return None;
+    }
+    Some((object, obj_text, class, field_name))
+}
+
+/// The accessor selector a property is reached through, which `getter=` /
+/// `setter=` can rename to anything -- so the field name in source is not
+/// necessarily the selector to call.
+///
+/// Falls back to the plain field name (and its `setX:` form), because
+/// Objective-C also accepts dot syntax against a bare getter method with no
+/// `@property` behind it at all.
+fn accessor_selector(ctx: &EmitCtx, class: &str, field: &str, writing: bool) -> String {
+    match ctx.program.find_property(class, field) {
+        Some((_, prop)) if writing => prop
+            .setter_sel
+            .clone()
+            .unwrap_or_else(|| crate::collect::default_setter_sel(&prop.name)),
+        Some((_, prop)) => prop.getter_sel.clone().unwrap_or_else(|| prop.name.clone()),
+        None if writing => crate::collect::default_setter_sel(field),
+        None => field.to_string(),
+    }
+}
+
+/// `obj.prop` -- Objective-C property dot syntax, read form, lowered to the
+/// getter call: `[App sharedInstance].heap` becomes
+/// `App_heap(App_sharedInstance_cls())`.
+///
+/// Chaining needs no special handling: `a.b.c` recurses, and the inner
+/// call's return type is what resolves `c`'s class, exactly as it would for
+/// a chain of message sends.
+fn render_field_expression(node: Node, ctx: &mut EmitCtx) -> (String, String) {
+    let pass_through = |ctx: &mut EmitCtx| {
+        let rebuilt = rebuild(node, ctx, &mut |child, ctx| {
+            if needs_translation(child) {
+                Some(render_expr(child, ctx).0)
+            } else {
+                None
+            }
+        });
+        (rebuilt, "id".to_string())
+    };
+
+    let Some((object, obj_text, class, field)) = dot_syntax_parts(node, ctx) else {
+        return pass_through(ctx);
+    };
+    let super_access = is_super_identifier(object, ctx.src);
+    let getter = accessor_selector(ctx, &class, &field, false);
+    if find_defining_class(ctx.program, &class, &getter, false).is_none() {
+        // Reaching a bare ivar through dot syntax is not Objective-C either
+        // -- `.` is accessor syntax, and Clang rejects `obj.someIvar` the
+        // same way. Rewriting it to `->` would compile, which is precisely
+        // why it is not done: it would accept a program the language does
+        // not, and quietly bypass whatever the accessor does.
+        ctx.err(
+            node,
+            format!(
+                "'{}' has no property or getter named '{}', so '{}' has no meaning on it",
+                class,
+                field,
+                one_line(node_text(node, ctx.src))
+            ),
+        );
+        return (node_text(node, ctx.src).to_string(), "id".to_string());
+    }
+    send_to_resolved_class(ctx, &class, &getter, &obj_text, &[], super_access)
+}
+
+/// Assignment, handled here only so that a property dot-syntax *target*
+/// becomes the setter call rather than an assignment to a function call.
+/// Every other assignment passes through as the C it already is.
+///
+/// A compound assignment (`+=`, `<<=`, ...) has to read the property and
+/// write it back, which mentions the receiver twice -- so it is only
+/// accepted when the receiver is a plain identifier (or `self`), where
+/// evaluating it twice provably cannot differ. `[obj thing].count += 1`
+/// stays a hard error instead of silently sending `thing` twice.
+fn render_assignment_expression(node: Node, ctx: &mut EmitCtx) -> (String, String) {
+    let mut cursor = node.walk();
+    let children: Vec<Node> = node.children(&mut cursor).collect();
+    let pass_through = |ctx: &mut EmitCtx| {
+        let rebuilt = rebuild(node, ctx, &mut |child, ctx| {
+            if needs_translation(child) {
+                Some(render_expr(child, ctx).0)
+            } else {
+                None
+            }
+        });
+        (rebuilt, "id".to_string())
+    };
+
+    let (Some(left), Some(op), Some(right)) =
+        (children.first().copied(), children.get(1).copied(), children.last().copied())
+    else {
+        return pass_through(ctx);
+    };
+    if left.kind() != "field_expression" || children.len() < 3 {
+        return pass_through(ctx);
+    }
+    let operator = node_text(op, ctx.src).to_string();
+    let Some((object, obj_text, class, field)) = dot_syntax_parts(left, ctx) else {
+        return pass_through(ctx);
+    };
+
+    let setter = accessor_selector(ctx, &class, &field, true);
+    if find_defining_class(ctx.program, &class, &setter, false).is_none() {
+        let readonly = ctx
+            .program
+            .find_property(&class, &field)
+            .is_some_and(|(_, prop)| prop.is_readonly);
+        ctx.err(
+            node,
+            if readonly {
+                format!(
+                    "'{}.{}' is a readonly property, so '{}' cannot assign to it",
+                    class,
+                    field,
+                    one_line(node_text(node, ctx.src))
+                )
+            } else {
+                format!(
+                    "'{}' has no property or setter named '{}', so '{}' has no meaning on it",
+                    class,
+                    field,
+                    one_line(node_text(node, ctx.src))
+                )
+            },
+        );
+        return (node_text(node, ctx.src).to_string(), "id".to_string());
+    }
+
+    let super_access = is_super_identifier(object, ctx.src);
+    let (right_text, _) = render_expr(right, ctx);
+    if operator == "=" {
+        return send_to_resolved_class(ctx, &class, &setter, &obj_text, &[right_text], super_access);
+    }
+
+    // Compound: read, combine, write back -- so the receiver appears twice.
+    if object.kind() != "identifier" {
+        ctx.err(
+            node,
+            format!(
+                "'{}' needs to read '{}' and write it back, which would evaluate the receiver '{}' twice -- assign through a local instead",
+                one_line(node_text(node, ctx.src)),
+                field,
+                one_line(node_text(object, ctx.src))
+            ),
+        );
+        return (node_text(node, ctx.src).to_string(), "id".to_string());
+    }
+    let getter = accessor_selector(ctx, &class, &field, false);
+    if find_defining_class(ctx.program, &class, &getter, false).is_none() {
+        ctx.err(
+            node,
+            format!(
+                "'{}' needs to read '{}' first, but '{}' has no property or getter of that name",
+                one_line(node_text(node, ctx.src)),
+                field,
+                class
+            ),
+        );
+        return (node_text(node, ctx.src).to_string(), "id".to_string());
+    }
+    let (read, _) = send_to_resolved_class(ctx, &class, &getter, &obj_text, &[], super_access);
+    // `x += y` is `x = x + y`: drop the trailing `=` to get the operator.
+    let binary_op = operator.trim_end_matches('=').to_string();
+    let combined = format!("{} {} ({})", read, binary_op, right_text);
+    send_to_resolved_class(ctx, &class, &setter, &obj_text, &[combined], super_access)
 }
 
 /// One instance send whose receiver's class is already resolved, routed by
@@ -1093,18 +1317,30 @@ fn render_subscript_expression(node: Node, ctx: &mut EmitCtx) -> (String, String
 /// one does (see `Program::has_overriding_subclass`).
 ///
 /// Used by desugarings that synthesize a send rather than translating a
-/// literal `[recv sel:...]` -- subscripting today. Deliberately does not
-/// handle `super` receivers or class methods: neither can arise from a
-/// desugaring, and both need care `render_message` already takes.
+/// literal `[recv sel:...]` -- subscripting and property dot syntax.
+/// Deliberately does not handle class methods, which need care
+/// `render_message` already takes.
+///
+/// `super_send` carries the one thing the receiver *text* cannot: `super`
+/// renders to `self`, so by the time there is a string left there is no way
+/// to tell the two apart, and they dispatch differently. See the two places
+/// it is consulted below; `render_message` applies the same two rules for a
+/// literal `[super sel]`.
 fn send_to_resolved_class(
     ctx: &mut EmitCtx,
     class: &str,
     selector: &str,
     recv_text: &str,
     arg_texts: &[String],
+    super_send: bool,
 ) -> (String, String) {
     let root = ctx.program.root_class().unwrap_or("OZSRoot").to_string();
-    if ctx.program.has_overriding_subclass(class, selector) {
+    // A `super` access names one specific implementation by definition, so
+    // it must stay a direct call. Routing it through the receiver's own
+    // class_id would re-enter the override that issued it -- for a property
+    // getter, a subclass override reading `super.thing` would call itself
+    // forever.
+    if !super_send && ctx.program.has_overriding_subclass(class, selector) {
         return dynamic_dispatch_call(ctx.program, &root, selector, recv_text, arg_texts);
     }
     let Some(defining) = find_defining_class(ctx.program, class, selector, false) else {
@@ -1116,8 +1352,15 @@ fn send_to_resolved_class(
     call_args.extend(arg_texts.iter().cloned());
     let call =
         format!("{}({})", method_fn_name(&defining, selector, false), call_args.join(", "));
-    if returns_instancetype && defining != class {
-        (format!("(struct {} *)({})", class, call), format!("struct {} *", class))
+    // For a `super` access the real receiver is still `self`, so an
+    // `instancetype` result covaries with this class, not with the
+    // superclass the call was resolved against.
+    let covariant_target = if super_send { ctx.class_name.clone() } else { class.to_string() };
+    if returns_instancetype && defining != covariant_target {
+        (
+            format!("(struct {} *)({})", covariant_target, call),
+            format!("struct {} *", covariant_target),
+        )
     } else {
         (call, ret_ty)
     }

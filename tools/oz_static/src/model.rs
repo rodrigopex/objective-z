@@ -75,6 +75,17 @@ pub struct ClassInfo {
     /// is unowned -- and releasing an unowned backref is exactly the
     /// double-free the qualifier exists to prevent.
     pub unretained_ivars: HashSet<String>,
+    /// `(selector, is_class_method)` for every method an `@implementation`
+    /// in the parsed source really defines -- as opposed to `methods`, which
+    /// also holds everything only *declared* in an `@interface`.
+    ///
+    /// oz_static is a whole-program transpiler: it emits a definition for a
+    /// method exactly when it parsed one, or when it synthesizes one (a
+    /// property accessor). So this is the authority on what the generated C
+    /// will actually contain, and referencing anything else produces a link
+    /// error rather than a compile error -- the mistake surfacing at the
+    /// wrong end of the pipeline. See `Program::method_is_defined`.
+    pub defined_selectors: HashSet<(String, bool)>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -365,25 +376,74 @@ impl Program {
     /// has no body in the AST either, so property accessors are treated as
     /// defined -- oz_static emits those itself
     /// (`emit::render_synthesized_accessor`).
-    pub fn method_is_defined(&self, class_name: &str, selector: &str) -> bool {
-        let Some(facts) = &self.ast else {
-            return true;
-        };
-        if !facts.knows_class(class_name) {
-            return true;
-        }
-        if facts.has_method_body(class_name, selector) {
-            return true;
-        }
+    /// Will the generated C contain a definition of `class_name`'s
+    /// `selector`? Referencing one that it will not is a link error, so this
+    /// gates the protocol-dispatch table (`companion::render_protocol_dispatch`).
+    ///
+    /// The parse is the authority, not the Clang AST. oz_static emits a
+    /// definition exactly when it parsed an `@implementation` defining the
+    /// method, or when it synthesizes the accessor for a `@property`, so it
+    /// already knows the answer without asking anyone. The AST is consulted
+    /// only as an additional *positive* source, never to overrule a body
+    /// that was parsed -- so supplying one can never suppress more than not
+    /// supplying one.
+    ///
+    /// The case this exists for: `include/oz_sdk/Foundation/OZArray.h` and
+    /// `OZDictionary.h` both declare `countByEnumeratingWithState:objects:
+    /// count:`, which no `.m` in the repository implements. Routing to it
+    /// emitted a dispatch function calling
+    /// `OZArray_countByEnumeratingWithState_objects_count_`, and every
+    /// sample that pulled in Foundation failed to link on the undefined
+    /// symbol. The Python pipeline never mentions that selector at all,
+    /// because it collects methods from implementations rather than
+    /// declarations.
+    ///
+    /// A method implemented outside the transpiled program -- a hand-written
+    /// C function providing `Foo_bar()` -- is therefore reported undefined.
+    /// That is consistent with the whole-program model, and a Clang AST
+    /// covering the file is the way to assert otherwise.
+    pub fn method_is_defined(&self, class_name: &str, selector: &str, is_class_method: bool) -> bool {
         let Some(info) = self.classes.get(class_name) else {
+            // Not a class this program describes at all; nothing to claim.
             return true;
         };
-        info.properties.iter().any(|prop| {
+        if info.defined_selectors.contains(&(selector.to_string(), is_class_method)) {
+            return true;
+        }
+        // A `@property`'s accessor has no body in source because oz_static
+        // writes it (`emit::render_synthesized_accessor`).
+        if info.properties.iter().any(|prop| {
             prop.getter_sel.as_deref() == Some(selector)
                 || prop.setter_sel.as_deref() == Some(selector)
                 || prop.name == selector
                 || crate::collect::default_setter_sel(&prop.name) == selector
-        })
+        }) {
+            return true;
+        }
+        self.ast.as_ref().is_some_and(|facts| facts.has_method_body(class_name, selector))
+    }
+
+    /// The `@property` named `prop_name` visible on `class_name`, and the
+    /// class that declares it -- searching up the superclass chain, since a
+    /// property is inherited like a method.
+    ///
+    /// Needed to translate dot syntax (`obj.prop`): the field name in the
+    /// source is the *property* name, but the call to emit is its accessor
+    /// selector, which `getter=`/`setter=` can rename to anything.
+    pub fn find_property(
+        &self,
+        class_name: &str,
+        prop_name: &str,
+    ) -> Option<(String, &PropertyInfo)> {
+        let mut current = Some(class_name.to_string());
+        while let Some(name) = current {
+            let info = self.classes.get(&name)?;
+            if let Some(prop) = info.properties.iter().find(|p| p.name == prop_name) {
+                return Some((name, prop));
+            }
+            current = info.superclass.clone();
+        }
+        None
     }
 
     /// Is `name` a strict descendant of `ancestor` (i.e. `ancestor`
