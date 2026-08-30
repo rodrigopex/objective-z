@@ -2952,20 +2952,57 @@ pub fn emit_split(
     // declaration. Without this the file gets `error: variable has
     // incomplete type 'struct OZString'` -- which is exactly what five of
     // the cases under tests/behavior/cases/ hit.
-    let mut always_visible: Vec<String> = Vec::new();
-    if let Some(r) = program.root_class().and_then(|r| class_to_stem.get(r).cloned()) {
-        always_visible.push(r);
-    }
-    for helper_class in ["OZArray", "OZDictionary", "OZString"] {
-        if let Some(s) = class_to_stem.get(helper_class) {
-            always_visible.push(s.clone());
+    // Carried as (class, stem) rather than just the stem, because whether
+    // an edge is safe depends on where the *class* sits in the hierarchy
+    // -- see the ancestry check below.
+    let mut always_visible: Vec<(String, String)> = Vec::new();
+    if let Some(root) = program.root_class() {
+        if let Some(stem) = class_to_stem.get(root) {
+            always_visible.push((root.to_string(), stem.clone()));
         }
     }
-    for target_stem in &always_visible {
+    for helper_class in ["OZArray", "OZDictionary", "OZString"] {
+        if let Some(stem) = class_to_stem.get(helper_class) {
+            always_visible.push((helper_class.to_string(), stem.clone()));
+        }
+    }
+    for (class, target_stem) in &always_visible {
         for stem in &stem_order {
-            if stem != target_stem {
-                extra_includes.entry(stem.clone()).or_default().insert(target_stem.clone());
+            if stem == target_stem {
+                continue;
             }
+            // A stem that declared nothing of its own has no code here to
+            // reach the root or the helpers with, so it gains nothing from
+            // these includes -- and one of them actively breaks the build.
+            // `include/oz_sdk/assert.h` is a shim that exists only so
+            // Clang keeps `oz_assert` calls in the AST; its generated
+            // header ends up on the include path as `assert.h`, shadowing
+            // the real one, so the PAL's own `#include <assert.h>`
+            // (platform/oz_assert.h) lands here instead. Pulling the class
+            // graph in through that point re-enters the class headers from
+            // inside the companion header, before the root struct it
+            // defines exists -- `field has incomplete type 'struct
+            // OZObject'`, from a header that declares nothing at all.
+            if headers.get(stem).is_none_or(|sections| sections.is_empty()) {
+                continue;
+            }
+            // Never point a stem at a *descendant* of a class it owns. A
+            // subclass's struct embeds its superclass's by value, so the
+            // subclass header must include the superclass header -- and
+            // the reverse edge closes a cycle that `#pragma once` then
+            // breaks by leaving one of the two structs incomplete
+            // (`field has incomplete type 'struct OZObject'`), depending
+            // only on which header the compiler happened to enter first.
+            // Every class here is a descendant of the root, so without
+            // this the root's own header would include all of them.
+            let owns_ancestor = program.class_order.iter().any(|owned| {
+                class_to_stem.get(owned).is_some_and(|s| s == stem)
+                    && program.is_descendant_of(class, owned)
+            });
+            if owns_ancestor {
+                continue;
+            }
+            extra_includes.entry(stem.clone()).or_default().insert(target_stem.clone());
         }
     }
 
