@@ -537,6 +537,7 @@ pub fn render(
     hoisted_structs: &[(String, String)],
     hoisted_enums: &[String],
     hoisted_forward_decls: &[String],
+    hoisted_c_structs: &[String],
     pools: &crate::pools::PoolSizes,
     system_includes: &[String],
 ) -> (String, String) {
@@ -628,6 +629,22 @@ below naming a type one of them declares sees the real definition */\n",
         h.push_str("/* enum definitions, hoisted here from source so they're complete\n * before any method prototype below references one by value */\n");
         for e in hoisted_enums {
             h.push_str(e);
+            h.push_str(";\n");
+        }
+        h.push('\n');
+    }
+
+    // After the enums, not before: a hoisted struct can have an enum field
+    // by value, and then needs that enum complete first --
+    // `tests/behavior/cases/regression/issue_090_header_preservation.m`
+    // has exactly that ("field has incomplete type 'enum sensor_state'").
+    // Nothing runs the other way: an enum cannot contain a struct.
+    if !hoisted_c_structs.is_empty() {
+        h.push_str(
+            "/* plain C struct and union definitions, hoisted here from source so\n * the type is complete before any method prototype below returns or\n * takes one, and in every generated file rather than only the one it\n * was written in. Source order is kept: one may contain the other. */\n",
+        );
+        for d in hoisted_c_structs {
+            h.push_str(d);
             h.push_str(";\n");
         }
         h.push('\n');

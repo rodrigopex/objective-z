@@ -29,22 +29,25 @@ cc -DOZ_PLATFORM_HOST -DOZ_HEAP_SUPPORT \
 | --- | --- | --- | --- |
 | hello_world | yes | yes | |
 | pool_demo | yes | yes | exercises `@synchronized` |
-| transpiled_literals | yes | yes | `POOL_SIZES` honoured |
+| transpiled_literals | yes | yes | `POOL_SIZES` honoured; was: helper unreachable from `main` |
 | transpiled_blocks | yes | Zephyr-blocked | `printk`/`k_*` only |
 | transpiled_generics | yes | Zephyr-blocked | `printk`/`k_*` only |
 | transpiled_led | yes | Zephyr-blocked | `printk`/`k_*` only |
 | mem_demo | yes | yes | was gap B |
 | arc_demo | yes | Zephyr-blocked | `K_THREAD_DEFINE` only; was gap A |
 | gpio_demo | yes | Zephyr-blocked | was gap D |
-| transpiled_literals | yes | yes | was: helper unreachable from `main` |
 | zbus_objc | yes | Zephyr-blocked | was gap E |
 | heap_alloc | yes | **no — transpiler** | property dot syntax |
-| hello_category | yes | **no — transpiler** | the generated `assert.c` shim |
+| hello_category | yes | yes | was gap C |
 | zbus_service | — | — | stale independently of oz_static (see below) |
 
-Every sample with usable sources transpiles. Of those, 4 compile cleanly on
+Every sample with usable sources transpiles. Of those, 5 compile cleanly on
 host, 6 fail only on Zephyr headers (expected — not a transpiler problem),
-and 2 fail on transpiler gaps.
+and 1 fails on a transpiler gap.
+
+The six Zephyr-blocked samples were each checked to be *only* that:
+`arc_demo`'s two remaining errors, for instance, are both on its single
+`K_THREAD_DEFINE(...)` line, which no host compiler can expand.
 
 Also fixed since: the always-visible includes (root macros, boxed-literal
 helpers) now go into each `.c` rather than each `.h`, which is where the code
@@ -130,11 +133,34 @@ ones behind them.** `hello_category` originally failed to compile in all
    'Car_initWithColor_andModel_'`. Every struct tag the companion mentions
    but never declares is now forward-declared.
 
-Three distinct causes remain, each in one file: `Car.h:22 type name
-requires a specifier or qualifier`; `assert.c:20 expected identifier or
-'('` (the shim's `static inline` stubs); and `main.c:24 variable has
-incomplete type 'struct color'` (a by-value struct needing the definition
-hoisted, not just a tag).
+The three causes behind those, since fixed, and `hello_category` now
+compiles:
+
+5. *Visibility specifiers copied into C.* `@public`/`@private` have no C
+   equivalent and were emitted into the generated struct → `Car.h:22 type
+   name requires a specifier or qualifier`. They are dropped; nothing
+   enforced visibility once the struct became plain C anyway.
+6. *An AST shim emitted as a translation unit.* `include/oz_sdk/assert.h`
+   exists so Clang keeps `oz_assert` calls in the AST — its own comment
+   says the generated C gets the real macros from `platform/oz_assert.h`.
+   Splicing it produced an `assert.c` defining `oz_assert_msg`, a name the
+   PAL had already made a function-like macro → `expected identifier or
+   '('`. A spliced file that reaches no Objective-C now gets no output
+   pair at all: there is nothing in it to transpile, and the C compiler
+   already has the real header.
+7. *Top-level struct definitions dropped outright.* `emit_split` builds
+   each file from what its per-kind arms push, and no arm handled a
+   `struct Tag { ... };` with a body — so `struct color` came out as
+   nothing but its trailing `;` → `variable has incomplete type 'struct
+   color'`. (`emit()` never showed this: it patches the original text, so
+   anything unpatched survives.) Struct *and* union definitions now hoist
+   to the companion header, in source order, after the enums.
+
+Two smaller gaps surfaced on the way and are also fixed: a stem that names
+a class owned by another stem now includes that stem's header (without it,
+`main` could not complete `struct Car`), and a `static inline` helper is
+emitted into its origin's header rather than its body, so it is callable
+from outside the file it was written in.
 
 **D. File-scope `static` object variables are not type-tracked.** Reduced
 to a 20-line reproducer:
@@ -150,17 +176,18 @@ int main(void) { g_widget = [Widget alloc]; [g_widget poke]; return 0; }
 file-scope statics (`collect.py`), so this is a parity gap rather than a
 deliberate restriction.
 
-**E. A quoted `#include "X.h"` is not resolved — only `#import`.**
-`imports.rs` deliberately treats `#include` as never a resolution
-candidate. `zbus_objc`'s `Producer.m` opens with `#include "Producer.h"`,
-so the `@interface` carrying `@property count` is never spliced in and
-`@synthesize count` fails. Verified by changing that single word in a
-scratch copy: the sample then transpiles (10 files, exit 0). Angled
-system includes must keep passing through untouched; only a quoted
-include resolvable in the search path should be spliced.
+**E. A quoted `#include "X.h"` was not resolved — only `#import`.** Fixed.
+`zbus_objc`'s `Producer.m` opens with `#include "Producer.h"`, so the
+`@interface` carrying `@property count` was never spliced in and
+`@synthesize count` failed. Objective-C draws no semantic line between the
+two directives here; only `#import`'s once-only behaviour differs, and the
+seen-set gives that to both. A quoted include is now a resolution
+candidate, and is declined — left exactly as written — when the header it
+names reaches no Objective-C, or cannot be resolved at all (it may
+legitimately name something only the target's own toolchain provides).
 
-`hello_category` survives the same pattern by luck — its `Car.m` also uses
-`#include "Car.h"`, but `main.m` reaches `Car.h` through
+`hello_category` had survived the same pattern by luck: its `Car.m` also
+uses `#include "Car.h"`, but `main.m` reached `Car.h` through
 `Car+Maintenance.h` via `#import`.
 
 ## Behavior corpus (73 cases)
@@ -181,9 +208,9 @@ That allowlist asserts the listed case *still* fails, so fixing it without
 updating the list also fails the test; it cannot decay into silently
 skipped cases.
 
-Rust test suite: 158 passing, 0 failing.
+Rust test suite: 169 passing, 0 failing.
 
-### Behavioral parity: 66 of 73, and zero disagreements
+### Behavioral parity: 67 of 73, and zero disagreements
 
 Transpiling and compiling say the input was understood and the output is
 real C. They say nothing about what the code *does*. `just
@@ -193,12 +220,12 @@ the results.
 
 | Outcome | Cases | Meaning |
 | --- | --- | --- |
-| MATCH | 66 | Identical Unity results — same tests, same outcomes |
+| MATCH | 67 | Identical Unity results — same tests, same outcomes |
 | MISMATCH | **0** | No case that runs on both backends behaves differently |
-| STATIC-FAILED | 7 | oz_static's side could not be built or run |
+| STATIC-FAILED | 6 | oz_static's side could not be built or run |
 
 Every case that builds under both backends now produces identical results.
-What remains is seven cases oz_static cannot build, not seven it gets wrong.
+What remains is six cases oz_static cannot build, not six it gets wrong.
 
 Unity *results* are compared, not generated C: the two backends emit
 deliberately different C, so a textual diff would be noise.
@@ -253,15 +280,22 @@ oracle never faces this choice: its sources are compiled `-fobjc-arc`, under
 which an explicit `release` is a compile error, and indeed no `.m` under
 `tests/behavior/cases/` contains one.
 
-#### The 7 remaining static-side failures
+#### The 6 remaining static-side failures
 
 Two are `timer_basic`/`timer_zephyr` crashing at runtime. Two drivers reach
 for `_meta`, the oracle's name for the root tracking struct that oz_static
-spells as flat `oz_*` fields. One needs a by-value `struct sensor_msg`
-definition hoisted (header preservation). One is the `oz_heap_inner`
-redefinition plus missing `allocWithHeap:`. One is a `void (*)(id)` vs
-`void (*)(struct OZObject *)` divergence inside a driver, which no shim can
-bridge because it is the driver's own code.
+spells as flat `oz_*` fields. One is the `oz_heap_inner` redefinition plus
+missing `allocWithHeap:`. One is a `void (*)(id)` vs `void (*)(struct
+OZObject *)` divergence inside a driver, which no shim can bridge because
+it is the driver's own code.
+
+`regression/issue_090_header_preservation` was the seventh and now matches.
+It is the oracle's own regression test for this exact bug — "transpiler
+drops struct/union/enum/macro definitions from companion headers when they
+are not referenced by ObjC interface members" — and its driver uses all six
+kinds it names. oz_static was already carrying the enum and the macros; the
+struct, the union and the `static inline` are the fixes described under
+gap C above.
 
 ### Clang as the authority on what oz_static cannot see
 

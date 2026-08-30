@@ -167,9 +167,12 @@ function(objz_transpile_sources_static target)
     # needs them -- oz_static preserves ivar declarations verbatim from
     # source rather than re-synthesizing them (its "literate" design), so
     # those qualifiers reach the final GCC compile unchanged. They're a
-    # true no-op here: oz_static has no ARC, so plain pointers are all
-    # there is either way. -D as empty rather than editing the shared
-    # headers or oz_static's verbatim copy.
+    # a no-op for the generated C either way: oz_static lowers the
+    # qualifiers off the ivar declarations it emits, and its own ARC works
+    # off the Clang AST's ownership facts rather than off these spellings
+    # surviving into C. The -D covers the positions the lowering does not
+    # rewrite (a method parameter, a local), and is an empty define rather
+    # than an edit to the shared headers or to oz_static's verbatim copy.
     target_compile_definitions(${target} PRIVATE __unsafe_unretained=)
 
     # Add OZLog support (pure C, matches the prototype hardcoded into
