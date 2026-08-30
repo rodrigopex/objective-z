@@ -44,34 +44,47 @@ fn parse_import(trimmed_line: &str) -> Option<ImportTarget> {
     None
 }
 
-fn resolve_import_path(target: &ImportTarget, current_dir: &Path, include_dirs: &[PathBuf]) -> Result<PathBuf, String> {
+/// `impl_dirs` are searched as well as `include_dirs`, because an import
+/// target can name an implementation directly: the behavior corpus's
+/// shared base header does `#import "OZObject.m"`, so that the oracle's
+/// Clang pass sees a complete AST. Without searching there, every one of
+/// those 73 cases fails to resolve -- `.m` files live in `src`, which is
+/// an `--impl-dir`, not an `-I`. Include dirs are tried first, so a header
+/// is still found where a header is expected.
+fn resolve_import_path(
+    target: &ImportTarget,
+    current_dir: &Path,
+    include_dirs: &[PathBuf],
+    impl_dirs: &[PathBuf],
+) -> Result<PathBuf, String> {
+    let search: Vec<&PathBuf> = include_dirs.iter().chain(impl_dirs.iter()).collect();
     match target {
         ImportTarget::Quoted(p) => {
             let local = current_dir.join(p);
             if local.is_file() {
                 return Ok(local);
             }
-            for dir in include_dirs {
+            for dir in &search {
                 let candidate = dir.join(p);
                 if candidate.is_file() {
                     return Ok(candidate);
                 }
             }
             Err(format!(
-                "cannot resolve #import \"{}\" -- not found in '{}' or any of {} include dir(s)",
+                "cannot resolve #import \"{}\" -- not found in '{}' or any of {} search dir(s)",
                 p,
                 current_dir.display(),
-                include_dirs.len()
+                search.len()
             ))
         }
         ImportTarget::Angled(p) => {
-            for dir in include_dirs {
+            for dir in &search {
                 let candidate = dir.join(p);
                 if candidate.is_file() {
                     return Ok(candidate);
                 }
             }
-            Err(format!("cannot resolve #import <{}> in any of {} include dir(s)", p, include_dirs.len()))
+            Err(format!("cannot resolve #import <{}> in any of {} search dir(s)", p, search.len()))
         }
     }
 }
@@ -274,7 +287,7 @@ fn resolve_into(
             out.push('\n');
             continue;
         };
-        let resolved_path = resolve_import_path(&target, current_dir, include_dirs)?;
+        let resolved_path = resolve_import_path(&target, current_dir, include_dirs, impl_dirs)?;
         let canonical = resolved_path.canonicalize().unwrap_or_else(|_| resolved_path.clone());
         if !seen.insert(canonical) {
             out.push_str(&format!("/* already resolved: #import {} */\n", target.spelled()));
