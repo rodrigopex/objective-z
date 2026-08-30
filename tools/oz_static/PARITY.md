@@ -14,9 +14,13 @@ These words are used precisely and are not interchangeable:
   perfectly well against the companion header's prototype and only fails at
   link, so a compile-only sweep reported "OK" for three samples that could
   not actually be built.
+- **runs** — the binary was executed, exited 0, and its console output
+  matched every line the sample's own `sample.yaml` says twister should see,
+  in order. That file is the sample author's statement of correct
+  behaviour, so it is a real oracle and an independent one — it says nothing
+  about the Python backend.
 - **matches** — the case was *run* under both backends and they produced
-  identical results. Only the behavior-corpus section below claims this;
-  the sample table does not, and no sample was executed.
+  identical results. Only the behavior-corpus section below claims this.
 
 ## Samples (13)
 
@@ -30,40 +34,48 @@ when the sample states it), plus one Clang AST dump per entry `.m` via
 cc -DOZ_PLATFORM_HOST -DOZ_HEAP_SUPPORT \
    -I include -I tests/behavior/include/zephyr_stubs \
    -I <outdir> -I <outdir>/Foundation -c <file> -o <file>.o
-cc <every .o> <host OZLog stand-in> -o a.out
+cc <every .o> src/OZLog.c tests/behavior/zephyr_stubs.c \
+   -DOZ_BACKEND_STATIC -o a.out
+./a.out            # checked against the sample's own sample.yaml
 ```
 
-`src/OZLog.c` itself cannot take part in a host link (it includes
-`<zephyr/sys/printk.h>`), so a stand-in satisfies `OZLog` — the link step
-is there to catch *generated* symbols that were referenced and never
-defined, so substituting the one file neither backend generates keeps it
-measuring oz_static's own output. See also the note on `src/OZLog.c` under
-"Not verified" below.
+The real `src/OZLog.c` is linked, not a stand-in: `OZ_BACKEND_STATIC` now
+selects oz_static's generated header names inside it (see gap K), and the
+host stubs gained `<zephyr/sys/printk.h>` plus a `zephyr_stubs.c` defining
+`printk`, so the file both backends share is exercised rather than
+substituted.
 
-| Sample | Transpiles | Compiles + links | Notes |
-| --- | --- | --- | --- |
-| hello_world | yes | yes | |
-| transpiled_literals | yes | yes | `POOL_SIZES` honoured; was: helper unreachable from `main` |
-| mem_demo | yes | yes | was gap B |
-| hello_category | yes | yes | was gap C |
-| pool_demo | yes | Zephyr-blocked (link) | needs `printk`; exercises `@synchronized` |
-| transpiled_blocks | yes | Zephyr-blocked | `printk`/`k_*` only |
-| transpiled_generics | yes | Zephyr-blocked | `printk`/`k_*` only |
-| transpiled_led | yes | Zephyr-blocked | `printk`/`k_*` only |
-| arc_demo | yes | Zephyr-blocked | `K_THREAD_DEFINE` only; was gap A |
-| gpio_demo | yes | Zephyr-blocked | was gap D |
-| zbus_objc | yes | Zephyr-blocked | was gap E |
-| heap_alloc | yes | yes | was gaps F and I; runs correctly, see below |
-| zbus_service | — | — | stale independently of oz_static (see below) |
+Each linked sample is then **run** under an ordinary build and again under
+`-fsanitize=address,undefined` with leak detection on. All nine are clean.
 
-Every sample with usable sources transpiles. Of those, 5 compile *and
-link* cleanly on host and 8 stop only on Zephyr (expected — not a
-transpiler problem). **No sample fails on a transpiler gap any more.**
+| Sample | Transpiles | Compiles + links | Runs | Notes |
+| --- | --- | --- | --- | --- |
+| hello_world | yes | yes | yes | |
+| transpiled_literals | yes | yes | yes | `POOL_SIZES` honoured; was: helper unreachable from `main` |
+| mem_demo | yes | yes | yes | was gap B |
+| hello_category | yes | yes | yes | was gap C |
+| pool_demo | yes | yes | yes | exercises `@synchronized` |
+| transpiled_blocks | yes | yes | yes | |
+| transpiled_generics | yes | yes | yes | |
+| transpiled_led | yes | yes | yes | was gap L — segfaulted |
+| heap_alloc | yes | yes | all but one line | was gaps F and I; see the release-order divergence below |
+| arc_demo | yes | Zephyr-blocked | — | `K_THREAD_DEFINE` only; was gap A |
+| gpio_demo | yes | Zephyr-blocked | — | device tree; was gap D |
+| zbus_objc | yes | Zephyr-blocked | — | zbus; was gap E |
+| zbus_service | — | — | — | stale independently of oz_static (see below) |
 
-`heap_alloc` was additionally *run*, and its output checked line by line
-against the expectations in its own `sample.yaml`. That is the only sample
-run so far, and it is what caught gap I below — it compiled, linked, and
-leaked.
+Every sample with usable sources transpiles, and **none fails on a
+transpiler gap**. Nine compile, link and run on host; eight of those match
+every line their own `sample.yaml` asks for, and all nine are clean under
+AddressSanitizer and UndefinedBehaviorSanitizer with leak detection on. The
+three that stop at Zephyr need kernel or device-tree infrastructure no host
+build can provide (`K_THREAD_DEFINE`, a device tree, zbus).
+
+`heap_alloc`'s one unmatched line is the release-order divergence recorded
+below, not a defect.
+
+Running them is what found gaps I and L. Both compiled and linked cleanly
+first.
 
 Each Zephyr-blocked sample was checked to be *only* that, rather than
 assumed: `arc_demo`'s two remaining compile errors are both on its single
@@ -330,6 +342,51 @@ by setting `deallocating = 1` on a boxed literal from birth -- which says
 "currently being deallocated" to mean "never deallocate". That one is left
 as is for now; it works, and changing the release path is a separate step.
 
+**K. `src/OZLog.c` could not be built by the static backend at all.**
+Fixed. `cmake/oz_static.cmake` links that file unconditionally, but it
+opened with `#include "oz_dispatch.h"` and `#include "OZObject_ozh.h"` --
+names that exist only in the Python backend's output. So no sample that logs
+could ever have been built through the static backend, which had gone
+unnoticed because none selects it. The two includes are now switched on
+`OZ_BACKEND_STATIC`, which `cmake/oz_static.cmake` defines for that one
+source; everything else the file needs (`struct OZObject`, and
+`OZ_PROTOCOL_SEND_cDescription_maxLength_` with the same signature) both
+backends already provide alike.
+
+Verified rather than assumed: the host stubs gained
+`<zephyr/sys/printk.h>` and a `tests/behavior/zephyr_stubs.c` defining
+`printk`, so the real file now compiles and links in the sample sweep.
+`printk` is a prototype plus a definition rather than a macro, because a
+macro would collide with transpiled sources that declare the function
+themselves -- `samples/pool_demo` does exactly that so its Clang AST dump
+resolves without Zephyr headers.
+
+Adding those stubs moved four more samples from Zephyr-blocked to running:
+`pool_demo`, `transpiled_blocks`, `transpiled_generics`, `transpiled_led`.
+They had never needed anything but `printk`.
+
+**L. Assigning to a strong object ivar did not take ownership.** Fixed, and
+it was a use-after-free. `{Class}_oz_release_ivars` releases every owned
+object ivar when an instance dies, but nothing had ever retained what was
+stored there -- oz_static had the release half of strong-ivar ownership
+without the retain half, and releasing a reference never taken is a double
+free.
+
+`samples/transpiled_led` is a chain of six objects, each holding the
+previous one in a strong `_next` ivar assigned straight from a parameter. It
+segfaulted with nothing printed at all. AddressSanitizer named it exactly:
+heap-use-after-free in `oz_atomic_dec_and_test`, the object freed once by
+its owner's `oz_release_ivars` and again by the scope-exit release of the
+local that created it.
+
+The rule now matches the oracle's `_emit_strong_ivar_assign`, and is just
+ARC's: a `+1` right-hand side is stored as-is, since it already carries the
+reference the ivar is taking over and a temporary has no scope-exit release
+to balance a second one; anything else is borrowed and gets retained. Order
+is assign, retain new, release old -- what makes `_x = _x` safe. Properties
+were never affected: a synthesized setter already did retain-new /
+release-old, so only *direct* ivar assignment was missing it.
+
 **D. File-scope `static` object variables are not type-tracked.** Reduced
 to a 20-line reproducer:
 
@@ -376,9 +433,9 @@ That allowlist asserts the listed case *still* fails, so fixing it without
 updating the list also fails the test; it cannot decay into silently
 skipped cases.
 
-Rust test suite: 180 passing, 0 failing.
+Rust test suite: 182 passing, 0 failing.
 
-### Behavioral parity: 70 of 73, and zero disagreements
+### Behavioral parity: 72 of 73, and zero disagreements
 
 Transpiling and compiling say the input was understood and the output is
 real C. They say nothing about what the code *does*. `just
@@ -388,12 +445,12 @@ the results.
 
 | Outcome | Cases | Meaning |
 | --- | --- | --- |
-| MATCH | 70 | Identical Unity results — same tests, same outcomes |
+| MATCH | 72 | Identical Unity results — same tests, same outcomes |
 | MISMATCH | **0** | No case that runs on both backends behaves differently |
-| STATIC-FAILED | 3 | oz_static's side could not be built or run |
+| STATIC-FAILED | 1 | oz_static's side could not be built or run |
 
-Every case that builds under both backends now produces identical results.
-What remains is three cases oz_static cannot build, not three it gets wrong.
+Every case that builds under both backends produces identical results, and
+only one case is left that oz_static cannot build.
 
 Unity *results* are compared, not generated C: the two backends emit
 deliberately different C, so a textual diff would be noise.
@@ -448,18 +505,18 @@ oracle never faces this choice: its sources are compiled `-fobjc-arc`, under
 which an explicit `release` is a compile error, and indeed no `.m` under
 `tests/behavior/cases/` contains one.
 
-#### The 3 remaining static-side failures
+#### The 1 remaining static-side failure
 
-Two are `timer_basic`/`timer_zephyr` crashing at runtime. One is a
-`void (*)(id)` vs `void (*)(struct OZObject *)` divergence inside
-`defer_block_ivar`'s driver, which no shim can bridge because it is the
-driver's own code.
+`foundation/defer_block_ivar`, and it is the driver's own code: a
+`void (*)(id)` where the generated signature is
+`void (*)(struct OZObject *)`. No shim can bridge a function-pointer type
+mismatch inside a file the harness does not generate.
 
-The three that cleared this round were all the `_meta` spelling —
-`edge/empty_class_no_methods`, `lifecycle/alloc_returns_valid` and
-`memory/heap_alloc`. See gap J; none of them was a behavioural difference,
-and none needed a shim entry once the two backends named the same field the
-same way.
+`timer_basic` and `timer_zephyr` — the two that had been crashing at
+runtime since the corpus harness was first built — cleared with gap L. They
+were never a timer problem at all: OZTimer holds a strong object ivar, so
+they were the same missing retain that made `samples/transpiled_led`
+segfault. Diagnosing that one sample fixed both.
 
 `regression/issue_090_header_preservation` was the seventh and now matches.
 It is the oracle's own regression test for this exact bug — "transpiler
@@ -526,36 +583,9 @@ CONFIG_OBJZ_BACKEND_STATIC=y
 ## Not verified
 
 **No Zephyr cross-build was run.** Everything above is a host measurement.
-Nothing here claims any sample builds or runs on target, and two findings
-say the Zephyr path has not been exercised at all:
+Nothing here claims any sample builds or runs on target, and one finding
+says the Zephyr path is still not fully exercised:
 
-- **`cmake/oz_static.cmake` links `src/OZLog.c`, which cannot compile
-  against oz_static's output.** That file is written against the *Python*
-  backend's generated header names — it opens with `#include
-  "oz_dispatch.h"` and `#include "OZObject_ozh.h"`, which oz_static spells
-  `oz_static_dispatch.h` and `OZObject.h`. Its one real dependency beyond
-  those, `OZ_PROTOCOL_SEND_cDescription_maxLength_`, both backends do
-  provide under the same name and signature (a macro on one side, a
-  function on the other), so the incompatibility is the two `#include`
-  lines and nothing more. No sample selects `CONFIG_OBJZ_BACKEND_STATIC`,
-  which is why this has gone unnoticed; it is not fixed here.
-
-  Making the file a `.m` and letting each backend transpile it would give
-  oz_static exactly what it needs -- a transpiled file already includes its
-  own dispatch header, so both stale includes could go -- but it does not
-  work for the Python backend today. That backend *does* model top-level C
-  functions (`collect.py::_collect_function`), yet it takes their parameters
-  from `ParmVarDecl` nodes alone and has no variadic support anywhere: no
-  `isVariadic`, no `...`, and every signature is built as
-  `", ".join(p.oz_type.c_param_decl(p.name) for p in func.params)`
-  (`emit.py:567`, `:795`, `:858`). `void OZLog(const char *fmt, ...)` would
-  silently lose its varargs, leaving the body's `va_start(args, fmt)`
-  undefined. OZLog is the one file least suited to the conversion, being
-  inherently variadic.
-
-  The cheap fix, if this is worth closing: make the two includes conditional
-  on a macro `cmake/oz_static.cmake` defines. Five lines in one shared file,
-  no emitter change on either side, one implementation.
 - **`cmake/oz_static.cmake` passes no `--ast`.** So the production build
   path gets none of the Clang ownership facts, and `--ast` support is
   exercised only by the corpus harness and the sample sweep. Since
@@ -563,5 +593,19 @@ say the Zephyr path has not been exercised at all:
   is ivar ownership — which is what decides whether ARC releases an
   `id`-typed ivar.
 
-**The samples are compiled and linked, not run.** Only the behavior corpus
-is executed, and only under the ABI shim described above.
+**The samples are run on host, not on target.** Nine of them execute and
+are checked against their own `sample.yaml`, which is a real and
+independent oracle — but a host run says nothing about `k_mem_slab`, real
+interrupt-disabled spinlocks, or code size, and the three samples needing
+kernel or device-tree infrastructure are not run at all.
+
+Recorded because the reasoning is worth keeping: an earlier note here asked
+whether making `src/OZLog.c` a `.m` and letting each backend transpile it
+would fix gap K. It would not have. The Python backend *does* model
+top-level C functions (`collect.py::_collect_function`) but has no variadic
+support anywhere — no `isVariadic`, no `...`, and every signature is built
+as `", ".join(p.oz_type.c_param_decl(p.name) for p in func.params)`
+(`emit.py:567`, `:795`, `:858`) — so `void OZLog(const char *fmt, ...)`
+would silently lose its varargs and its `va_start(args, fmt)` would be
+undefined. OZLog is inherently variadic, making it the file least suited to
+that conversion. Gap K fixes it the other way instead.

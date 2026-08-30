@@ -14,8 +14,25 @@
 #include <stdarg.h>
 #include <zephyr/sys/printk.h>
 
+/*
+ * The generated dispatch header and the root class's struct, whose file
+ * names differ between the two backends. Everything this file actually
+ * needs from them -- struct OZObject, and
+ * OZ_PROTOCOL_SEND_cDescription_maxLength_ with the same signature -- both
+ * backends provide alike; only the spellings differ, so a switch on the
+ * backend is all it takes. cmake/oz_static.cmake defines OZ_BACKEND_STATIC.
+ *
+ * Without this the static backend could not build any sample that logs:
+ * cmake/oz_static.cmake links this file unconditionally, and these two
+ * names exist only in the Python backend's output.
+ */
+#ifdef OZ_BACKEND_STATIC
+#include "oz_static_dispatch.h"
+#include "OZObject.h"
+#else
 #include "oz_dispatch.h"
 #include "OZObject_ozh.h"
+#endif
 
 #ifndef CONFIG_OBJZ_LOG_BUFFER_SIZE
 #define CONFIG_OBJZ_LOG_BUFFER_SIZE 128

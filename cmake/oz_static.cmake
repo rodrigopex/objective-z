@@ -176,9 +176,18 @@ function(objz_transpile_sources_static target)
     # than an edit to the shared headers or to oz_static's verbatim copy.
     target_compile_definitions(${target} PRIVATE __unsafe_unretained=)
 
-    # Add OZLog support (pure C, matches the prototype hardcoded into
-    # oz_static's own generated companion header -- see companion.rs)
+    # Add OZLog support (pure C, matching the prototypes hardcoded into
+    # oz_static's own generated companion header -- see companion.rs).
+    #
+    # OZ_BACKEND_STATIC picks the generated header names in that file: it
+    # reaches for the dispatch header and the root class's struct, and the
+    # two backends name both differently. Without the define it includes
+    # "oz_dispatch.h" and "OZObject_ozh.h", which exist only in the Python
+    # backend's output, so no sample that logs could be built at all.
     target_sources(${target} PRIVATE ${_mod}/src/OZLog.c)
+    set_source_files_properties(${_mod}/src/OZLog.c
+        DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        PROPERTIES COMPILE_DEFINITIONS OZ_BACKEND_STATIC)
 
     set_target_properties(${target} PROPERTIES LINKER_LANGUAGE C)
 endfunction()

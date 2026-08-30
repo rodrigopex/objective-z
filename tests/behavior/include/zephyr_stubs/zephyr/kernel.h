@@ -4,6 +4,12 @@
 
 #include <stdint.h>
 
+/* Real Zephyr's kernel.h makes printk available transitively, and
+ * transpiled code relies on that -- samples/pool_demo calls printk with
+ * only <zephyr/kernel.h> included. Mirroring it here is what lets those
+ * samples link on host instead of stopping at an undefined _printk. */
+#include <zephyr/sys/printk.h>
+
 typedef struct { int64_t ticks; } k_timeout_t;
 
 struct k_timer {
