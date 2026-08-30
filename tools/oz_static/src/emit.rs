@@ -2594,7 +2594,14 @@ pub fn emit(source: &str, program: &Program, pools: &crate::pools::PoolSizes) ->
     );
 
     let (companion_h, companion_c) =
-        crate::companion::render(program, &hoisted_structs, &hoisted_enums, &hoisted_forward_decls, pools);
+        crate::companion::render(
+            program,
+            &hoisted_structs,
+            &hoisted_enums,
+            &hoisted_forward_decls,
+            pools,
+            &crate::imports::collect_system_includes(source),
+        );
 
     EmitOutput { source_c: out, companion_h, companion_c, diagnostics: diags }
 }
@@ -3038,7 +3045,14 @@ pub fn emit_split(
     }
 
     let (companion_h, companion_c) =
-        crate::companion::render(program, &hoisted_structs, &hoisted_enums, &hoisted_forward_decls, pools);
+        crate::companion::render(
+            program,
+            &hoisted_structs,
+            &hoisted_enums,
+            &hoisted_forward_decls,
+            pools,
+            &crate::imports::collect_system_includes(source),
+        );
 
     EmitSplitOutput { files, companion_h, companion_c, diagnostics: diags }
 }

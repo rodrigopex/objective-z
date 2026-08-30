@@ -31,21 +31,17 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// Cases whose generated C does not compile yet, each with the reason.
-/// Both causes are understood and tracked; neither is a mystery.
+/// The cause is understood; it is not a mystery.
 const KNOWN_CC_FAILURES: &[(&str, &str)] = &[
-    // The companion header declares OZTimer's initialiser with `struct
-    // k_timer` parameters, but the source's own `#include
-    // <zephyr/kernel.h>` is not carried into that header, so C invents a
-    // prototype-scoped type and the real definition then conflicts. The
-    // oracle propagates the include (see
-    // tests/zephyr/generated/OZTimer_ozh.h:7).
-    ("foundation/timer_basic.m", "source #include not propagated into companion header"),
-    ("foundation/timer_zephyr.m", "source #include not propagated into companion header"),
-    // OZHeap.h's `struct oz_heap_inner` and platform/oz_platform.h's
-    // fallback are guarded on the same macro, which neither defines
-    // outside OZ_HEAP_SUPPORT, so both fire. Needs the heap-support path
-    // (`allocWithHeap:`), which oz_static does not emit.
-    ("memory/heap_alloc.m", "oz_heap_inner redefinition; no allocWithHeap: support"),
+    // Two headers define `struct oz_heap_inner` -- OZHeap.h and
+    // platform/oz_platform.h -- both guarded on OZ_HEAP_INNER_DEFINED,
+    // which neither defines (only oz_platform_{host,zephyr}.h do, behind
+    // OZ_HEAP_SUPPORT), so both fire. That is a defect in the SDK headers
+    // rather than in what oz_static emits: the generated header contains
+    // exactly one definition. Reaching a working build here also needs
+    // the heap-support path (`allocWithHeap:`), which oz_static does not
+    // emit at all.
+    ("memory/heap_alloc.m", "oz_heap_inner redefinition in SDK headers; no allocWithHeap: support"),
 ];
 
 fn repo_root() -> PathBuf {
