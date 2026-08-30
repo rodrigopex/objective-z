@@ -8,13 +8,9 @@
 // and a main() that printf's the values the original Unity `_test.c`
 // asserted, checked here via an exact stdout match.
 //
-// tests/behavior/cases/memory/heap_alloc.m is NOT ported here: it exercises
-// the Python pipeline's `allocWithHeap:` (a heap-backed OZHeap allocation
-// variant, distinct from slab alloc, with its own usage-tracking API).
-// oz_static only synthesizes one malloc-based `{Class}_oz_alloc` -- there is
-// no heap-backed allocation variant to test an equivalent of. Not tracked as
-// its own issue; falls under OZ-092's (#190) general note that
-// Foundation-adjacent features are Phase 2.
+// tests/behavior/cases/memory/heap_alloc.m is covered in
+// behavior_foundation_heap.rs instead, alongside the rest of OZHeap, now
+// that `+allocWithHeap:` is implemented.
 
 mod common;
 use common::{compile_and_run, ozobject_src as PREAMBLE};
@@ -201,4 +197,132 @@ fn retain_increments_refcount() {
     );
     let stdout = compile_and_run(&src, "retain_increments_refcount");
     assert_eq!(stdout, "rc1=1\nrc2=2\nrc3=3\n");
+}
+
+/// Assigning to a strong object ivar has to take ownership of the value.
+///
+/// It did not, and the asymmetry was a use-after-free waiting to happen:
+/// `{Class}_oz_release_ivars` releases every owned object ivar when an
+/// instance dies, but nothing had ever retained what was stored there. This
+/// is the shape of `samples/transpiled_led` -- a chain of objects each
+/// holding the previous one in a strong ivar assigned straight from a
+/// parameter -- which segfaulted with nothing printed at all.
+/// AddressSanitizer named it exactly: heap-use-after-free in
+/// `oz_atomic_dec_and_test`, the object freed once by its owner's
+/// `oz_release_ivars` and again by the scope-exit release of the local that
+/// created it.
+///
+/// The refcount is what this checks, because it is the thing that was wrong:
+/// `first` is held by a local *and* by `second`'s ivar, so it is 2 while
+/// both are alive, and releasing `second` has to bring it back to 1 rather
+/// than to 0.
+#[test]
+fn strong_ivar_assignment_takes_ownership() {
+    let src = format!(
+        "{}{}",
+        PREAMBLE(),
+        "\
+#include <stdio.h>
+
+@interface Link : OZObject {
+	int _tag;
+	Link *_next;
+}
+- (instancetype)initWithTag:(int)tag next:(Link *)next;
+- (int)tag;
+@end
+
+@implementation Link
+- (instancetype)initWithTag:(int)tag next:(Link *)next {
+	self = [super init];
+	if (self) {
+		_tag = tag;
+		_next = next;
+	}
+	return self;
+}
+- (int)tag {
+	return _tag;
+}
+- (void)dealloc {
+	printf(\"dealloc %d\\n\", _tag);
+}
+@end
+
+int main(void) {
+	Link *first = [[Link alloc] initWithTag:1 next:nil];
+	printf(\"first_rc=%d\\n\", [first retainCount]);
+	Link *second = [[Link alloc] initWithTag:2 next:first];
+	/* `first` is now held twice: by this scope, and by second's ivar. */
+	printf(\"first_rc_held=%d\\n\", [first retainCount]);
+	[second release];
+	/* second's dealloc released its ivar, so `first` is back to just us. */
+	printf(\"first_rc_after=%d\\n\", [first retainCount]);
+	printf(\"still_alive_tag=%d\\n\", [first tag]);
+	[first release];
+	printf(\"done\\n\");
+	return 0;
+}
+"
+    );
+    let stdout = compile_and_run(&src, "strong_ivar_assignment_takes_ownership");
+    assert_eq!(
+        stdout,
+        "first_rc=1\nfirst_rc_held=2\ndealloc 2\nfirst_rc_after=1\nstill_alive_tag=1\ndealloc 1\ndone\n"
+    );
+}
+
+/// A `+1` right-hand side is stored without an extra retain: it already
+/// carries the reference the ivar takes over, and a temporary has no
+/// scope-exit release to balance a second one -- so retaining it too would
+/// leak. The count stays 1, and the object still dies with its owner.
+#[test]
+fn strong_ivar_assigned_a_fresh_object_is_not_retained_twice() {
+    let src = format!(
+        "{}{}",
+        PREAMBLE(),
+        "\
+#include <stdio.h>
+
+@interface Leaf : OZObject
+@end
+@implementation Leaf
+- (void)dealloc {
+	printf(\"leaf gone\\n\");
+}
+@end
+
+@interface Holder : OZObject {
+	Leaf *_leaf;
+}
+- (instancetype)init;
+- (int)leafCount;
+@end
+
+@implementation Holder
+- (instancetype)init {
+	self = [super init];
+	if (self) {
+		_leaf = [Leaf alloc];
+	}
+	return self;
+}
+- (int)leafCount {
+	return [_leaf retainCount];
+}
+- (void)dealloc {
+}
+@end
+
+int main(void) {
+	Holder *h = [[Holder alloc] init];
+	printf(\"leaf_rc=%d\\n\", [h leafCount]);
+	[h release];
+	printf(\"done\\n\");
+	return 0;
+}
+"
+    );
+    let stdout = compile_and_run(&src, "strong_ivar_assigned_a_fresh_object_is_not_retained_twice");
+    assert_eq!(stdout, "leaf_rc=1\nleaf gone\ndone\n");
 }

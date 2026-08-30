@@ -1209,9 +1209,91 @@ fn render_field_expression(node: Node, ctx: &mut EmitCtx) -> (String, String) {
     send_to_resolved_class(ctx, &class, &getter, &obj_text, &[], super_access)
 }
 
-/// Assignment, handled here only so that a property dot-syntax *target*
-/// becomes the setter call rather than an assignment to a function call.
-/// Every other assignment passes through as the C it already is.
+/// `_ivar = value` where `_ivar` is a strong object ivar: takes ownership of
+/// the new value and gives up the old one, the way assigning to a `__strong`
+/// ivar does under ARC. `None` when this is not that.
+///
+/// oz_static had the release half of strong-ivar ownership without the
+/// retain half: `{Class}_oz_release_ivars` releases every owned object ivar
+/// when an instance dies, but nothing ever retained what was stored there.
+/// `samples/transpiled_led` is a chain of six OZHelpers, each holding the
+/// previous one in a strong `_next` ivar assigned straight from a parameter,
+/// and it segfaulted -- AddressSanitizer named it exactly:
+/// heap-use-after-free in `oz_atomic_dec_and_test`, the object freed once by
+/// its owner's `oz_release_ivars` and again by the scope-exit release of the
+/// local that created it. Releasing a reference never taken is a double
+/// free, so the two halves have to match: retain exactly what dealloc will
+/// release, which is why the predicate here is
+/// `Program::owned_object_ivar_names` -- the same list that path uses.
+///
+/// Properties were never affected: a synthesized setter already does
+/// retain-new/release-old (`render_synthesized_accessor`). Only *direct*
+/// ivar assignment was missing it.
+///
+/// A `+1` right-hand side is stored without retaining, because it already
+/// carries the reference the ivar is taking over -- retaining it as well
+/// would leak, since a temporary has no scope-exit release to balance it.
+/// Everything else is borrowed and gets retained; where that value is also
+/// an owned local, its own scope-exit release keeps the count right.
+///
+/// Emitted as a comma expression over a temporary rather than several
+/// statements, so it stays usable wherever an assignment was, and in the
+/// same order the synthesized setter uses: assign, retain new, release old.
+/// That order is what makes self-assignment (`_x = _x`) safe -- releasing
+/// first could free the value being stored.
+fn render_strong_ivar_assign(
+    node: Node,
+    left: Node,
+    right: Node,
+    ctx: &mut EmitCtx,
+) -> Option<(String, String)> {
+    if left.kind() != "identifier" {
+        return None;
+    }
+    let name = node_text(left, ctx.src).to_string();
+    if ctx.locals.contains(&name) {
+        return None;
+    }
+    if !ctx.program.owned_object_ivar_names(&ctx.class_name).contains(&name) {
+        return None;
+    }
+    let path = ctx.program.ivar_access_path(&ctx.class_name, &name)?;
+    let root = ctx.program.root_class()?.to_string();
+
+    let takes_ownership = crate::arc::is_owning_expr(right, ctx.src, ctx.program, &ctx.program.owning_methods);
+    let (value, value_ty) = render_expr(right, ctx);
+
+    let (line, col) = line_col(ctx.src, node.start_byte());
+    ctx.block_counter += 1;
+    let prev = format!("_oz_prev_L{}_C{}_{}", line, col, ctx.block_counter);
+    ctx.pre_stmts.push(format!(
+        "struct {root} *{prev} = (struct {root} *)(self->{path});",
+        root = root,
+        prev = prev,
+        path = path
+    ));
+
+    let retain = if takes_ownership {
+        String::new()
+    } else {
+        format!("oz_static_retain((struct {root} *)(self->{path})), ", root = root, path = path)
+    };
+    let expr = format!(
+        "(self->{path} = {value}, {retain}oz_static_release({prev}), self->{path})",
+        path = path,
+        value = value,
+        retain = retain,
+        prev = prev
+    );
+    let ty = if value_ty == "id" { format!("struct {} *", root) } else { value_ty };
+    Some((expr, ty))
+}
+
+/// Assignment, handled here for two reasons: a property dot-syntax *target*
+/// has to become the setter call rather than an assignment to a function
+/// call, and a strong object ivar has to take ownership of what it is given
+/// (`render_strong_ivar_assign`). Every other assignment passes through as
+/// the C it already is.
 ///
 /// A compound assignment (`+=`, `<<=`, ...) has to read the property and
 /// write it back, which mentions the receiver twice -- so it is only
@@ -1237,7 +1319,15 @@ fn render_assignment_expression(node: Node, ctx: &mut EmitCtx) -> (String, Strin
     else {
         return pass_through(ctx);
     };
-    if left.kind() != "field_expression" || children.len() < 3 {
+    if children.len() < 3 {
+        return pass_through(ctx);
+    }
+    if node_text(op, ctx.src) == "=" {
+        if let Some(rendered) = render_strong_ivar_assign(node, left, right, ctx) {
+            return rendered;
+        }
+    }
+    if left.kind() != "field_expression" {
         return pass_through(ctx);
     }
     let operator = node_text(op, ctx.src).to_string();
