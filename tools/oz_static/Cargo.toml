@@ -1,6 +1,6 @@
 [package]
 name = "oz_static"
-version = "0.5.0"
+version = "0.6.0"
 edition = "2021"
 description = "OZ-091 Track B spike: static-subset Objective-C to C transpiler using in-place textual substitution"
 publish = false
@@ -10,7 +10,7 @@ name = "oz_static"
 path = "src/lib.rs"
 
 [[bin]]
-name = "ozcc"
+name = "oz2c"
 path = "src/main.rs"
 
 [dependencies]
