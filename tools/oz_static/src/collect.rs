@@ -784,6 +784,7 @@ pub fn collect(source: &str) -> (Program, Vec<crate::model::Diagnostic>) {
             protocols,
             owning_methods: Default::default(),
             ast: None,
+            heap_support: false,
         },
         diagnostics,
     )

@@ -4,25 +4,26 @@
 // `allocWithHeap:`, transplanted from the real `src/OZHeap.m` (see
 // `common::ozheap_src`).
 //
-// SCOPE, stated plainly: these tests prove oz_static *transpiles* OZHeap
-// into C that compiles, links, and runs -- a value-typed ivar of an
-// externally-declared struct (`struct oz_heap_inner _inner`), a
-// `self = [super init]` chain, a `size_t` return type, and
-// `&self->_inner` address-of-ivar passing. They do NOT prove heap
-// accounting: this harness compiles with `-DOZ_PLATFORM_HOST` but not
-// `-DOZ_HEAP_SUPPORT`, so the linked `oz_heap_init`/`oz_heap_used_bytes`
-// are the header's own no-op stubs, and `-usedBytes` answers 0 by
-// construction. Real accounting needs the malloc-backed PAL versions
-// (`platform/oz_platform_host.h`, behind `OZ_HEAP_SUPPORT`) reached
-// through `allocWithHeap:`, which oz_static does not implement yet.
+// The first two tests prove oz_static *transpiles* OZHeap into C that
+// compiles, links, and runs -- a value-typed ivar of an externally-declared
+// struct (`struct oz_heap_inner _inner`), a `self = [super init]` chain, a
+// `size_t` return type, and `&self->_inner` address-of-ivar passing. They do
+// not prove heap accounting: they compile with `-DOZ_PLATFORM_HOST` but not
+// `-DOZ_HEAP_SUPPORT`, so the linked `oz_heap_init`/`oz_heap_used_bytes` are
+// the header's own no-op stubs and `-usedBytes` answers 0 by construction.
 //
-// The oracle's `tests/behavior/cases/memory/heap_alloc.m` is the
-// corresponding case; it is NOT ported, because it exercises
-// `[Cls allocWithHeap:]` -- the part oz_static lacks. Porting it would
-// require asserting on behavior that doesn't exist here.
+// The last test does prove accounting, through the real malloc-backed PAL
+// versions (`platform/oz_platform_host.h`, behind `OZ_HEAP_SUPPORT`) reached
+// via `+allocWithHeap:`. It is the shape of the oracle's own
+// `tests/behavior/cases/memory/heap_alloc.m`, which cannot itself be run
+// through the cross-backend harness: that case's driver asserts on the
+// oracle's root struct layout (`w->base._meta.class_id`) rather than on
+// behavior -- see PARITY.md.
 
 mod common;
-use common::{compile_and_run, ozheap_src, ozobject_src as PREAMBLE};
+use common::{
+    compile_and_run, compile_and_run_with_heap, ozheap_src, ozobject_src as PREAMBLE,
+};
 
 #[test]
 fn heap_init_with_buffer_and_used_bytes() {
@@ -53,8 +54,8 @@ int main(void) {{
 }
 
 /// OZHeap as a strong ivar of another class, released from that class's
-/// own `-dealloc`: oz_static has no ARC (#189), so the release is
-/// explicit.
+/// own `-dealloc`. The release is written by hand here, which ARC defers to
+/// (see `emit::released_by_hand`).
 #[test]
 fn heap_held_as_ivar_and_released_by_owner() {
     let src = format!(
@@ -106,4 +107,63 @@ int main(void) {{
     );
     let stdout = compile_and_run(&src, "heap_held_as_ivar_and_released_by_owner");
     assert_eq!(stdout, "used=0\ndealloc_before=0\ndealloc_after=1\n");
+}
+
+/// `+allocWithHeap:` end to end: the storage comes from the heap it was
+/// given, the heap's used-bytes reflects that, and freeing gives the space
+/// back -- so `-usedBytes` is 0 again once the object dies.
+///
+/// This is the check that matters for the whole feature, because none of it
+/// is visible earlier. Compiling and linking both passed while every object
+/// allocated this way leaked: `@autoreleasepool` had its own renderer that
+/// skipped ARC entirely, so nothing released them (see `emit::arc_enter`).
+/// The heap's own accounting is what makes that observable at all.
+#[test]
+fn alloc_with_heap_takes_storage_from_the_heap_and_gives_it_back() {
+    let src = format!(
+        "{}{}\n\
+#include <stdio.h>
+
+@interface Widget : OZObject {{
+\tint _tag;
+}}
+- (void)setTag:(int)t;
+- (int)tag;
+@end
+
+@implementation Widget
+- (void)setTag:(int)t {{
+\t_tag = t;
+}}
+- (int)tag {{
+\treturn _tag;
+}}
+- (void)dealloc {{
+}}
+@end
+
+static char g_buf[1024];
+
+int main(void) {{
+\tOZHeap *h = [[OZHeap alloc] initWithBuffer:g_buf size:1024];
+\tprintf(\"before=%zu\\n\", [h usedBytes]);
+\t@autoreleasepool {{
+\t\tWidget *w = [[Widget allocWithHeap:h] init];
+\t\t[w setTag:7];
+\t\tprintf(\"tag=%d\\n\", [w tag]);
+\t\tprintf(\"during=%d\\n\", [h usedBytes] > 0);
+\t}}
+\tprintf(\"after=%zu\\n\", [h usedBytes]);
+\t[h release];
+\treturn 0;
+}}
+",
+        PREAMBLE(),
+        ozheap_src()
+    );
+    let stdout = compile_and_run_with_heap(
+        &src,
+        "alloc_with_heap_takes_storage_from_the_heap_and_gives_it_back",
+    );
+    assert_eq!(stdout, "before=0\ntag=7\nduring=1\nafter=0\n");
 }
