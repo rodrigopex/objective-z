@@ -6,6 +6,7 @@
 pub mod collect;
 pub mod companion;
 pub mod emit;
+pub mod generics;
 pub mod imports;
 pub mod model;
 pub mod parse;
@@ -24,7 +25,11 @@ pub struct TranspileOutput {
 /// silently degrades: anything the static subset doesn't accept is a
 /// named, located hard error.
 pub fn transpile(source: &str) -> Result<TranspileOutput, Vec<Diagnostic>> {
-    let (program, diagnostics) = collect::collect(source);
+    let (program, mut diagnostics) = collect::collect(source);
+    if !diagnostics.is_empty() {
+        return Err(diagnostics);
+    }
+    diagnostics.extend(generics::check_program(source, &program));
     if !diagnostics.is_empty() {
         return Err(diagnostics);
     }
@@ -51,6 +56,10 @@ pub fn transpile_split(
     origins: &[(String, std::ops::Range<usize>)],
 ) -> Result<emit::EmitSplitOutput, Vec<Diagnostic>> {
     let (program, mut diagnostics) = collect::collect(source);
+    if !diagnostics.is_empty() {
+        return Err(diagnostics);
+    }
+    diagnostics.extend(generics::check_program(source, &program));
     if !diagnostics.is_empty() {
         return Err(diagnostics);
     }

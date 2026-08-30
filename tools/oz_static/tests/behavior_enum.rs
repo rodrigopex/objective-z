@@ -184,3 +184,61 @@ int main(void) {{
     let stdout = compile_and_run(&src, "enum_in_switch");
     assert_eq!(stdout, "red=10\ngreen=20\nblue=30\n");
 }
+
+/// Not a port -- the oracle's own `tests/behavior/cases/enum/` has no
+/// anonymous-enum case, so there is nothing to port. This is new
+/// coverage for a construct reportedly unsupported: `enum { ... };` with
+/// no tag name.
+///
+/// It already works, and needed no code change: the enum-hoisting logic
+/// (`emit.rs`'s `enum_specifier` arm) moves the whole definition's text
+/// to the companion header verbatim regardless of whether it has a tag,
+/// and an anonymous enum's enumerators are ordinary identifiers usable
+/// anywhere an `int` constant is, tag or no tag -- the same as in real C.
+///
+/// A real, narrower gap does exist a level down, in
+/// `collect::extract_type_and_stars`'s `enum_specifier` arm: an anonymous
+/// enum used *inline as a value type* (a method parameter/ivar/return
+/// declared with the enum's definition instead of a name, e.g.
+/// `- (enum { A, B })foo;`) degrades to the bare word `enum` with no
+/// body, which is not valid C on its own. That's a different construct
+/// from the one exercised here -- this test's enum is defined once at
+/// file scope and every use of it is by its *enumerator constants*
+/// (plain `int`s), never by naming the anonymous type itself -- and
+/// fixing it needs a change in `collect.rs`, out of scope here.
+#[test]
+fn anonymous_enum_constants_usable() {
+    let src = format!(
+        "{}
+enum {{
+	AnonRed,
+	AnonGreen,
+	AnonBlue
+}};
+
+@interface AnonEnumTest : OZObject
+- (int)pick;
+@end
+
+@implementation AnonEnumTest
+- (int)pick {{
+	return AnonGreen;
+}}
+@end
+
+#include <stdio.h>
+
+int main(void) {{
+	AnonEnumTest *t = [AnonEnumTest alloc];
+	printf(\"red=%d\\n\", AnonRed);
+	printf(\"pick=%d\\n\", [t pick]);
+	printf(\"blue=%d\\n\", AnonBlue);
+	[t release];
+	return 0;
+}}
+",
+        PREAMBLE()
+    );
+    let stdout = compile_and_run(&src, "anonymous_enum_constants_usable");
+    assert_eq!(stdout, "red=0\npick=1\nblue=2\n");
+}

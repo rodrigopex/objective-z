@@ -74,9 +74,35 @@ fn extract_protocol_list(node: Node, src: &str) -> Vec<String> {
     out
 }
 
+/// A `class_interface` with both its own generic parameter list *and*
+/// protocol conformance (`@interface OZArray<__covariant ObjectType> :
+/// OZObject <IteratorProtocol>`) has TWO `parameterized_arguments`
+/// children -- the class's own `<...>` right after its name, and the
+/// conformance list `<...>` after the superclass. `child_by_kind` picks
+/// the *first* one unconditionally, which is only ever correct when a
+/// generic parameter list isn't also present -- otherwise it reads the
+/// generic parameter names (`__covariant`, `ObjectType`) as if they were
+/// protocol names. Confirmed via a tree-sitter-objc CST dump: both
+/// lists really do share the same node kind, distinguished only by
+/// position relative to the `:` token.
+///
+/// The conformance list, when a superclass is present, is whichever
+/// `parameterized_arguments` comes *after* the `:` -- there is at most
+/// one on each side. With no superclass (a root class conforming to a
+/// protocol directly -- no precedent in this SDK, but syntactically
+/// possible), there is at most one `parameterized_arguments` at all, so
+/// it can only be the conformance list.
 fn extract_conformance(node: Node, src: &str) -> Vec<String> {
-    match child_by_kind(node, "parameterized_arguments") {
-        Some(list) => extract_protocol_list(list, src),
+    let mut cursor = node.walk();
+    let children: Vec<Node> = node.children(&mut cursor).collect();
+    let list = match children.iter().position(|c| c.kind() == ":") {
+        Some(colon_idx) => {
+            children[colon_idx..].iter().find(|c| c.kind() == "parameterized_arguments")
+        }
+        None => children.iter().find(|c| c.kind() == "parameterized_arguments"),
+    };
+    match list {
+        Some(list) => extract_protocol_list(*list, src),
         None => Vec::new(),
     }
 }
@@ -157,9 +183,55 @@ pub(crate) fn extract_type_and_stars(node: Node, src: &str) -> (String, usize) {
             // a single-keyword `primitive_type` (`int`, `char`, ...),
             // but the whole node's own text is exactly the desired type
             // text either way.
-            "primitive_type" | "sized_type_specifier" | "type_identifier" | "typedefed_specifier" => {
+            "primitive_type" | "sized_type_specifier" | "type_identifier" => {
                 if type_text.is_empty() {
                     *type_text = node_text(n, src).to_string();
+                }
+            }
+            "typedefed_specifier" => {
+                // Usually just wraps a bare `id`/`instancetype`/typedef'd
+                // name, whose own text is exactly the desired type text
+                // (the common case, handled by the fallback below). But
+                // `id<Proto>` -- a protocol-qualified `id` -- parses as
+                // this SAME node kind wrapping `id` *plus* a
+                // `protocol_reference_list` (confirmed via a tree-sitter
+                // CST dump: see `generics.rs`'s header comment), so its
+                // own text is `"id<Proto>"`, not a real type name --
+                // `render_type` only special-cases bare `"id"`. Detect
+                // that shape and normalize to plain `"id"`, so it lowers
+                // to `void *` exactly like an unqualified `id` would;
+                // the protocol constraint itself is a
+                // `generics::check_program` concern, not codegen (no
+                // runtime type/selector registry is generated -- the
+                // same reason `staticbar.rs` rejects `@selector`).
+                if type_text.is_empty() {
+                    let mut c = n.walk();
+                    let has_protocol_list =
+                        n.children(&mut c).any(|ch| ch.kind() == "protocol_reference_list");
+                    *type_text = if has_protocol_list {
+                        "id".to_string()
+                    } else {
+                        node_text(n, src).to_string()
+                    };
+                }
+            }
+            "generic_specifier" => {
+                // `Container<Arg, ...>` (e.g. `OZArray<OZQ31 *>`): this
+                // spike renders a generic collection's *declared* type
+                // exactly like its non-generic form -- element-type
+                // constraints are a `generics::check_program` concern,
+                // not codegen, matching the oracle (Clang erases
+                // generics too, so it also just emits the base class).
+                // Only the base name is a real C type; the recursive
+                // fallback below must not be allowed to touch the
+                // bracketed argument, whose own pointer star(s) belong
+                // to the *argument* type, not to this declaration's.
+                if type_text.is_empty() {
+                    let mut c = n.walk();
+                    let base = n.children(&mut c).find(|ch| ch.kind() == "type_identifier");
+                    if let Some(base) = base {
+                        *type_text = node_text(base, src).to_string();
+                    }
                 }
             }
             "enum_specifier" => {
@@ -534,26 +606,45 @@ pub fn collect(source: &str) -> (Program, Vec<crate::model::Diagnostic>) {
         match node.kind() {
             "class_interface" => {
                 let (name, _, category) = class_header(node, source);
-                if category.is_some() {
-                    continue;
-                }
-                let ivars = extract_ivars(node, source, &known_classes);
-                if let Some(info) = classes.get_mut(&name) {
-                    info.own_ivars = ivars;
+                // A category's methods and properties merge into the
+                // class it extends (mirroring the oracle's
+                // `collect.py::_merge_category`); its ivars do not,
+                // because ObjC categories cannot declare any. A category
+                // may restate a selector the main @interface already
+                // declared, so pushes from here are deduplicated -- the
+                // main interface has no such risk, nothing else declares
+                // its selectors before it.
+                let is_category = category.is_some();
+                if !is_category {
+                    let ivars = extract_ivars(node, source, &known_classes);
+                    if let Some(info) = classes.get_mut(&name) {
+                        info.own_ivars = ivars;
+                    }
                 }
                 let mut c = node.walk();
                 for decl in node.children(&mut c) {
                     if decl.kind() == "method_declaration" {
                         let sig = extract_method_sig(decl, source, &name, &known_classes);
                         if let Some(info) = classes.get_mut(&name) {
-                            info.methods.push(sig);
+                            let dup = is_category
+                                && info.methods.iter().any(|m| {
+                                    m.selector == sig.selector
+                                        && m.is_class_method == sig.is_class_method
+                                });
+                            if !dup {
+                                info.methods.push(sig);
+                            }
                         }
                     } else if decl.kind() == "property_declaration" {
                         if let Some(prop) =
                             extract_property(decl, source, &known_classes, &mut diagnostics)
                         {
                             if let Some(info) = classes.get_mut(&name) {
-                                info.properties.push(prop);
+                                let dup = is_category
+                                    && info.properties.iter().any(|p| p.name == prop.name);
+                                if !dup {
+                                    info.properties.push(prop);
+                                }
                             }
                         }
                     }
