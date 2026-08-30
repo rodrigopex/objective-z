@@ -4,7 +4,9 @@
 // subset must be a named, located hard error -- never a silent skip.
 
 mod common;
-use common::{expect_reject, ozobject_src as PREAMBLE};
+use common::{
+    compile_and_run, expect_reject, ozarray_src, ozobject_src as PREAMBLE, ozq31_src,
+};
 
 #[test]
 fn try_catch_rejected() {
@@ -309,4 +311,126 @@ fn releasing_unretained_ivar_in_dealloc_accepted() {
         oz_static::transpile(&src).is_ok(),
         "releasing an __unsafe_unretained ivar should be accepted"
     );
+}
+
+
+// ---------------------------------------------------------------------
+// Collection literals that escape a loop iteration (OZ-098)
+//
+// Pool sizing counts an allocation *site* once, however many times it
+// runs (`pools::count_sites`). That is a sound floor only while each
+// iteration's instance dies before the next begins, which scope-based ARC
+// guarantees for a fresh per-iteration local and cannot guarantee for
+// anything else. An explicit `[X alloc]` has been held to this rule all
+// along; `@[...]`/`@{...}` allocate too -- both a collection object and a
+// run of element slots -- so they are now held to it as well.
+//
+// These cases put the loop inside an Objective-C method, which is where
+// the rule can act: `staticbar::check_method_body` is reached only from
+// `emit.rs`'s method-body renderer, so a loop written in a plain C
+// function (`int main(void) { ... }`) is not examined by the static bar at
+// all. That predates this work and applies to the `alloc` rule above
+// identically -- it is not specific to literals.
+// ---------------------------------------------------------------------
+
+/// Assigned to a local declared *outside* the loop, so each iteration's
+/// array can outlive the one before it and the counted single site is no
+/// longer a bound.
+#[test]
+fn array_literal_escaping_a_loop_rejected() {
+    let src = format!(
+        "{}{}{}{}",
+        PREAMBLE(),
+        ozq31_src(),
+        ozarray_src(),
+        "\
+@interface Keeper : OZObject
+- (BOOL)run;
+@end
+@implementation Keeper
+- (BOOL)run {
+	OZArray *arr;
+	for (int i = 0; i < 3; i++) {
+		arr = @[@(1), @(2)];
+	}
+	return arr != 0;
+}
+@end
+
+int main(void) { return 0; }
+"
+    );
+    let diags = expect_reject(&src);
+    assert!(diags.contains("boxed array literal"), "diagnostics: {}", diags);
+    assert!(diags.contains("escapes the iteration"), "diagnostics: {}", diags);
+}
+
+/// The dictionary counterpart, which names itself distinctly so the
+/// message points at the construct actually written.
+#[test]
+fn dictionary_literal_escaping_a_loop_rejected() {
+    let src = format!(
+        "{}{}{}{}",
+        PREAMBLE(),
+        ozq31_src(),
+        common::ozdictionary_src(),
+        "\
+@interface Keeper : OZObject
+- (BOOL)run;
+@end
+@implementation Keeper
+- (BOOL)run {
+	OZDictionary *d;
+	for (int i = 0; i < 3; i++) {
+		d = @{@(1): @(2)};
+	}
+	return d != 0;
+}
+@end
+
+int main(void) { return 0; }
+"
+    );
+    let diags = expect_reject(&src);
+    assert!(diags.contains("boxed dictionary literal"), "diagnostics: {}", diags);
+    assert!(diags.contains("escapes the iteration"), "diagnostics: {}", diags);
+}
+
+/// The contrast that keeps the rule from being over-broad: bound to a
+/// fresh local declared inside the loop, the array is released at the end
+/// of each iteration and one site really is one slot. Compiled and run,
+/// not merely accepted, so the recycling is demonstrated rather than
+/// assumed.
+#[test]
+fn array_literal_in_a_loop_bound_to_a_fresh_local_accepted() {
+    let src = format!(
+        "/* oz-item-pool: 2 */\n{}{}{}{}",
+        PREAMBLE(),
+        ozq31_src(),
+        ozarray_src(),
+        "\
+@interface Keeper : OZObject
+- (int)run;
+@end
+@implementation Keeper
+- (int)run {
+	int seen = 0;
+	for (int i = 0; i < 4; i++) {
+		OZArray *arr = @[@(1), @(2)];
+		seen += (arr != 0);
+	}
+	return seen;
+}
+@end
+
+#include <stdio.h>
+int main(void) {
+	Keeper *k = [Keeper alloc];
+	printf(\"seen=%d\\n\", [k run]);
+	return 0;
+}
+"
+    );
+    let stdout = compile_and_run(&src, "array_literal_in_a_loop_bound_to_a_fresh_local_accepted");
+    assert_eq!(stdout, "seen=4\n");
 }

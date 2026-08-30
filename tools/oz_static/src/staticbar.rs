@@ -182,12 +182,29 @@ fn walk_for_reject(
             return; // don't descend further with loop/decl context; block is opaque
         }
         // `array_literal` (`@[...]`) and `dictionary_literal`
-        // (`@{...}`) are not rejected -- they desugar to
+        // (`@{...}`) are accepted in general -- they desugar to
         // OZArray_oz_initWithItems / OZDictionary_oz_initWithKeysValues
-        // calls in emit.rs. Their child nodes (elements; key/value
-        // pairs) still get walked normally (falling through to the
-        // default descent below), so an unsupported construct nested
+        // calls in emit.rs -- but they allocate, so they are held to the
+        // same loop rule as an explicit `alloc` above. Sizing counts one
+        // site once however many times it runs (see `pools`), which is
+        // sound only when each iteration's instance dies before the next
+        // begins; a literal in a loop that is *not* bound to a fresh
+        // per-iteration local can accumulate live instances the static
+        // count cannot bound, exhausting both the OZArray/OZDictionary
+        // slab and the shared element pool. This arm does not return:
+        // child nodes (elements; key/value pairs) still get walked by the
+        // default descent below, so an unsupported construct nested
         // inside one of them is still caught.
+        "array_literal" | "dictionary_literal" if in_loop && !fresh_decl => {
+            let what = if node.kind() == "array_literal" {
+                "boxed array literal"
+            } else {
+                "boxed dictionary literal"
+            };
+            err(diags, src, node, format!(
+                "a {} inside a loop escapes the iteration (not a fresh per-iteration local) — the static subset cannot bound how many live instances this may need; hoist it out of the loop or restructure",
+                what));
+        }
         //
         // `selector_expression` (`@selector(...)`) is a real node kind
         // in tree-sitter-objc 3.0.2 (confirmed against its
