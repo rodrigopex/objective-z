@@ -366,6 +366,7 @@ pub(crate) fn render_array_support(
     slots: usize,
     owned_ivars: &[String],
     heap_support: bool,
+    item_slots: usize,
 ) -> String {
     let mut c = render_slab_define(name, slots);
     c.push_str(&render_release_ivars(name, root, owned_ivars));
@@ -403,12 +404,13 @@ zero (not from source; OZArray.m has no -dealloc of its own) */\n",
          \tfor (unsigned int i = 0; i < obj->_count; i++) {{\n\
          \t\toz_static_release((struct {root} *)obj->_items[i]);\n\
          \t}}\n\
-         \tfree(obj->_items);\n\
+         {items_free}\
          {heap_check}\
          \toz_slab_free(&oz_slab_{name}, (void *)obj);\n\
          }}\n\n",
         root = root,
         name = name,
+        items_free = render_item_buffer_free("_items", "obj->_count", item_slots),
         heap_check = render_heap_free_check(root, heap_support)
     ));
 
@@ -423,16 +425,77 @@ source) */\n",
         "struct {name} *{name}_oz_initWithItems(void **src, unsigned int count)\n{{\n\
          \tstruct {name} *arr = {name}_oz_alloc();\n\
          \tif (!arr) {{\n\t\treturn (struct {name} *)0;\n\t}}\n\
-         \tvoid **items = malloc(count * sizeof(void *));\n\
-         \tif (!items) {{\n\t\t{name}_oz_free(arr);\n\t\treturn (struct {name} *)0;\n\t}}\n\
+         \tvoid **items;\n\
+         {items_alloc}\
          \tfor (unsigned int i = 0; i < count; i++) {{\n\t\titems[i] = src[i];\n\t}}\n\
          \tarr->_items = items;\n\
          \tarr->_count = count;\n\
          \treturn arr;\n\
          }}\n\n",
-        name = name
+        name = name,
+        items_alloc = render_item_buffer_alloc(name, "items", "count", item_slots)
     ));
     c
+}
+
+/// Take a run of `count` element slots from the shared item pool, or fall
+/// back to `malloc` when there is no pool.
+///
+/// The fallback is not a second allocator to maintain: `item_slots` is
+/// zero only when the source contains no `@[...]`/`@{...}` at all, in
+/// which case nothing calls the builder this lands in and the branch is
+/// dead. It exists so the emitted C still compiles in that case, since
+/// the builder itself is emitted unconditionally (it has a prototype in
+/// the shared header, which every translation unit sees).
+///
+/// On failure the just-allocated collection object is handed back to its
+/// slab and the builder returns NULL, which is what the oracle does
+/// (`templates/class_header.h.j2`) -- a caller already has to handle a
+/// null return from slab exhaustion, so pool exhaustion needs no new
+/// contract.
+fn render_item_buffer_alloc(name: &str, var: &str, count: &str, item_slots: usize) -> String {
+    if item_slots == 0 {
+        return format!(
+            "\t{var} = malloc({count} * sizeof(void *));\n\
+             \tif (!{var}) {{\n\t\t{name}_oz_free({obj});\n\t\treturn (struct {name} *)0;\n\t}}\n",
+            var = var,
+            count = count,
+            name = name,
+            obj = if name == "OZArray" { "arr" } else { "dict" }
+        );
+    }
+    format!(
+        "\tif (oz_mem_blocks_alloc_contiguous(&oz_item_pool, {count},\n\
+         \t\t\t\t\t   (void **)&{var}) != 0) {{\n\
+         \t\t{name}_oz_free({obj});\n\
+         \t\treturn (struct {name} *)0;\n\t}}\n",
+        count = count,
+        var = var,
+        name = name,
+        obj = if name == "OZArray" { "arr" } else { "dict" }
+    )
+}
+
+/// Give a collection's element buffer back, mirroring
+/// `render_item_buffer_alloc`.
+///
+/// Guarded on the pointer being non-null, unlike the `free()` it replaces:
+/// `free(NULL)` is defined to do nothing, but handing a null pointer to
+/// `sys_mem_blocks_free_contiguous` is not, and a collection whose
+/// builder failed (or which was never given a buffer) reaches here with
+/// `_items`/`_keys` still zeroed by `_oz_alloc`'s memset.
+fn render_item_buffer_free(field: &str, count: &str, item_slots: usize) -> String {
+    if item_slots == 0 {
+        return format!("\tfree(obj->{field});\n", field = field);
+    }
+    format!(
+        "\tif (obj->{field}) {{\n\
+         \t\toz_mem_blocks_free_contiguous(&oz_item_pool,\n\
+         \t\t\t\t\t      obj->{field}, {count});\n\
+         \t}}\n",
+        field = field,
+        count = count
+    )
 }
 
 /// OZDictionary-specific replacement for `render_alloc_free`, the same
@@ -452,6 +515,7 @@ pub(crate) fn render_dict_support(
     slots: usize,
     owned_ivars: &[String],
     heap_support: bool,
+    item_slots: usize,
 ) -> String {
     let mut c = render_slab_define(name, slots);
     c.push_str(&render_release_ivars(name, root, owned_ivars));
@@ -491,12 +555,13 @@ the refcount reaches zero (not from source; OZDictionary.m has no\n * \
          \t\toz_static_release((struct {root} *)obj->_keys[i]);\n\
          \t\toz_static_release((struct {root} *)obj->_values[i]);\n\
          \t}}\n\
-         \tfree(obj->_keys);\n\
+         {keys_free}\
          {heap_check}\
          \toz_slab_free(&oz_slab_{name}, (void *)obj);\n\
          }}\n\n",
         root = root,
         name = name,
+        keys_free = render_item_buffer_free("_keys", "obj->_count * 2", item_slots),
         heap_check = render_heap_free_check(root, heap_support)
     ));
 
@@ -511,8 +576,8 @@ the refcount reaches zero (not from source; OZDictionary.m has no\n * \
         "struct {name} *{name}_oz_initWithKeysValues(void **keys, void **values, unsigned int count)\n{{\n\
          \tstruct {name} *dict = {name}_oz_alloc();\n\
          \tif (!dict) {{\n\t\treturn (struct {name} *)0;\n\t}}\n\
-         \tvoid **buf = malloc(count * 2 * sizeof(void *));\n\
-         \tif (!buf) {{\n\t\t{name}_oz_free(dict);\n\t\treturn (struct {name} *)0;\n\t}}\n\
+         \tvoid **buf;\n\
+         {buf_alloc}\
          \tfor (unsigned int i = 0; i < count; i++) {{\n\
          \t\tbuf[i] = keys[i];\n\
          \t\tbuf[count + i] = values[i];\n\
@@ -522,7 +587,8 @@ the refcount reaches zero (not from source; OZDictionary.m has no\n * \
          \tdict->_count = count;\n\
          \treturn dict;\n\
          }}\n\n",
-        name = name
+        name = name,
+        buf_alloc = render_item_buffer_alloc(name, "buf", "count * 2", item_slots)
     ));
     c
 }
@@ -720,6 +786,20 @@ below naming a type one of them declares sees the real definition */\n",
         );
     }
 
+    // The shared element-buffer pool. Declared here and defined once in
+    // the companion source, because both OZArray's and OZDictionary's
+    // builders draw from it and each lives in its own translation unit.
+    // Omitted entirely when nothing needs it -- see
+    // `pools::PoolSizes::item_slots`.
+    if pools.item_slots() > 0 {
+        h.push_str(
+            "/* Shared pool for '@[...]'/'@{...}' element buffers; defined in\n * \
+oz_static_dispatch.c. A static, no-heap store on Zephyr\n * \
+(`sys_mem_blocks`) and a count-enforcing malloc-backed one on host, both\n * \
+via the PAL. */\nextern oz_mem_blocks_t oz_item_pool;\n\n",
+        );
+    }
+
     if !hoisted_forward_decls.is_empty() {
         h.push_str("/* forward-declared structs (no body in source), hoisted here so a\n * method prototype below referencing one as a pointer type still compiles */\n");
         for d in hoisted_forward_decls {
@@ -830,6 +910,27 @@ below naming a type one of them declares sees the real definition */\n",
 src/OZLog.c provides the strong definition where it is linked. */\n\
          __attribute__((weak)) int _oz_get_log_precision(void) { return -1; }\n\n",
     );
+
+    // The one definition of the element-buffer pool, matching the `extern`
+    // in the header above. Block size is one root-class pointer, because
+    // that is what an element slot holds; the oracle sizes it the same way
+    // (`templates/oz_dispatch.c.j2`: `OZ_MEM_BLOCKS_DEFINE(oz_item_pool,
+    // sizeof(struct {{ root_class }} *), ...)`).
+    if pools.item_slots() > 0 {
+        let pool_root = root.as_deref().unwrap_or("OZObject");
+        // No nested comment delimiters in this text: the directive is
+        // named without its surrounding slash-star, which would close
+        // this comment early.
+        c.push_str(&format!(
+            "/* Element buffers for '@[...]' and '@{{...}}': {slots} id-slot(s),\n * \
+sized by counting literal sites (see pools.rs). Override with the\n * \
+--item-pool-size flag or an 'oz-item-pool: N' source directive. */\n\
+             OZ_MEM_BLOCKS_DEFINE(oz_item_pool, sizeof(struct {root} *), {slots}, {align});\n\n",
+            slots = pools.item_slots(),
+            root = pool_root,
+            align = crate::pools::SLAB_ALIGNMENT
+        ));
+    }
 
     if let Some(root) = &root {
         c.push_str(&render_alloc_free(

@@ -52,6 +52,14 @@ pub struct Options {
     /// and the branch it adds to every free are only worth paying for if
     /// something actually allocates from a heap.
     pub heap_support: bool,
+    /// Slots for the shared collection element pool instead of the count
+    /// taken from the source, as `--item-pool-size N` supplies. `None`
+    /// leaves the counted size (or an `oz-item-pool:` directive) in force.
+    ///
+    /// A single number rather than a per-class map, because both OZArray
+    /// and OZDictionary draw from one pool -- see
+    /// `pools::PoolSizes::item_slots`.
+    pub item_pool_size: Option<usize>,
     /// Byte ranges of the source that came from a header rather than an
     /// implementation file -- `imports::ResolvedSource::header_ranges`.
     /// Pass-through C from a header goes into the generated header, so every
@@ -98,7 +106,7 @@ pub fn transpile_with_options(
     if !diagnostics.is_empty() {
         return Err(diagnostics);
     }
-    let pools = resolve_pools(source, &program, overrides, &mut diagnostics);
+    let pools = resolve_pools(source, &program, overrides, options.item_pool_size, &mut diagnostics);
     if !diagnostics.is_empty() {
         return Err(diagnostics);
     }
@@ -160,7 +168,7 @@ pub fn transpile_split_with_options(
     if !diagnostics.is_empty() {
         return Err(diagnostics);
     }
-    let pools = resolve_pools(source, &program, overrides, &mut diagnostics);
+    let pools = resolve_pools(source, &program, overrides, options.item_pool_size, &mut diagnostics);
     if !diagnostics.is_empty() {
         return Err(diagnostics);
     }
@@ -207,10 +215,14 @@ fn resolve_pools(
     source: &str,
     program: &Program,
     overrides: &PoolOverrides,
+    item_pool_size: Option<usize>,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> pools::PoolSizes {
     let mut sizes = pools::PoolSizes::analyze(source, program);
     sizes.set_overrides(overrides.clone());
+    if let Some(slots) = item_pool_size {
+        sizes.set_item_pool_override(slots);
+    }
     for name in sizes.unknown_overrides(program) {
         diagnostics.push(Diagnostic::new(
             format!(
