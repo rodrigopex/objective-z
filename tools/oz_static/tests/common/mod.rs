@@ -37,6 +37,37 @@ pub fn compile_and_run_strict(source: &str, stem: &str) -> String {
     compile_and_run_with_flags(source, stem, &["-Werror=incompatible-pointer-types"])
 }
 
+/// Same as `compile_and_run`, plus the host Zephyr stub headers on the
+/// include path and `zephyr/kernel.h` force-included ahead of everything.
+///
+/// A class wrapping a kernel primitive (OZTimer's `struct k_timer`) keeps
+/// its `#include <zephyr/kernel.h>` through transpilation, and there is
+/// no Zephyr on host, so it resolves to
+/// `tests/behavior/include/zephyr_stubs/zephyr/kernel.h` -- the same
+/// self-contained stub (a `k_timer` with `expiry_fn`/`stop_fn`/
+/// `user_data`, no-op `k_timer_start`/`k_timer_stop`, and the real
+/// `__oz_timer_setup`) the oracle's own host-side timer tests compile
+/// against.
+///
+/// The `-include` is not cosmetic: it stands in for a propagation
+/// oz_static doesn't do. The companion header declares
+/// `OZTimer_initWithUserData_expiry_stop_`, whose parameters mention
+/// `struct k_timer`, but nothing has declared that struct at that point,
+/// so C invents a prototype-scoped type and the later definition in the
+/// primary output becomes `error: conflicting types for ...`. The oracle
+/// avoids this by carrying the source's own `#include <zephyr/kernel.h>`
+/// into its generated header, ahead of the struct and prototypes -- see
+/// `tests/zephyr/generated/OZTimer_ozh.h:7`. Forcing the include here
+/// reproduces that ordering from outside. Once oz_static propagates
+/// source `#include`s into the companion header, this can become a plain
+/// `-I`.
+pub fn compile_and_run_with_zephyr_stubs(source: &str, stem: &str) -> String {
+    let stubs = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/behavior/include/zephyr_stubs");
+    let stubs = stubs.to_str().unwrap().to_string();
+    compile_and_run_with_flags(source, stem, &["-I", &stubs, "-include", "zephyr/kernel.h"])
+}
+
 fn compile_and_run_with_flags(source: &str, stem: &str, extra_cc_flags: &[&str]) -> String {
     let out = oz_static::transpile(source).unwrap_or_else(|diags| {
         panic!(
@@ -326,14 +357,17 @@ pub fn ozdefer_src() -> String {
 /// to always grab the first -- the generic param list here, misreading
 /// `__covariant`/`ObjectType` as bogus protocol names) now exercise it
 /// directly, so dropping it is no longer "changes nothing observable".
-/// Still cut: `enumerateObjectsUsingBlock:`/`countByEnumeratingWithState:` (only
-/// back Foundation's own `NSFastEnumeration`-style for-in, which this
-/// port doesn't use -- the Python oracle's own for-in desugar is
-/// `-iter`/`-next`-based too, see `_emit_forin_stmt`), and
-/// `cDescription:maxLength:` (still recurses `[elem cDescription:...]`
-/// on a bare `id` -- now dynamically dispatchable in principle, same
-/// fix as OZDictionary's, just not restored here since nothing in this
-/// port's scope needs it).
+/// `cDescription:maxLength:` and `enumerateObjectsUsingBlock:` are kept
+/// now as well, so the only thing still cut is
+/// `countByEnumeratingWithState:` -- it backs Foundation's own
+/// `NSFastEnumeration`-style for-in, which neither pipeline uses (the
+/// Python oracle's for-in desugar is `-iter`/`-next`-based too, see
+/// `_emit_forin_stmt`) and has no body in the real `OZArray.m` to begin
+/// with. `cDescription:maxLength:` recurses `[elem cDescription:...]` on
+/// a bare `id`, which the dynamic-dispatch generalization made work;
+/// `enumerateObjectsUsingBlock:` needs a block-typed parameter lowered to
+/// a plain function pointer (`collect::detect_block_param_type`). Both are
+/// exercised directly by `behavior_foundation_array`.
 ///
 /// `+arrayWithObjects:count:` isn't declared/implemented in the real
 /// `OZArray.m` either -- the real pipeline synthesizes it at emit-time as
@@ -355,13 +389,9 @@ pub fn ozarray_src() -> String {
     header = header.replace("__unsafe_unretained id *_items;", "id *_items;");
     header = remove_line_containing(&header, "arrayWithObjects:");
     header = remove_line_containing(&header, "struct NSFastEnumerationState;");
-    header = remove_line_containing(&header, "enumerateObjectsUsingBlock:");
     header = remove_line_range(&header, "countByEnumeratingWithState:", "count:(unsigned long)len;");
-    header = remove_line_containing(&header, "cDescription:(char *)buf maxLength:(int)maxLen;");
 
-    let mut implementation = include_str!("../../../../src/OZArray.m").to_string();
-    implementation = remove_method_body(&implementation, "- (void)enumerateObjectsUsingBlock:");
-    implementation = remove_method_body(&implementation, "cDescription:(char *)buf maxLength:(int)maxLen");
+    let implementation = include_str!("../../../../src/OZArray.m").to_string();
 
     assemble(&header, &implementation)
 }
@@ -452,4 +482,64 @@ pub fn ozdictionary_src() -> String {
 /// conformance validation (#192) and because the real headers do too.
 pub fn iterator_protocol_src() -> String {
     strip_import_and_pragma_lines(include_str!("../../../../include/oz_sdk/Foundation/Iterator+Protocol.h"))
+}
+
+/// OZHeap, the `allocWithHeap:` backing store -- assembled from
+/// `include/oz_sdk/Foundation/OZHeap.h` / `src/OZHeap.m`, with one cut:
+/// the header's own `struct oz_heap_inner` definition.
+///
+/// That cut is required, not a convenience. The header guards its stubs
+/// with `#ifndef OZ_HEAP_INNER_DEFINED`, but so does
+/// `platform/oz_platform.h`, and *neither* ever defines that macro --
+/// only `oz_platform_{host,zephyr}.h` do, behind `OZ_HEAP_SUPPORT`. This
+/// harness compiles with `-DOZ_PLATFORM_HOST` and no `-DOZ_HEAP_SUPPORT`,
+/// so both fallback blocks fire and the generated C fails with
+/// `error: redefinition of 'oz_heap_inner'`. The PAL's fallback wins
+/// (the companion header includes it); the header's is dropped here. The
+/// two `static inline` stubs are kept, because the PAL supplies no
+/// `oz_heap_init`/`oz_heap_used_bytes` at this configuration.
+///
+/// Consequence for the tests: the linked stubs are no-ops, so
+/// `-usedBytes` answers 0 by construction and nothing below reads it as
+/// a measurement. What is genuinely exercised is the transpile -- a
+/// value-typed ivar of an externally-declared struct, `self = [super
+/// init]` chaining, a `size_t` return type, and `&self->_inner`
+/// address-of-ivar passing. Requires `OZObject`
+/// (`common::ozobject_src`) in scope as the root class.
+pub fn ozheap_src() -> String {
+    let mut header = include_str!("../../../../include/oz_sdk/Foundation/OZHeap.h").to_string();
+    header = remove_line_range(&header, "struct oz_heap_inner {", "};");
+    assemble(&header, include_str!("../../../../src/OZHeap.m"))
+}
+
+/// OZTimer, the `k_timer` wrapper -- assembled from
+/// `include/oz_sdk/Foundation/OZTimer.h` / `src/OZTimer.m` verbatim, no
+/// cuts and no rewrites.
+///
+/// Its `(__bridge void *)` casts used to need rewriting to `(void *)`
+/// here, because `__bridge` was copied through into the generated C,
+/// where it is not a keyword (`error: use of undeclared identifier
+/// '__bridge'`) -- meaning the real `src/OZTimer.m` could not be
+/// transpiled at all. `emit::render_cast_expression` now drops the
+/// qualifier, as the oracle does (its committed
+/// `tests/zephyr/generated/OZTimer_ozm.c:28` reads
+/// `__oz_timer_setup(&self->_timer, (void *)expBlock, ...)`, and
+/// `__bridge` appears nowhere under `tests/zephyr/generated/`).
+///
+/// What these tests cover: a
+/// value-typed `struct k_timer` ivar, two block-typed ivars and two
+/// block-typed parameters (both lowered to plain function pointers by
+/// `emit::lower_ivar_decl` and `collect::detect_block_param_type`), a
+/// strong `id` ivar, and a `-dealloc` that touches the embedded timer.
+///
+/// Requires `OZObject` (`common::ozobject_src`) in scope, and must be
+/// compiled with `compile_and_run_with_zephyr_stubs` -- the header's
+/// `#include <zephyr/kernel.h>` resolves to the host stub under
+/// `tests/behavior/include/zephyr_stubs/`, the same one the oracle's own
+/// host-side timer behavior tests use.
+pub fn oztimer_src() -> String {
+    assemble(
+        include_str!("../../../../include/oz_sdk/Foundation/OZTimer.h"),
+        include_str!("../../../../src/OZTimer.m"),
+    )
 }

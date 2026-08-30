@@ -365,6 +365,7 @@ fn needs_translation(node: Node) -> bool {
             | "array_literal"
             | "dictionary_literal"
             | "synchronized_statement"
+            | "cast_expression"
     ) {
         return true;
     }
@@ -559,6 +560,7 @@ fn render_expr(node: Node, ctx: &mut EmitCtx) -> (String, String) {
             }
         }
         "subscript_expression" => render_subscript_expression(node, ctx),
+        "cast_expression" => render_cast_expression(node, ctx),
         "for_statement" if is_forin_shape(node) => render_forin_statement(node, ctx),
         "synchronized_statement" => render_synchronized_statement(node, ctx),
         "return_statement" => render_return_statement(node, ctx),
@@ -1607,6 +1609,62 @@ fn infer_block_return_type(body: Node) -> &'static str {
     }
 }
 
+/// A cast expression, which needs handling for two separate reasons:
+///
+///   - an ARC bridging qualifier (`__bridge`, `__bridge_transfer`,
+///     `__bridge_retained`) has to be dropped. It means nothing without
+///     ARC and is not a C keyword, so left in place it is a compile error
+///     (`use of undeclared identifier '__bridge'`). The real
+///     `src/OZTimer.m` casts this way, so without this OZTimer cannot be
+///     transpiled at all. Rebuilding the type through
+///     `collect::extract_type_and_stars` drops it for free -- that
+///     function collects only type specifiers, never a `type_qualifier`.
+///     The oracle drops it too: its committed
+///     `tests/zephyr/generated/OZTimer_ozm.c:28` renders that same cast
+///     as plain `(void *)expBlock`.
+///   - the cast's target type has to be *reported*, so a send against a
+///     cast receiver resolves. `[((OZQ31 *)obj) int32Value]` otherwise
+///     fails with "cannot statically resolve the receiver type ...
+///     (receiver type is 'id')", since every expression not specifically
+///     handled reports the opaque `id`. The oracle gets this for free from
+///     Clang's own types; here the declared type is right there in the
+///     cast, which is the one place a bare `id` can be narrowed back to a
+///     class without inference.
+///
+/// A known class name in the cast is rendered `struct Name *`, matching
+/// how the same name is rendered in every other type position
+/// (`collect::render_type`).
+fn render_cast_expression(node: Node, ctx: &mut EmitCtx) -> (String, String) {
+    let mut cursor = node.walk();
+    let children: Vec<Node> = node.children(&mut cursor).collect();
+    let descriptor = children.iter().find(|c| c.kind() == "type_descriptor").copied();
+    let value = children
+        .iter()
+        .rev()
+        .find(|c| c.kind() != ")" && c.kind() != "(" && c.kind() != "type_descriptor")
+        .copied();
+
+    let (Some(descriptor), Some(value)) = (descriptor, value) else {
+        // Not the shape this handles (e.g. a compound literal); fall back
+        // to the generic rebuild the catch-all would have done.
+        let rebuilt = rebuild(node, ctx, &mut |child, ctx| {
+            if needs_translation(child) {
+                Some(render_expr(child, ctx).0)
+            } else {
+                None
+            }
+        });
+        return (rebuilt, "id".to_string());
+    };
+
+    let (type_text, stars) = crate::collect::extract_type_and_stars(descriptor, ctx.src);
+    let known: HashSet<String> = ctx.program.classes.keys().cloned().collect();
+    let c_type = crate::collect::render_type(&type_text, stars, &known);
+
+    let (value_text, _) = render_expr(value, ctx);
+    (format!("({})({})", c_type.trim(), value_text), c_type)
+}
+
 /// Non-capturing block literal -> hoisted static C function; the block
 /// expression itself is replaced with a reference to that function.
 /// (Capturing blocks were already rejected by the static-bar scan.)
@@ -1752,6 +1810,14 @@ const STRIPPED_IVAR_QUALIFIERS: &[&str] = &["__strong", "__unsafe_unretained", "
 ///     `collect::detect_block_param_type` already applies to block-typed
 ///     method parameters, the static subset having no block runtime.
 ///   - an ARC ownership qualifier is dropped.
+///   - a bare class name (`OZHeap *_heap;`) gains its `struct` tag. The
+///     generated struct for a class is `struct Name`, never a typedef, so
+///     the untagged spelling is `error: must use 'struct' tag to refer to
+///     type 'OZHeap'`. Every other type position already routes through
+///     `collect::render_type` for this; an ivar declaration is copied
+///     through as text, so it has to be done here. `struct OZHeap
+///     *_heap;` is left alone -- its name sits under a `struct_specifier`
+///     rather than being a direct child, so it never matches.
 ///
 /// `__weak` is a hard error rather than a silent strip: with no runtime
 /// to zero the reference it would behave as an unretained strong ivar,
@@ -1762,11 +1828,11 @@ const STRIPPED_IVAR_QUALIFIERS: &[&str] = &["__strong", "__unsafe_unretained", "
 fn lower_ivar_decl(instance_variable: Node, ctx: &mut EmitCtx) -> String {
     let origin = instance_variable.start_byte();
     let mut text = node_text(instance_variable, ctx.src).to_string();
-    let mut edits: Vec<(Range<usize>, &str)> = Vec::new();
+    let mut edits: Vec<(Range<usize>, String)> = Vec::new();
     collect_ivar_lowering_edits(instance_variable, ctx, origin, &mut edits);
     edits.sort_by_key(|(r, _)| std::cmp::Reverse(r.start));
     for (range, replacement) in edits {
-        text.replace_range(range, replacement);
+        text.replace_range(range, &replacement);
     }
     // A stripped qualifier leaves behind the whitespace it sat in.
     text.split_whitespace().collect::<Vec<_>>().join(" ").replace(" ;", ";")
@@ -1776,8 +1842,25 @@ fn collect_ivar_lowering_edits(
     node: Node,
     ctx: &mut EmitCtx,
     origin: usize,
-    edits: &mut Vec<(Range<usize>, &'static str)>,
+    edits: &mut Vec<(Range<usize>, String)>,
 ) {
+    if node.kind() == "struct_declaration" {
+        // Only a *direct* type_identifier child is an untagged type name;
+        // in `struct OZHeap *x` the name hangs off a `struct_specifier`.
+        let mut cursor = node.walk();
+        let bare = node
+            .children(&mut cursor)
+            .find(|c| c.kind() == "type_identifier")
+            .map(|c| (c.byte_range(), node_text(c, ctx.src).to_string()));
+        if let Some((range, name)) = bare {
+            if ctx.program.is_class(&name) {
+                edits.push((
+                    range.start - origin..range.end - origin,
+                    format!("struct {}", name),
+                ));
+            }
+        }
+    }
     match node.kind() {
         "type_qualifier" => {
             let text = node_text(node, ctx.src).trim();
@@ -1789,7 +1872,7 @@ fn collect_ivar_lowering_edits(
                      '__unsafe_unretained' and clear it explicitly",
                 );
             } else if STRIPPED_IVAR_QUALIFIERS.contains(&text) {
-                edits.push((node.start_byte() - origin..node.end_byte() - origin, ""));
+                edits.push((node.start_byte() - origin..node.end_byte() - origin, String::new()));
             }
             return;
         }
@@ -1797,7 +1880,7 @@ fn collect_ivar_lowering_edits(
             let mut c = node.walk();
             let caret = node.children(&mut c).find(|n| n.kind() == "^").map(|n| n.byte_range());
             if let Some(caret) = caret {
-                edits.push((caret.start - origin..caret.end - origin, "*"));
+                edits.push((caret.start - origin..caret.end - origin, "*".to_string()));
             }
         }
         _ => {}

@@ -112,3 +112,78 @@ int main(void) {{
     let stdout = compile_and_run(&src, "array_fast_access_count_and_first_val");
     assert_eq!(stdout, "count=3\nfirst=100\n");
 }
+
+/// `-cDescription:maxLength:` used to be cut from the fixture because its
+/// body recurses `[elem cDescription:...]` on a bare `id` element. That
+/// resolves now (the selector is always dynamically dispatched, so the
+/// element's real class picks the implementation at runtime), and this
+/// exercises it end to end: the rendering is OZArray's own parenthesised
+/// comma list, with each element rendered by OZQ31's override.
+#[test]
+fn array_cdescription_recurses_into_elements() {
+    let src = format!(
+        "{}{}{}\n{}",
+        PREAMBLE(),
+        ozq31_src(),
+        ozarray_src(),
+        "\
+#include <stdio.h>
+int main(void) {
+	OZArray *nums = @[ @1, @2, @3 ];
+	char buf[64];
+	int n = [nums cDescription:buf maxLength:63];
+	buf[n] = 0;
+	printf(\"desc=%s\\n\", buf);
+	printf(\"len=%d\\n\", n);
+	[nums release];
+	return 0;
+}
+"
+    );
+    let stdout = compile_and_run(&src, "array_cdescription_recurses_into_elements");
+    assert_eq!(stdout, "desc=(1, 2, 3)\nlen=9\n");
+}
+
+/// `-enumerateObjectsUsingBlock:` was cut too. It needs a block-typed
+/// parameter lowered to a plain function pointer
+/// (`collect::detect_block_param_type`) and a non-capturing block literal
+/// hoisted to a static function (`emit::render_block`) at the call site.
+/// The `BOOL *stop` out-parameter is what makes early termination
+/// observable, so it is asserted rather than just the full walk.
+#[test]
+fn array_enumerate_objects_using_block() {
+    let src = format!(
+        "{}{}{}\n{}",
+        PREAMBLE(),
+        ozq31_src(),
+        ozarray_src(),
+        "\
+static int g_sum = 0;
+static int g_calls = 0;
+
+#include <stdio.h>
+int main(void) {
+	OZArray *nums = @[ @10, @20, @30 ];
+	[nums enumerateObjectsUsingBlock:^(id obj, unsigned int idx, BOOL *stop) {
+		g_calls = g_calls + 1;
+		g_sum = g_sum + [((OZQ31 *)obj) int32Value];
+	}];
+	printf(\"calls=%d\\n\", g_calls);
+	printf(\"sum=%d\\n\", g_sum);
+
+	g_calls = 0;
+	[nums enumerateObjectsUsingBlock:^(id obj, unsigned int idx, BOOL *stop) {
+		g_calls = g_calls + 1;
+		if (idx == 1) {
+			*stop = 1;
+		}
+	}];
+	printf(\"calls_until_stop=%d\\n\", g_calls);
+	[nums release];
+	return 0;
+}
+"
+    );
+    let stdout = compile_and_run(&src, "array_enumerate_objects_using_block");
+    assert_eq!(stdout, "calls=3\nsum=60\ncalls_until_stop=2\n");
+}
