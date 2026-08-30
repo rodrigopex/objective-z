@@ -18,6 +18,7 @@
  * at GCC compile time.  The transpiler only needs the type name.
  */
 #ifndef OZ_HEAP_INNER_DEFINED
+#define OZ_HEAP_INNER_DEFINED
 struct oz_heap_inner {
 	int _opaque;
 };

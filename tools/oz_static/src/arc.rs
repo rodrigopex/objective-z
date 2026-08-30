@@ -19,12 +19,29 @@ use tree_sitter::Node;
 
 use crate::model::Program;
 
+/// This module indexes `src` directly elsewhere; a named helper keeps the
+/// new code readable.
+fn node_text<'a>(node: Node, src: &'a str) -> &'a str {
+    &src[node.byte_range()]
+}
+
 /// `(class, selector)` for every method whose every return path hands back a
 /// +1 reference, so a caller storing the result must not retain it again and
 /// *must* release it.
 #[derive(Debug, Default, Clone)]
 pub struct OwningMethods {
     methods: HashSet<(String, String)>,
+    /// Plain top-level C functions whose every return path hands back +1.
+    ///
+    /// A helper like `samples/arc_demo`'s
+    /// `static Sensor *createSensor(int v)` is exactly as owning as a
+    /// factory method, and its callers own what it returns. Left out, the
+    /// local holding its result was treated as borrowed and never released
+    /// -- and the sample's own comment says otherwise ("s is released here
+    /// by ARC"). On target that showed up as an MPU fault: the one-slot
+    /// Sensor slab stayed occupied, the next allocation returned NULL, and
+    /// `-initWithValue:` wrote through it.
+    functions: HashSet<String>,
 }
 
 impl OwningMethods {
@@ -32,12 +49,17 @@ impl OwningMethods {
         self.methods.contains(&(class.to_string(), selector.to_string()))
     }
 
+    /// Does the plain C function `name` return +1?
+    pub fn contains_function(&self, name: &str) -> bool {
+        self.functions.contains(name)
+    }
+
     pub fn len(&self) -> usize {
-        self.methods.len()
+        self.methods.len() + self.functions.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.methods.is_empty()
+        self.methods.is_empty() && self.functions.is_empty()
     }
 }
 
@@ -82,6 +104,10 @@ fn scan_once(root: Node, src: &str, program: &Program, owning: &mut OwningMethod
         owning: &mut OwningMethods,
         class: Option<&str>,
     ) {
+        if node.kind() == "function_definition" {
+            consider_function(node, src, program, owning);
+            return;
+        }
         let class = if node.kind() == "class_implementation" {
             // Only an @implementation has bodies to analyse.
             let (name, _, _) = crate::collect::class_header(node, src);
@@ -124,6 +150,48 @@ fn scan_once(root: Node, src: &str, program: &Program, owning: &mut OwningMethod
         }
     }
 
+    /// Same rule as `consider_method`, for a plain C function: an
+    /// object-returning function whose every return path is owning is
+    /// itself owning.
+    fn consider_function(
+        function: Node,
+        src: &str,
+        program: &Program,
+        owning: &mut OwningMethods,
+    ) {
+        let Some(name) = function_name(function, src) else {
+            return;
+        };
+        if owning.functions.contains(&name) {
+            return;
+        }
+        let mut cursor = function.walk();
+        let children: Vec<Node> = function.children(&mut cursor).collect();
+        // Only a pointer return can carry ownership. Checked on the
+        // declared type's own text, ahead of the body, so a function
+        // returning a struct by value is skipped.
+        let returns_pointer = children.iter().any(|c| {
+            matches!(c.kind(), "pointer_declarator" | "function_declarator")
+                && node_text(*c, src).contains('*')
+        });
+        if !returns_pointer {
+            return;
+        }
+        let Some(body) = children.iter().find(|c| c.kind() == "compound_statement") else {
+            return;
+        };
+        let returns = collect_returns(*body);
+        if returns.is_empty() {
+            return;
+        }
+        let all_owning = returns
+            .iter()
+            .all(|ret| return_hands_back_ownership(*ret, *body, src, program, owning));
+        if all_owning {
+            owning.functions.insert(name);
+        }
+    }
+
     fn consider_method(
         method: Node,
         src: &str,
@@ -152,16 +220,133 @@ fn scan_once(root: Node, src: &str, program: &Program, owning: &mut OwningMethod
         }
         // Every path must be owning. One borrowed return makes the whole
         // method +0, because the caller cannot tell the paths apart.
-        let all_owning = returns.iter().all(|ret| {
-            value_of_return(*ret)
-                .is_some_and(|value| is_owning_expr(value, src, program, owning))
-        });
+        // Same shape as the function case above: a factory method that
+        // returns a local is just as owning as one that returns the
+        // allocation directly.
+        let all_owning = returns
+            .iter()
+            .all(|ret| return_hands_back_ownership(*ret, body, src, program, owning));
         if all_owning {
             owning.methods.insert((class.to_string(), sig.selector));
         }
     }
 
     walk(root, src, program, owning, None);
+}
+
+/// Does this `return` hand back a reference the caller owns?
+///
+/// `is_owning_expr` alone is not enough, because the idiomatic factory
+/// returns a *variable*:
+///
+/// ```objc
+/// static Sensor *createSensor(int v)
+/// {
+///         Sensor *s = [[Sensor alloc] init];
+///         [s setValue:v];
+///         return s;
+/// }
+/// ```
+///
+/// `samples/arc_demo` is built on that shape, and with the returned
+/// identifier read as borrowed the function looked +0, its callers released
+/// nothing, and the one-slot Sensor slab stayed occupied -- an MPU fault on
+/// target at the next allocation.
+///
+/// So a returned identifier is followed back to its declaration, and counts
+/// as owning when that declaration's initialiser is. Requiring the name to
+/// be assigned nowhere else keeps the usual bias: a variable that is
+/// reassigned might hold something borrowed by the time it is returned, and
+/// guessing wrong in that direction is a double free, where guessing wrong
+/// the other way only leaks.
+fn return_hands_back_ownership(
+    ret: Node,
+    body: Node,
+    src: &str,
+    program: &Program,
+    owning: &OwningMethods,
+) -> bool {
+    let Some(value) = value_of_return(ret) else {
+        return false;
+    };
+    if is_owning_expr(value, src, program, owning) {
+        return true;
+    }
+    if value.kind() != "identifier" {
+        return false;
+    }
+    let name = node_text(value, src);
+    if is_reassigned(body, src, name) {
+        return false;
+    }
+    declared_initializer(body, src, name)
+        .is_some_and(|init| is_owning_expr(init, src, program, owning))
+}
+
+/// The initialiser of `name`'s declaration inside `node`, if it has one.
+fn declared_initializer<'a>(node: Node<'a>, src: &str, name: &str) -> Option<Node<'a>> {
+    if node.kind() == "init_declarator" {
+        let mut cursor = node.walk();
+        let children: Vec<Node<'a>> = node.children(&mut cursor).collect();
+        let declares = children.iter().any(|c| {
+            matches!(c.kind(), "identifier" | "pointer_declarator")
+                && node_text(*c, src).trim_start_matches('*').trim() == name
+        });
+        if declares {
+            return children.into_iter().rev().find(|c| {
+                !matches!(c.kind(), "=" | "identifier" | "pointer_declarator")
+            });
+        }
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if let Some(found) = declared_initializer(child, src, name) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+/// Is `name` the target of an assignment anywhere in `node`?
+fn is_reassigned(node: Node, src: &str, name: &str) -> bool {
+    let mut cursor = node.walk();
+    let children: Vec<Node> = node.children(&mut cursor).collect();
+    if node.kind() == "assignment_expression" {
+        if let Some(lhs) = children.first() {
+            if lhs.kind() == "identifier" && node_text(*lhs, src) == name {
+                return true;
+            }
+        }
+    }
+    children.into_iter().any(|child| is_reassigned(child, src, name))
+}
+
+/// A `function_definition`'s own name, reached through however many
+/// declarator layers its return type needs (`static Sensor *f(int)` nests a
+/// `pointer_declarator` around the `function_declarator`).
+fn function_name(function: Node, src: &str) -> Option<String> {
+    fn find_declarator_identifier<'a>(node: Node<'a>, src: &str) -> Option<String> {
+        if node.kind() == "function_declarator" {
+            let mut cursor = node.walk();
+            for child in node.children(&mut cursor) {
+                if child.kind() == "identifier" {
+                    return Some(node_text(child, src).to_string());
+                }
+                if let Some(found) = find_declarator_identifier(child, src) {
+                    return Some(found);
+                }
+            }
+            return None;
+        }
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            if let Some(found) = find_declarator_identifier(child, src) {
+                return Some(found);
+            }
+        }
+        None
+    }
+    find_declarator_identifier(function, src)
 }
 
 /// Every `return_statement` in `body`, not descending into a nested block
@@ -221,6 +406,15 @@ pub fn is_owning_expr(
                 return true;
             }
             receiver_class.is_some_and(|class| owning.contains(&class, &selector))
+        }
+        // A call to a plain C function that returns +1 -- see
+        // `OwningMethods::functions`.
+        "call_expression" => {
+            let mut cursor = node.walk();
+            let callee = node.children(&mut cursor).next();
+            callee.is_some_and(|callee| {
+                callee.kind() == "identifier" && owning.contains_function(node_text(callee, src))
+            })
         }
         // A cast says nothing about ownership, and `__bridge` explicitly
         // means "not mine" -- borrowed either way.

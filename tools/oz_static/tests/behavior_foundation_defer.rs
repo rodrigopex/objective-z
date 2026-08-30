@@ -139,13 +139,19 @@ int main(void) {{
 /// trips `-Werror=incompatible-pointer-types` via `compile_and_run_strict`.
 /// The real header also spells `_owner` `__unsafe_unretained`, so this
 /// covers the ARC-qualifier strip reaching the struct as well.
+///
+/// The callback is declared `void (struct OZObject *)`, not `void (id)`:
+/// that is the field's type now, and it is what the oracle's own driver
+/// assigns. An `id` there used to work only because `id` was a typedef for
+/// `void *`, which is exactly the looseness the corpus case
+/// `foundation/defer_block_ivar` could not build against.
 #[test]
 fn block_ivar_declares_valid_function_pointer() {
     let src = format!(
         "{}{}\n\
 static int g_block_called = 0;
 
-static void test_block_fn(id owner) {{
+static void test_block_fn(struct OZObject *owner) {{
 	(void)owner;
 	g_block_called = 1;
 }}

@@ -573,7 +573,7 @@ fn render_protocol_dispatch(program: &Program, root: &str) -> (String, String) {
         let mut params = format!("struct {} *self", root);
         for (pname, ptype) in &m.params {
             params.push_str(", ");
-            params.push_str(&crate::emit::render_param(ptype, pname));
+            params.push_str(&crate::emit::render_param(ptype, pname, Some(root)));
         }
         let arg_names: Vec<&str> = m.params.iter().map(|(n, _)| n.as_str()).collect();
 
@@ -767,7 +767,7 @@ below naming a type one of them declares sees the real definition */\n",
             None => h.push_str(&format!("struct {};\n", name)),
         }
         for m in &program.classes[name].methods {
-            h.push_str(&crate::emit::render_prototype(name, m));
+            h.push_str(&crate::emit::render_prototype(name, m, root.as_deref()));
         }
         // The heap allocator's prototype is guarded, not omitted: the
         // definition is `#ifdef OZ_HEAP_SUPPORT` too, so a caller compiled

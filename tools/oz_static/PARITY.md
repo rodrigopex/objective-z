@@ -21,6 +21,10 @@ These words are used precisely and are not interchangeable:
   about the Python backend.
 - **matches** — the case was *run* under both backends and they produced
   identical results. Only the behavior-corpus section below claims this.
+- **builds for ARM** — `west build -b mps2/an385` succeeded with the real
+  cross-toolchain. Strictly more than compiling on host, and the difference
+  is not small: it found five defects in twenty minutes that a full day of
+  host checks had not (see "On target").
 
 ## Samples (13)
 
@@ -450,6 +454,28 @@ One dump is not enough, which is why `--ast` is repeatable: Clang
 preprocesses `#import`s, so a dump of `main.m` carries every `@interface` it
 imports but only the `@implementation`s written in that one file.
 
+**O. `id` inside a function-pointer type is spelled as the root class
+pointer.** A function-pointer ivar's or parameter's own parameter list is
+the one place `id` cannot be left to the typedef: the field's type is what
+external C code has to match when it assigns, and it has no call site to
+cast at. `OZDefer`'s ivar is `void (^_block)(id)`, and with `id` as a
+typedef for `void *` the field was `void (*)(void *)` — so assigning a
+plain `void (*)(struct OZObject *)` function to it did not compile, which is
+what `foundation/defer_block_ivar` does.
+
+The field, the method parameter and a hoisted block literal's own signature
+all have to agree, so all three are lowered. The first attempt lowered only
+the field, and the `-initWithBlock:` assignment stopped compiling instead.
+
+Deliberately *not* done the obvious way — making `id` itself a root-class
+pointer, as the Python backend's own typedef does. That was tried and is
+worse: it turns the ordinary Objective-C idiom of passing `Foo *` where `id`
+is expected into a warning, in code that has no call site to cast at either,
+and produced 64 new `-Wall` warnings against the one it fixed.
+`collect::render_type` therefore still resolves a *method's* `id` to
+`void *`, where oz_static's own casts at every call site make the looseness
+free.
+
 **D. File-scope `static` object variables are not type-tracked.** Reduced
 to a 20-line reproducer:
 
@@ -478,6 +504,88 @@ legitimately name something only the target's own toolchain provides).
 uses `#include "Car.h"`, but `main.m` reached `Car.h` through
 `Car+Maintenance.h` via `#import`.
 
+## On target (mps2/an385, ARM, Zephyr)
+
+The check that was missing, and the one that mattered most. Every
+measurement above this section is a host measurement; this one uses the real
+ARM toolchain, real `k_mem_slab`, real spinlocks and Zephyr's own warning
+set.
+
+```
+west build -p -b mps2/an385 samples/<name>     # default backend is now static
+west build -d <build> -t run                   # QEMU
+```
+
+**12 of 13 samples build for ARM.** `arc_demo` was also run under QEMU and
+its console output is byte-identical to the Python backend's. The one
+failure is `zbus_service`, below.
+
+Running the cross-build found five defects in the first twenty minutes,
+after a whole day of host checks had gone green — worth recording, because
+four of the five are invisible to any host build:
+
+1. **`struct oz_heap_inner` was defined twice.** Both fallback stubs
+   (`include/platform/oz_platform.h`, `include/oz_sdk/Foundation/OZHeap.h`)
+   were guarded by `#ifndef OZ_HEAP_INNER_DEFINED` and *neither defined it*,
+   so both compiled. Latent in the shared headers; only the static backend
+   exposes it, because it splices the SDK header into generated C. The guard
+   is now set where the struct is defined, as the two PAL backends already
+   did, and the PAL fallback gained the accessor stubs the guard also covers.
+2. **A generated header was shadowed by the source it was generated from.**
+   A sample doing `target_include_directories(app PRIVATE include)` gets its
+   own directory searched first, so `#include "Car.h"` from generated C found
+   `samples/*/include/Car.h` — the Objective-C original — and the ARM
+   compiler reported `stray '@' in program`. The generated directories are
+   now added `BEFORE`. This is also why the Python backend suffixes its
+   headers `_ozh.h`: the suffix makes the collision impossible rather than
+   merely losing the race.
+3. **`arc_demo` MPU-faulted.** Registers named it: `r0=0`, `r1=0x63` (99),
+   MMFAR `0xc` — a write through a null receiver. The one-slot Sensor slab
+   stayed occupied because ARC never released the first Sensor, so the next
+   allocation returned NULL. Two gaps behind it, both in `arc`: a plain C
+   function was not considered for owning returns, and a factory returning a
+   *local* rather than the allocation directly was not recognised at all.
+   `samples/arc_demo` is built on both shapes, and its own comment says "s
+   is released here by ARC". The Python backend released it correctly with
+   the same 1-slot slab, which made the diagnosis certain.
+4. **Two samples declared `int printk(...)`** where Zephyr's returns `void`
+   (`samples/pool_demo`, `samples/transpiled_led`). Harmless until the
+   declaration reached generated C beside Zephyr's own header, then a
+   conflicting declaration. The Python backend never emitted it, because it
+   models function *definitions* and skips bare prototypes.
+5. **`samples/gpio_demo` had `BIT(spec.pin)`** on a `const struct
+   gpio_dt_spec *spec` — invalid on a pointer, and every other line in the
+   same method correctly writes `spec->`. A pre-existing source bug that no
+   host build reached.
+
+### `zbus_service`
+
+Was recorded here for a long time as "stale independently of oz_static".
+That was right, and the cross-build quantified it: five separate kinds of
+staleness, four of them nothing to do with any backend.
+
+| What | Fixed |
+| --- | --- |
+| `ZEPHYR_EXTRA_MODULES` pointed at `../../objc/`, which does not exist | yes |
+| called `objz_target_sources`, a function removed from `cmake/` | yes |
+| `prj.conf` set three Kconfig options that no longer exist | yes |
+| `@interface TemperatureService: Object` — the root is `OZObject` | yes |
+| `#include <Foundation/OZLog.h>` did not resolve at compile time | yes — `include/oz_sdk` added to the target's include path |
+| `ZBUS_CHAN_DECLARE(...)` in a header does not reach other origins | **no** |
+
+The last one is a real oz_static gap and the only thing still stopping this
+sample. A bare top-level macro *invocation* in a source header is routed to
+the generated `.c` rather than the generated `.h`, so no other origin sees
+it — hence `'chan_temperature_service_report' undeclared` in `main.c`. It is
+a common Zephyr shape (`ZBUS_CHAN_DECLARE`, `LOG_MODULE_DECLARE`,
+`DEVICE_DT_DECLARE`).
+
+The proper fix is the one this document has skirted twice: track per-origin
+whether a byte range came from a `.h` or a `.m`, and route that range's
+pass-through content accordingly. It would also subsume the special case
+that currently routes `static inline` to the header by kind rather than by
+provenance.
+
 ## Behavior corpus (73 cases)
 
 `tests/behavior/cases/*/*.m` is the Python pipeline's own behavior suite,
@@ -498,7 +606,7 @@ skipped cases.
 
 Rust test suite: 182 passing, 0 failing.
 
-### Behavioral parity: 72 of 73, and zero disagreements
+### Behavioral parity: 73 of 73
 
 Transpiling and compiling say the input was understood and the output is
 real C. They say nothing about what the code *does*. `just
@@ -508,12 +616,12 @@ the results.
 
 | Outcome | Cases | Meaning |
 | --- | --- | --- |
-| MATCH | 72 | Identical Unity results — same tests, same outcomes |
-| MISMATCH | **0** | No case that runs on both backends behaves differently |
-| STATIC-FAILED | 1 | oz_static's side could not be built or run |
+| MATCH | **73** | Identical Unity results — same tests, same outcomes |
+| MISMATCH | 0 | — |
+| STATIC-FAILED | 0 | — |
 
-Every case that builds under both backends produces identical results, and
-only one case is left that oz_static cannot build.
+Every case in the corpus builds, runs and produces identical results under
+both backends.
 
 Unity *results* are compared, not generated C: the two backends emit
 deliberately different C, so a textual diff would be noise.
@@ -568,18 +676,24 @@ oracle never faces this choice: its sources are compiled `-fobjc-arc`, under
 which an explicit `release` is a compile error, and indeed no `.m` under
 `tests/behavior/cases/` contains one.
 
-#### The 1 remaining static-side failure
+#### How the last few closed
 
-`foundation/defer_block_ivar`, and it is the driver's own code: a
-`void (*)(id)` where the generated signature is
-`void (*)(struct OZObject *)`. No shim can bridge a function-pointer type
-mismatch inside a file the harness does not generate.
+`timer_basic` and `timer_zephyr` had been crashing at runtime since the
+harness was first built. They were never a timer problem: OZTimer holds a
+strong object ivar, so they were the same missing retain that made
+`samples/transpiled_led` segfault (gap L). Diagnosing one sample fixed both.
 
-`timer_basic` and `timer_zephyr` — the two that had been crashing at
-runtime since the corpus harness was first built — cleared with gap L. They
-were never a timer problem at all: OZTimer holds a strong object ivar, so
-they were the same missing retain that made `samples/transpiled_led`
-segfault. Diagnosing that one sample fixed both.
+`foundation/defer_block_ivar` was the last, and it was a type the generated
+struct got wrong rather than anything about the driver: its field was
+`void (*)(void *)` because `id` inside a function-pointer type was left to
+the typedef, so assigning an ordinary `void (*)(struct OZObject *)` function
+to it did not compile. See gap O.
+
+`memory/heap_alloc` needed `+allocWithHeap:` (gap I) and the SDK header fix
+found by the ARM build. It was the last entry in
+`tests/oz_static/tests/corpus_parity.rs`'s `KNOWN_CC_FAILURES`, which is now
+empty — and that list asserts a listed case *still* fails, so emptying it
+was forced rather than chosen.
 
 `regression/issue_090_header_preservation` was the seventh and now matches.
 It is the oracle's own regression test for this exact bug — "transpiler
@@ -630,31 +744,37 @@ one definition — the collision is between SDK header content and the PAL,
 not something oz_static emits. Worth knowing before reading a bare
 `cc` failure as a codegen bug.
 
-## Trying a sample on the static backend
+## The static backend is now the default
 
-No sample selects it; every `samples/*/prj.conf` uses the default Python
-backend, and this document changes none of them. To try one:
+`Kconfig`'s `OBJZ_BACKEND` choice defaults to `OBJZ_BACKEND_STATIC`, so
+every sample and every application using this module transpiles through
+`oz2c` unless it says otherwise. No `prj.conf` pins the backend, so the
+default is the whole mechanism.
+
+To go back to the Python pipeline, per target:
 
 ```
 # samples/<name>/prj.conf
-CONFIG_OBJZ_BACKEND_STATIC=y
+CONFIG_OBJZ_BACKEND_PYTHON=y
 ```
 
-`cmake/oz_static.cmake` still hard-errors on `CONFIG_OBJZ_HEAP`, since
-`allocWithHeap:` is not emitted.
+**What this default rests on, stated plainly.** Every measurement in this
+document is a host measurement. The 73-case corpus matches on both backends,
+9 of 12 samples compile, link, run and match their own `sample.yaml`, and
+all 9 are clean under AddressSanitizer and UndefinedBehaviorSanitizer. What
+none of that covers is a Zephyr cross-build: no sample has been built on
+target through this backend, the three samples needing kernel or
+device-tree infrastructure (`arc_demo`, `gpio_demo`, `zbus_objc`) are not
+exercised at all, and `k_mem_slab`, real interrupt-disabled spinlocks and
+code size are all untested. Flipping the default is what will surface those;
+`CONFIG_OBJZ_BACKEND_PYTHON=y` is the way back for any target it breaks.
 
 ## Not verified
 
-**No Zephyr cross-build was run.** Everything above is a host measurement,
-and nothing here claims any sample builds or runs on target.
-
-`cmake/oz_static.cmake` now dumps one Clang AST per source and passes them
-all with `--ast` (gap N), so that path is no longer missing the ownership
-facts — but the CMake wiring itself is unverified here, since configuring it
-needs a Zephyr cross-build. What *was* verified is the part most likely to be
-wrong: the generated dump script and the multi-`--ast` handoff were
-reproduced under `cmake -P` against the real Clang, producing 12 non-empty
-dumps that oz2c accepted.
+**The Zephyr cross-build is now run** — see "On target" above. What is still
+not covered: only `arc_demo` has been *executed* on target, no board has been
+used (mps2/an385 under QEMU only), and nothing here measures code size
+against the Python backend.
 
 **The samples are run on host, not on target.** Nine of them execute and
 are checked against their own `sample.yaml`, which is a real and

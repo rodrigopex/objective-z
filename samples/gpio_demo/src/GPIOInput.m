@@ -20,7 +20,7 @@
 {
 	self = [super initWithDTSpec:spec flags:GPIO_INPUT];
 
-	gpio_init_callback(&self->cb, (gpio_callback_handler_t)blockCallback, BIT(spec.pin));
+	gpio_init_callback(&self->cb, (gpio_callback_handler_t)blockCallback, BIT(spec->pin));
 
 	int ret = gpio_add_callback_dt(spec, &self->cb);
 	if (ret < 0) {
