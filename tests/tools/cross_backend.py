@@ -8,6 +8,9 @@ Rust one (`oz2c`) over the *same* driver and diffs the Unity results, so
 "the same features are implemented" rests on observed behavior rather than
 on both backends merely compiling.
 
+Both backends are given the same pool sizes, since a slab that is too
+small fails a test on a null receiver rather than on behavior.
+
 What is compared is the Unity report -- one `test_name:PASS|FAIL` line per
 test plus the totals -- not generated C.  The two backends deliberately
 generate different C (in-place substitution vs. template emission), so a
@@ -224,15 +227,40 @@ def run_static(case: Path) -> tuple[bool, str, list[str]]:
 
     tmpdir = Path(tempfile.mkdtemp(prefix="oz_xback_"))
     try:
+        # The two backends must be given the *same* pool sizes or the
+        # comparison measures configuration rather than behavior. The Python
+        # harness uses the case's `oz-pool` directive if it has one and
+        # otherwise defaults to 4 blocks per class; oz_static would
+        # otherwise size from allocation sites it can see, and a case whose
+        # allocations all live in the `_test.c` driver has none -- its slab
+        # would hold one object, the second `alloc` would return NULL, and
+        # the test would fail on a null receiver rather than on behavior.
+        pool_sizes = (compile_and_run._parse_pool_sizes(case)
+                      or compile_and_run._default_pool_sizes(case))
+        args = [str(OZ2C),
+                "-I", str(REPO_ROOT / "include" / "oz_sdk"),
+                "-I", str(REPO_ROOT / "tests" / "behavior" / "include"),
+                "--impl-dir", str(REPO_ROOT / "src")]
         transpile = subprocess.run(
-            [str(OZ2C),
-             "-I", str(REPO_ROOT / "include" / "oz_sdk"),
-             "-I", str(REPO_ROOT / "tests" / "behavior" / "include"),
-             "--impl-dir", str(REPO_ROOT / "src"),
-             str(case), str(tmpdir)],
-            capture_output=True, text=True)
+            args + [str(case), str(tmpdir)], capture_output=True, text=True)
         if transpile.returncode != 0:
             return False, f"transpile: {transpile.stderr.strip().splitlines()[0]}", []
+
+        # Re-run with the sizes, now that the first pass has revealed which
+        # classes exist: oz_static rejects `--pool-sizes` naming a class it
+        # has no record of, and a directive written for the oracle can name
+        # one (`OZSpinLock`, which oz_static never creates).
+        known = set(_discover_classes(tmpdir))
+        wanted = [entry for entry in pool_sizes.split(",")
+                  if entry and entry.split("=")[0] in known]
+        if wanted:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+            tmpdir.mkdir(parents=True, exist_ok=True)
+            transpile = subprocess.run(
+                args + ["--pool-sizes", ",".join(wanted), str(case), str(tmpdir)],
+                capture_output=True, text=True)
+            if transpile.returncode != 0:
+                return False, f"transpile: {transpile.stderr.strip().splitlines()[0]}", []
 
         classes = _discover_classes(tmpdir)
         if not classes:

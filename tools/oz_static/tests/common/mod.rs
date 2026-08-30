@@ -321,10 +321,10 @@ pub fn ozstring_src() -> String {
 /// qualifier and turns the block declarator into a function pointer, so
 /// the real header's spelling goes through untouched. Requires `OZObject`
 /// (`common::ozobject_src`) in scope as the root class; oz_static has no
-/// ARC (tracked separately as #189), so releasing an object holding an
-/// OZDefer ivar must call `[_cleanup release]` explicitly in that
-/// object's own `-dealloc` -- there's no automatic ivar release to rely
-/// on.
+/// full ARC (tracked separately as #189), but an owned object ivar *is*
+/// released automatically when its owner is deallocated
+/// (`companion::render_release_ivars`), so an owner's `-dealloc` must not
+/// release it by hand -- that is rejected as a double free.
 pub fn ozdefer_src() -> String {
     assemble(
         include_str!("../../../../include/oz_sdk/Foundation/OZDefer.h"),

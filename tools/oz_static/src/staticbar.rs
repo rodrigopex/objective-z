@@ -374,14 +374,86 @@ fn find_capture(
     }
 }
 
+/// Reject `[_ivar release]` inside `-dealloc` for an ivar the class already
+/// owns, because that release is emitted automatically
+/// (`companion::render_release_ivars`) and doing both is a double free.
+///
+/// This is the one place oz_static deliberately diverges from the oracle
+/// rather than following it. `emit.py::_emit_user_dealloc` appends the
+/// owned-ivar releases *after* the user's body, so a `-dealloc` written in
+/// ordinary manual-retain/release style -- releasing what it owns -- has
+/// every one of those ivars released twice, silently. Real ARC does not
+/// paper over that: it makes an explicit `release` a compile error, and the
+/// safety comes from the rejection. Rejecting is also the only option
+/// consistent with never silently degrading.
+///
+/// Only owned object ivars are rejected. Releasing a local, a parameter, or
+/// an `__unsafe_unretained` ivar the author manages by hand is untouched --
+/// nothing releases those automatically.
+fn check_dealloc_body(
+    body: Node,
+    src: &str,
+    program: &Program,
+    class_info: &ClassInfo,
+    diags: &mut Vec<Diagnostic>,
+) {
+    let owned = program.owned_object_ivar_names(&class_info.name);
+    if owned.is_empty() {
+        return;
+    }
+    fn walk(
+        node: Node,
+        src: &str,
+        owned: &[String],
+        class_name: &str,
+        diags: &mut Vec<Diagnostic>,
+    ) {
+        if node.kind() == "message_expression" {
+            let mut cursor = node.walk();
+            let parts: Vec<Node> = node
+                .children(&mut cursor)
+                .filter(|c| c.kind() != "[" && c.kind() != "]")
+                .collect();
+            if parts.len() == 2 && node_text(parts[1], src) == "release" {
+                let receiver = node_text(parts[0], src);
+                if owned.iter().any(|ivar| ivar == receiver) {
+                    err(
+                        diags,
+                        src,
+                        node,
+                        format!(
+                            "'{recv}' is released automatically when a {class} is deallocated, so \
+                             releasing it here would release it twice -- drop this line (the \
+                             generated {class}_oz_release_ivars does it). Declare the ivar \
+                             '__unsafe_unretained' if this class does not own it.",
+                            recv = receiver,
+                            class = class_name
+                        ),
+                    );
+                }
+            }
+        }
+        let mut cursor = node.walk();
+        let children: Vec<Node> = node.children(&mut cursor).collect();
+        for child in children {
+            walk(child, src, owned, class_name, diags);
+        }
+    }
+    walk(body, src, &owned, &class_info.name, diags);
+}
+
 pub fn check_method_body(
     body: Node,
     src: &str,
     program: &Program,
     class_info: &ClassInfo,
     params: &[(String, String)],
+    selector: &str,
 ) -> Vec<Diagnostic> {
     let mut diags = Vec::new();
+    if selector == "dealloc" {
+        check_dealloc_body(body, src, program, class_info, &mut diags);
+    }
     let ivar_names: HashSet<String> =
         program.all_ivars(&class_info.name).into_iter().map(|(n, _)| n).collect();
     let mut scope =

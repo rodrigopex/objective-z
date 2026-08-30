@@ -19,10 +19,12 @@
 // conversion, so the test is ported below as
 // `block_ivar_declares_valid_function_pointer`.
 //
-// oz_static has no ARC (issue #189), so `DeferTest`'s own `-dealloc`
-// explicitly releases its `_cleanup` ivar -- there's no automatic
-// ivar-release to rely on the way the Python oracle's comment
-// ("Release triggers dealloc -> releases _cleanup ivar") implies.
+// `DeferTest`'s `_cleanup` ivar is released automatically when the owner is
+// deallocated (`companion::render_release_ivars`), so its `-dealloc` must
+// NOT release it by hand -- doing so is rejected, because the two releases
+// together would be a double free. This is where oz_static deliberately
+// parts company with the oracle, whose `_emit_user_dealloc` appends the
+// automatic releases after the user's body and so double-releases silently.
 
 mod common;
 use common::{compile_and_run, compile_and_run_strict, ozdefer_src, ozobject_src as PREAMBLE};
@@ -56,7 +58,8 @@ static void *g_fired_owner = 0;
 	return _marker;
 }}
 - (void)dealloc {{
-	[_cleanup release];
+	/* _cleanup is released automatically -- see
+	 * companion::render_release_ivars. Releasing it here is rejected. */
 }}
 @end
 
@@ -105,7 +108,8 @@ static void *g_owner_seen = (void *)1;
 	}}];
 }}
 - (void)dealloc {{
-	[_cleanup release];
+	/* _cleanup is released automatically -- see
+	 * companion::render_release_ivars. Releasing it here is rejected. */
 }}
 @end
 

@@ -2018,21 +2018,22 @@ fn render_interface(node: Node, ctx: &mut EmitCtx, program: &Program) -> (String
         // different file (e.g. `main.c`'s own `@[...]` literal) needs
         // an explicit declaration once each class gets its own file.
         let slots = ctx.pools.for_class(&name);
+        let owned_ivars = ctx.program.owned_object_ivars(&name);
         let (alloc_free, extra_proto) = if name == "OZArray" {
             (
-                crate::companion::render_array_support(&name, &root, slots),
+                crate::companion::render_array_support(&name, &root, slots, &owned_ivars),
                 format!("struct {name} *{name}_oz_initWithItems(void **src, unsigned int count);\n", name = name),
             )
         } else if name == "OZDictionary" {
             (
-                crate::companion::render_dict_support(&name, &root, slots),
+                crate::companion::render_dict_support(&name, &root, slots, &owned_ivars),
                 format!(
                     "struct {name} *{name}_oz_initWithKeysValues(void **keys, void **values, unsigned int count);\n",
                     name = name
                 ),
             )
         } else {
-            (crate::companion::render_alloc_free(&name, &root, slots), String::new())
+            (crate::companion::render_alloc_free(&name, &root, slots, &owned_ivars), String::new())
         };
         (format!("{}{}\n{}{}{}", open_banner, struct_text, extra_proto, decls, close_banner), alloc_free)
     }
@@ -2221,7 +2222,7 @@ fn render_method_definition(
         Some(body) => {
             let class_info = ctx.program.classes[class_name].clone();
             let reject_diags = crate::staticbar::check_method_body(
-                body, ctx.src, ctx.program, &class_info, &sig.params,
+                body, ctx.src, ctx.program, &class_info, &sig.params, &sig.selector,
             );
             if !reject_diags.is_empty() {
                 ctx.diags.extend(reject_diags);
