@@ -38,7 +38,7 @@ pub fn compile_and_run_strict(source: &str, stem: &str) -> String {
 }
 
 /// Same as `compile_and_run`, plus the host Zephyr stub headers on the
-/// include path and `zephyr/kernel.h` force-included ahead of everything.
+/// include path.
 ///
 /// A class wrapping a kernel primitive (OZTimer's `struct k_timer`) keeps
 /// its `#include <zephyr/kernel.h>` through transpilation, and there is
@@ -49,23 +49,19 @@ pub fn compile_and_run_strict(source: &str, stem: &str) -> String {
 /// `__oz_timer_setup`) the oracle's own host-side timer tests compile
 /// against.
 ///
-/// The `-include` is not cosmetic: it stands in for a propagation
-/// oz_static doesn't do. The companion header declares
+/// This used to also force `-include zephyr/kernel.h`, standing in for a
+/// propagation oz_static didn't do: the companion header declares
 /// `OZTimer_initWithUserData_expiry_stop_`, whose parameters mention
-/// `struct k_timer`, but nothing has declared that struct at that point,
-/// so C invents a prototype-scoped type and the later definition in the
-/// primary output becomes `error: conflicting types for ...`. The oracle
-/// avoids this by carrying the source's own `#include <zephyr/kernel.h>`
-/// into its generated header, ahead of the struct and prototypes -- see
-/// `tests/zephyr/generated/OZTimer_ozh.h:7`. Forcing the include here
-/// reproduces that ordering from outside. Once oz_static propagates
-/// source `#include`s into the companion header, this can become a plain
-/// `-I`.
+/// `struct k_timer`, and nothing had declared that struct at that point.
+/// `imports::collect_system_includes` now carries the source's own angled
+/// includes into that header, so a plain `-I` is enough and the ordering
+/// is fixed in the generated output rather than compensated for from
+/// outside.
 pub fn compile_and_run_with_zephyr_stubs(source: &str, stem: &str) -> String {
     let stubs = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../tests/behavior/include/zephyr_stubs");
     let stubs = stubs.to_str().unwrap().to_string();
-    compile_and_run_with_flags(source, stem, &["-I", &stubs, "-include", "zephyr/kernel.h"])
+    compile_and_run_with_flags(source, stem, &["-I", &stubs])
 }
 
 fn compile_and_run_with_flags(source: &str, stem: &str, extra_cc_flags: &[&str]) -> String {

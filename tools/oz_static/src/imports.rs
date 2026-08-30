@@ -89,6 +89,59 @@ fn resolve_import_path(
     }
 }
 
+/// Every angled `#include <...>` line in `source`, deduplicated, in
+/// first-seen order.
+///
+/// These are the includes `resolve_imports` deliberately leaves alone (only
+/// `#import` is a resolution candidate), and the companion header needs
+/// them: it declares a prototype for every method of every class, so a
+/// parameter type that came from a system or RTOS header -- OZTimer's
+/// `struct k_timer`, from `#include <zephyr/kernel.h>` -- is otherwise
+/// named there before anything has declared it. C then invents a
+/// prototype-scoped tag, and the class's own header, which does carry the
+/// include, declares the same function with the real type: `error:
+/// conflicting types for 'OZTimer_initWithUserData_expiry_stop_'`. The
+/// oracle propagates the include for the same reason -- see its committed
+/// `tests/zephyr/generated/OZTimer_ozh.h`, whose `#include
+/// <zephyr/kernel.h>` sits ahead of the struct and prototypes.
+///
+/// Angled only, deliberately. An angled include resolves against the
+/// compiler's include path, which is identical for the companion header
+/// and for every other generated file, so copying one is always safe. A
+/// quoted `#include "X.h"` resolves relative to the *original* source's
+/// directory, which the companion header does not share, so copying it
+/// could turn a working build into an unresolvable path; and a quoted
+/// Objective-C header would have been an `#import`, already spliced in by
+/// then. A quoted include that does define a prototype's type therefore
+/// still fails -- but loudly, at the C compiler, not as wrong code.
+///
+/// Propagating the include is preferred over forward-declaring the struct
+/// tag, which would fix this instance more narrowly but only this kind:
+/// a forward declaration is not enough for a parameter passed by value,
+/// nor for a typedef, enum, or macro the same header supplies.
+pub fn collect_system_includes(source: &str) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    for line in source.lines() {
+        let trimmed = line.trim_start();
+        let Some(rest) = trimmed.strip_prefix("#include") else {
+            continue;
+        };
+        let rest = rest.trim_start();
+        if !rest.starts_with('<') {
+            continue;
+        }
+        let Some(end) = rest.find('>') else {
+            continue;
+        };
+        let path = &rest[1..end];
+        if seen.insert(path.to_string()) {
+            out.push(format!("#include <{}>", path));
+        }
+    }
+    out
+}
+
 /// A header's sibling implementation -- same basename, `.m` extension,
 /// in one of `impl_dirs` -- if one exists. Without it, a class's own
 /// real method bodies (e.g. `OZObject`'s `-init`) would be declared via
