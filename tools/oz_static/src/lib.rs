@@ -36,11 +36,17 @@ pub type PoolOverrides = std::collections::HashMap<String, usize>;
 #[derive(Default)]
 pub struct Options {
     pub pool_sizes: PoolOverrides,
-    /// A `clang -Xclang -ast-dump=json` dump of this same source, which is
+    /// `clang -Xclang -ast-dump=json` dumps covering this source, which are
     /// the only authority on which ivars are objects the class owns (see
-    /// `astinfo`). Produce it with `-fobjc-arc`, or it carries no ownership
-    /// information and oz_static falls back to its own narrower rule.
-    pub ast_json: Option<String>,
+    /// `astinfo`). Produce them with `-fobjc-arc`, or they carry no
+    /// ownership information and oz_static falls back to its own narrower
+    /// rule.
+    ///
+    /// A list, not one dump: a program spread over several `.m` files needs
+    /// one per file, since a single dump only shows the `@implementation`s
+    /// written in that file. The facts are unioned -- see
+    /// `astinfo::AstFacts::merge`.
+    pub ast_json: Vec<String>,
 }
 
 /// Full pipeline: parse -> collect -> emit. Returns Ok on success, or the
@@ -58,7 +64,7 @@ pub fn transpile_with_pool_sizes(
 ) -> Result<TranspileOutput, Vec<Diagnostic>> {
     transpile_with_options(
         source,
-        &Options { pool_sizes: overrides.clone(), ast_json: None },
+        &Options { pool_sizes: overrides.clone(), ast_json: Vec::new() },
     )
 }
 
@@ -118,7 +124,7 @@ pub fn transpile_split_with_pool_sizes(
     transpile_split_with_options(
         source,
         origins,
-        &Options { pool_sizes: overrides.clone(), ast_json: None },
+        &Options { pool_sizes: overrides.clone(), ast_json: Vec::new() },
     )
 }
 
@@ -160,15 +166,18 @@ pub fn transpile_split_with_options(
 /// substituting a guess would change which ivars get released with no
 /// indication why.
 fn attach_ast(program: &mut Program, options: &Options) -> Result<(), String> {
-    let Some(text) = &options.ast_json else {
+    if options.ast_json.is_empty() {
         return Ok(());
-    };
-    let facts = astinfo::AstFacts::from_json(text)?;
+    }
+    let mut facts = astinfo::AstFacts::default();
+    for text in &options.ast_json {
+        facts.merge(astinfo::AstFacts::from_json(text)?);
+    }
     if facts.is_empty() {
         return Err(
-            "the supplied Clang AST describes no ivars at all -- it is probably not a dump of \
-             this source (produce it with `clang -Xclang -ast-dump=json -fsyntax-only \
-             -fobjc-arc`)"
+            "the supplied Clang AST dumps describe no ivars at all -- they are probably not \
+             dumps of this source (produce them with `clang -Xclang -ast-dump=json \
+             -fsyntax-only -fobjc-arc`)"
                 .to_string(),
         );
     }

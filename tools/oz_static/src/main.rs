@@ -13,7 +13,7 @@ use std::process::ExitCode;
 fn usage() -> ExitCode {
     eprintln!(
         "usage: oz2c [-I <dir>]... [--impl-dir <dir>]... [--manifest <path>] \
-         [--root-class <name>] [--pool-sizes <Class=N,...>] [--ast <ast.json>] \
+         [--root-class <name>] [--pool-sizes <Class=N,...>] [--ast <ast.json>]... \
          <input.m>... <outdir>"
     );
     ExitCode::FAILURE
@@ -26,7 +26,7 @@ fn main() -> ExitCode {
     let mut manifest_path: Option<PathBuf> = None;
     let mut expected_root: Option<String> = None;
     let mut pool_overrides = oz_static::PoolOverrides::new();
-    let mut ast_path: Option<PathBuf> = None;
+    let mut ast_paths: Vec<PathBuf> = Vec::new();
     let mut positional: Vec<String> = Vec::new();
 
     let mut i = 0;
@@ -59,7 +59,7 @@ fn main() -> ExitCode {
             // `-fobjc-arc`, or the dump carries no ownership at all.
             "--ast" => {
                 let Some(path) = args.get(i + 1) else { return usage() };
-                ast_path = Some(PathBuf::from(path));
+                ast_paths.push(PathBuf::from(path));
                 i += 2;
             }
             // Same spelling and meaning as the Python backend's flag, so a
@@ -157,16 +157,16 @@ fn main() -> ExitCode {
         }
     }
 
-    let ast_json = match &ast_path {
-        Some(path) => match fs::read_to_string(path) {
-            Ok(text) => Some(text),
+    let mut ast_json: Vec<String> = Vec::new();
+    for path in &ast_paths {
+        match fs::read_to_string(path) {
+            Ok(text) => ast_json.push(text),
             Err(e) => {
                 eprintln!("oz_static: error: cannot read --ast '{}': {}", path.display(), e);
                 return ExitCode::FAILURE;
             }
-        },
-        None => None,
-    };
+        }
+    }
 
     match oz_static::transpile_split_with_options(
         &resolved.text,

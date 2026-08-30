@@ -79,7 +79,7 @@ fn id_ivar_is_not_released_without_an_ast() {
 #[test]
 fn ast_makes_owned_id_ivar_released_and_unretained_one_not() {
     let all = generated(&oz_static::Options {
-        ast_json: Some(ast_json().to_string()),
+        ast_json: vec![ast_json().to_string()],
         ..Default::default()
     });
     assert!(
@@ -104,7 +104,7 @@ fn ast_makes_owned_id_ivar_released_and_unretained_one_not() {
 fn malformed_ast_is_rejected() {
     let result = oz_static::transpile_with_options(
         &source(),
-        &oz_static::Options { ast_json: Some("not json at all".to_string()), ..Default::default() },
+        &oz_static::Options { ast_json: vec!["not json at all".to_string()], ..Default::default() },
     )
     ;
     let Err(err) = result else { panic!("a malformed AST should be rejected") };
@@ -120,12 +120,12 @@ fn ast_describing_no_ivars_is_rejected() {
     let result = oz_static::transpile_with_options(
         &source(),
         &oz_static::Options {
-            ast_json: Some(r#"{"kind": "TranslationUnitDecl", "inner": []}"#.to_string()),
+            ast_json: vec![r#"{"kind": "TranslationUnitDecl", "inner": []}"#.to_string()],
             ..Default::default()
         },
     )
     ;
     let Err(err) = result else { panic!("an AST with no ivars should be rejected") };
     let joined = err.iter().map(|d| d.to_string()).collect::<Vec<_>>().join("\n");
-    assert!(joined.contains("describes no ivars"), "diagnostics: {}", joined);
+    assert!(joined.contains("describe no ivars"), "diagnostics: {}", joined);
 }

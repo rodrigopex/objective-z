@@ -3,11 +3,17 @@
 Where the Rust backend (`oz2c`) stands against the Python pipeline
 (`tools/oz_transpile`). A status record, not a claim of readiness.
 
-Two words are used precisely and are not interchangeable:
+These words are used precisely and are not interchangeable:
 
 - **transpiles** — `oz2c` exits 0 and writes output. The input was understood.
 - **compiles** — the generated `.c` files pass the host compiler. The output
   is real C.
+- **links** — the generated objects link into a binary. Strictly more than
+  compiling, and it took finding a bug to make the distinction earn its
+  place: a call to a method that is declared but defined nowhere compiles
+  perfectly well against the companion header's prototype and only fails at
+  link, so a compile-only sweep reported "OK" for three samples that could
+  not actually be built.
 - **matches** — the case was *run* under both backends and they produced
   identical results. Only the behavior-corpus section below claims this;
   the sample table does not, and no sample was executed.
@@ -17,37 +23,48 @@ Two words are used precisely and are not interchangeable:
 Measured by invoking `oz2c` directly with the same flags
 `cmake/oz_static.cmake` passes (`-I <module>/include/oz_sdk`, one
 `--impl-dir` per source directory, target include dirs, `--pool-sizes`
-when the sample states it). Compile check:
+when the sample states it), plus one Clang AST dump per entry `.m` via
+`--ast`. Compile and link check:
 
 ```
 cc -DOZ_PLATFORM_HOST -DOZ_HEAP_SUPPORT \
    -I include -I tests/behavior/include/zephyr_stubs \
-   -I <outdir> -I <outdir>/Foundation -c <file> -o /dev/null
+   -I <outdir> -I <outdir>/Foundation -c <file> -o <file>.o
+cc <every .o> <host OZLog stand-in> -o a.out
 ```
 
-| Sample | Transpiles | Generated C compiles | Notes |
+`src/OZLog.c` itself cannot take part in a host link (it includes
+`<zephyr/sys/printk.h>`), so a stand-in satisfies `OZLog` — the link step
+is there to catch *generated* symbols that were referenced and never
+defined, so substituting the one file neither backend generates keeps it
+measuring oz_static's own output. See also the note on `src/OZLog.c` under
+"Not verified" below.
+
+| Sample | Transpiles | Compiles + links | Notes |
 | --- | --- | --- | --- |
 | hello_world | yes | yes | |
-| pool_demo | yes | yes | exercises `@synchronized` |
 | transpiled_literals | yes | yes | `POOL_SIZES` honoured; was: helper unreachable from `main` |
+| mem_demo | yes | yes | was gap B |
+| hello_category | yes | yes | was gap C |
+| pool_demo | yes | Zephyr-blocked (link) | needs `printk`; exercises `@synchronized` |
 | transpiled_blocks | yes | Zephyr-blocked | `printk`/`k_*` only |
 | transpiled_generics | yes | Zephyr-blocked | `printk`/`k_*` only |
 | transpiled_led | yes | Zephyr-blocked | `printk`/`k_*` only |
-| mem_demo | yes | yes | was gap B |
 | arc_demo | yes | Zephyr-blocked | `K_THREAD_DEFINE` only; was gap A |
 | gpio_demo | yes | Zephyr-blocked | was gap D |
 | zbus_objc | yes | Zephyr-blocked | was gap E |
-| heap_alloc | yes | **no — transpiler** | property dot syntax |
-| hello_category | yes | yes | was gap C |
+| heap_alloc | yes | **no — transpiler** | `+allocWithHeap:` is not emitted; its dot syntax is fixed |
 | zbus_service | — | — | stale independently of oz_static (see below) |
 
-Every sample with usable sources transpiles. Of those, 5 compile cleanly on
-host, 6 fail only on Zephyr headers (expected — not a transpiler problem),
-and 1 fails on a transpiler gap.
+Every sample with usable sources transpiles. Of those, 4 compile *and link*
+cleanly on host, 8 stop only on Zephyr (expected — not a transpiler
+problem), and 1 fails on a transpiler gap.
 
-The six Zephyr-blocked samples were each checked to be *only* that:
-`arc_demo`'s two remaining errors, for instance, are both on its single
-`K_THREAD_DEFINE(...)` line, which no host compiler can expand.
+Each Zephyr-blocked sample was checked to be *only* that, rather than
+assumed: `arc_demo`'s two remaining compile errors are both on its single
+`K_THREAD_DEFINE(...)` line, which no host compiler can expand, and
+`pool_demo` compiles completely and fails at link on `printk` alone — a
+symbol Zephyr provides and the stub headers only declare.
 
 Also fixed since: the always-visible includes (root macros, boxed-literal
 helpers) now go into each `.c` rather than each `.h`, which is where the code
@@ -162,6 +179,83 @@ a class owned by another stem now includes that stem's header (without it,
 emitted into its origin's header rather than its body, so it is callable
 from outside the file it was written in.
 
+**F. Property dot syntax was not handled at all.** Fixed. A `.` on an
+object passed straight through as C member access, so
+`samples/heap_alloc`'s `[App sharedInstance].heap` became a member
+reference on `struct App *` — "did you mean to use '->'?". It is now
+lowered to the accessor call, in both read and write positions.
+
+A survey of every `.m`/`.h` under `samples/`, `src/`, `include/oz_sdk/` and
+the three test corpora found ten dot accesses, all in `samples/`, all
+reads, in four shapes that differ in how the selector is found — and the
+first three of them were shapes a naive implementation gets wrong:
+
+- `super.spec` (`gpio_demo`) — dot syntax on `super`, which must stay a
+  *direct* call. Routed through the receiver's own class_id switch the way
+  an ordinary send is, a subclass override reading `super.thing` calls
+  itself forever.
+- `producer.ackCount` (`zbus_objc`) — the property is named `count` and
+  carries `getter=ackCount`, so the field in source is not the property
+  name. Accessor selectors are resolved through `getter=`/`setter=`.
+- `str.cString` (`zbus_service`) — no `@property` at all, just a
+  `- (const char *)cString` method. Objective-C accepts dot syntax against
+  a bare getter, so a `@property` lookup alone is not enough.
+- `[App sharedInstance].heap` (`heap_alloc`) — on a message-send result.
+
+Chains need nothing special: `a.b.c` recurses, and the inner accessor's
+return type resolves the outer field. Writes and compound writes occur
+nowhere in the repository and are covered on their own account: a compound
+assignment has to read and write back, which mentions the receiver twice,
+so it is accepted only where the receiver is a plain identifier and stays a
+hard error otherwise rather than sending twice.
+
+Two bugs surfaced while testing this, both from `class_name_from_type`
+being a pure spelling transform that says nothing about whether the name is
+a *class* — `struct point` and `struct Widget` are spelled alike. Plain C
+member access (`p.x`) was read as dot syntax and rejected, and the same
+hole was latent in subscripting, where indexing a C array of structs would
+have been reported as a class that "does not support subscripting". Both
+now ask `Program::is_class`.
+
+The oracle's own `tests/behavior/cases/properties/dot_syntax.m` is named
+for this feature but never uses it — it declares a property and stops — so
+there was no coverage on that side either.
+
+**G. The protocol-dispatch table routed to methods that are never
+defined.** Fixed, and it is why the sample sweep now links.
+`include/oz_sdk/Foundation/OZArray.h` and `OZDictionary.h` both declare
+`countByEnumeratingWithState:objects:count:`, which no `.m` in the
+repository implements. oz_static collects a class's methods from its
+*declarations*, so both classes appeared to have it, and the generated
+dispatch function called
+`OZArray_countByEnumeratingWithState_objects_count_` — an undefined
+symbol that broke the link of every sample pulling in Foundation. The
+Python pipeline never mentions that selector at all, because it collects
+from implementations.
+
+`Program::method_is_defined` existed for exactly this but could only answer
+with a Clang AST supplied, and abstained otherwise. It now rests on the
+parse instead, which is both simpler and strictly better founded:
+oz_static emits a definition exactly when it parsed an `@implementation`
+defining the method or synthesizes the accessor for a `@property`, so it
+already knows what its own output will contain. The AST is kept as an
+additional *positive* source only, so supplying one can never suppress
+more than not supplying one.
+
+**H. The Clang AST could not be supplied for a multi-file program.** Fixed.
+`--ast` takes one dump, but a dump of `main.m` carries every `@interface`
+it imports and only the `@implementation`s written in that one file — so a
+sample's dumps cover none of the SDK's implementations in `src/*.m`.
+`--ast` is now repeatable and the facts are unioned.
+
+That exposed a sharper problem: treating "the dump described this class" as
+"I would have seen its method bodies" made oz_static *drop* the
+declarations of everything the SDK implements elsewhere, including
+`OZ_PROTOCOL_SEND_cDescription_maxLength_`, while still emitting the calls
+— so supplying an AST made the output stop compiling. `AstFacts` now
+tracks which classes it saw an `@implementation` *for*, separately from
+which it merely saw, and the guard abstains without that stronger evidence.
+
 **D. File-scope `static` object variables are not type-tracked.** Reduced
 to a 20-line reproducer:
 
@@ -208,7 +302,7 @@ That allowlist asserts the listed case *still* fails, so fixing it without
 updating the list also fails the test; it cannot decay into silently
 skipped cases.
 
-Rust test suite: 169 passing, 0 failing.
+Rust test suite: 178 passing, 0 failing.
 
 ### Behavioral parity: 67 of 73, and zero disagreements
 
@@ -353,12 +447,26 @@ CONFIG_OBJZ_BACKEND_STATIC=y
 
 ## Not verified
 
-**No Zephyr cross-build was run.** `west` v1.4.0 and `cmake` 4.4.2 are
-present and `deps/zephyr` exists, but `ZEPHYR_BASE`,
-`ZEPHYR_SDK_INSTALL_DIR` and `ZEPHYR_TOOLCHAIN_VARIANT` are all unset and
-no SDK is installed, so no cross-toolchain is configured in this
-environment. Nothing here claims any sample builds or runs on target.
+**No Zephyr cross-build was run.** Everything above is a host measurement.
+Nothing here claims any sample builds or runs on target, and two findings
+say the Zephyr path has not been exercised at all:
 
-**Nothing was executed.** The corpus cases each ship a Unity `_test.c`
-driver; wiring those up is the cross-backend behavioural comparison still
-outstanding. Compiling is the strongest check available without it.
+- **`cmake/oz_static.cmake` links `src/OZLog.c`, which cannot compile
+  against oz_static's output.** That file is written against the *Python*
+  backend's generated header names — it opens with `#include
+  "oz_dispatch.h"` and `#include "OZObject_ozh.h"`, which oz_static spells
+  `oz_static_dispatch.h` and `OZObject.h`. Its one real dependency beyond
+  those, `OZ_PROTOCOL_SEND_cDescription_maxLength_`, both backends do
+  provide under the same name and signature (a macro on one side, a
+  function on the other), so the incompatibility is the two `#include`
+  lines and nothing more. No sample selects `CONFIG_OBJZ_BACKEND_STATIC`,
+  which is why this has gone unnoticed; it is not fixed here.
+- **`cmake/oz_static.cmake` passes no `--ast`.** So the production build
+  path gets none of the Clang ownership facts, and `--ast` support is
+  exercised only by the corpus harness and the sample sweep. Since
+  definedness now rests on the parse (gap G), the AST's remaining job there
+  is ivar ownership — which is what decides whether ARC releases an
+  `id`-typed ivar.
+
+**The samples are compiled and linked, not run.** Only the behavior corpus
+is executed, and only under the ABI shim described above.

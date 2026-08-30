@@ -720,6 +720,8 @@ pub fn collect(source: &str) -> (Program, Vec<crate::model::Diagnostic>) {
                         if sig.is_class_method && sig.selector == "initialize" {
                             info.has_class_initialize = true;
                         }
+                        info.defined_selectors
+                            .insert((sig.selector.clone(), sig.is_class_method));
                         if !info.methods.iter().any(|m| {
                             m.selector == sig.selector && m.is_class_method == sig.is_class_method
                         }) {

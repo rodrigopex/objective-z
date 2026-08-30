@@ -37,6 +37,20 @@ pub struct AstFacts {
     /// this ivar is not owned" from "Clang never saw this class" -- only the
     /// former is a fact worth acting on.
     classes: HashSet<String>,
+    /// Classes the dump saw an `@implementation` *for*, which is a stricter
+    /// thing than `classes` and the only sound basis for concluding a method
+    /// is undefined.
+    ///
+    /// Seeing a class's `@interface` says nothing about where its methods
+    /// are defined: Clang preprocesses `#import`s, so a dump of one `.m`
+    /// carries every interface it imports and no other file's
+    /// implementations. Treating "interface seen" as "I would have seen the
+    /// bodies" made oz_static drop the declaration of everything the SDK
+    /// implements in `src/*.m` -- `OZ_PROTOCOL_SEND_cDescription_maxLength_`
+    /// among them -- while still emitting the calls, so the generated C
+    /// stopped compiling. Now the guard abstains unless this dump really
+    /// covered the class's implementation.
+    implemented_classes: HashSet<String>,
 }
 
 impl AstFacts {
@@ -63,6 +77,11 @@ impl AstFacts {
         } else {
             owner
         };
+        if kind == "ObjCImplementationDecl" {
+            if let Some(name) = node.get("name").and_then(Value::as_str) {
+                self.implemented_classes.insert(name.to_string());
+            }
+        }
         if kind == "ObjCMethodDecl" {
             // A definition carries its body as an inner CompoundStmt; a bare
             // `@interface` declaration has none. A `@synthesize`d accessor
@@ -105,6 +124,21 @@ impl AstFacts {
         }
     }
 
+    /// Fold another dump's facts into this one.
+    ///
+    /// A program built from several `.m` files needs one dump per file: a
+    /// dump of `main.m` sees every `@interface` it imports but only the
+    /// `@implementation`s written in that one file, so on its own it would
+    /// report every *other* class's methods as never defined. Unioning is
+    /// the right operation for every set here -- each dump is a partial
+    /// view, and none contradicts another.
+    pub fn merge(&mut self, other: Self) {
+        self.owned_object.extend(other.owned_object);
+        self.defined_methods.extend(other.defined_methods);
+        self.classes.extend(other.classes);
+        self.implemented_classes.extend(other.implemented_classes);
+    }
+
     /// Whether `class`'s `ivar` is an object the class owns, or `None` if
     /// this dump says nothing about it -- an unknown class, or an ivar Clang
     /// never saw. Callers must not read `None` as "not owned".
@@ -115,6 +149,13 @@ impl AstFacts {
     /// Did the dump describe `class` at all?
     pub fn knows_class(&self, class: &str) -> bool {
         self.classes.contains(class)
+    }
+
+    /// Did the dump cover `class`'s `@implementation`? See the field of the
+    /// same name for why this, and not `knows_class`, gates any conclusion
+    /// that a method has no definition.
+    pub fn knows_implementation_of(&self, class: &str) -> bool {
+        self.implemented_classes.contains(class)
     }
 
     /// Does the dump show `class` defining `selector` with a body?
