@@ -66,6 +66,15 @@ pub struct ClassInfo {
     /// use `Program::protocol_methods` for that.
     pub conforms: Vec<String>,
     pub properties: Vec<PropertyInfo>,
+    /// Ivars this class must NOT release when an instance is deallocated:
+    /// those declared `__unsafe_unretained` in source, and those backing a
+    /// property whose ownership is `assign`/`unsafe_unretained`. Tracked
+    /// separately from `own_ivars` because `emit::lower_ivar_decl` strips
+    /// the qualifier on the way into the generated struct (it means nothing
+    /// to C), which would otherwise lose the only record that a reference
+    /// is unowned -- and releasing an unowned backref is exactly the
+    /// double-free the qualifier exists to prevent.
+    pub unretained_ivars: HashSet<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -126,6 +135,68 @@ impl Program {
             hops += 1;
         }
         None
+    }
+
+    /// Every object ivar an instance of `class_name` owns, as the C access
+    /// path to reach it from a `struct {class_name} *self` -- the ivars that
+    /// have to be released when the instance is deallocated.
+    ///
+    /// Walks the whole superclass chain, because deallocating a subclass has
+    /// to release what its ancestors own too. Excluded:
+    ///
+    ///   * anything in a class's `unretained_ivars` (declared
+    ///     `__unsafe_unretained`, or backing an `assign`/`unsafe_unretained`
+    ///     property) -- an unowned reference, whose release would be a
+    ///     double-free;
+    ///   * the synthesized tracking fields, which are not objects;
+    ///   * `id`-typed ivars. `id` lowers to `void *`
+    ///     (`collect::render_type`), which is indistinguishable from a
+    ///     non-object pointer, and releasing a non-object crashes whereas
+    ///     failing to release an object only leaks. The oracle releases
+    ///     `id` ivars because Clang tells it which are objects; without
+    ///     that this stays conservative rather than guessing.
+    pub fn owned_object_ivars(&self, class_name: &str) -> Vec<String> {
+        self.owned_object_ivar_names(class_name)
+            .into_iter()
+            .filter_map(|ivar| self.ivar_access_path(class_name, &ivar))
+            .collect()
+    }
+
+    /// `owned_object_ivars` as plain ivar names rather than access paths --
+    /// what `staticbar` needs to recognise one being released by hand.
+    pub fn owned_object_ivar_names(&self, class_name: &str) -> Vec<String> {
+        let mut chain = Vec::new();
+        let mut cur = Some(class_name.to_string());
+        while let Some(name) = cur {
+            let Some(info) = self.classes.get(&name) else {
+                break;
+            };
+            chain.push(name.clone());
+            cur = info.superclass.clone();
+        }
+        let mut out = Vec::new();
+        // Subclass-first: an owner releases what it added before what it
+        // inherited, mirroring the oracle's dealloc-then-chain-to-parent.
+        for name in chain {
+            let info = &self.classes[&name];
+            for (ivar, c_type) in &info.own_ivars {
+                if info.unretained_ivars.contains(ivar) {
+                    continue;
+                }
+                if !c_type.trim_start().starts_with("struct ") || !c_type.contains('*') {
+                    continue;
+                }
+                let Some(target) = c_type.trim().strip_prefix("struct ") else {
+                    continue;
+                };
+                let target = target.trim_end_matches('*').trim();
+                if !self.is_class(target) {
+                    continue;
+                }
+                out.push(ivar.clone());
+            }
+        }
+        out
     }
 
     /// Compile-time-fixed class id (index into class_order), used only for

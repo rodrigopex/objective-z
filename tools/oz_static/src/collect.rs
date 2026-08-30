@@ -295,9 +295,26 @@ pub(crate) fn extract_type_and_stars(node: Node, src: &str) -> (String, usize) {
 }
 
 pub(crate) fn extract_ivars(node: Node, src: &str, known_classes: &HashSet<String>) -> Vec<(String, String)> {
+    extract_ivars_with_ownership(node, src, known_classes).0
+}
+
+/// `extract_ivars`, plus the names declared `__unsafe_unretained`.
+///
+/// The qualifier is dropped from the generated struct, meaning nothing to C
+/// (see `emit::lower_ivar_decl`), so this is the only point at which it can
+/// be recorded -- and it has to be. An unretained ivar is an unowned
+/// backref; releasing one when its owner is deallocated is precisely the
+/// double-free the qualifier exists to prevent (`OZDefer`'s `_owner` is
+/// exactly that shape).
+pub(crate) fn extract_ivars_with_ownership(
+    node: Node,
+    src: &str,
+    known_classes: &HashSet<String>,
+) -> (Vec<(String, String)>, HashSet<String>) {
     let Some(vars_node) = child_by_kind(node, "instance_variables") else {
-        return Vec::new();
+        return (Vec::new(), HashSet::new());
     };
+    let mut unretained = HashSet::new();
     let mut out = Vec::new();
     let mut cursor = vars_node.walk();
     for child in vars_node.children(&mut cursor) {
@@ -315,9 +332,12 @@ pub(crate) fn extract_ivars(node: Node, src: &str, known_classes: &HashSet<Strin
         };
         // struct_declarator wraps either `identifier` or `pointer_declarator`.
         let name = find_declared_name(declarator, src);
+        if node_text(decl, src).contains("__unsafe_unretained") {
+            unretained.insert(name.clone());
+        }
         out.push((name, render_type(&type_text, stars, known_classes)));
     }
-    out
+    (out, unretained)
 }
 
 pub(crate) fn find_declared_name(node: Node, src: &str) -> String {
@@ -628,9 +648,11 @@ pub fn collect(source: &str) -> (Program, Vec<crate::model::Diagnostic>) {
                 // its selectors before it.
                 let is_category = category.is_some();
                 if !is_category {
-                    let ivars = extract_ivars(node, source, &known_classes);
+                    let (ivars, unretained) =
+                        extract_ivars_with_ownership(node, source, &known_classes);
                     if let Some(info) = classes.get_mut(&name) {
                         info.own_ivars = ivars;
+                        info.unretained_ivars = unretained;
                     }
                 }
                 let mut c = node.walk();
@@ -906,6 +928,16 @@ fn resolve_properties(classes: &mut std::collections::HashMap<String, ClassInfo>
         }
 
         let info = classes.get_mut(name).unwrap();
+        // A non-strong property does not own what its ivar points at, so
+        // the ivar joins the do-not-release set alongside the ones declared
+        // `__unsafe_unretained` directly.
+        for prop in &resolved_props {
+            if prop.ownership != Ownership::Strong {
+                if let Some(ivar) = &prop.ivar_name {
+                    info.unretained_ivars.insert(ivar.clone());
+                }
+            }
+        }
         info.properties = resolved_props;
         info.own_ivars.extend(new_ivars);
         info.methods.extend(new_methods);

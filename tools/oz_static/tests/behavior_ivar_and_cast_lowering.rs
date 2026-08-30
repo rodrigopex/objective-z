@@ -70,8 +70,7 @@ fn bare_class_name_ivar_gains_struct_tag() {
 	return [_tagged v];
 }
 - (void)dealloc {
-	[_bare release];
-	[_tagged release];
+	/* Both ivars are released automatically on dealloc. */
 }
 @end
 

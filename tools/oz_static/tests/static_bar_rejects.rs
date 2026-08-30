@@ -240,3 +240,73 @@ fn protocol_literal_expression_rejected() {
     let diags = expect_reject(&src);
     assert!(diags.contains("@protocol(...)"), "diagnostics: {}", diags);
 }
+
+/// Releasing an owned object ivar by hand inside `-dealloc` is rejected,
+/// because the release is already emitted automatically
+/// (`companion::render_release_ivars`) and running both is a double free.
+///
+/// A deliberate divergence from the oracle rather than a port of it:
+/// `emit.py::_emit_user_dealloc` appends the automatic releases *after* the
+/// user's body, so ordinary manual-retain/release teardown has every owned
+/// ivar released twice, silently. Real ARC does not compensate for that
+/// either -- it makes the explicit `release` a compile error, which is the
+/// rule taken here.
+#[test]
+fn releasing_owned_ivar_in_dealloc_rejected() {
+    let src = format!(
+        "{}{}",
+        PREAMBLE(),
+        "\
+@interface Held : OZObject
+@end
+@implementation Held
+@end
+
+@interface Owner : OZObject {
+	Held *_held;
+}
+- (void)dealloc;
+@end
+@implementation Owner
+- (void)dealloc {
+	[_held release];
+}
+@end
+"
+    );
+    let diags = expect_reject(&src);
+    assert!(diags.contains("released automatically"), "diagnostics: {}", diags);
+    assert!(diags.contains("_held"), "diagnostics: {}", diags);
+}
+
+/// The contrast: an `__unsafe_unretained` ivar is *not* released
+/// automatically, so releasing it by hand stays legal. The rejection is
+/// scoped to ivars the class actually owns.
+#[test]
+fn releasing_unretained_ivar_in_dealloc_accepted() {
+    let src = format!(
+        "{}{}",
+        PREAMBLE(),
+        "\
+@interface Held : OZObject
+@end
+@implementation Held
+@end
+
+@interface Watcher : OZObject {
+	__unsafe_unretained Held *_seen;
+}
+- (void)dealloc;
+@end
+@implementation Watcher
+- (void)dealloc {
+	[_seen release];
+}
+@end
+"
+    );
+    assert!(
+        oz_static::transpile(&src).is_ok(),
+        "releasing an __unsafe_unretained ivar should be accepted"
+    );
+}

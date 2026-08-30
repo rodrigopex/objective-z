@@ -158,7 +158,7 @@ skipped cases.
 
 Rust test suite: 158 passing, 0 failing.
 
-### Behavioral parity: 44 of 73 cases agree
+### Behavioral parity: 46 of 73 cases agree
 
 Transpiling and compiling say the input was understood and the output is
 real C. They say nothing about what the code *does*. `just
@@ -168,8 +168,8 @@ the results.
 
 | Outcome | Cases | Meaning |
 | --- | --- | --- |
-| MATCH | 44 | Identical Unity results — same tests, same outcomes |
-| MISMATCH | 4 | Both ran; they disagree. Real differences, listed below |
+| MATCH | 46 | Identical Unity results — same tests, same outcomes |
+| MISMATCH | 2 | Both ran; they disagree. Real differences, listed below |
 | STATIC-FAILED | 25 | oz_static's side could not be built or run |
 
 Unity *results* are compared, not generated C: the two backends emit
@@ -184,9 +184,14 @@ exercises both backends. **This means the harness proves behavioral
 agreement, not ABI compatibility** — the two backends' generated C is not
 link-compatible, and that is not currently a goal.
 
-#### The 4 mismatches
+Both backends are also given the same pool sizes (the case's `oz-pool`
+directive, else 4 per class, matching what `compile_and_run.py` does). A
+slab that is too small makes a test fail on a null receiver rather than on
+behavior, which would be measuring configuration, not parity.
 
-Two are the known missing ARC (#189), now measurable rather than inferred:
+#### The 2 mismatches
+
+Both are the known missing ARC (#189), now measurable rather than inferred:
 
     arc/break_releases_loop_local      python PASS / static FAIL: Expected 1 Was 0
     arc/continue_releases_loop_local   python PASS / static FAIL: Expected 3 Was -1
@@ -194,21 +199,37 @@ Two are the known missing ARC (#189), now measurable rather than inferred:
 Note `arc/reassign_releases_old` *matches*, so the gap is narrower than
 "no ARC at all".
 
-Two are a distinct bug the harness found, not an ARC-scope issue —
-**strong object ivars are never released when their owner is
-deallocated**:
+#### Fixed: strong object ivars were never released
 
-    properties/atomic_property     strong_retains FAIL: Expected 1 Was 2
-                                   strong_releases_old FAIL: Expected 1 Was 0
-    properties/strong_vs_assign    strong_retains_on_set FAIL: Expected 1 Was 2
-                                   strong_releases_old_on_overwrite FAIL: Expected 2 Was 0
+The harness's first run also found two mismatches in
+`properties/atomic_property` and `properties/strong_vs_assign` — a held
+object's refcount never came back down (`Expected 1 Was 2`) — because
+nothing released a class's strong object ivars when an instance was
+deallocated. `companion::render_release_ivars` now emits a per-class
+`{Class}_oz_release_ivars`, called from the release path once the class's
+own `-dealloc` body has run. Both cases now MATCH.
 
-The oracle emits an auto-dealloc (`emit.py::_emit_auto_dealloc`) for any
-class with object ivars or a non-root superclass: it releases the owned
-ivars, then chains to the parent. oz_static's dealloc dispatch falls back
-to the root's no-op for a class with no user `-dealloc`, so a held object's
-refcount never comes back down. Unlike full ARC this needs no scope
-tracking and has well-defined semantics.
+This is where oz_static **deliberately parts company with the oracle**
+rather than porting it. `emit.py::_emit_user_dealloc` appends the same
+automatic releases *after* a user-written `-dealloc` body, so a `-dealloc`
+doing ordinary manual-retain/release teardown — releasing what it owns —
+has every one of those ivars released twice, silently. That is neither MRR
+nor ARC: real ARC makes `[_ivar release]` in `-dealloc` a *compile error*,
+so its safety comes from forbidding the manual release, not from adding a
+second one.
+
+oz_static follows ARC's rule: the release is automatic, and an explicit
+release of an owned ivar inside `-dealloc` is a hard, located error naming
+the ivar. Releasing a local, a parameter, or an `__unsafe_unretained` ivar
+is untouched — nothing releases those automatically. The oracle's shape is
+latent rather than observed there (its only corpus case with a user
+`dealloc` has an empty body and no object ivars), but it is a double free
+waiting for the first person to write conventional teardown.
+
+`id`-typed ivars are deliberately *not* auto-released: `id` lowers to `void
+*`, indistinguishable from a non-object pointer, and releasing a
+non-object crashes whereas failing to release an object only leaks. The
+oracle can release them because Clang tells it which are objects.
 
 #### The 25 static-side failures
 

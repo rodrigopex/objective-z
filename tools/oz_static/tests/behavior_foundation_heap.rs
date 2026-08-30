@@ -87,7 +87,7 @@ static int g_owner_dealloc_ran = 0;
 }}
 - (void)dealloc {{
 	g_owner_dealloc_ran = 1;
-	[_heap release];
+	/* _heap is released automatically on dealloc. */
 }}
 @end
 
