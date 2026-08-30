@@ -755,7 +755,16 @@ pub fn collect(source: &str) -> (Program, Vec<crate::model::Diagnostic>) {
 
     reject_inline_anonymous_aggregates(root, source, &mut diagnostics);
 
-    (Program { classes, class_order, protocols, ast: None }, diagnostics)
+    (
+        Program {
+            classes,
+            class_order,
+            protocols,
+            owning_methods: Default::default(),
+            ast: None,
+        },
+        diagnostics,
+    )
 }
 
 /// An inline anonymous aggregate -- `enum { A, B }`, `struct { int x; }`,

@@ -158,7 +158,7 @@ skipped cases.
 
 Rust test suite: 158 passing, 0 failing.
 
-### Behavioral parity: 60 of 73 cases agree
+### Behavioral parity: 66 of 73, and zero disagreements
 
 Transpiling and compiling say the input was understood and the output is
 real C. They say nothing about what the code *does*. `just
@@ -168,9 +168,12 @@ the results.
 
 | Outcome | Cases | Meaning |
 | --- | --- | --- |
-| MATCH | 60 | Identical Unity results — same tests, same outcomes |
-| MISMATCH | 2 | Both ran; they disagree. Real differences, listed below |
-| STATIC-FAILED | 11 | oz_static's side could not be built or run |
+| MATCH | 66 | Identical Unity results — same tests, same outcomes |
+| MISMATCH | **0** | No case that runs on both backends behaves differently |
+| STATIC-FAILED | 7 | oz_static's side could not be built or run |
+
+Every case that builds under both backends now produces identical results.
+What remains is seven cases oz_static cannot build, not seven it gets wrong.
 
 Unity *results* are compared, not generated C: the two backends emit
 deliberately different C, so a textual diff would be noise.
@@ -193,89 +196,47 @@ The harness passes each case's Clang AST to `oz2c --ast` as well, using the
 same dump it produces for the oracle — see "Clang as the authority" below.
 That alone moved 14 cases from unbuildable to matching.
 
-#### The 2 mismatches
+#### Fixed: scope-based ARC
 
-Both are the known missing ARC (#189), now measurable rather than inferred:
+Both remaining mismatches were the missing ARC (#189), and so were all six
+runtime crashes: `arc/break_releases_loop_local` and
+`arc/continue_releases_loop_local` failed directly, while the crashes were
+pool exhaustion caused by temporaries that were never released. All eight
+now match.
 
-    arc/break_releases_loop_local      python PASS / static FAIL: Expected 1 Was 0
-    arc/continue_releases_loop_local   python PASS / static FAIL: Expected 3 Was -1
+`emit::render_scoped_block` releases the object locals a block owns when the
+block ends, and `render_loop_jump` / `render_return_statement` release what a
+`break`, `continue` or `return` unwinds past. A `break` releases out to the
+nearest loop body and no further, since a local declared *after* the loop is
+still live once it exits.
 
-Note `arc/reassign_releases_old` *matches*, so the gap is narrower than
-"no ARC at all".
+Two rules keep it from doing damage:
 
-#### Fixed: strong object ivars were never released
+**Only provably-owned locals are released.** `arc::is_owning_expr` accepts
+`alloc`/`init`/`copy`/`new`/`retain`, boxed and collection literals, and
+methods whose *every* return path is itself owning — computed to a fixed
+point, which catches a factory that returns another factory's result (the
+oracle's single pass does not). Anything unrecognised is treated as
+borrowed, so an unknown shape leaks rather than double-frees. That asymmetry
+is deliberate: a leak is a bug, a double free is memory corruption.
 
-The harness's first run also found two mismatches in
-`properties/atomic_property` and `properties/strong_vs_assign` — a held
-object's refcount never came back down (`Expected 1 Was 2`) — because
-nothing released a class's strong object ivars when an instance was
-deallocated. `companion::render_release_ivars` now emits a per-class
-`{Class}_oz_release_ivars`, called from the release path once the class's
-own `-dealloc` body has run. Both cases now MATCH.
+**ARC defers to manual retain/release.** oz_static supports manual memory
+management as a feature of its own, and a variable cannot be managed both
+ways — adding an automatic release to code that already releases is a double
+free. So a local the body releases by hand is left entirely to the body. The
+oracle never faces this choice: its sources are compiled `-fobjc-arc`, under
+which an explicit `release` is a compile error, and indeed no `.m` under
+`tests/behavior/cases/` contains one.
 
-This is where oz_static **deliberately parts company with the oracle**
-rather than porting it. `emit.py::_emit_user_dealloc` appends the same
-automatic releases *after* a user-written `-dealloc` body, so a `-dealloc`
-doing ordinary manual-retain/release teardown — releasing what it owns —
-has every one of those ivars released twice, silently. That is neither MRR
-nor ARC: real ARC makes `[_ivar release]` in `-dealloc` a *compile error*,
-so its safety comes from forbidding the manual release, not from adding a
-second one.
+#### The 7 remaining static-side failures
 
-oz_static follows ARC's rule: the release is automatic, and an explicit
-release of an owned ivar inside `-dealloc` is a hard, located error naming
-the ivar. Releasing a local, a parameter, or an `__unsafe_unretained` ivar
-is untouched — nothing releases those automatically. The oracle's shape is
-latent rather than observed there (its only corpus case with a user
-`dealloc` has an empty body and no object ivars), but it is a double free
-waiting for the first person to write conventional teardown.
-
-`id`-typed ivars are deliberately *not* auto-released: `id` lowers to `void
-*`, indistinguishable from a non-object pointer, and releasing a
-non-object crashes whereas failing to release an object only leaks. The
-oracle can release them because Clang tells it which are objects.
-
-#### The 11 static-side failures
-
-Six are runtime crashes (`exit -11`) that were previously masked -- those
-cases could not be linked at all, so their generated code had never run.
-Triaged, and they are **not six separate bugs**: all six are the missing ARC
-(#189) again, reached by a different route.
-
-Each dies at the same instruction, `OZQ31_fixedWithInt32__cls` writing
-through a NULL. The slab ran out, `alloc` returned nil as it is supposed to,
-and the factory in the real `OZQ31.m` writes through the result without
-checking. The pool ran out because oz_static has no ARC: every temporary
-Q31 stays live for the whole run, where the oracle releases each at the end
-of the method that made it. `inline/array_fast_access.m` declares
-`OZQ31=3`, which is ample with ARC and hopeless without it.
-
-Raising the sizes for the static side only was considered and rejected:
-`lifecycle/alloc_failure_enomem.m` asserts the pool bound *exactly* -- a
-one-block pool whose second `alloc` must be NULL -- so pool sizes are part
-of what is under test, not a knob the harness may turn. These six stay
-unmeasurable until ARC lands, and that is the honest state.
-
-What did change is the diagnosis. Building with
-`-DOZ_STATIC_TRAP_POOL_EXHAUSTION` turns
-
-    EXC_BAD_ACCESS (code=1, address=0x18) in OZQ31_fixedWithInt32__cls
-
-into
-
-    Assertion failed: OZQ31 pool exhausted -- raise it with --pool-sizes OZQ31=N
-
-naming both the pool and the fix, at the point of exhaustion rather than
-wherever the nil happens to be dereferenced. Off by default, because
-returning nil is the contract.
-
-The other five are individual and understood: two drivers reach for
-`_meta`, the oracle's name for the root tracking struct that oz_static
-spells as flat `oz_*` fields; a by-value `struct sensor_msg` needing its
-definition hoisted (header preservation); the `oz_heap_inner` collision
-described above; and one `void (*)(id)` vs `void (*)(struct OZObject *)`
-function-pointer divergence in a driver, which no shim can bridge because
-it is in the driver's own code.
+Two are `timer_basic`/`timer_zephyr` crashing at runtime. Two drivers reach
+for `_meta`, the oracle's name for the root tracking struct that oz_static
+spells as flat `oz_*` fields. One needs a by-value `struct sensor_msg`
+definition hoisted (header preservation). One is the `oz_heap_inner`
+redefinition plus missing `allocWithHeap:`. One is a `void (*)(id)` vs
+`void (*)(struct OZObject *)` divergence inside a driver, which no shim can
+bridge because it is the driver's own code.
 
 ### Clang as the authority on what oz_static cannot see
 
