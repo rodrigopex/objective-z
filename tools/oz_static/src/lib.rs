@@ -3,6 +3,7 @@
 // lib.rs - OZ-091 Track B spike: static-subset Objective-C to C
 // transpiler using in-place textual substitution.
 
+pub mod astinfo;
 pub mod collect;
 pub mod companion;
 pub mod emit;
@@ -26,25 +27,53 @@ pub struct TranspileOutput {
 /// every caller that doesn't override anything.
 pub type PoolOverrides = std::collections::HashMap<String, usize>;
 
+/// Everything a caller can supply beyond the source text itself.
+///
+/// Grouped rather than passed as a widening list of arguments, because both
+/// entry points take the same set and the pure `transpile(source)` form has
+/// to keep working untouched -- it is what the whole test suite calls.
+#[derive(Default)]
+pub struct Options {
+    pub pool_sizes: PoolOverrides,
+    /// A `clang -Xclang -ast-dump=json` dump of this same source, which is
+    /// the only authority on which ivars are objects the class owns (see
+    /// `astinfo`). Produce it with `-fobjc-arc`, or it carries no ownership
+    /// information and oz_static falls back to its own narrower rule.
+    pub ast_json: Option<String>,
+}
+
 /// Full pipeline: parse -> collect -> emit. Returns Ok on success, or the
 /// full list of static-bar/emission diagnostics on failure. Never
 /// silently degrades: anything the static subset doesn't accept is a
 /// named, located hard error.
 pub fn transpile(source: &str) -> Result<TranspileOutput, Vec<Diagnostic>> {
-    transpile_with_pool_sizes(source, &PoolOverrides::new())
+    transpile_with_options(source, &Options::default())
 }
 
-/// `transpile` with explicit slab sizes for named classes. Split out
-/// rather than folded into `transpile` so the pure, argument-free form
-/// stays what the test suite calls.
+/// `transpile` with explicit slab sizes for named classes.
 pub fn transpile_with_pool_sizes(
     source: &str,
     overrides: &PoolOverrides,
 ) -> Result<TranspileOutput, Vec<Diagnostic>> {
-    let (program, mut diagnostics) = collect::collect(source);
+    transpile_with_options(
+        source,
+        &Options { pool_sizes: overrides.clone(), ast_json: None },
+    )
+}
+
+/// `transpile` with everything a caller can supply.
+pub fn transpile_with_options(
+    source: &str,
+    options: &Options,
+) -> Result<TranspileOutput, Vec<Diagnostic>> {
+    let (mut program, mut diagnostics) = collect::collect(source);
     if !diagnostics.is_empty() {
         return Err(diagnostics);
     }
+    if let Err(why) = attach_ast(&mut program, options) {
+        return Err(vec![Diagnostic::new(why, 1, 1)]);
+    }
+    let overrides = &options.pool_sizes;
     diagnostics.extend(generics::check_program(source, &program));
     if !diagnostics.is_empty() {
         return Err(diagnostics);
@@ -75,7 +104,7 @@ pub fn transpile_split(
     source: &str,
     origins: &[(String, std::ops::Range<usize>)],
 ) -> Result<emit::EmitSplitOutput, Vec<Diagnostic>> {
-    transpile_split_with_pool_sizes(source, origins, &PoolOverrides::new())
+    transpile_split_with_options(source, origins, &Options::default())
 }
 
 /// `transpile_split` with explicit slab sizes for named classes.
@@ -84,10 +113,27 @@ pub fn transpile_split_with_pool_sizes(
     origins: &[(String, std::ops::Range<usize>)],
     overrides: &PoolOverrides,
 ) -> Result<emit::EmitSplitOutput, Vec<Diagnostic>> {
-    let (program, mut diagnostics) = collect::collect(source);
+    transpile_split_with_options(
+        source,
+        origins,
+        &Options { pool_sizes: overrides.clone(), ast_json: None },
+    )
+}
+
+/// `transpile_split` with everything a caller can supply.
+pub fn transpile_split_with_options(
+    source: &str,
+    origins: &[(String, std::ops::Range<usize>)],
+    options: &Options,
+) -> Result<emit::EmitSplitOutput, Vec<Diagnostic>> {
+    let (mut program, mut diagnostics) = collect::collect(source);
     if !diagnostics.is_empty() {
         return Err(diagnostics);
     }
+    if let Err(why) = attach_ast(&mut program, options) {
+        return Err(vec![Diagnostic::new(why, 1, 1)]);
+    }
+    let overrides = &options.pool_sizes;
     diagnostics.extend(generics::check_program(source, &program));
     if !diagnostics.is_empty() {
         return Err(diagnostics);
@@ -102,6 +148,29 @@ pub fn transpile_split_with_pool_sizes(
         return Err(diagnostics);
     }
     Ok(result)
+}
+
+/// Parse the supplied Clang AST, if any, onto the program.
+///
+/// A malformed dump is a hard error rather than a silent fall-back to the
+/// narrower built-in rule: the caller asked for Clang's answer, and quietly
+/// substituting a guess would change which ivars get released with no
+/// indication why.
+fn attach_ast(program: &mut Program, options: &Options) -> Result<(), String> {
+    let Some(text) = &options.ast_json else {
+        return Ok(());
+    };
+    let facts = astinfo::AstFacts::from_json(text)?;
+    if facts.is_empty() {
+        return Err(
+            "the supplied Clang AST describes no ivars at all -- it is probably not a dump of \
+             this source (produce it with `clang -Xclang -ast-dump=json -fsyntax-only \
+             -fobjc-arc`)"
+                .to_string(),
+        );
+    }
+    program.ast = Some(facts);
+    Ok(())
 }
 
 /// Count allocation sites, apply any overrides, and reject an override

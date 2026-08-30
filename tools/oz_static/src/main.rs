@@ -13,7 +13,8 @@ use std::process::ExitCode;
 fn usage() -> ExitCode {
     eprintln!(
         "usage: oz2c [-I <dir>]... [--impl-dir <dir>]... [--manifest <path>] \
-         [--root-class <name>] [--pool-sizes <Class=N,...>] <input.m>... <outdir>"
+         [--root-class <name>] [--pool-sizes <Class=N,...>] [--ast <ast.json>] \
+         <input.m>... <outdir>"
     );
     ExitCode::FAILURE
 }
@@ -25,6 +26,7 @@ fn main() -> ExitCode {
     let mut manifest_path: Option<PathBuf> = None;
     let mut expected_root: Option<String> = None;
     let mut pool_overrides = oz_static::PoolOverrides::new();
+    let mut ast_path: Option<PathBuf> = None;
     let mut positional: Vec<String> = Vec::new();
 
     let mut i = 0;
@@ -48,6 +50,16 @@ fn main() -> ExitCode {
             "--root-class" => {
                 let Some(name) = args.get(i + 1) else { return usage() };
                 expected_root = Some(name.clone());
+                i += 2;
+            }
+            // Clang resolves types; tree-sitter does not. Supplying the AST
+            // is what lets oz_static know which ivars are objects the class
+            // owns -- including `id`-typed ones, which it otherwise has to
+            // skip rather than risk releasing a non-object. Produce it with
+            // `-fobjc-arc`, or the dump carries no ownership at all.
+            "--ast" => {
+                let Some(path) = args.get(i + 1) else { return usage() };
+                ast_path = Some(PathBuf::from(path));
                 i += 2;
             }
             // Same spelling and meaning as the Python backend's flag, so a
@@ -145,10 +157,21 @@ fn main() -> ExitCode {
         }
     }
 
-    match oz_static::transpile_split_with_pool_sizes(
+    let ast_json = match &ast_path {
+        Some(path) => match fs::read_to_string(path) {
+            Ok(text) => Some(text),
+            Err(e) => {
+                eprintln!("oz_static: error: cannot read --ast '{}': {}", path.display(), e);
+                return ExitCode::FAILURE;
+            }
+        },
+        None => None,
+    };
+
+    match oz_static::transpile_split_with_options(
         &resolved.text,
         &resolved.origins,
-        &pool_overrides,
+        &oz_static::Options { pool_sizes: pool_overrides, ast_json },
     ) {
         Ok(out) => {
             // Foundation/SDK-origin files land in their own subdirectory,

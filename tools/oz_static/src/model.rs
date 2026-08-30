@@ -92,6 +92,11 @@ pub struct Program {
     pub classes: HashMap<String, ClassInfo>,
     pub class_order: Vec<String>,
     pub protocols: HashMap<String, ProtocolInfo>,
+    /// Ownership facts read from a Clang AST dump, when one was supplied
+    /// (`--ast`). Clang resolves types; tree-sitter does not, so this is the
+    /// only authority on whether an `id`-typed ivar is an object the class
+    /// owns -- see `astinfo` and `owned_object_ivar_names`.
+    pub ast: Option<crate::astinfo::AstFacts>,
 }
 
 impl Program {
@@ -164,6 +169,12 @@ impl Program {
 
     /// `owned_object_ivars` as plain ivar names rather than access paths --
     /// what `staticbar` needs to recognise one being released by hand.
+    ///
+    /// With a Clang AST supplied (`--ast`), Clang decides: it resolves types
+    /// and, under `-fobjc-arc`, states each ivar's ownership outright, so an
+    /// `id`-typed ivar is classified correctly instead of being skipped.
+    /// Without one, the fallback below can only go on the spelling
+    /// tree-sitter gives it, which is why it is deliberately narrow.
     pub fn owned_object_ivar_names(&self, class_name: &str) -> Vec<String> {
         let mut chain = Vec::new();
         let mut cur = Some(class_name.to_string());
@@ -180,6 +191,18 @@ impl Program {
         for name in chain {
             let info = &self.classes[&name];
             for (ivar, c_type) in &info.own_ivars {
+                // Clang's answer wins wherever it has one. It knows the
+                // resolved type and the ARC qualifier; the fallback knows
+                // neither, and disagreeing with Clang here means either
+                // leaking an object or releasing something that is not one.
+                if let Some(facts) = &self.ast {
+                    if let Some(owned) = facts.is_owned_object_ivar(&name, ivar) {
+                        if owned {
+                            out.push(ivar.clone());
+                        }
+                        continue;
+                    }
+                }
                 if info.unretained_ivars.contains(ivar) {
                     continue;
                 }
