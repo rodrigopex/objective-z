@@ -2937,11 +2937,19 @@ pub fn emit_split(
     // top-level code (e.g. `main()`), not just inside another class's
     // method body, so there's no single "subclass of" edge to hang the
     // dependency on the way there is for a nested struct field.
+    //
+    // OZString is in the list for the same reason, one step further: a
+    // `@"..."` literal emits a *definition* of a `struct OZString` into
+    // whichever file used it (see `render_boxed_string_literal`), and
+    // defining a variable needs the complete type, not just a
+    // declaration. Without this the file gets `error: variable has
+    // incomplete type 'struct OZString'` -- which is exactly what five of
+    // the cases under tests/behavior/cases/ hit.
     let mut always_visible: Vec<String> = Vec::new();
     if let Some(r) = program.root_class().and_then(|r| class_to_stem.get(r).cloned()) {
         always_visible.push(r);
     }
-    for helper_class in ["OZArray", "OZDictionary"] {
+    for helper_class in ["OZArray", "OZDictionary", "OZString"] {
         if let Some(s) = class_to_stem.get(helper_class) {
             always_visible.push(s.clone());
         }

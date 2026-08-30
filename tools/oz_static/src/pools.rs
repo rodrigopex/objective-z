@@ -42,7 +42,11 @@ pub const SLAB_ALIGNMENT: u32 = 4;
 
 pub struct PoolSizes {
     counted: HashMap<String, usize>,
-    overrides: HashMap<String, usize>,
+    /// From the source's own `/* oz-pool: ... */`. Kept apart from `cli`
+    /// because the two are held to different standards -- see
+    /// `unknown_overrides`.
+    directive: HashMap<String, usize>,
+    cli: HashMap<String, usize>,
 }
 
 impl PoolSizes {
@@ -56,8 +60,8 @@ impl PoolSizes {
         let tree = crate::parse::parse(source);
         let mut counted = HashMap::new();
         count_sites(tree.root_node(), source, program, &mut counted);
-        let overrides = parse_pool_directive(source).unwrap_or_default();
-        PoolSizes { counted, overrides }
+        let directive = parse_pool_directive(source).unwrap_or_default();
+        PoolSizes { counted, directive, cli: HashMap::new() }
     }
 
     /// Apply `--pool-sizes Class=N,...` overrides on top of the counted
@@ -67,19 +71,24 @@ impl PoolSizes {
     /// it names, being specific to this invocation; classes it doesn't
     /// name keep whatever the directive said.
     pub fn set_overrides(&mut self, overrides: HashMap<String, usize>) {
-        self.overrides.extend(overrides);
+        self.cli.extend(overrides);
     }
 
-    /// Names given an override that aren't classes in this program --
-    /// almost always a typo, and silently ignoring it would leave the
-    /// pool at its counted size with no hint why.
+    /// Names given an override on the *command line* that aren't classes
+    /// in this program -- almost always a typo, and silently ignoring it
+    /// would leave the pool at its counted size with no hint why.
+    ///
+    /// A source `/* oz-pool: ... */` directive is deliberately not
+    /// checked. The same directive is read by both backends, and the
+    /// oracle has classes oz_static does not: every
+    /// `tests/behavior/cases/synchronized/*.m` names `OZSpinLock`, which
+    /// the oracle allocates per `@synchronized` block and oz_static never
+    /// creates at all (its lock is a stack local -- see
+    /// `emit::render_synchronized_statement`). Rejecting those would fail
+    /// five corpus cases over a class whose absence is the point.
     pub fn unknown_overrides(&self, program: &Program) -> Vec<String> {
-        let mut unknown: Vec<String> = self
-            .overrides
-            .keys()
-            .filter(|name| !program.is_class(name))
-            .cloned()
-            .collect();
+        let mut unknown: Vec<String> =
+            self.cli.keys().filter(|name| !program.is_class(name)).cloned().collect();
         unknown.sort();
         unknown
     }
@@ -90,9 +99,10 @@ impl PoolSizes {
     /// class's alloc function is emitted regardless of whether this
     /// translation unit happens to call it.
     pub fn for_class(&self, name: &str) -> usize {
-        self.overrides
+        self.cli
             .get(name)
             .copied()
+            .or_else(|| self.directive.get(name).copied())
             .or_else(|| self.counted.get(name).copied())
             .unwrap_or(0)
             .max(1)
