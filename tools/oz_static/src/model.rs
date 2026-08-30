@@ -207,18 +207,30 @@ impl Program {
             .any(|m| m.selector == selector && m.is_class_method == is_class_method)
     }
 
-    /// Mirrors the Python pipeline's `_classify_dispatch` (see
-    /// `tools/oz_transpile/resolve.py`) exactly: an instance selector
-    /// needs dynamic (`class_id`-switch) dispatch -- not a direct
-    /// function call resolved from one static receiver type -- when
-    /// it's protocol-declared, when it's one of a fixed set of
-    /// selectors that are always polymorphic by design (meaningful only
-    /// via whatever the receiver's *actual* class overrides -- an
-    /// object's own `-isEqual:`/`-cDescription:maxLength:`), or when
-    /// more than one class in the program implements it (so the
-    /// selector name alone doesn't pin down which implementation runs).
-    /// Class methods are never dynamically dispatched -- a class-method
-    /// receiver is always a literal class name, always statically known.
+    /// Does this selector need a dynamic (`class_id`-switch) dispatch
+    /// function generated for it at all? True when it's
+    /// protocol-declared, when it's one of a fixed set of selectors that
+    /// are always polymorphic by design (meaningful only via whatever the
+    /// receiver's *actual* class overrides -- an object's own
+    /// `-isEqual:`/`-cDescription:maxLength:`), or when more than one
+    /// class in the program implements it. Class methods never qualify --
+    /// a class-method receiver is always a literal class name, always
+    /// statically known.
+    ///
+    /// This answers "which selectors get an `OZ_PROTOCOL_SEND_*`
+    /// function", which is a program-wide question. Whether a given
+    /// *call site* uses that function is decided separately, by class
+    /// hierarchy analysis over the receiver's declared type (see
+    /// `has_overriding_subclass`); the two differ, e.g. a selector
+    /// implemented by two unrelated classes qualifies here, yet each
+    /// call against either concrete type still compiles to a direct call.
+    ///
+    /// This is close to, but no longer identical with, the Python
+    /// pipeline's `_classify_dispatch` (`tools/oz_transpile/resolve.py`),
+    /// which additionally forces `dealloc` and `init` to be dynamic.
+    /// oz_static needs neither: `dealloc` has its own const-vtable
+    /// mechanism, and an overridden `init` is caught by the same
+    /// hierarchy analysis as any other selector.
     pub fn is_dynamically_dispatched(&self, selector: &str, is_class_method: bool) -> bool {
         const ALWAYS_DYNAMIC: &[&str] = &["isEqual:", "cDescription:maxLength:"];
         if is_class_method {
@@ -237,6 +249,41 @@ impl Program {
             })
             .count()
             > 1
+    }
+
+    /// Is `name` a strict descendant of `ancestor` (i.e. `ancestor`
+    /// appears somewhere up `name`'s superclass chain, `name` itself
+    /// excluded)?
+    pub fn is_descendant_of(&self, name: &str, ancestor: &str) -> bool {
+        let mut current = self.classes.get(name).and_then(|c| c.superclass.clone());
+        while let Some(sup) = current {
+            if sup == ancestor {
+                return true;
+            }
+            current = self.classes.get(&sup).and_then(|c| c.superclass.clone());
+        }
+        false
+    }
+
+    /// Does any strict subclass of `class_name` implement `selector`?
+    ///
+    /// This is the class-hierarchy-analysis test that decides whether a
+    /// message send against a receiver *declared* as `class_name` can be
+    /// devirtualized into a direct call. A declared type is only an upper
+    /// bound on the receiver's real class -- `Base *b = (Base *)[Sub
+    /// alloc];` is still a `Sub` -- so a direct call to the declared
+    /// type's own implementation is sound only when no subclass could
+    /// have overridden it. oz_static sees the whole program as one
+    /// translation unit, so this analysis is exact rather than
+    /// conservative.
+    pub fn has_overriding_subclass(&self, class_name: &str, selector: &str) -> bool {
+        self.class_order.iter().any(|name| {
+            self.is_descendant_of(name, class_name)
+                && self.classes[name]
+                    .methods
+                    .iter()
+                    .any(|m| m.selector == selector && !m.is_class_method)
+        })
     }
 
     /// Every distinct dynamically-dispatched instance selector in the

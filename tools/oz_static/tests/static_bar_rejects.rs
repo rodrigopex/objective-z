@@ -40,6 +40,23 @@ fn weak_property_rejected() {
     assert!(diags.contains("unsafe_unretained"), "diagnostics: {}", diags);
 }
 
+/// The ivar-level counterpart of `weak_property_rejected`. `__strong` and
+/// `__unsafe_unretained` are stripped on the way into the generated
+/// struct (see `emit::lower_ivar_decl`), but `__weak` is rejected: with
+/// no runtime to zero the reference it would silently behave as an
+/// unretained strong ivar.
+#[test]
+fn weak_ivar_rejected() {
+    let src = format!(
+        "{}\n@interface Foo : OZObject {{\n\t__weak id _delegate;\n}}\n@end\n\
+         @implementation Foo\n@end\n",
+        PREAMBLE()
+    );
+    let diags = expect_reject(&src);
+    assert!(diags.contains("'__weak' ivars are not supported"), "diagnostics: {}", diags);
+    assert!(diags.contains("unsafe_unretained"), "diagnostics: {}", diags);
+}
+
 #[test]
 fn reflection_selector_rejected() {
     let src = format!(

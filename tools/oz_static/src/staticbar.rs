@@ -99,10 +99,6 @@ fn walk_for_reject(
             err(diags, src, node, "@synchronized is not supported in the static subset spike");
             return;
         }
-        "property_declaration" | "property_implementation" => {
-            err(diags, src, node, "@property/@synthesize is not supported in the static subset spike; declare an ivar and accessor methods explicitly");
-            return;
-        }
         "message_expression" => {
             let selector = message_selector(node, src);
             if REFLECTION_SELECTORS.contains(&selector.as_str()) {

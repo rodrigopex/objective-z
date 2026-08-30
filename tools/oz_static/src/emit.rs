@@ -522,6 +522,14 @@ struct MessageParts<'a> {
     args: Vec<Node<'a>>,
 }
 
+/// Is this send's receiver the literal `super`? A super send names one
+/// specific implementation, so it is always a direct call -- it must
+/// never be routed through the receiver's own class_id switch, which
+/// would re-enter whichever override issued the send.
+fn is_super_receiver(parts: &MessageParts, ctx: &EmitCtx) -> bool {
+    parts.receiver.kind() == "identifier" && node_text(parts.receiver, ctx.src) == "super"
+}
+
 fn parse_message<'a>(node: Node<'a>, src: &str) -> MessageParts<'a> {
     let mut cursor = node.walk();
     let children: Vec<Node> =
@@ -1051,6 +1059,24 @@ fn render_message(node: Node, ctx: &mut EmitCtx) -> (String, String) {
             ("0".to_string(), "int".to_string())
         }
         Some(target) => match find_defining_class(ctx.program, &target, &parts.selector, false) {
+            // A `super` send names one specific implementation by
+            // definition -- it must stay a direct call, never route back
+            // through the receiver's own class_id (which would re-enter
+            // the override that issued the send).
+            Some(_)
+                if !is_super_receiver(&parts, ctx)
+                    && ctx.program.has_overriding_subclass(&target, &parts.selector) =>
+            {
+                // The receiver's *declared* type implements this selector,
+                // but a subclass overrides it -- and a declared type is
+                // only an upper bound on the real class (`Base *b =
+                // (Base *)[Sub alloc];`). Calling the declared type's
+                // implementation directly would silently run the wrong
+                // one, so this needs the runtime class_id switch. Where
+                // no subclass overrides, the direct call below is exact
+                // and stays (see `Program::has_overriding_subclass`).
+                dynamic_dispatch_call(ctx.program, &root, &parts.selector, &recv_text, &arg_texts)
+            }
             Some(defining) => {
                 let (ret_ty, returns_instancetype) =
                     method_return_type(ctx.program, &defining, &parts.selector, false)
@@ -1073,8 +1099,7 @@ fn render_message(node: Node, ctx: &mut EmitCtx) -> (String, String) {
                 // super-send just *is* the defining class already,
                 // masking the mismatch the class-message/plain-receiver
                 // branch above catches via `defining != target`).
-                let is_super = parts.receiver.kind() == "identifier"
-                    && node_text(parts.receiver, ctx.src) == "super";
+                let is_super = is_super_receiver(&parts, ctx);
                 let covariant_target = if is_super { ctx.class_name.clone() } else { target.clone() };
                 if returns_instancetype && defining != covariant_target {
                     (
@@ -1294,6 +1319,76 @@ fn render_stmt_with_comment(node: Node, ctx: &mut EmitCtx, indent: &str) -> Stri
 /// for why. `emit()` recombines both into one string; `emit_split()`
 /// (OZ-096) keeps them apart, routing them to a per-origin `.h`/`.c`
 /// respectively.
+/// ARC ownership qualifiers, meaningless without a runtime that honors
+/// them, so dropped from a generated ivar. `__weak` is deliberately
+/// absent -- it is rejected rather than stripped (see `lower_ivar_decl`).
+const STRIPPED_IVAR_QUALIFIERS: &[&str] = &["__strong", "__unsafe_unretained", "__autoreleasing"];
+
+/// An ivar declaration is copied into the generated struct essentially
+/// verbatim, but two ObjC-only spellings are not valid C and have to be
+/// lowered on the way through:
+///
+///   - a block-pointer declarator (`void (^_block)(id)`) becomes a plain
+///     function pointer (`void (*_block)(id)`) -- the same collapse
+///     `collect::detect_block_param_type` already applies to block-typed
+///     method parameters, the static subset having no block runtime.
+///   - an ARC ownership qualifier is dropped.
+///
+/// `__weak` is a hard error rather than a silent strip: with no runtime
+/// to zero the reference it would behave as an unretained strong ivar,
+/// which is the exact bug the qualifier exists to prevent. Mirrors
+/// `collect::extract_property`'s rejection of `weak` properties.
+///
+/// Edits are applied back-to-front so earlier byte ranges stay valid.
+fn lower_ivar_decl(instance_variable: Node, ctx: &mut EmitCtx) -> String {
+    let origin = instance_variable.start_byte();
+    let mut text = node_text(instance_variable, ctx.src).to_string();
+    let mut edits: Vec<(Range<usize>, &str)> = Vec::new();
+    collect_ivar_lowering_edits(instance_variable, ctx, origin, &mut edits);
+    edits.sort_by_key(|(r, _)| std::cmp::Reverse(r.start));
+    for (range, replacement) in edits {
+        text.replace_range(range, replacement);
+    }
+    // A stripped qualifier leaves behind the whitespace it sat in.
+    text.split_whitespace().collect::<Vec<_>>().join(" ").replace(" ;", ";")
+}
+
+fn collect_ivar_lowering_edits(
+    node: Node,
+    ctx: &mut EmitCtx,
+    origin: usize,
+    edits: &mut Vec<(Range<usize>, &'static str)>,
+) {
+    match node.kind() {
+        "type_qualifier" => {
+            let text = node_text(node, ctx.src).trim();
+            if text == "__weak" {
+                ctx.err(
+                    node,
+                    "'__weak' ivars are not supported (nothing zeroes a weak reference without a \
+                     runtime, so it would silently behave as an unretained strong ivar) -- use \
+                     '__unsafe_unretained' and clear it explicitly",
+                );
+            } else if STRIPPED_IVAR_QUALIFIERS.contains(&text) {
+                edits.push((node.start_byte() - origin..node.end_byte() - origin, ""));
+            }
+            return;
+        }
+        "block_pointer_declarator" => {
+            let mut c = node.walk();
+            let caret = node.children(&mut c).find(|n| n.kind() == "^").map(|n| n.byte_range());
+            if let Some(caret) = caret {
+                edits.push((caret.start - origin..caret.end - origin, "*"));
+            }
+        }
+        _ => {}
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        collect_ivar_lowering_edits(child, ctx, origin, edits);
+    }
+}
+
 fn render_interface(node: Node, ctx: &mut EmitCtx, program: &Program) -> (String, String) {
     let name = ctx.class_name.clone();
     let info = &program.classes[&name];
@@ -1342,7 +1437,8 @@ fn render_interface(node: Node, ctx: &mut EmitCtx, program: &Program) -> (String
         for child in vars_node.children(&mut c2) {
             if child.kind() == "instance_variable" {
                 ivars_text.push('\t');
-                ivars_text.push_str(node_text(child, ctx.src));
+                let lowered = lower_ivar_decl(child, ctx);
+                ivars_text.push_str(&lowered);
                 ivars_text.push('\n');
             }
         }

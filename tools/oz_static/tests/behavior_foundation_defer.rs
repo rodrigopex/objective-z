@@ -10,14 +10,14 @@
 // explicit global flag the deferred block flips, so dealloc-time firing
 // is actually asserted, not just implied by an absence of a crash.
 //
-// tests/behavior/cases/foundation/defer_block_ivar.m's second test
-// (`test_block_ivar_callable_through_struct`) is a regression test for a
-// Python-pipeline-specific bug (a block ivar's `^`-to-`*` C conversion
-// once emitted invalid declarator syntax). That bug class can't recur in
-// oz_static by construction -- ivar declarations are copied verbatim
-// (see `common::ozdefer_src`'s doc comment), so an ivar is only ever
-// valid C because it was written that way in source, never because a
-// declarator-rewrite pass got it right -- so it isn't ported.
+// tests/behavior/cases/foundation/defer_block_ivar.m (+ its
+// `defer_block_ivar_test.c` driver) is a regression test for a bug where
+// a block ivar's `^`-to-`*` C conversion emitted invalid declarator
+// syntax (`void (*)(...) _block` instead of `void (*_block)(...)`). That
+// bug class used not to apply to oz_static, which copied ivar
+// declarations through verbatim; `emit::lower_ivar_decl` now does the
+// conversion, so the test is ported below as
+// `block_ivar_declares_valid_function_pointer`.
 //
 // oz_static has no ARC (issue #189), so `DeferTest`'s own `-dealloc`
 // explicitly releases its `_cleanup` ivar -- there's no automatic
@@ -25,7 +25,7 @@
 // ("Release triggers dealloc -> releases _cleanup ivar") implies.
 
 mod common;
-use common::{compile_and_run, ozdefer_src, ozobject_src as PREAMBLE};
+use common::{compile_and_run, compile_and_run_strict, ozdefer_src, ozobject_src as PREAMBLE};
 
 #[test]
 fn defer_basic_fires_block_with_owner_on_dealloc() {
@@ -123,4 +123,44 @@ int main(void) {{
     );
     let stdout = compile_and_run(&src, "defer_with_block_only_no_owner");
     assert_eq!(stdout, "fired=1\nowner_is_null=1\n");
+}
+
+/// Ported from tests/behavior/cases/foundation/defer_block_ivar.m and its
+/// `defer_block_ivar_test.c` driver: reaches OZDefer's block ivar
+/// directly through the generated struct, assigning a plain C function to
+/// it and calling it. This only compiles if `emit::lower_ivar_decl`
+/// turned the real header's `void (^_block)(id);` into a well-formed
+/// function-pointer field -- a regressed declarator (`void (*)(id)
+/// _block`) is a syntax error, and a field of the wrong pointer type
+/// trips `-Werror=incompatible-pointer-types` via `compile_and_run_strict`.
+/// The real header also spells `_owner` `__unsafe_unretained`, so this
+/// covers the ARC-qualifier strip reaching the struct as well.
+#[test]
+fn block_ivar_declares_valid_function_pointer() {
+    let src = format!(
+        "{}{}\n\
+static int g_block_called = 0;
+
+static void test_block_fn(id owner) {{
+	(void)owner;
+	g_block_called = 1;
+}}
+
+#include <stdio.h>
+int main(void) {{
+	OZDefer *d = [OZDefer alloc];
+	d->_block = test_block_fn;
+	d->_owner = 0;
+	d->_block(d->_owner);
+	printf(\"called=%d\\n\", g_block_called);
+	printf(\"owner_field_is_null=%d\\n\", d->_owner == 0);
+	[d release];
+	return 0;
+}}
+",
+        PREAMBLE(),
+        ozdefer_src()
+    );
+    let stdout = compile_and_run_strict(&src, "block_ivar_declares_valid_function_pointer");
+    assert_eq!(stdout, "called=1\nowner_field_is_null=1\n");
 }
