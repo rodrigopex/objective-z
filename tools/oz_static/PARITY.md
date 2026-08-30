@@ -158,7 +158,7 @@ skipped cases.
 
 Rust test suite: 158 passing, 0 failing.
 
-### Behavioral parity: 46 of 73 cases agree
+### Behavioral parity: 60 of 73 cases agree
 
 Transpiling and compiling say the input was understood and the output is
 real C. They say nothing about what the code *does*. `just
@@ -168,9 +168,9 @@ the results.
 
 | Outcome | Cases | Meaning |
 | --- | --- | --- |
-| MATCH | 46 | Identical Unity results — same tests, same outcomes |
+| MATCH | 60 | Identical Unity results — same tests, same outcomes |
 | MISMATCH | 2 | Both ran; they disagree. Real differences, listed below |
-| STATIC-FAILED | 25 | oz_static's side could not be built or run |
+| STATIC-FAILED | 11 | oz_static's side could not be built or run |
 
 Unity *results* are compared, not generated C: the two backends emit
 deliberately different C, so a textual diff would be noise.
@@ -188,6 +188,10 @@ Both backends are also given the same pool sizes (the case's `oz-pool`
 directive, else 4 per class, matching what `compile_and_run.py` does). A
 slab that is too small makes a test fail on a null receiver rather than on
 behavior, which would be measuring configuration, not parity.
+
+The harness passes each case's Clang AST to `oz2c --ast` as well, using the
+same dump it produces for the oracle — see "Clang as the authority" below.
+That alone moved 14 cases from unbuildable to matching.
 
 #### The 2 mismatches
 
@@ -231,21 +235,51 @@ waiting for the first person to write conventional teardown.
 non-object crashes whereas failing to release an object only leaks. The
 oracle can release them because Clang tells it which are objects.
 
-#### The 25 static-side failures
+#### The 11 static-side failures
 
-19 of them are one cause: oz_static emits prototypes and dispatch-switch
-references for methods that are *declared but never defined* — the real
-`OZArray.m`/`OZDictionary.m` have no body for
-`countByEnumeratingWithState:objects:count:` (vestigial in the oracle
-too), and the companion header declares `OZLog`/`_oz_get_log_precision`
-unconditionally while only sometimes emitting them. Both surface as
-link errors rather than located transpile errors, which is the wrong end
-of the pipeline to learn about them.
+Six are runtime crashes (`exit -11`) that were previously masked: those
+cases could not be linked at all, so their generated code had never been
+executed. Each needs its own triage.
 
-The rest are individual: a by-value `struct sensor_msg` needing its
-definition hoisted (header preservation), the `oz_heap_inner` collision
-above, one `void (*)(id)` vs `void (*)(struct OZObject *)` function-pointer
-divergence, and one crash.
+The other five are individual and understood: two drivers reach for
+`_meta`, the oracle's name for the root tracking struct that oz_static
+spells as flat `oz_*` fields; a by-value `struct sensor_msg` needing its
+definition hoisted (header preservation); the `oz_heap_inner` collision
+described above; and one `void (*)(id)` vs `void (*)(struct OZObject *)`
+function-pointer divergence in a driver, which no shim can bridge because
+it is in the driver's own code.
+
+### Clang as the authority on what oz_static cannot see
+
+oz_static parses with tree-sitter, which yields syntax but no resolved
+types. Two questions it therefore cannot answer alone, both of which
+decide whether generated code is *correct* rather than merely plausible:
+
+1. **Is this ivar an object the class owns?** `id _thing` looks identical
+   to any other pointer. Releasing a non-object corrupts memory; skipping
+   every `id` ivar silently leaks it.
+2. **Does this method actually exist?** A selector declared in an
+   `@interface` and never defined is not a callable function, and emitting
+   a call to it fails at *link* time with an undefined symbol rather than
+   at transpile time with a located message.
+
+`oz2c --ast <dump.json>` answers both from the same Clang dump the oracle
+already produces (`tools/oz_static/src/astinfo.rs`). Under `-fobjc-arc`
+Clang writes ARC ownership straight into each `qualType`, and a real
+definition carries a `CompoundStmt` body that a bare declaration does not.
+
+Without `--ast` the previous, narrower rules still apply, so nothing
+regresses for a caller that does not pass one; a malformed dump is a hard
+error rather than a silent fall-back to guessing.
+
+**What is deliberately *not* taken from the AST:** lightweight generics.
+Clang erases them from `qualType` — the oracle needed a secondary
+tree-sitter pass (`collect.py::extract_source_generics`) to recover
+`OZArray<OZQ31 *>`, which oz_static has natively. The split is therefore
+principled: Clang for resolved semantics, tree-sitter for surface syntax
+Clang discards. The AST also cannot become oz_static's parse tree at all,
+being post-preprocessor, while in-place textual substitution needs the
+original text; it stays an oracle for facts.
 
 ### The compile check needs `-DOZ_HEAP_SUPPORT`
 

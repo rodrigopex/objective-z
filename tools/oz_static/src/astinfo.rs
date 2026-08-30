@@ -27,6 +27,12 @@ use serde_json::Value;
 #[derive(Debug, Default)]
 pub struct AstFacts {
     owned_object: HashMap<(String, String), bool>,
+    /// `(class, selector)` for every method the dump shows with a real body.
+    /// A selector declared in an `@interface` and never defined in any
+    /// `@implementation` is absent -- which is the point: emitting a call to
+    /// one produces a link error, not a compile error, so the mistake
+    /// surfaces at the wrong end of the pipeline.
+    defined_methods: HashSet<(String, String)>,
     /// Classes the dump actually described, so a caller can tell "Clang says
     /// this ivar is not owned" from "Clang never saw this class" -- only the
     /// former is a fact worth acting on.
@@ -57,6 +63,29 @@ impl AstFacts {
         } else {
             owner
         };
+        if kind == "ObjCMethodDecl" {
+            // A definition carries its body as an inner CompoundStmt; a bare
+            // `@interface` declaration has none. A `@synthesize`d accessor
+            // also has none, which is why callers must ask
+            // `Program::method_is_defined` rather than reading this directly
+            // -- oz_static generates those itself.
+            if let (Some(class), Some(selector)) =
+                (owner, node.get("name").and_then(Value::as_str))
+            {
+                let has_body = node
+                    .get("inner")
+                    .and_then(Value::as_array)
+                    .is_some_and(|children| {
+                        children.iter().any(|c| {
+                            c.get("kind").and_then(Value::as_str) == Some("CompoundStmt")
+                        })
+                    });
+                if has_body {
+                    self.defined_methods.insert((class.to_string(), selector.to_string()));
+                }
+                self.classes.insert(class.to_string());
+            }
+        }
         if kind == "ObjCIvarDecl" {
             if let (Some(class), Some(ivar)) = (owner, node.get("name").and_then(Value::as_str)) {
                 let qual = node
@@ -88,8 +117,16 @@ impl AstFacts {
         self.classes.contains(class)
     }
 
+    /// Does the dump show `class` defining `selector` with a body?
+    ///
+    /// Only meaningful together with `knows_class`: `false` for a class the
+    /// dump never mentioned means "no information", not "not defined".
+    pub fn has_method_body(&self, class: &str, selector: &str) -> bool {
+        self.defined_methods.contains(&(class.to_string(), selector.to_string()))
+    }
+
     pub fn is_empty(&self) -> bool {
-        self.owned_object.is_empty()
+        self.owned_object.is_empty() && self.defined_methods.is_empty()
     }
 }
 
@@ -190,6 +227,34 @@ mod tests {
         assert_eq!(facts.is_owned_object_ivar("Nobody", "_x"), None);
         assert!(facts.knows_class("Holder"));
         assert!(!facts.knows_class("Nobody"));
+    }
+
+    /// `countByEnumeratingWithState:objects:count:` is the real case this
+    /// exists for: declared in `OZArray.h`, never defined in `OZArray.m`.
+    /// The `iterIdx` row is the trap -- no body either, but only because it
+    /// is `@synthesize`d, and oz_static does emit that accessor.
+    #[test]
+    fn distinguishes_definitions_from_bare_declarations() {
+        let json = r#"{
+          "kind": "TranslationUnitDecl",
+          "inner": [
+            {"kind": "ObjCInterfaceDecl", "name": "OZArray", "inner": [
+              {"kind": "ObjCMethodDecl", "name": "count"},
+              {"kind": "ObjCMethodDecl", "name": "countByEnumeratingWithState:objects:count:"},
+              {"kind": "ObjCMethodDecl", "name": "iterIdx"}
+            ]},
+            {"kind": "ObjCImplementationDecl", "name": "OZArray", "inner": [
+              {"kind": "ObjCMethodDecl", "name": "count",
+               "inner": [{"kind": "CompoundStmt"}]},
+              {"kind": "ObjCMethodDecl", "name": "iterIdx"}
+            ]}
+          ]
+        }"#;
+        let facts = AstFacts::from_json(json).expect("parses");
+        assert!(facts.has_method_body("OZArray", "count"));
+        assert!(!facts.has_method_body("OZArray", "countByEnumeratingWithState:objects:count:"));
+        assert!(!facts.has_method_body("OZArray", "iterIdx"));
+        assert!(facts.knows_class("OZArray"));
     }
 
     #[test]

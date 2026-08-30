@@ -345,6 +345,43 @@ impl Program {
             > 1
     }
 
+    /// Will `class_name`'s `selector` exist as a callable function in the
+    /// generated output?
+    ///
+    /// A selector declared in an `@interface` and never defined anywhere is
+    /// not callable, and emitting a call to it fails at *link* time with an
+    /// undefined symbol rather than at transpile time with a located
+    /// message. `countByEnumeratingWithState:objects:count:` is the real
+    /// instance: declared by `OZArray.h`/`OZDictionary.h` (Foundation's
+    /// NSFastEnumeration shape) and given no body by either `.m`, since
+    /// neither pipeline's for-in uses it.
+    ///
+    /// Answerable only with a Clang AST; without one everything is assumed
+    /// defined, which is the previous behavior. A `@synthesize`d accessor
+    /// has no body in the AST either, so property accessors are treated as
+    /// defined -- oz_static emits those itself
+    /// (`emit::render_synthesized_accessor`).
+    pub fn method_is_defined(&self, class_name: &str, selector: &str) -> bool {
+        let Some(facts) = &self.ast else {
+            return true;
+        };
+        if !facts.knows_class(class_name) {
+            return true;
+        }
+        if facts.has_method_body(class_name, selector) {
+            return true;
+        }
+        let Some(info) = self.classes.get(class_name) else {
+            return true;
+        };
+        info.properties.iter().any(|prop| {
+            prop.getter_sel.as_deref() == Some(selector)
+                || prop.setter_sel.as_deref() == Some(selector)
+                || prop.name == selector
+                || crate::collect::default_setter_sel(&prop.name) == selector
+        })
+    }
+
     /// Is `name` a strict descendant of `ancestor` (i.e. `ancestor`
     /// appears somewhere up `name`'s superclass chain, `name` itself
     /// excluded)?
