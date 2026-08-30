@@ -13,7 +13,8 @@ use std::process::ExitCode;
 fn usage() -> ExitCode {
     eprintln!(
         "usage: oz2c [-I <dir>]... [--impl-dir <dir>]... [--manifest <path>] \
-         [--root-class <name>] [--pool-sizes <Class=N,...>] [--ast <ast.json>]... \
+         [--root-class <name>] [--pool-sizes <Class=N,...>] \
+         [--item-pool-size <N>] [--ast <ast.json>]... \
          [--heap-support] \
          <input.m>... <outdir>"
     );
@@ -29,6 +30,7 @@ fn main() -> ExitCode {
     let mut pool_overrides = oz_static::PoolOverrides::new();
     let mut ast_paths: Vec<PathBuf> = Vec::new();
     let mut heap_support = false;
+    let mut item_pool_size: Option<usize> = None;
     let mut positional: Vec<String> = Vec::new();
 
     let mut i = 0;
@@ -84,6 +86,24 @@ fn main() -> ExitCode {
                     Ok(sizes) => pool_overrides.extend(sizes),
                     Err(why) => {
                         eprintln!("oz_static: error: --pool-sizes: {}", why);
+                        return ExitCode::FAILURE;
+                    }
+                }
+                i += 2;
+            }
+            // Slots for the shared '@[...]'/'@{...}' element pool, the
+            // oracle's identically-spelled flag. Also accepted as an
+            // `/* oz-item-pool: N */` comment; this flag wins (see
+            // `pools::PoolSizes::item_slots`).
+            "--item-pool-size" => {
+                let Some(spec) = args.get(i + 1) else { return usage() };
+                match spec.parse::<usize>() {
+                    Ok(slots) => item_pool_size = Some(slots),
+                    Err(_) => {
+                        eprintln!(
+                            "oz_static: error: --item-pool-size: '{}' is not a number",
+                            spec
+                        );
                         return ExitCode::FAILURE;
                     }
                 }
@@ -185,6 +205,7 @@ fn main() -> ExitCode {
             pool_sizes: pool_overrides,
             ast_json,
             heap_support,
+            item_pool_size,
             header_ranges: resolved.header_ranges.clone(),
         },
     ) {

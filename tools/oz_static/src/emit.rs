@@ -2915,6 +2915,7 @@ fn render_interface(node: Node, ctx: &mut EmitCtx, program: &Program) -> (String
                     slots,
                     &owned_ivars,
                     ctx.program.heap_support,
+                    ctx.pools.item_slots(),
                 ),
                 format!("struct {name} *{name}_oz_initWithItems(void **src, unsigned int count);\n", name = name),
             )
@@ -2926,6 +2927,7 @@ fn render_interface(node: Node, ctx: &mut EmitCtx, program: &Program) -> (String
                     slots,
                     &owned_ivars,
                     ctx.program.heap_support,
+                    ctx.pools.item_slots(),
                 ),
                 format!(
                     "struct {name} *{name}_oz_initWithKeysValues(void **keys, void **values, unsigned int count);\n",

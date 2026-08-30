@@ -47,6 +47,13 @@ pub struct PoolSizes {
     /// `unknown_overrides`.
     directive: HashMap<String, usize>,
     cli: HashMap<String, usize>,
+    /// Total `id`-slots the shared item pool has to hold, for the element
+    /// buffers behind `@[...]` and `@{...}`. One number rather than a
+    /// per-class map: both collections draw from the same pool, exactly as
+    /// the oracle's single `oz_item_pool` does.
+    item_slots_counted: usize,
+    item_slots_directive: Option<usize>,
+    item_slots_cli: Option<usize>,
 }
 
 impl PoolSizes {
@@ -59,9 +66,23 @@ impl PoolSizes {
     pub fn analyze(source: &str, program: &Program) -> Self {
         let tree = crate::parse::parse(source);
         let mut counted = HashMap::new();
-        count_sites(tree.root_node(), source, program, &mut counted);
+        let mut item_slots_counted = 0usize;
+        count_sites(
+            tree.root_node(),
+            source,
+            program,
+            &mut counted,
+            &mut item_slots_counted,
+        );
         let directive = parse_pool_directive(source).unwrap_or_default();
-        PoolSizes { counted, directive, cli: HashMap::new() }
+        PoolSizes {
+            counted,
+            directive,
+            cli: HashMap::new(),
+            item_slots_counted,
+            item_slots_directive: parse_item_pool_directive(source),
+            item_slots_cli: None,
+        }
     }
 
     /// Apply `--pool-sizes Class=N,...` overrides on top of the counted
@@ -72,6 +93,29 @@ impl PoolSizes {
     /// name keep whatever the directive said.
     pub fn set_overrides(&mut self, overrides: HashMap<String, usize>) {
         self.cli.extend(overrides);
+    }
+
+    /// Apply `--item-pool-size N`. Same precedence rule as
+    /// `set_overrides`: the command line beats the source directive, which
+    /// beats the static count.
+    pub fn set_item_pool_override(&mut self, slots: usize) {
+        self.item_slots_cli = Some(slots);
+    }
+
+    /// Slots the shared item pool needs.
+    ///
+    /// Unlike `for_class`, zero is meaningful and is *not* floored to one:
+    /// a program with no array or dictionary literal needs no pool, and
+    /// `OZ_MEM_BLOCKS_DEFINE(..., 0, ...)` reaches
+    /// `SYS_MEM_BLOCKS_DEFINE` with a zero block count on Zephyr. The
+    /// emitters therefore treat zero as "emit neither the pool nor the
+    /// builders that draw from it", which is what the oracle's
+    /// `{% if item_pool_count > 0 %}` guards do
+    /// (`templates/oz_dispatch.c.j2`, `templates/class_header.h.j2`).
+    pub fn item_slots(&self) -> usize {
+        self.item_slots_cli
+            .or(self.item_slots_directive)
+            .unwrap_or(self.item_slots_counted)
     }
 
     /// Names given an override on the *command line* that aren't classes
@@ -159,7 +203,33 @@ fn parse_pool_directive(source: &str) -> Option<HashMap<String, usize>> {
     parse_pool_sizes(after[..end].trim()).ok()
 }
 
-fn count_sites(node: Node, src: &str, program: &Program, counts: &mut HashMap<String, usize>) {
+/// The `/* oz-item-pool: N */` directive: how many `id`-slots to reserve
+/// for collection element buffers.
+///
+/// Spelled to match `/* oz-pool: ... */` above rather than the oracle's
+/// `--item-pool-size` flag, because a directive is what travels with a
+/// source file. The two keys cannot be confused for each other in either
+/// direction: `"oz-pool:"` does not occur inside `"oz-item-pool:"` (after
+/// `oz-` comes `item-`), so neither `find` can match the other's
+/// directive. Locked down by
+/// `item_pool_directive_does_not_disturb_the_class_pool_directive`.
+///
+/// Malformed content is ignored rather than rejected, for the same reason
+/// `parse_pool_directive` ignores it: a comment is not a command line.
+fn parse_item_pool_directive(source: &str) -> Option<usize> {
+    let start = source.find("oz-item-pool:")?;
+    let after = &source[start + "oz-item-pool:".len()..];
+    let end = after.find("*/")?;
+    after[..end].trim().parse().ok()
+}
+
+fn count_sites(
+    node: Node,
+    src: &str,
+    program: &Program,
+    counts: &mut HashMap<String, usize>,
+    item_slots: &mut usize,
+) {
     let allocated = match node.kind() {
         "message_expression" => alloc_receiver_class(node, src, program),
         // The desugars these drive allocate through the same per-class
@@ -175,11 +245,37 @@ fn count_sites(node: Node, src: &str, program: &Program, counts: &mut HashMap<St
     if let Some(name) = allocated {
         *counts.entry(name).or_insert(0) += 1;
     }
+    // Element slots, on top of the one object slot counted above. The
+    // element counts must agree with what `emit::render_boxed_array_literal`
+    // and `render_boxed_dictionary_literal` actually pass as `count`, so
+    // both use the same child filters those do.
+    *item_slots += match node.kind() {
+        "array_literal" => array_element_count(node),
+        // Keys and values share one contiguous run of `2 * pairs` slots
+        // (`companion::render_dict_support` points `_keys` at the first
+        // half and `_values` at the second).
+        "dictionary_literal" => 2 * dictionary_pair_count(node),
+        _ => 0,
+    };
     let mut cursor = node.walk();
     let children: Vec<Node> = node.children(&mut cursor).collect();
     for child in children {
-        count_sites(child, src, program, counts);
+        count_sites(child, src, program, counts, item_slots);
     }
+}
+
+/// Elements in an `@[...]`, matching
+/// `emit::render_boxed_array_literal`'s own filter exactly.
+pub(crate) fn array_element_count(node: Node) -> usize {
+    let mut cursor = node.walk();
+    node.children(&mut cursor).filter(|c| !matches!(c.kind(), "@" | "[" | "]" | ",")).count()
+}
+
+/// Key/value pairs in an `@{...}`, matching
+/// `emit::render_boxed_dictionary_literal`'s own filter exactly.
+pub(crate) fn dictionary_pair_count(node: Node) -> usize {
+    let mut cursor = node.walk();
+    node.children(&mut cursor).filter(|c| c.kind() == "dictionary_pair").count()
 }
 
 /// `[ClassName alloc]` -- the receiver has to be a literal class name for
