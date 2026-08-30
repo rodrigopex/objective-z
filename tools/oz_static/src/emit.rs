@@ -2783,7 +2783,7 @@ pub fn emit(source: &str, program: &Program, pools: &crate::pools::PoolSizes) ->
                     });
                 }
             }
-            "struct_specifier" => {
+            "struct_specifier" | "union_specifier" => {
                 // A top-level `struct Tag;` forward-declaration (no
                 // `field_declaration_list` body -- a real, full `struct
                 // Tag { ... };` definition, if this spike ever needs to
@@ -2926,6 +2926,11 @@ pub fn emit(source: &str, program: &Program, pools: &crate::pools::PoolSizes) ->
             &hoisted_structs,
             &hoisted_enums,
             &hoisted_forward_decls,
+            // Nothing to hoist: this path emits one file, patching the
+            // original text, so a plain C `struct Tag { ... };` already
+            // stands exactly where the source put it -- ahead of every
+            // use of it, since C requires that of the source too.
+            &[],
             pools,
             &crate::imports::collect_system_includes(source),
         );
@@ -3003,6 +3008,7 @@ pub fn emit_split(
     let mut hoisted_structs: Vec<(String, String)> = Vec::new();
     let mut hoisted_enums: Vec<String> = Vec::new();
     let mut hoisted_forward_decls: Vec<String> = Vec::new();
+    let mut hoisted_c_structs: Vec<String> = Vec::new();
 
     let mut stem_order: Vec<String> = Vec::new();
     let mut headers: HashMap<String, Vec<String>> = HashMap::new();
@@ -3184,7 +3190,7 @@ pub fn emit_split(
                     );
                 }
             }
-            "struct_specifier" => {
+            "struct_specifier" | "union_specifier" => {
                 // See the matching arm in `emit()` for why this hoists
                 // to the shared companion header rather than staying in
                 // this origin's own `.h`: the header a real method
@@ -3199,6 +3205,36 @@ pub fn emit_split(
                     headers.entry(stem.clone()).or_default().push(
                         "/* forward-declared struct hoisted to the companion header -- needed there before any method prototype references it by pointer */".to_string(),
                     );
+                } else {
+                    // A full `struct Tag { ... };` definition written in
+                    // plain C in one of the spliced sources. `emit()` can
+                    // leave one where it stands, because that path patches
+                    // the original text and anything unpatched survives;
+                    // here output is built only from what each arm pushes,
+                    // so until this existed such a definition was dropped
+                    // outright -- `samples/hello_category`'s `struct color`
+                    // came out as nothing but its trailing `;`, and every
+                    // use of it failed with "variable has incomplete type
+                    // 'struct color'".
+                    //
+                    // It goes to the companion header rather than this
+                    // origin's own `.h` because that is the header every
+                    // generated file includes, and the type is needed in
+                    // more than one of them: the companion's own prototypes
+                    // name it (`struct color* Car_color(struct Car *)`),
+                    // and another origin's code can build a value of it
+                    // (that sample's `main` writes
+                    // `&(struct color){255, 255, 0}`).
+                    //
+                    // Unions share this arm and this one list, so that
+                    // source order survives: a struct may have a union
+                    // field by value, or the reverse, and the source had
+                    // to declare them in a working order already.
+                    hoisted_c_structs.push(node_text(node, source).to_string());
+                    headers.entry(stem.clone()).or_default().push(format!(
+                        "/* {} definition hoisted to the companion header -- named by generated prototypes there, and by other origins' code */",
+                        if node.kind() == "union_specifier" { "union" } else { "struct" }
+                    ));
                 }
             }
             "function_definition" => {
@@ -3246,7 +3282,30 @@ pub fn emit_split(
                 hoisted_blocks_by_stem.entry(stem.clone()).or_default().extend(ctx.hoisted_blocks);
                 hoisted_strings_by_stem.entry(stem.clone()).or_default().extend(ctx.hoisted_string_literals);
                 hoisted_statics_by_stem.entry(stem.clone()).or_default().extend(ctx.hoisted_statics);
-                bodies.entry(stem.clone()).or_default().push(text);
+                // A `static inline` helper goes to this origin's own
+                // header, for the same reason the passthrough arm below
+                // already puts macros there: in the single-file design any
+                // top-level definition was visible to everything after it
+                // merely by sitting in the same text, and once split into
+                // real files only that origin's `.h` gives it the same
+                // reach. `tests/behavior/cases/regression/
+                // issue_090_header_preservation.m` is the case -- its
+                // header's `static inline int sensor_scale(int, int)` has
+                // to be callable from outside the file it was written in,
+                // which is the whole point of the test.
+                //
+                // `static inline` and nothing else: it is the one form
+                // meant to be duplicated per translation unit. A plain
+                // `static` function copied into a header would draw
+                // "defined but not used" in every file that includes it
+                // and break outright if it touched a file-scope static
+                // that stayed behind in the body, and a non-static one
+                // would be a duplicate symbol at link time.
+                if is_static_inline(node, source) {
+                    headers.entry(stem.clone()).or_default().push(text);
+                } else {
+                    bodies.entry(stem.clone()).or_default().push(text);
+                }
             }
             _ => {
                 // Passthrough top-level trivia: a stray `#include`,
@@ -3358,6 +3417,38 @@ pub fn emit_split(
         }
     }
 
+    // A stem that names a class living in another stem needs that stem's
+    // header, or the class's struct is incomplete wherever it is used.
+    // `samples/hello_category` splits `Car` (its own header, its own
+    // origin) from the `main` that does `myCar->_plate = 0xAABBCC`, and
+    // without this edge that line is "incomplete definition of type
+    // 'struct Car'" -- the companion header carries every class's method
+    // prototypes, but only a forward declaration of any non-root struct.
+    //
+    // Textual mention of the class name is the test. It over-approximates
+    // (a comment or an unrelated identifier of the same name counts), but
+    // an unnecessary `#include` of a `#pragma once` header costs nothing,
+    // while a missing one is a compile error -- so erring towards including
+    // is the safe direction. These are body includes, so no header cycle
+    // can come of it.
+    let mut stem_text: HashMap<&str, String> = HashMap::new();
+    for (stem, range) in origins {
+        stem_text.entry(stem.as_str()).or_default().push_str(&source[range.clone()]);
+    }
+    for stem in &stem_order {
+        let Some(text) = stem_text.get(stem.as_str()) else {
+            continue;
+        };
+        for (class, owner_stem) in &class_to_stem {
+            if owner_stem == stem {
+                continue;
+            }
+            if mentions_identifier(text, class) {
+                body_includes.entry(stem.clone()).or_default().insert(owner_stem.clone());
+            }
+        }
+    }
+
     let mut files = Vec::with_capacity(stem_order.len());
     for stem in &stem_order {
         let mut h = String::from(
@@ -3445,6 +3536,7 @@ pub fn emit_split(
             &hoisted_structs,
             &hoisted_enums,
             &hoisted_forward_decls,
+            &hoisted_c_structs,
             pools,
             &crate::imports::collect_system_includes(source),
         );
@@ -3508,6 +3600,49 @@ fn apply_edits(src: &str, start: usize, end: usize, edits: &[(Range<usize>, Stri
         text.replace_range(range.start - start..range.end - start, replacement);
     }
     text
+}
+
+/// Is `node` a `static inline` function definition?
+///
+/// Read off the text ahead of the declarator rather than the child nodes,
+/// because the two keywords can appear in either order and with any
+/// qualifiers or attributes between them.
+fn is_static_inline(node: Node, source: &str) -> bool {
+    let text = node_text(node, source);
+    let prefix = match text.find('(') {
+        Some(paren) => &text[..paren],
+        None => text,
+    };
+    let has = |word: &str| {
+        prefix.split(|c: char| !c.is_ascii_alphanumeric() && c != '_').any(|t| t == word)
+    };
+    has("static") && (has("inline") || has("__inline") || has("__inline__"))
+}
+
+/// Does `name` appear in `text` as a whole identifier?
+///
+/// A substring test would match `Car` inside `Carriage`, and a real parse
+/// is more than this needs: the caller only wants to know whether a file
+/// might refer to a class, and answering "yes" too often merely adds an
+/// `#include` that a `#pragma once` header makes free.
+fn mentions_identifier(text: &str, name: &str) -> bool {
+    let is_ident_byte = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+    let (haystack, needle) = (text.as_bytes(), name.as_bytes());
+    if needle.is_empty() {
+        return false;
+    }
+    let mut from = 0;
+    while let Some(offset) = text[from..].find(name) {
+        let start = from + offset;
+        let end = start + needle.len();
+        let before_ok = start == 0 || !is_ident_byte(haystack[start - 1]);
+        let after_ok = end == haystack.len() || !is_ident_byte(haystack[end]);
+        if before_ok && after_ok {
+            return true;
+        }
+        from = start + 1;
+    }
+    false
 }
 
 /// First child of `node` with the given kind.

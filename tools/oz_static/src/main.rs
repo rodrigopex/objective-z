@@ -188,6 +188,21 @@ fn main() -> ExitCode {
             }
             let mut written: Vec<PathBuf> = Vec::new();
             for (file_stem, header_h, source_c) in &out.files {
+                // A spliced pure-C header gets no output pair. Its text was
+                // needed so the parse saw the whole program, but there is
+                // nothing in it to transpile, and copying it back out is at
+                // best duplication of a header the C compiler already has:
+                // `cmake/oz_static.cmake` puts the module's own `include/`
+                // on the path and links `src/OZLog.c` itself. At worst it
+                // is a redefinition -- `include/oz_sdk/assert.h` is an
+                // AST-analysis shim (its own comment: "The generated C
+                // includes platform/oz_assert.h which provides the real
+                // macros"), so its `static inline oz_assert_msg` came out
+                // as a generated `assert.c` the PAL had already turned into
+                // a function-like macro: "expected identifier or '('".
+                if resolved.pure_c_stems.contains(file_stem) {
+                    continue;
+                }
                 let target_dir =
                     if resolved.foundation_stems.contains(file_stem) { &foundation_dir } else { outdir };
                 let h_path = target_dir.join(format!("{}.h", file_stem));

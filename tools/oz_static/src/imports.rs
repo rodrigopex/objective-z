@@ -7,7 +7,7 @@
 // directly with a pre-assembled string -- only `main.rs` (and any
 // future caller that actually has a real file on disk) needs this.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
@@ -45,15 +45,84 @@ fn parse_import(trimmed_line: &str) -> Option<ImportTarget> {
     None
 }
 
-/// Does this file carry Objective-C declarations oz_static has to see?
-///
-/// Only such a file is worth splicing in place of a quoted `#include`. A
-/// pure C header stays an ordinary include: the generated code is C, the
-/// header is already on the compiler's search path, and inlining it would
-/// only risk duplicating definitions the C compiler handles perfectly well
-/// on its own.
+/// Does this file's own text carry Objective-C declarations?
 fn declares_objc(text: &str) -> bool {
     text.contains("@interface") || text.contains("@implementation") || text.contains("@protocol")
+}
+
+/// Can `path` reach any Objective-C declaration -- in its own text, or
+/// through anything it imports?
+///
+/// This is the test for whether a resolved header is spliced at all.
+/// Splicing exists so the core pipeline sees the Objective-C it has to
+/// transpile; a header that reaches none is pure C, has nothing to
+/// transpile, and is already on the C compiler's own search path. Leaving
+/// it as an ordinary `#include` is both sufficient and more faithful than
+/// copying it into the output.
+///
+/// It has to be transitive, not just a look at the file's own text.
+/// `include/oz_sdk/objc/objc.h` declares nothing itself -- its entire body
+/// is `#import <Foundation/OZObject.h>` -- yet declining it would hide
+/// every class behind it. `include/oz_sdk/assert.h` reaches nothing, and
+/// splicing it is actively wrong: it is an AST-analysis shim whose own
+/// comment says so ("Declares oz_assert functions so Clang preserves calls
+/// in the AST. The generated C includes platform/oz_assert.h which
+/// provides the real macros"), so copying its `static inline oz_assert_msg`
+/// into a generated `assert.c` could not compile -- the PAL had already
+/// made that name a function-like macro, and the definition came out as
+/// "expected identifier or '('".
+///
+/// A file being visited is memoised as `false` before recursing, so an
+/// import cycle terminates: a cycle cannot itself introduce a declaration,
+/// so assuming "no" for the back-edge is safe, and the real answer for
+/// each file is still whatever its own text and its other imports say.
+fn reaches_objc(
+    path: &Path,
+    include_dirs: &[PathBuf],
+    impl_dirs: &[PathBuf],
+    memo: &mut HashMap<PathBuf, bool>,
+) -> bool {
+    let key = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    if let Some(known) = memo.get(&key) {
+        return *known;
+    }
+    memo.insert(key.clone(), false);
+
+    let Ok(text) = fs::read_to_string(path) else {
+        return false;
+    };
+    let mut answer = declares_objc(&text);
+    let dir = path.parent().unwrap_or(Path::new(".")).to_path_buf();
+
+    // A pure-C header whose sibling implementation carries the Objective-C
+    // still has to be spliced -- the sibling is only ever reached through
+    // its header (see `find_sibling_impl`), so declining the header would
+    // drop the implementation with it.
+    if !answer {
+        if let Some(impl_path) = find_sibling_impl(path, impl_dirs) {
+            if let Ok(impl_text) = fs::read_to_string(&impl_path) {
+                answer = declares_objc(&impl_text);
+            }
+        }
+    }
+
+    if !answer {
+        for line in text.lines() {
+            let Some(target) = parse_import(line.trim_start()) else {
+                continue;
+            };
+            let Ok(next) = resolve_import_path(&target, &dir, include_dirs, impl_dirs) else {
+                continue;
+            };
+            if reaches_objc(&next, include_dirs, impl_dirs, memo) {
+                answer = true;
+                break;
+            }
+        }
+    }
+
+    memo.insert(key, answer);
+    answer
 }
 
 /// `impl_dirs` are searched as well as `include_dirs`, because an import
@@ -218,6 +287,11 @@ pub struct ResolvedSource {
     /// pipeline's own `outdir/Foundation/` split (OZ-096) when writing
     /// per-origin output files.
     pub foundation_stems: HashSet<String>,
+    /// Stems of spliced files that reach no Objective-C at all -- pure C
+    /// pulled in by an `#import`. No output translation unit is written
+    /// for these; see `reaches_objc` for why, and `main.rs` for where the
+    /// pair is skipped.
+    pub pure_c_stems: HashSet<String>,
 }
 
 /// Resolve every `#import` in `source` (as if read from a file in
@@ -249,6 +323,8 @@ pub fn resolve_imports(
     let mut text = String::new();
     let mut origins = Vec::new();
     let mut foundation_stems = HashSet::new();
+    let mut pure_c_stems = HashSet::new();
+    let mut objc_memo = HashMap::new();
     resolve_into(
         source,
         source_dir,
@@ -259,8 +335,10 @@ pub fn resolve_imports(
         &mut text,
         &mut origins,
         &mut foundation_stems,
+        &mut pure_c_stems,
+        &mut objc_memo,
     )?;
-    Ok(ResolvedSource { text, origins, foundation_stems })
+    Ok(ResolvedSource { text, origins, foundation_stems, pure_c_stems })
 }
 
 /// `resolve_imports` for several entry `.m` files at once, merged into
@@ -297,6 +375,8 @@ pub fn resolve_entry_files(
     let mut text = String::new();
     let mut origins = Vec::new();
     let mut foundation_stems = HashSet::new();
+    let mut pure_c_stems = HashSet::new();
+    let mut objc_memo = HashMap::new();
 
     for path in entry_paths {
         let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
@@ -317,9 +397,11 @@ pub fn resolve_entry_files(
             &mut text,
             &mut origins,
             &mut foundation_stems,
+            &mut pure_c_stems,
+            &mut objc_memo,
         )?;
     }
-    Ok(ResolvedSource { text, origins, foundation_stems })
+    Ok(ResolvedSource { text, origins, foundation_stems, pure_c_stems })
 }
 
 /// Writes into the single, shared `out` buffer (rather than building and
@@ -340,6 +422,8 @@ fn resolve_into(
     out: &mut String,
     origins: &mut Vec<(String, Range<usize>)>,
     foundation_stems: &mut HashSet<String>,
+    pure_c_stems: &mut HashSet<String>,
+    objc_memo: &mut HashMap<PathBuf, bool>,
 ) -> Result<(), String> {
     let mut run_start = out.len();
     for line in source.lines() {
@@ -352,24 +436,20 @@ fn resolve_into(
             out.push('\n');
             continue;
         };
-        // A quoted `#include` is only spliced when it actually carries
-        // Objective-C declarations, and is otherwise left exactly as
-        // written. `samples/zbus_objc`'s `Producer.m` opens with
+        // `#include "X.h"` is a resolution candidate alongside `#import`,
+        // not just `#import`. `samples/zbus_objc`'s `Producer.m` opens with
         // `#include "Producer.h"` -- an ordinary C spelling for a header
         // holding an `@interface`, and until this existed the `@property`
         // in it was never seen, so its own `@synthesize` failed with
         // "'@synthesize count' but no '@property count' is declared".
-        // Real Objective-C draws no semantic line between the two
-        // directives here; only `#import`'s once-only behaviour differs,
-        // and the seen-set below gives that to both.
+        // Objective-C draws no semantic line between the two directives
+        // here; only `#import`'s once-only behaviour differs, and the
+        // seen-set below gives that to both.
         //
-        // Pure C headers stay ordinary includes: the generated code is C,
-        // the header is already on the compiler's search path, and
-        // inlining it would only risk duplicating what the C compiler
-        // handles fine. A header that cannot be resolved at all also stays
-        // put, rather than failing the build the way an unresolvable
+        // A `#include` that cannot be resolved at all stays exactly as
+        // written, rather than failing the build the way an unresolvable
         // `#import` does -- a `#include` may legitimately name something
-        // only the target's toolchain provides.
+        // only the target's own toolchain provides.
         let is_include = trimmed.starts_with("#include");
         let resolved_path = match resolve_import_path(&target, current_dir, include_dirs, impl_dirs)
         {
@@ -383,13 +463,19 @@ fn resolve_into(
                 return Err(why);
             }
         };
-        if is_include {
-            let text = fs::read_to_string(&resolved_path).unwrap_or_default();
-            if !declares_objc(&text) {
-                out.push_str(line);
-                out.push('\n');
-                continue;
-            }
+        let carries_objc = reaches_objc(&resolved_path, include_dirs, impl_dirs, objc_memo);
+        // A quoted `#include` that reaches no Objective-C is left exactly
+        // as written: it is pure C, the C compiler resolves it the same
+        // way it always did, and taking it over would only move work that
+        // was never oz_static's. An `#import` is always spliced, whatever
+        // it reaches -- it is Objective-C's own directive, and its target
+        // may still be needed for the chain (`oz_sdk/objc/objc.h` declares
+        // nothing itself; its whole body is `#import
+        // <Foundation/OZObject.h>`).
+        if is_include && !carries_objc {
+            out.push_str(line);
+            out.push('\n');
+            continue;
         }
         let canonical = resolved_path.canonicalize().unwrap_or_else(|_| resolved_path.clone());
         if !seen.insert(canonical) {
@@ -412,6 +498,9 @@ fn resolve_into(
         if include_dirs.iter().chain(impl_dirs.iter()).any(|d| resolved_path.starts_with(d)) {
             foundation_stems.insert(header_stem.clone());
         }
+        if !carries_objc {
+            pure_c_stems.insert(header_stem.clone());
+        }
         resolve_into(
             &unwrap_clang_guard(&header_text),
             &header_dir,
@@ -422,6 +511,8 @@ fn resolve_into(
             out,
             origins,
             foundation_stems,
+            pure_c_stems,
+            objc_memo,
         )?;
         out.push('\n');
 
@@ -442,6 +533,8 @@ fn resolve_into(
                     out,
                     origins,
                     foundation_stems,
+                    pure_c_stems,
+                    objc_memo,
                 )?;
                 out.push('\n');
             }

@@ -247,3 +247,118 @@ fn boxed_array_literal_helper_prototype_is_visible_across_files() {
     let stdout = compile_link_run(&scratch_dir("boxed_array_literal_out"), &out.files, &out.companion_h, &out.companion_c);
     assert_eq!(stdout, "count=3\n");
 }
+
+/// Everything a header holds besides its `@interface` has to survive into
+/// the generated output, and has to be reachable from a *different* origin
+/// file than the one it was written in.
+///
+/// This is the shape of `tests/behavior/cases/regression/
+/// issue_090_header_preservation.m`, the Python pipeline's own regression
+/// test for the same bug ("transpiler drops struct/union/enum/macro
+/// definitions from companion headers when they are not referenced by ObjC
+/// interface members"). oz_static dropped three of the five kinds:
+///
+/// - a `struct`/`union` definition with a body matched no arm in
+///   `emit_split`, which builds each file only from what its arms push, so
+///   the definition vanished and left just its trailing `;` -- every use of
+///   it was then "variable has incomplete type". `emit()` never showed this,
+///   because that path patches the original text and anything unpatched
+///   survives, which is why a single-file test cannot catch it.
+/// - a `static inline` helper went to the body, so no other file could call
+///   it.
+///
+/// Enums and macros already worked; they are asserted here too, so a future
+/// change cannot quietly lose them either.
+#[test]
+fn non_objc_header_content_survives_into_other_translation_units() {
+    let dir = scratch_dir("header_content_preservation");
+    fs::create_dir_all(dir.join("include")).unwrap();
+    fs::create_dir_all(dir.join("src")).unwrap();
+    fs::write(
+        dir.join("include/Sensor.h"),
+        "#pragma once\n#import <Foundation/OZObject.h>\n\n\
+         enum sensor_state {\n\tSENSOR_IDLE = 0,\n\tSENSOR_SAMPLING,\n\tSENSOR_ERROR,\n};\n\n\
+         union sensor_data {\n\tint raw;\n\tfloat calibrated;\n};\n\n\
+         struct sensor_msg {\n\tenum sensor_state state;\n\tunion sensor_data data;\n};\n\n\
+         #define SENSOR_MAX_CHANNELS 8\n\
+         #define SENSOR_DOUBLE(v) ((v) * 2)\n\n\
+         static inline int sensor_scale(int raw, int factor)\n{\n\treturn raw * factor;\n}\n\n\
+         @interface Sensor : OZObject {\n\tint _reading;\n}\n\
+         - (int)reading;\n- (void)setReading:(int)v;\n@end\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("src/Sensor.m"),
+        "#import \"Sensor.h\"\n\n@implementation Sensor\n\
+         - (int)reading {\n\treturn _reading;\n}\n\
+         - (void)setReading:(int)v {\n\t_reading = v;\n}\n@end\n",
+    )
+    .unwrap();
+    // Every one of the five kinds is used here, in an origin that is not
+    // the header they were written in -- a struct with a union field by
+    // value (needing both complete, in the right order), the enum, both
+    // macros, and the `static inline`.
+    fs::write(
+        dir.join("main.m"),
+        "#import \"Sensor.h\"\n\n#include <stdio.h>\n\
+         int main(void) {\n\
+         \tstruct sensor_msg msg;\n\
+         \tmsg.state = SENSOR_ERROR;\n\
+         \tmsg.data.raw = sensor_scale(SENSOR_DOUBLE(3), SENSOR_MAX_CHANNELS);\n\
+         \tSensor *s = [Sensor alloc];\n\t[s setReading:msg.data.raw];\n\
+         \tprintf(\"state=%d reading=%d\\n\", (int)msg.state, [s reading]);\n\treturn 0;\n}\n",
+    )
+    .unwrap();
+
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let include_dirs = vec![repo_root.join("include/oz_sdk"), dir.join("include")];
+    let impl_dirs = vec![repo_root.join("src"), dir.join("src")];
+    let source = fs::read_to_string(dir.join("main.m")).unwrap();
+
+    let resolved = resolve_imports(&source, &dir, &include_dirs, &impl_dirs, "main")
+        .unwrap_or_else(|e| panic!("resolve failed: {}", e));
+    let out = oz_static::transpile_split(&resolved.text, &resolved.origins).unwrap_or_else(|diags| {
+        panic!(
+            "transpile_split failed:\n{}",
+            diags.iter().map(|d| d.to_string()).collect::<Vec<_>>().join("\n")
+        )
+    });
+
+    // The types go to the companion header: it is the one header every
+    // generated file includes, and its own prototypes can name them.
+    for expected in ["union sensor_data", "struct sensor_msg", "enum sensor_state"] {
+        assert!(
+            out.companion_h.contains(expected),
+            "companion header is missing `{}`:\n{}",
+            expected,
+            out.companion_h
+        );
+    }
+    // The union must come before the struct that has one by value, and both
+    // after the enum -- source order, which the source itself had to get
+    // right for C.
+    let enum_at = out.companion_h.find("enum sensor_state {").unwrap();
+    let union_at = out.companion_h.find("union sensor_data {").unwrap();
+    let struct_at = out.companion_h.find("struct sensor_msg {").unwrap();
+    assert!(enum_at < union_at && union_at < struct_at, "hoisted types are out of source order");
+
+    // The `static inline` goes to its own origin's header, where another
+    // file including that header can call it.
+    let sensor_h = &out.files.iter().find(|(s, _, _)| s == "Sensor").unwrap().1;
+    assert!(
+        sensor_h.contains("int sensor_scale(int raw, int factor)"),
+        "Sensor.h is missing the static inline helper:\n{}",
+        sensor_h
+    );
+
+    // Compiling each origin as its own translation unit is the real check:
+    // "reachable from another file" is not something inspecting one string
+    // can establish.
+    let stdout = compile_link_run(
+        &scratch_dir("header_content_preservation_out"),
+        &out.files,
+        &out.companion_h,
+        &out.companion_c,
+    );
+    assert_eq!(stdout, "state=2 reading=48\n");
+}
