@@ -18,6 +18,26 @@ Objective-Z is an Objective-C transpiler for Zephyr RTOS, packaged as a Zephyr m
 
 Default board: `mps2/an385` (ARM). RISC-V: `qemu_riscv32`. Requires Zephyr SDK, west, and Clang (for AST analysis). RISC-V requires LLVM Clang (not Apple Clang) — auto-detected from Homebrew.
 
+### Zephyr SDK: LLVM must be installed explicitly
+
+The SDK is componentised — host tools, GNU toolchains and LLVM are separate
+downloads — and both `west sdk install` and the SDK's own `setup.sh` install
+the GNU toolchains only. LLVM is opt-in, so a default install has no
+`clang`, and `objz_find_clang()` (`cmake/ObjcClang.cmake`) then falls
+through past the SDK to Homebrew or system clang:
+
+```sh
+west sdk install --llvm --version <ver> -b ~/.local   # or: setup.sh -l
+```
+
+That puts clang at `$ZEPHYR_SDK_INSTALL_DIR/llvm/bin/clang`, which is
+priority 2 in `objz_find_clang()`'s search order and the version the
+project is tested against (clang 19). Point the test harnesses at it with
+`OZ_CLANG=$ZEPHYR_SDK_INSTALL_DIR/llvm/bin/clang`; both
+`tests/tools/compile_and_run.py` and `tests/tools/cross_backend.py` honour
+that variable. Without it they pick whatever clang is on `PATH`, which on
+macOS is Apple Clang and a different version from CI.
+
 | Command                    | Description                        |
 | -------------------------- | ---------------------------------- |
 | `just build` / `just b`   | Build default sample (hello_world) |

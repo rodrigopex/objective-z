@@ -8,8 +8,9 @@ Two words are used precisely and are not interchangeable:
 - **transpiles** — `oz2c` exits 0 and writes output. The input was understood.
 - **compiles** — the generated `.c` files pass the host compiler. The output
   is real C.
-
-Neither means *runs*. Nothing below was executed.
+- **matches** — the case was *run* under both backends and they produced
+  identical results. Only the behavior-corpus section below claims this;
+  the sample table does not, and no sample was executed.
 
 ## Samples (13)
 
@@ -156,6 +157,74 @@ updating the list also fails the test; it cannot decay into silently
 skipped cases.
 
 Rust test suite: 158 passing, 0 failing.
+
+### Behavioral parity: 44 of 73 cases agree
+
+Transpiling and compiling say the input was understood and the output is
+real C. They say nothing about what the code *does*. `just
+test-cross-backend` (`tests/tools/cross_backend.py`) closes that: it runs
+each case through **both** backends over the same Unity driver and diffs
+the results.
+
+| Outcome | Cases | Meaning |
+| --- | --- | --- |
+| MATCH | 44 | Identical Unity results — same tests, same outcomes |
+| MISMATCH | 4 | Both ran; they disagree. Real differences, listed below |
+| STATIC-FAILED | 25 | oz_static's side could not be built or run |
+
+Unity *results* are compared, not generated C: the two backends emit
+deliberately different C, so a textual diff would be noise.
+
+The drivers are written against the Python backend's ABI, which differs
+from oz_static's in naming only (`<Class>_ozh.h` headers, `Class_alloc` vs
+`Class_oz_alloc`, `OZObject_release` vs `oz_static_release`,
+`Class_cls_sel` vs `Class_sel_cls`, `OZ_CLASS_X` vs `OZ_STATIC_CLASS_X`).
+A generated shim header bridges exactly those, so one unmodified driver
+exercises both backends. **This means the harness proves behavioral
+agreement, not ABI compatibility** — the two backends' generated C is not
+link-compatible, and that is not currently a goal.
+
+#### The 4 mismatches
+
+Two are the known missing ARC (#189), now measurable rather than inferred:
+
+    arc/break_releases_loop_local      python PASS / static FAIL: Expected 1 Was 0
+    arc/continue_releases_loop_local   python PASS / static FAIL: Expected 3 Was -1
+
+Note `arc/reassign_releases_old` *matches*, so the gap is narrower than
+"no ARC at all".
+
+Two are a distinct bug the harness found, not an ARC-scope issue —
+**strong object ivars are never released when their owner is
+deallocated**:
+
+    properties/atomic_property     strong_retains FAIL: Expected 1 Was 2
+                                   strong_releases_old FAIL: Expected 1 Was 0
+    properties/strong_vs_assign    strong_retains_on_set FAIL: Expected 1 Was 2
+                                   strong_releases_old_on_overwrite FAIL: Expected 2 Was 0
+
+The oracle emits an auto-dealloc (`emit.py::_emit_auto_dealloc`) for any
+class with object ivars or a non-root superclass: it releases the owned
+ivars, then chains to the parent. oz_static's dealloc dispatch falls back
+to the root's no-op for a class with no user `-dealloc`, so a held object's
+refcount never comes back down. Unlike full ARC this needs no scope
+tracking and has well-defined semantics.
+
+#### The 25 static-side failures
+
+19 of them are one cause: oz_static emits prototypes and dispatch-switch
+references for methods that are *declared but never defined* — the real
+`OZArray.m`/`OZDictionary.m` have no body for
+`countByEnumeratingWithState:objects:count:` (vestigial in the oracle
+too), and the companion header declares `OZLog`/`_oz_get_log_precision`
+unconditionally while only sometimes emitting them. Both surface as
+link errors rather than located transpile errors, which is the wrong end
+of the pipeline to learn about them.
+
+The rest are individual: a by-value `struct sensor_msg` needing its
+definition hoisted (header preservation), the `oz_heap_inner` collision
+above, one `void (*)(id)` vs `void (*)(struct OZObject *)` function-pointer
+divergence, and one crash.
 
 ### The compile check needs `-DOZ_HEAP_SUPPORT`
 
