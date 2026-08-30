@@ -15,9 +15,6 @@
 # backend's own test harness reads; POOL_SIZES here wins for the classes
 # it names.
 #
-# Not yet supported, a hard error below rather than silent divergence:
-# CONFIG_OBJZ_HEAP. oz_static emits no `allocWithHeap:` variant, so an
-# object cannot be placed in a caller-supplied heap.
 
 include_guard(GLOBAL)
 
@@ -38,12 +35,6 @@ function(objz_transpile_sources_static target)
     set(_mod ${ZEPHYR_OBJZ_MODULE_DIR})
     set(_sources ${OZT_UNPARSED_ARGUMENTS})
 
-    if(CONFIG_OBJZ_HEAP)
-        message(FATAL_ERROR
-            "objz_transpile_sources_static: CONFIG_OBJZ_HEAP is not supported by the "
-            "static backend yet -- it emits no allocWithHeap: variant. Build this "
-            "sample with CONFIG_OBJZ_BACKEND_PYTHON, or disable CONFIG_OBJZ_HEAP.")
-    endif()
     if(NOT _sources)
         message(FATAL_ERROR
             "objz_transpile_sources_static: no .m source files given")
@@ -82,6 +73,13 @@ function(objz_transpile_sources_static target)
     list(REMOVE_DUPLICATES _src_dirs)
 
     set(_oz2c_flags -I ${_mod}/include/oz_sdk)
+    # CONFIG_OBJZ_HEAP enables `+allocWithHeap:` and the heap-aware free
+    # path. The generated code is additionally guarded by OZ_HEAP_SUPPORT,
+    # which is what makes the PAL expose the heap functions it calls -- so
+    # both have to be set together, exactly as the Python backend does it.
+    if(CONFIG_OBJZ_HEAP)
+        list(APPEND _oz2c_flags --heap-support)
+    endif()
     foreach(_dir ${_src_dirs})
         list(APPEND _oz2c_flags --impl-dir ${_dir})
     endforeach()
@@ -161,6 +159,9 @@ function(objz_transpile_sources_static target)
     # PAL: select Zephyr backend and provide include path
     target_include_directories(${target} PRIVATE ${_mod}/include)
     target_compile_definitions(${target} PRIVATE OZ_PLATFORM_ZEPHYR)
+    if(CONFIG_OBJZ_HEAP)
+        target_compile_definitions(${target} PRIVATE OZ_HEAP_SUPPORT)
+    endif()
 
     # Real oz_sdk headers keep ARC ownership qualifiers (__unsafe_unretained,
     # etc.) for the Python pipeline's Clang-AST analysis, which genuinely

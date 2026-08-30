@@ -47,6 +47,11 @@ pub struct Options {
     /// written in that file. The facts are unioned -- see
     /// `astinfo::AstFacts::merge`.
     pub ast_json: Vec<String>,
+    /// Enable `+allocWithHeap:` and the heap-aware free path -- the oracle's
+    /// `--heap-support`. Off by default: the field it adds to every object
+    /// and the branch it adds to every free are only worth paying for if
+    /// something actually allocates from a heap.
+    pub heap_support: bool,
 }
 
 /// Full pipeline: parse -> collect -> emit. Returns Ok on success, or the
@@ -64,7 +69,7 @@ pub fn transpile_with_pool_sizes(
 ) -> Result<TranspileOutput, Vec<Diagnostic>> {
     transpile_with_options(
         source,
-        &Options { pool_sizes: overrides.clone(), ast_json: Vec::new() },
+        &Options { pool_sizes: overrides.clone(), ..Default::default() },
     )
 }
 
@@ -81,6 +86,7 @@ pub fn transpile_with_options(
         return Err(vec![Diagnostic::new(why, 1, 1)]);
     }
     program.owning_methods = arc::analyze(source, &program);
+    program.heap_support = options.heap_support;
     let overrides = &options.pool_sizes;
     diagnostics.extend(generics::check_program(source, &program));
     if !diagnostics.is_empty() {
@@ -124,7 +130,7 @@ pub fn transpile_split_with_pool_sizes(
     transpile_split_with_options(
         source,
         origins,
-        &Options { pool_sizes: overrides.clone(), ast_json: Vec::new() },
+        &Options { pool_sizes: overrides.clone(), ..Default::default() },
     )
 }
 
@@ -142,6 +148,7 @@ pub fn transpile_split_with_options(
         return Err(vec![Diagnostic::new(why, 1, 1)]);
     }
     program.owning_methods = arc::analyze(source, &program);
+    program.heap_support = options.heap_support;
     let overrides = &options.pool_sizes;
     diagnostics.extend(generics::check_program(source, &program));
     if !diagnostics.is_empty() {

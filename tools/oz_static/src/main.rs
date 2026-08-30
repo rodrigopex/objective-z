@@ -14,6 +14,7 @@ fn usage() -> ExitCode {
     eprintln!(
         "usage: oz2c [-I <dir>]... [--impl-dir <dir>]... [--manifest <path>] \
          [--root-class <name>] [--pool-sizes <Class=N,...>] [--ast <ast.json>]... \
+         [--heap-support] \
          <input.m>... <outdir>"
     );
     ExitCode::FAILURE
@@ -27,6 +28,7 @@ fn main() -> ExitCode {
     let mut expected_root: Option<String> = None;
     let mut pool_overrides = oz_static::PoolOverrides::new();
     let mut ast_paths: Vec<PathBuf> = Vec::new();
+    let mut heap_support = false;
     let mut positional: Vec<String> = Vec::new();
 
     let mut i = 0;
@@ -51,6 +53,14 @@ fn main() -> ExitCode {
                 let Some(name) = args.get(i + 1) else { return usage() };
                 expected_root = Some(name.clone());
                 i += 2;
+            }
+            // Same spelling and meaning as the Python backend's flag.
+            // Enables `+allocWithHeap:` and the heap-aware free path; the
+            // generated code is additionally guarded by `OZ_HEAP_SUPPORT`,
+            // which is what makes the PAL expose the heap it needs.
+            "--heap-support" => {
+                heap_support = true;
+                i += 1;
             }
             // Clang resolves types; tree-sitter does not. Supplying the AST
             // is what lets oz_static know which ivars are objects the class
@@ -171,7 +181,7 @@ fn main() -> ExitCode {
     match oz_static::transpile_split_with_options(
         &resolved.text,
         &resolved.origins,
-        &oz_static::Options { pool_sizes: pool_overrides, ast_json },
+        &oz_static::Options { pool_sizes: pool_overrides, ast_json, heap_support },
     ) {
         Ok(out) => {
             // Foundation/SDK-origin files land in their own subdirectory,

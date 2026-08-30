@@ -222,11 +222,94 @@ fn render_release_ivars(name: &str, root: &str, owned: &[String]) -> String {
     c
 }
 
+/// `{name}_oz_alloc_with_heap`, backing `[Cls allocWithHeap:h]`: the same
+/// initialization as `{name}_oz_alloc`, but the storage comes from an
+/// `OZHeap` (or the system heap when the argument is nil) instead of the
+/// class's slab, and the object is marked so `{name}_oz_free` knows to
+/// return it there.
+///
+/// `oz_heap_obj_alloc` is declared by the PAL and defined in the companion
+/// (see `render_heap_bridge`) -- it needs `struct OZHeap` complete, which
+/// only generated code has.
+///
+/// Guarded by `OZ_HEAP_SUPPORT` as well as by `--heap-support`, matching the
+/// oracle (`templates/class_header.h.j2`): the flag decides whether the code
+/// is generated at all, the macro whether the PAL exposes the heap it needs.
+/// `OZHeap_oz_inner`: hands back the address of OZHeap's `_inner` ivar.
+///
+/// The heap bridge (`render_heap_bridge`) needs it, and cannot reach it
+/// itself: the companion header only forward-declares any class that is not
+/// the root, so `heap->_inner` is not available there -- and in single-file
+/// mode the full struct is in the one output file, not in the companion at
+/// all. So the accessor is defined where the struct *is* complete, which is
+/// OZHeap's own file, and only its prototype crosses into the companion.
+/// `render_release_ivars` is split for exactly the same reason.
+fn render_heap_inner_accessor(name: &str, heap_support: bool) -> String {
+    if !heap_support || name != "OZHeap" {
+        return String::new();
+    }
+    "/* synthesized: the companion's heap bridge needs OZHeap's inner store, and\n * only this file has the complete struct to reach it through (not from\n * source) */\n#ifdef OZ_HEAP_SUPPORT\nstruct oz_heap_inner *OZHeap_oz_inner(struct OZHeap *self)\n{\n\treturn &self->_inner;\n}\n#endif\n\n"
+        .to_string()
+}
+
+fn render_heap_alloc(name: &str, root: &str, heap_support: bool) -> String {
+    if !heap_support {
+        return String::new();
+    }
+    format!(
+        "/* synthesized: allocates a new {name} from an OZHeap rather than its slab --\n * \
+backs '[{name} allocWithHeap:h]' (not from source) */\n\
+         #ifdef OZ_HEAP_SUPPORT\n\
+         struct {name} *{name}_oz_alloc_with_heap(struct {root} *heap_obj)\n{{\n\
+         \tstruct {name} *obj = (struct {name} *)oz_heap_obj_alloc(\n\
+         \t\t(struct OZHeap *)heap_obj, sizeof(struct {name}));\n\
+         \tif (!obj) {{\n\t\treturn (struct {name} *)0;\n\t}}\n\
+         \tmemset(obj, 0, sizeof(struct {name}));\n\
+         \t((struct {root} *)obj)->oz_class_id = OZ_STATIC_CLASS_{name};\n\
+         \t((struct {root} *)obj)->oz_heap_allocated = 1;\n\
+         \toz_atomic_init(&((struct {root} *)obj)->oz_refcount, 1);\n\
+         \treturn obj;\n}}\n\
+         #endif\n\n",
+        name = name,
+        root = root
+    )
+}
+
+/// The first lines of every `{name}_oz_free`: an object that came from a
+/// heap has no slot in the class's slab to return, so it goes back to the
+/// heap and the slab is never touched.
+fn render_heap_free_check(root: &str, heap_support: bool) -> String {
+    if !heap_support {
+        return String::new();
+    }
+    format!(
+        "#ifdef OZ_HEAP_SUPPORT\n\
+         \tif (((struct {root} *)obj)->oz_heap_allocated) {{\n\
+         \t\toz_heap_obj_free((void *)obj);\n\
+         \t\treturn;\n\t}}\n\
+         #endif\n",
+        root = root
+    )
+}
+
+/// `oz_heap_obj_alloc`/`oz_heap_obj_free`, which
+/// `platform/oz_platform_{zephyr,host}.h` declare and deliberately leave to
+/// generated code: both need `struct OZHeap` to be a complete type, and the
+/// PAL cannot see it. Same division as the oracle's `oz_dispatch.c.j2`.
+fn render_heap_bridge(heap_support: bool) -> String {
+    if !heap_support {
+        return String::new();
+    }
+    "/* synthesized: the two heap entry points the PAL declares but leaves to\n * generated code -- both need 'struct OZHeap' complete, which only this\n * file has (not from source) */\n#ifdef OZ_HEAP_SUPPORT\nvoid *oz_heap_obj_alloc(struct OZHeap *heap, size_t size)\n{\n\tif (heap) {\n\t\treturn oz_heap_alloc_obj(OZHeap_oz_inner(heap), heap, size);\n\t}\n\treturn oz_sys_heap_alloc(size);\n}\n\nvoid oz_heap_obj_free(void *obj)\n{\n\tstruct oz_heap_hdr *hdr = (struct oz_heap_hdr *)\n\t\t((char *)obj - offsetof(struct oz_heap_hdr, obj));\n\tif (hdr->heap) {\n\t\toz_heap_free_obj(OZHeap_oz_inner(hdr->heap), obj);\n\t} else {\n\t\toz_sys_heap_free(obj);\n\t}\n}\n#endif\n\n"
+        .to_string()
+}
+
 pub(crate) fn render_alloc_free(
     name: &str,
     root: &str,
     slots: usize,
     owned_ivars: &[String],
+    heap_support: bool,
 ) -> String {
     let mut c = render_slab_define(name, slots);
     c.push_str(&render_release_ivars(name, root, owned_ivars));
@@ -251,6 +334,8 @@ pub(crate) fn render_alloc_free(
         name = name
     ));
     c.push_str("\treturn obj;\n}\n\n");
+    c.push_str(&render_heap_alloc(name, root, heap_support));
+    c.push_str(&render_heap_inner_accessor(name, heap_support));
     c.push_str(&format!(
         "/* synthesized: returns {name}'s slot to its slab -- called only from\n * \
 oz_static_release, once the refcount reaches zero (not from source) */\n",
@@ -258,8 +343,10 @@ oz_static_release, once the refcount reaches zero (not from source) */\n",
     ));
     c.push_str(&format!(
         "void {name}_oz_free(struct {name} *obj)\n{{\n\
+         {heap_check}\
          \toz_slab_free(&oz_slab_{name}, (void *)obj);\n}}\n\n",
-        name = name
+        name = name,
+        heap_check = render_heap_free_check(root, heap_support)
     ));
     c
 }
@@ -278,6 +365,7 @@ pub(crate) fn render_array_support(
     root: &str,
     slots: usize,
     owned_ivars: &[String],
+    heap_support: bool,
 ) -> String {
     let mut c = render_slab_define(name, slots);
     c.push_str(&render_release_ivars(name, root, owned_ivars));
@@ -303,6 +391,7 @@ pub(crate) fn render_array_support(
     ));
     c.push_str("\treturn obj;\n}\n\n");
 
+    c.push_str(&render_heap_alloc(name, root, heap_support));
     c.push_str(&format!(
         "/* synthesized: releases {name}'s items, its items buffer, and its own\n * \
 storage -- called only from oz_static_release, once the refcount reaches\n * \
@@ -315,10 +404,12 @@ zero (not from source; OZArray.m has no -dealloc of its own) */\n",
          \t\toz_static_release((struct {root} *)obj->_items[i]);\n\
          \t}}\n\
          \tfree(obj->_items);\n\
+         {heap_check}\
          \toz_slab_free(&oz_slab_{name}, (void *)obj);\n\
          }}\n\n",
         root = root,
-        name = name
+        name = name,
+        heap_check = render_heap_free_check(root, heap_support)
     ));
 
     c.push_str(&format!(
@@ -360,6 +451,7 @@ pub(crate) fn render_dict_support(
     root: &str,
     slots: usize,
     owned_ivars: &[String],
+    heap_support: bool,
 ) -> String {
     let mut c = render_slab_define(name, slots);
     c.push_str(&render_release_ivars(name, root, owned_ivars));
@@ -385,6 +477,7 @@ pub(crate) fn render_dict_support(
     ));
     c.push_str("\treturn obj;\n}\n\n");
 
+    c.push_str(&render_heap_alloc(name, root, heap_support));
     c.push_str(&format!(
         "/* synthesized: releases {name}'s keys, its values, their shared\n * \
 buffer, and its own storage -- called only from oz_static_release, once\n * \
@@ -399,10 +492,12 @@ the refcount reaches zero (not from source; OZDictionary.m has no\n * \
          \t\toz_static_release((struct {root} *)obj->_values[i]);\n\
          \t}}\n\
          \tfree(obj->_keys);\n\
+         {heap_check}\
          \toz_slab_free(&oz_slab_{name}, (void *)obj);\n\
          }}\n\n",
         root = root,
-        name = name
+        name = name,
+        heap_check = render_heap_free_check(root, heap_support)
     ));
 
     c.push_str(&format!(
@@ -617,6 +712,14 @@ below naming a type one of them declares sees the real definition */\n",
          int _oz_get_log_precision(void);\n\n",
     );
 
+    // Declared here, defined in OZHeap's own file -- see
+    // `render_heap_inner_accessor`.
+    if program.heap_support && program.is_class("OZHeap") {
+        h.push_str(
+            "/* OZHeap's inner store, reached through an accessor because this header\n * only forward-declares the struct -- see the definition in OZHeap's file */\n#ifdef OZ_HEAP_SUPPORT\nstruct oz_heap_inner *OZHeap_oz_inner(struct OZHeap *self);\n#endif\n\n",
+        );
+    }
+
     if !hoisted_forward_decls.is_empty() {
         h.push_str("/* forward-declared structs (no body in source), hoisted here so a\n * method prototype below referencing one as a pointer type still compiles */\n");
         for d in hoisted_forward_decls {
@@ -666,9 +769,23 @@ below naming a type one of them declares sees the real definition */\n",
         for m in &program.classes[name].methods {
             h.push_str(&crate::emit::render_prototype(name, m));
         }
+        // The heap allocator's prototype is guarded, not omitted: the
+        // definition is `#ifdef OZ_HEAP_SUPPORT` too, so a caller compiled
+        // without the macro must not see a declaration for a function that
+        // will not exist.
+        let heap_proto = if program.heap_support {
+            format!(
+                "#ifdef OZ_HEAP_SUPPORT\nstruct {name} *{name}_oz_alloc_with_heap(struct {root} *heap_obj);\n#endif\n",
+                name = name,
+                root = root.as_deref().unwrap_or(name)
+            )
+        } else {
+            String::new()
+        };
         h.push_str(&format!(
-            "struct {name} *{name}_oz_alloc(void);\nvoid {name}_oz_free(struct {name} *obj);\n",
-            name = name
+            "struct {name} *{name}_oz_alloc(void);\nvoid {name}_oz_free(struct {name} *obj);\n{heap_proto}",
+            name = name,
+            heap_proto = heap_proto
         ));
         // Defined in the owning class's own file (see `render_release_ivars`),
         // declared here because the release switch below calls through it.
@@ -720,6 +837,7 @@ src/OZLog.c provides the strong definition where it is linked. */\n\
             root,
             pools.for_class(root),
             &program.owned_object_ivars(root),
+            program.heap_support,
         ));
 
         if root_needs_synthetic_dealloc {
@@ -735,6 +853,7 @@ void {root}_dealloc(struct {root} *self)\n{{\n\t(void)self;\n}}\n\n",
             "/* synthesized: increments the retain count; shared by every class,\n * \
 not tied to one (not from source) */\n",
         );
+        c.push_str(&render_heap_bridge(program.heap_support));
         c.push_str(&format!(
             "struct {root} *oz_static_retain(struct {root} *self)\n{{\n\
              \tif (self) {{\n\t\toz_atomic_inc(&self->oz_refcount);\n\t}}\n\treturn self;\n}}\n\n",

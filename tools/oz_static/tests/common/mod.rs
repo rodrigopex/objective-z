@@ -64,8 +64,36 @@ pub fn compile_and_run_with_zephyr_stubs(source: &str, stem: &str) -> String {
     compile_and_run_with_flags(source, stem, &["-I", &stubs])
 }
 
+/// Same as `compile_and_run`, but with `--heap-support` on the transpile and
+/// `-DOZ_HEAP_SUPPORT` on the compiles -- the pair `+allocWithHeap:` needs,
+/// and the same pair `tests/tools/compile_and_run.py` sets for a case
+/// carrying the `/* oz-heap */` directive.
+///
+/// Both switches or neither: the flag decides whether the heap allocator is
+/// generated at all, and the macro whether the PAL exposes the real
+/// malloc-backed heap it calls. With only the macro, nothing calls the heap;
+/// with only the flag, the generated code calls functions the PAL has
+/// compiled out.
+pub fn compile_and_run_with_heap(source: &str, stem: &str) -> String {
+    compile_and_run_inner(
+        source,
+        stem,
+        &["-DOZ_HEAP_SUPPORT"],
+        &oz_static::Options { heap_support: true, ..Default::default() },
+    )
+}
+
 fn compile_and_run_with_flags(source: &str, stem: &str, extra_cc_flags: &[&str]) -> String {
-    let out = oz_static::transpile(source).unwrap_or_else(|diags| {
+    compile_and_run_inner(source, stem, extra_cc_flags, &oz_static::Options::default())
+}
+
+fn compile_and_run_inner(
+    source: &str,
+    stem: &str,
+    extra_cc_flags: &[&str],
+    options: &oz_static::Options,
+) -> String {
+    let out = oz_static::transpile_with_options(source, options).unwrap_or_else(|diags| {
         panic!(
             "transpile('{}') was expected to succeed but produced diagnostics:\n{}",
             stem,

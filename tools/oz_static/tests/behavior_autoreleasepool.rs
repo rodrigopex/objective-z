@@ -156,3 +156,58 @@ int main(void) {{
     let stdout = compile_and_run(&src, "sibling_autoreleasepool_blocks_each_scope_independently");
     assert_eq!(stdout, "total=3\n");
 }
+
+/// A pool block is an ordinary scope as far as ownership goes, so ARC has to
+/// release what is declared inside it when it ends.
+///
+/// It did not. `@autoreleasepool` has its own arm in `emit::render_expr`'s
+/// match, sitting *before* the ARC one, so a pool block that declared an
+/// owned local got the pool renderer and never the releases -- every object
+/// allocated inside one leaked silently. `samples/heap_alloc` is built
+/// entirely out of that shape, and states the consequence in its own
+/// expected output ("Sensor dealloc", "app heap after free: 0 bytes used"):
+/// nothing was released, no `-dealloc` ran, and the heap never came back
+/// down. Neither compiling nor linking can see that; only running it can,
+/// which is why this test observes `-dealloc` rather than inspecting the C.
+#[test]
+fn autoreleasepool_releases_what_it_owns_at_scope_exit() {
+    let src = format!(
+        "{}
+#include <stdio.h>
+
+@interface Tracked : OZObject {{
+	int _tag;
+}}
+- (void)setTag:(int)t;
+@end
+
+@implementation Tracked
+- (void)setTag:(int)t {{
+	_tag = t;
+}}
+- (void)dealloc {{
+	printf(\"dealloc %d\\n\", _tag);
+}}
+@end
+
+int main(void) {{
+	printf(\"before\\n\");
+	@autoreleasepool {{
+		Tracked *first = [Tracked alloc];
+		[first setTag:1];
+		Tracked *second = [Tracked alloc];
+		[second setTag:2];
+	}}
+	printf(\"after\\n\");
+	return 0;
+}}
+",
+        PREAMBLE()
+    );
+    let stdout = compile_and_run(&src, "autoreleasepool_releases_what_it_owns_at_scope_exit");
+    // Reverse declaration order, which is what Clang's own ARC does (its
+    // scope cleanups run LIFO, like C++ destructors) and what matters when
+    // one object's -dealloc touches another. The oracle releases in
+    // declaration order instead -- see PARITY.md.
+    assert_eq!(stdout, "before\ndealloc 2\ndealloc 1\nafter\n");
+}

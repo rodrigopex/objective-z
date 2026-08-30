@@ -53,12 +53,17 @@ measuring oz_static's own output. See also the note on `src/OZLog.c` under
 | arc_demo | yes | Zephyr-blocked | `K_THREAD_DEFINE` only; was gap A |
 | gpio_demo | yes | Zephyr-blocked | was gap D |
 | zbus_objc | yes | Zephyr-blocked | was gap E |
-| heap_alloc | yes | **no — transpiler** | `+allocWithHeap:` is not emitted; its dot syntax is fixed |
+| heap_alloc | yes | yes | was gaps F and I; runs correctly, see below |
 | zbus_service | — | — | stale independently of oz_static (see below) |
 
-Every sample with usable sources transpiles. Of those, 4 compile *and link*
-cleanly on host, 8 stop only on Zephyr (expected — not a transpiler
-problem), and 1 fails on a transpiler gap.
+Every sample with usable sources transpiles. Of those, 5 compile *and
+link* cleanly on host and 8 stop only on Zephyr (expected — not a
+transpiler problem). **No sample fails on a transpiler gap any more.**
+
+`heap_alloc` was additionally *run*, and its output checked line by line
+against the expectations in its own `sample.yaml`. That is the only sample
+run so far, and it is what caught gap I below — it compiled, linked, and
+leaked.
 
 Each Zephyr-blocked sample was checked to be *only* that, rather than
 assumed: `arc_demo`'s two remaining compile errors are both on its single
@@ -256,6 +261,51 @@ declarations of everything the SDK implements elsewhere, including
 tracks which classes it saw an `@implementation` *for*, separately from
 which it merely saw, and the guard abstains without that stronger evidence.
 
+**I. `+allocWithHeap:` and the heap-aware free path.** Implemented, so
+`CONFIG_OBJZ_HEAP` is no longer a `FATAL_ERROR` in
+`cmake/oz_static.cmake`. `--heap-support` generates, per class, a
+`{Class}_oz_alloc_with_heap` taking its storage from an `OZHeap` (or the
+system heap for a nil argument); the root gains an `oz_heap_allocated`
+flag, so free returns the object where it came from; and the companion
+defines `oz_heap_obj_alloc`/`oz_heap_obj_free`, which the PAL declares and
+deliberately leaves to generated code because both need `struct OZHeap`
+complete. All of it behind `OZ_HEAP_SUPPORT` as well as the flag, matching
+the oracle.
+
+`+allocWithHeap:` resolves to the *receiver's* allocator, not the declaring
+class's, exactly as `+alloc` does — dispatched as an ordinary class method
+it became `OZObject_allocWithHeap__cls`, which would allocate an
+OZObject-sized block for a Sensor, and which is generated nowhere at all.
+
+Two things only running the sample could show:
+
+- **Every heap-allocated object leaked.** `@autoreleasepool` has its own arm
+  in `emit::render_expr`'s match, ahead of the ARC one, so a pool block that
+  declared an owned local got the pool renderer and never the releases. Not
+  heap-specific at all — *any* `@autoreleasepool { Foo *f = [Foo alloc]; }`
+  leaked — but `samples/heap_alloc` is built entirely from that shape and
+  states the consequence in its own expected output ("Sensor dealloc",
+  "app heap after free: 0 bytes used"). The three `arc_*` helpers now do
+  that bookkeeping in one place so the two block renderers cannot drift
+  again.
+- **`+allocWithHeap:` was not an owning selector.** It is `+alloc` with
+  different storage, so it returns +1; `arc::is_owning_selector` did not
+  list it.
+
+Both compiled and linked cleanly throughout. This is the clearest case so
+far for the sample table's link column not being the last word either.
+
+**Known divergence: release order within a scope.** oz_static releases a
+scope's owned locals in *reverse* declaration order; the oracle
+(`emit.py::_emit_scope_releases`) iterates its frame in declaration order.
+Reverse is what Clang's own ARC does — its scope cleanups run LIFO, like C++
+destructors — and it is the order that matters when one object's `-dealloc`
+touches another, so oz_static keeps it. The visible cost is that
+`samples/heap_alloc/sample.yaml` lists its two `Sensor dealloc` lines in the
+oracle's order under `ordered: true`, so that sample's twister check would
+not pass under the static backend without editing a file the Python backend
+also uses. Nothing fails today, since no sample selects the static backend.
+
 **D. File-scope `static` object variables are not type-tracked.** Reduced
 to a 20-line reproducer:
 
@@ -302,7 +352,7 @@ That allowlist asserts the listed case *still* fails, so fixing it without
 updating the list also fails the test; it cannot decay into silently
 skipped cases.
 
-Rust test suite: 178 passing, 0 failing.
+Rust test suite: 180 passing, 0 failing.
 
 ### Behavioral parity: 67 of 73, and zero disagreements
 
@@ -378,10 +428,24 @@ which an explicit `release` is a compile error, and indeed no `.m` under
 
 Two are `timer_basic`/`timer_zephyr` crashing at runtime. Two drivers reach
 for `_meta`, the oracle's name for the root tracking struct that oz_static
-spells as flat `oz_*` fields. One is the `oz_heap_inner` redefinition plus
-missing `allocWithHeap:`. One is a `void (*)(id)` vs `void (*)(struct
+spells as flat `oz_*` fields. One is a `void (*)(id)` vs `void (*)(struct
 OZObject *)` divergence inside a driver, which no shim can bridge because
 it is the driver's own code.
+
+`memory/heap_alloc` now transpiles, compiles and links with
+`--heap-support` — the harness reads the case's own `/* oz-heap */`
+directive, the same one the Python harness reads — but its driver asserts
+`w->base._meta.class_id` and `w->base._meta.heap_allocated`, reaching into
+the oracle's root struct layout rather than testing behavior. oz_static
+holds the same two facts in flat `oz_class_id` / `oz_heap_allocated`
+fields, and no `#define` can rewrite `a._meta.b` into `a.c` — the two names
+are separate tokens joined by `.`. That makes three of the six a driver
+reaching for `_meta`. Grouping oz_static's tracking fields into a nested
+struct would bridge all three at once, and is the single largest remaining
+win available; it is a layout change, so it has not been made
+unilaterally. The feature itself is covered directly instead, in
+`tests/behavior_foundation_heap.rs`, where the heap's own accounting shows
+the storage taken and given back.
 
 `regression/issue_090_header_preservation` was the seventh and now matches.
 It is the oracle's own regression test for this exact bug — "transpiler

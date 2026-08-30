@@ -46,6 +46,14 @@ impl OwningMethods {
 /// ownership whatever their body does.
 fn is_owning_selector(selector: &str) -> bool {
     selector == "alloc"
+        // `+allocWithHeap:` is `+alloc` with the storage coming from an
+        // OZHeap, so it hands back +1 just the same. Missing from this list,
+        // `samples/heap_alloc` leaked every object it allocated: nothing
+        // released them, no `-dealloc` ran, and the heap's used-bytes never
+        // came back down -- which the sample's own expected output
+        // ("app heap after free: 0 bytes used", "Sensor dealloc") states.
+        // Compiling and linking cannot catch that; only running it can.
+        || selector == "allocWithHeap:"
         || selector == "new"
         || selector == "copy"
         || selector == "mutableCopy"

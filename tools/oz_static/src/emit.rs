@@ -1575,20 +1575,26 @@ fn render_autoreleasepool_statement(node: Node, ctx: &mut EmitCtx) -> (String, S
     // children[0] = "@autoreleasepool", children[1] = "{", last = "}".
     let stmts = &children[2..children.len() - 1];
 
-    let rendered_stmts: Vec<(String, &str)> = stmts
-        .iter()
-        .map(|s| {
-            let rendered = render_expr(*s, ctx).0;
-            let combined = if ctx.pre_stmts.is_empty() {
-                rendered
-            } else {
-                let pre = ctx.pre_stmts.join("\n\t");
-                ctx.pre_stmts.clear();
-                format!("{}\n\t{}", pre, rendered)
-            };
-            (combined, node_text(*s, ctx.src))
-        })
-        .collect();
+    // A pool block is an ordinary scope as far as ownership goes, so it does
+    // the same ARC bookkeeping as `render_scoped_block` -- see `arc_enter`
+    // for what went wrong while it did not.
+    arc_enter(ctx, node);
+    let mut ended_with_jump = false;
+    let mut rendered_stmts: Vec<(String, &str)> = Vec::with_capacity(stmts.len());
+    for stmt in stmts {
+        let rendered = render_expr(*stmt, ctx).0;
+        let combined = if ctx.pre_stmts.is_empty() {
+            rendered
+        } else {
+            let pre = ctx.pre_stmts.join("\n\t");
+            ctx.pre_stmts.clear();
+            format!("{}\n\t{}", pre, rendered)
+        };
+        rendered_stmts.push((combined, node_text(*stmt, ctx.src)));
+        arc_note(*stmt, ctx);
+        ended_with_jump = is_jump_statement(*stmt);
+    }
+    let releases = arc_exit(ctx, ended_with_jump);
 
     let mut out = String::from("{\n");
     for (rendered, original) in &rendered_stmts {
@@ -1601,6 +1607,11 @@ fn render_autoreleasepool_statement(node: Node, ctx: &mut EmitCtx) -> (String, S
             out.push_str(" */\n\t");
             out.push_str(rendered);
         }
+        out.push('\n');
+    }
+    for line in &releases {
+        out.push('\t');
+        out.push_str(line);
         out.push('\n');
     }
     out.push('}');
@@ -1707,6 +1718,38 @@ fn render_message(node: Node, ctx: &mut EmitCtx) -> (String, String) {
     if parts.selector == "alloc" && parts.args.is_empty() {
         if let Some(cls) = recv_type.strip_prefix("class:") {
             return (format!("{}_oz_alloc()", cls), format!("struct {} *", cls));
+        }
+    }
+    // `+allocWithHeap:` is declared once on the root class, but it has to
+    // allocate `sizeof(struct {receiver})` and stamp the receiver's own
+    // class_id -- so, exactly like `+alloc`, it resolves to the *receiver's*
+    // generated allocator rather than to the declaring class's. Dispatching
+    // it as an ordinary class method would call
+    // `OZObject_allocWithHeap__cls`, which allocates an OZObject-sized
+    // block: `samples/heap_alloc` did precisely that, and it linked to
+    // nothing at all because no such function is generated.
+    if parts.selector == "allocWithHeap:" && parts.args.len() == 1 {
+        if let Some(cls) = recv_type.strip_prefix("class:") {
+            let cls = cls.to_string();
+            if !ctx.program.heap_support {
+                ctx.err(
+                    node,
+                    format!(
+                        "'{}' needs heap support, which is off -- pass --heap-support (and build with -DOZ_HEAP_SUPPORT) to enable '+allocWithHeap:'",
+                        one_line(node_text(node, ctx.src))
+                    ),
+                );
+                return (node_text(node, ctx.src).to_string(), format!("struct {} *", cls));
+            }
+            return (
+                format!(
+                    "{cls}_oz_alloc_with_heap((struct {root} *)({heap}))",
+                    cls = cls,
+                    root = root,
+                    heap = arg_texts[0]
+                ),
+                format!("struct {} *", cls),
+            );
         }
     }
 
@@ -2175,6 +2218,49 @@ fn render_loop_jump(node: Node, ctx: &mut EmitCtx) -> (String, String) {
 ///
 /// A block ending in a jump gets no trailing releases -- the jump already
 /// emitted them, and code after it would be unreachable anyway.
+/// Enter an ARC scope for the block about to be rendered.
+///
+/// The three `arc_*` helpers exist so that every block renderer does the
+/// same bookkeeping. They were factored out after `@autoreleasepool` was
+/// found to do none of it: its arm sits before the ARC one in
+/// `render_expr`'s match, so a pool block that declared an owned local got
+/// the pool renderer and never the releases. `samples/heap_alloc` leaked
+/// every object it allocated that way -- and it says so in its own expected
+/// output, which no compile or link could have checked.
+fn arc_enter(ctx: &mut EmitCtx, body: Node) {
+    ctx.arc_scopes.push(ArcScope { owned: Vec::new(), is_loop_body: is_loop_body(body) });
+}
+
+/// Record whatever owned locals `stmt` just declared.
+fn arc_note(stmt: Node, ctx: &mut EmitCtx) {
+    if stmt.kind() != "declaration" {
+        return;
+    }
+    let owned = owned_locals_of(stmt, ctx);
+    if let Some(scope) = ctx.arc_scopes.last_mut() {
+        scope.owned.extend(owned);
+    }
+}
+
+/// Leave the scope, returning the releases it owes -- none when the block
+/// ended in a jump, which released on its way out (`render_loop_jump` /
+/// `render_return_statement`).
+fn arc_exit(ctx: &mut EmitCtx, ended_with_jump: bool) -> Vec<String> {
+    let scope = ctx.arc_scopes.pop().unwrap_or_default();
+    if ended_with_jump {
+        return Vec::new();
+    }
+    release_lines(&scope.owned.iter().rev().cloned().collect::<Vec<_>>(), ctx)
+}
+
+/// Did this statement leave the block by jumping?
+fn is_jump_statement(node: Node) -> bool {
+    matches!(
+        node.kind(),
+        "return_statement" | "break_statement" | "continue_statement" | "goto_statement"
+    )
+}
+
 fn render_scoped_block(body: Node, ctx: &mut EmitCtx) -> (String, String) {
     let mut cursor = body.walk();
     let children: Vec<Node> = body.children(&mut cursor).collect();
@@ -2183,7 +2269,7 @@ fn render_scoped_block(body: Node, ctx: &mut EmitCtx) -> (String, String) {
     }
     let stmts = &children[1..children.len() - 1];
 
-    ctx.arc_scopes.push(ArcScope { owned: Vec::new(), is_loop_body: is_loop_body(body) });
+    arc_enter(ctx, body);
     let mut out = String::from("{\n");
     let mut ended_with_jump = false;
     for stmt in stmts {
@@ -2198,24 +2284,13 @@ fn render_scoped_block(body: Node, ctx: &mut EmitCtx) -> (String, String) {
         out.push('\t');
         out.push_str(&rendered);
         out.push('\n');
-        if stmt.kind() == "declaration" {
-            let owned = owned_locals_of(*stmt, ctx);
-            if let Some(scope) = ctx.arc_scopes.last_mut() {
-                scope.owned.extend(owned);
-            }
-        }
-        ended_with_jump = matches!(
-            stmt.kind(),
-            "return_statement" | "break_statement" | "continue_statement" | "goto_statement"
-        );
+        arc_note(*stmt, ctx);
+        ended_with_jump = is_jump_statement(*stmt);
     }
-    let scope = ctx.arc_scopes.pop().unwrap_or_default();
-    if !ended_with_jump {
-        for line in release_lines(&scope.owned.iter().rev().cloned().collect::<Vec<_>>(), ctx) {
-            out.push('\t');
-            out.push_str(&line);
-            out.push('\n');
-        }
+    for line in arc_exit(ctx, ended_with_jump) {
+        out.push('\t');
+        out.push_str(&line);
+        out.push('\n');
     }
     out.push('}');
     (out, "void".to_string())
@@ -2439,6 +2514,17 @@ fn render_interface(node: Node, ctx: &mut EmitCtx, program: &Program) -> (String
                  \toz_atomic_t oz_refcount; /* synthesized: retain count */\n\
                  \tuint8_t oz_deallocating; /* synthesized: guards against re-entrant dealloc while it runs */\n",
             );
+            // Only under `--heap-support`: free has to know whether an
+            // object came from its class's slab or from an OZHeap, and
+            // nothing else can tell afterwards. Left out otherwise so a
+            // program that never allocates from a heap does not carry the
+            // byte -- the same reason the oracle guards its own uses of the
+            // equivalent `_meta.heap_allocated` behind `OZ_HEAP_SUPPORT`.
+            if program.heap_support {
+                f.push_str(
+                    "\tuint8_t oz_heap_allocated; /* synthesized: allocated from an OZHeap, not this class's slab */\n",
+                );
+            }
             // Shared lock for every atomic property in the program --
             // reached from any class via `Program::ivar_access_path`'s
             // ordinary "base." hop-chain, same as any inherited ivar.
@@ -2577,19 +2663,40 @@ fn render_interface(node: Node, ctx: &mut EmitCtx, program: &Program) -> (String
         let owned_ivars = ctx.program.owned_object_ivars(&name);
         let (alloc_free, extra_proto) = if name == "OZArray" {
             (
-                crate::companion::render_array_support(&name, &root, slots, &owned_ivars),
+                crate::companion::render_array_support(
+                    &name,
+                    &root,
+                    slots,
+                    &owned_ivars,
+                    ctx.program.heap_support,
+                ),
                 format!("struct {name} *{name}_oz_initWithItems(void **src, unsigned int count);\n", name = name),
             )
         } else if name == "OZDictionary" {
             (
-                crate::companion::render_dict_support(&name, &root, slots, &owned_ivars),
+                crate::companion::render_dict_support(
+                    &name,
+                    &root,
+                    slots,
+                    &owned_ivars,
+                    ctx.program.heap_support,
+                ),
                 format!(
                     "struct {name} *{name}_oz_initWithKeysValues(void **keys, void **values, unsigned int count);\n",
                     name = name
                 ),
             )
         } else {
-            (crate::companion::render_alloc_free(&name, &root, slots, &owned_ivars), String::new())
+            (
+                crate::companion::render_alloc_free(
+                    &name,
+                    &root,
+                    slots,
+                    &owned_ivars,
+                    ctx.program.heap_support,
+                ),
+                String::new(),
+            )
         };
         (format!("{}{}\n{}{}{}", open_banner, struct_text, extra_proto, decls, close_banner), alloc_free)
     }

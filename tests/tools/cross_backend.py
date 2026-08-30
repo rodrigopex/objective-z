@@ -31,7 +31,7 @@ differs from oz_static's in three ways, none of them behavioral:
     where oz_static only emits one when a selector really is polymorphic
     (its class hierarchy analysis proves the rest are direct calls).
 
-`_write_abi_shim` bridges exactly those three with a generated header, so
+`_write_abi_shim` bridges exactly those with a generated header, so
 the driver is compiled unmodified against both backends.  Anything beyond
 naming -- a different result, a crash, a missing symbol -- is a real
 difference and is reported as one.
@@ -157,6 +157,10 @@ def _write_abi_shim(outdir: Path, classes: list[str], root: str,
     for cls in classes:
         body.append(f"#define {cls}_alloc {cls}_oz_alloc")
         body.append(f"#define {cls}_free {cls}_oz_free")
+        # The oracle names the heap allocator after the selector; oz_static
+        # keeps its `oz_` prefix for everything it synthesizes, as it does
+        # for `_oz_alloc` itself.
+        body.append(f"#define {cls}_allocWithHeap_ {cls}_oz_alloc_with_heap")
         body.append(f"#define OZ_CLASS_{cls} OZ_STATIC_CLASS_{cls}")
     body.append(f"#define {root}_retain oz_static_retain")
     body.append(f"#define {root}_release oz_static_release")
@@ -272,10 +276,17 @@ def run_static(case: Path) -> tuple[bool, str, list[str]]:
         # the test would fail on a null receiver rather than on behavior.
         pool_sizes = (compile_and_run._parse_pool_sizes(case)
                       or compile_and_run._default_pool_sizes(case))
+        # `/* oz-heap */` in the case turns on `+allocWithHeap:` -- the same
+        # directive and the same pair of switches the Python harness reads
+        # (`--heap-support` to the transpiler, `-DOZ_HEAP_SUPPORT` to the
+        # compiler), so both backends are given the identical configuration.
+        heap_support = compile_and_run._needs_heap_support(case)
         args = [str(OZ2C),
                 "-I", str(REPO_ROOT / "include" / "oz_sdk"),
                 "-I", str(REPO_ROOT / "tests" / "behavior" / "include"),
                 "--impl-dir", str(REPO_ROOT / "src")]
+        if heap_support:
+            args.append("--heap-support")
         # Clang resolves types and states ARC ownership; tree-sitter does
         # neither. Handing oz2c the same dump the oracle parses is what lets
         # it classify id-typed ivars and spot methods that are declared but
@@ -328,6 +339,7 @@ def run_static(case: Path) -> tuple[bool, str, list[str]]:
         binary = tmpdir / "test_bin"
         compile_cmd = [
             "cc", "-std=c11", "-O0", "-DOZ_PLATFORM_HOST",
+            *(["-DOZ_HEAP_SUPPORT"] if heap_support else []),
             "-I", str(tmpdir),
             "-I", str(tmpdir / "Foundation"),
             "-I", str(REPO_ROOT / "include"),
