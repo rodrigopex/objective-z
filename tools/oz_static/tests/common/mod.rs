@@ -316,11 +316,17 @@ pub fn ozdefer_src() -> String {
 /// `iterIdx` *property* (`@property (readonly) uint16_t iterIdx;` +
 /// `@synthesize iterIdx = _iterIdx;` -- distinct from the `_iterIdx`
 /// ivar itself, which `-iter`/`-next` use directly) is kept too, now
-/// that OZ-095 added `@property`/`@synthesize` support. Still cut, same
-/// reasons as before: the real header's generic type param
-/// (`<__covariant ObjectType>` -- untested territory, not worth the
-/// risk when dropping it changes nothing observable) and
-/// `enumerateObjectsUsingBlock:`/`countByEnumeratingWithState:` (only
+/// that OZ-095 added `@property`/`@synthesize` support. The real
+/// header's generic type param (`<__covariant ObjectType>`) is kept now
+/// too -- it used to be cut as "untested territory", but
+/// `generics::check_program` (and the `collect::extract_conformance`/
+/// `extract_type_and_stars` fixes it needed: a class with *both* a
+/// generic parameter list and protocol conformance has two
+/// `parameterized_arguments` nodes, and the conformance extractor used
+/// to always grab the first -- the generic param list here, misreading
+/// `__covariant`/`ObjectType` as bogus protocol names) now exercise it
+/// directly, so dropping it is no longer "changes nothing observable".
+/// Still cut: `enumerateObjectsUsingBlock:`/`countByEnumeratingWithState:` (only
 /// back Foundation's own `NSFastEnumeration`-style for-in, which this
 /// port doesn't use -- the Python oracle's own for-in desugar is
 /// `-iter`/`-next`-based too, see `_emit_forin_stmt`), and
@@ -347,10 +353,6 @@ pub fn ozdefer_src() -> String {
 pub fn ozarray_src() -> String {
     let mut header = include_str!("../../../../include/oz_sdk/Foundation/OZArray.h").to_string();
     header = header.replace("__unsafe_unretained id *_items;", "id *_items;");
-    header = header.replace(
-        "@interface OZArray<__covariant ObjectType> : OZObject <IteratorProtocol> {",
-        "@interface OZArray : OZObject <IteratorProtocol> {",
-    );
     header = remove_line_containing(&header, "arrayWithObjects:");
     header = remove_line_containing(&header, "struct NSFastEnumerationState;");
     header = remove_line_containing(&header, "enumerateObjectsUsingBlock:");
@@ -391,9 +393,10 @@ pub fn ozmutablestring_src() -> String {
 /// `ozarray_src`'s doc comment -- same reasoning, now that for-in
 /// support exists), and so is the `iterIdx` *property* (distinct from
 /// the ivar), now that OZ-095 added `@property`/`@synthesize` support.
-/// Still cut, same reasons as `ozarray_src`: the generic type params
-/// (`<__covariant KeyType, __covariant ObjectType>`) and
-/// `countByEnumeratingWithState:` (for-in here is `-iter`/`-next`-based,
+/// The generic type params (`<__covariant KeyType, __covariant
+/// ObjectType>`) are kept too now, same reasoning as `ozarray_src`.
+/// Still cut: `countByEnumeratingWithState:` (for-in here is
+/// `-iter`/`-next`-based,
 /// matching the Python oracle's own desugar). `cDescription:maxLength:`
 /// is kept, unlike `ozarray_src`: its body message-sends
 /// `cDescription:maxLength:` back onto bare `id`-typed locals (each
@@ -417,10 +420,6 @@ pub fn ozdictionary_src() -> String {
     let mut header = include_str!("../../../../include/oz_sdk/Foundation/OZDictionary.h").to_string();
     header = header.replace("__unsafe_unretained id *_keys;", "id *_keys;");
     header = header.replace("__unsafe_unretained id *_values;", "id *_values;");
-    header = header.replace(
-        "@interface OZDictionary<__covariant KeyType, __covariant ObjectType> : OZObject <IteratorProtocol> {",
-        "@interface OZDictionary : OZObject <IteratorProtocol> {",
-    );
     header = remove_line_range(&header, "dictionaryWithObjects:", "count:(unsigned int)count;");
     header = remove_line_containing(&header, "struct NSFastEnumerationState;");
     header = remove_line_range(&header, "countByEnumeratingWithState:", "count:(unsigned long)len;");

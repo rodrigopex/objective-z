@@ -368,6 +368,9 @@ fn needs_translation(node: Node) -> bool {
     ) {
         return true;
     }
+    if is_autoreleasepool_shape(node) {
+        return true;
+    }
     if node.kind() == "string_literal" {
         return is_boxed_string_literal(node);
     }
@@ -468,6 +471,58 @@ fn render_expr(node: Node, ctx: &mut EmitCtx) -> (String, String) {
                 (name, "id".to_string())
             }
         }
+        // `id<Proto>` -- a protocol-qualified `id`, parsing as this same
+        // node kind wrapping `id` plus a `protocol_reference_list` (see
+        // `collect::extract_type_and_stars`'s `typedefed_specifier` arm,
+        // fixed for the same reason: without this, the per-child
+        // substitution below would leave `Frobbable` untouched inside a
+        // literal `id<Frobbable>` in the output, which isn't valid C on
+        // its own -- no generic/protocol-qualified type syntax exists in
+        // plain C). Any *other* `typedefed_specifier` shape (a bare `id`,
+        // or a real typedef'd name) is already valid as its own text, so
+        // only this one shape needs rewriting.
+        "typedefed_specifier" => {
+            let mut cursor = node.walk();
+            let has_protocol_list =
+                node.children(&mut cursor).any(|c| c.kind() == "protocol_reference_list");
+            if has_protocol_list {
+                ("void *".to_string(), "id".to_string())
+            } else if !needs_translation(node) {
+                (node_text(node, ctx.src).to_string(), "id".to_string())
+            } else {
+                let rebuilt = rebuild(node, ctx, &mut |child, ctx| {
+                    if needs_translation(child) {
+                        Some(render_expr(child, ctx).0)
+                    } else {
+                        None
+                    }
+                });
+                (rebuilt, "id".to_string())
+            }
+        }
+        // `Container<Arg, ...>` (e.g. `OZArray<Widget *>`): this spike
+        // renders a generic collection's declared type exactly like its
+        // non-generic form, the same collapse
+        // `collect::extract_type_and_stars`'s `generic_specifier` arm
+        // does for an ivar/param/return type -- element-type constraints
+        // are a `generics::check_program` concern, not codegen. Without
+        // this, the per-child substitution below independently promotes
+        // each bare class name it finds (`OZArray` -> `struct OZArray`,
+        // and the *argument*'s `Widget` -> `struct Widget` too) while
+        // leaving the `<...>` wrapper itself untouched, producing
+        // `struct OZArray<struct Widget *>` -- not valid C. Only the
+        // base name carries into the declaration; the declarator's own
+        // `*` (e.g. `... *a`) is a separate token elsewhere in source
+        // and is left alone, exactly like the plain `type_identifier`
+        // arm above never itself emits a trailing `*`.
+        "generic_specifier" => {
+            let mut cursor = node.walk();
+            let base = node.children(&mut cursor).find(|c| c.kind() == "type_identifier");
+            match base {
+                Some(base) => render_expr(base, ctx),
+                None => (node_text(node, ctx.src).to_string(), "id".to_string()),
+            }
+        }
         "at_expression" => render_boxed_at_expression(node, ctx),
         "string_literal" => render_boxed_string_literal(node, ctx),
         "array_literal" => render_boxed_array_literal(node, ctx),
@@ -503,9 +558,13 @@ fn render_expr(node: Node, ctx: &mut EmitCtx) -> (String, String) {
                 None => (node_text(node, ctx.src).to_string(), "id".to_string()),
             }
         }
+        "subscript_expression" => render_subscript_expression(node, ctx),
         "for_statement" if is_forin_shape(node) => render_forin_statement(node, ctx),
         "synchronized_statement" => render_synchronized_statement(node, ctx),
         "return_statement" => render_return_statement(node, ctx),
+        "compound_statement" if is_autoreleasepool_shape(node) => {
+            render_autoreleasepool_statement(node, ctx)
+        }
         "declaration" if is_block_qualified_declaration(node, ctx.src) => {
             hoist_block_var(node, ctx);
             (String::new(), "id".to_string())
@@ -912,6 +971,117 @@ fn declarator_name_and_stars(node: Node, src: &str) -> (String, usize) {
 /// oracle's own unconditional choice, since `collection`'s static type
 /// might be anywhere from a concrete class to plain `id` -- never a
 /// direct call resolved from one receiver type.
+/// ObjC subscripting -- `array[0]`, `dict[@"key"]` -- desugared to the
+/// message send it stands for, the way Clang resolves it into a
+/// `PseudoObjectExpr` for the Python pipeline:
+///
+///   - `objectAtIndexedSubscript:` when the receiver's class implements it
+///   - `objectForKeyedSubscript:` when it implements that instead
+///
+/// Which one applies is decided by the receiver's class, not by the index
+/// expression: the two selectors are declared by different classes
+/// (`OZArray` and `OZDictionary` respectively), so a class implementing
+/// both is not a shape that arises. If it ever did, the index would have
+/// to break the tie.
+///
+/// A receiver whose static type isn't a resolved class pointer is left
+/// exactly as written -- that's ordinary C array indexing, which the
+/// Foundation sources themselves rely on (`_items[index]` over an
+/// `id *_items`). Only a *resolved object* receiver is rewritten, and one
+/// with no subscript method is a hard error rather than being emitted as
+/// pointer arithmetic over the object, which is what passing it through
+/// used to do.
+fn render_subscript_expression(node: Node, ctx: &mut EmitCtx) -> (String, String) {
+    let mut cursor = node.walk();
+    let children: Vec<Node> = node.children(&mut cursor).collect();
+    let open = children.iter().position(|c| c.kind() == "[");
+    let close = children.iter().position(|c| c.kind() == "]");
+    let pass_through = |ctx: &mut EmitCtx| {
+        let rebuilt = rebuild(node, ctx, &mut |child, ctx| {
+            if needs_translation(child) {
+                Some(render_expr(child, ctx).0)
+            } else {
+                None
+            }
+        });
+        (rebuilt, "id".to_string())
+    };
+
+    let (Some(open), Some(close)) = (open, close) else {
+        return pass_through(ctx);
+    };
+    let (Some(recv_node), Some(index_node)) = (
+        children.first().copied().filter(|_| open > 0),
+        children.get(open + 1).copied().filter(|_| open + 1 < close),
+    ) else {
+        return pass_through(ctx);
+    };
+
+    let (recv_text, recv_type) = render_expr(recv_node, ctx);
+    let Some(class) = class_name_from_type(&recv_type) else {
+        return pass_through(ctx);
+    };
+
+    const INDEXED: &str = "objectAtIndexedSubscript:";
+    const KEYED: &str = "objectForKeyedSubscript:";
+    let selector = if find_defining_class(ctx.program, &class, INDEXED, false).is_some() {
+        INDEXED
+    } else if find_defining_class(ctx.program, &class, KEYED, false).is_some() {
+        KEYED
+    } else {
+        ctx.err(
+            node,
+            format!(
+                "'{}' does not support subscripting (it implements neither '{}' nor '{}'), so '{}' has no meaning on it",
+                class,
+                INDEXED,
+                KEYED,
+                one_line(node_text(node, ctx.src))
+            ),
+        );
+        return (node_text(node, ctx.src).to_string(), "id".to_string());
+    };
+
+    let (index_text, _) = render_expr(index_node, ctx);
+    send_to_resolved_class(ctx, &class, selector, &recv_text, &[index_text])
+}
+
+/// One instance send whose receiver's class is already resolved, routed by
+/// the same rule as `render_message`'s resolved-receiver branch: a direct
+/// call when no subclass overrides the selector, the `class_id` switch when
+/// one does (see `Program::has_overriding_subclass`).
+///
+/// Used by desugarings that synthesize a send rather than translating a
+/// literal `[recv sel:...]` -- subscripting today. Deliberately does not
+/// handle `super` receivers or class methods: neither can arise from a
+/// desugaring, and both need care `render_message` already takes.
+fn send_to_resolved_class(
+    ctx: &mut EmitCtx,
+    class: &str,
+    selector: &str,
+    recv_text: &str,
+    arg_texts: &[String],
+) -> (String, String) {
+    let root = ctx.program.root_class().unwrap_or("OZSRoot").to_string();
+    if ctx.program.has_overriding_subclass(class, selector) {
+        return dynamic_dispatch_call(ctx.program, &root, selector, recv_text, arg_texts);
+    }
+    let Some(defining) = find_defining_class(ctx.program, class, selector, false) else {
+        return dynamic_dispatch_call(ctx.program, &root, selector, recv_text, arg_texts);
+    };
+    let (ret_ty, returns_instancetype) = method_return_type(ctx.program, &defining, selector, false)
+        .unwrap_or_else(|| ("void".to_string(), false));
+    let mut call_args = vec![format!("(struct {} *)({})", defining, recv_text)];
+    call_args.extend(arg_texts.iter().cloned());
+    let call =
+        format!("{}({})", method_fn_name(&defining, selector, false), call_args.join(", "));
+    if returns_instancetype && defining != class {
+        (format!("(struct {} *)({})", class, call), format!("struct {} *", class))
+    } else {
+        (call, ret_ty)
+    }
+}
+
 /// `@synchronized(obj) { body }` lowered to a scoped critical section:
 ///
 /// ```c
@@ -1071,6 +1241,73 @@ fn render_return_statement(node: Node, ctx: &mut EmitCtx) -> (String, String) {
             )
         }
     }
+}
+
+/// Is `node` an `@autoreleasepool { ... }` block? tree-sitter-objc gives
+/// it no node kind of its own -- it parses as an ordinary
+/// `compound_statement` whose first child is the literal token
+/// `@autoreleasepool`, ahead of the usual `{`. This is the one place that
+/// distinction is tested; everywhere else a bare `{ ... }` is left alone,
+/// so an ordinary nested block is unaffected.
+fn is_autoreleasepool_shape(node: Node) -> bool {
+    if node.kind() != "compound_statement" {
+        return false;
+    }
+    let mut cursor = node.walk();
+    let first_kind = node.children(&mut cursor).next().map(|c| c.kind());
+    first_kind == Some("@autoreleasepool")
+}
+
+/// `@autoreleasepool { body }` unwrapped to a plain compound statement --
+/// no pool object, no drain. Matches the Python pipeline exactly
+/// (`emit.py`: accepted syntactically and simply unwrapped to its inner
+/// compound statement -- there is no `OZAutoreleasePool` class or
+/// `-autorelease` method anywhere in this SDK). oz_static has no ARC
+/// either way (#189), so there is nothing here for a real pool to drain;
+/// the only thing that has to happen is dropping the `@autoreleasepool`
+/// token itself, which is not a real C token and would otherwise fail to
+/// compile verbatim.
+///
+/// Always runs when `is_autoreleasepool_shape` matches, even if nothing
+/// inside the body needs translating -- unlike the ordinary "byte-
+/// identical when untranslated" shortcut elsewhere, leaving the token in
+/// place is never valid, so there is no shortcut to take.
+fn render_autoreleasepool_statement(node: Node, ctx: &mut EmitCtx) -> (String, String) {
+    let mut cursor = node.walk();
+    let children: Vec<Node> = node.children(&mut cursor).collect();
+    // children[0] = "@autoreleasepool", children[1] = "{", last = "}".
+    let stmts = &children[2..children.len() - 1];
+
+    let rendered_stmts: Vec<(String, &str)> = stmts
+        .iter()
+        .map(|s| {
+            let rendered = render_expr(*s, ctx).0;
+            let combined = if ctx.pre_stmts.is_empty() {
+                rendered
+            } else {
+                let pre = ctx.pre_stmts.join("\n\t");
+                ctx.pre_stmts.clear();
+                format!("{}\n\t{}", pre, rendered)
+            };
+            (combined, node_text(*s, ctx.src))
+        })
+        .collect();
+
+    let mut out = String::from("{\n");
+    for (rendered, original) in &rendered_stmts {
+        if rendered == original {
+            out.push('\t');
+            out.push_str(original);
+        } else {
+            out.push_str("\t/* ");
+            out.push_str(&one_line(original));
+            out.push_str(" */\n\t");
+            out.push_str(rendered);
+        }
+        out.push('\n');
+    }
+    out.push('}');
+    (out, "id".to_string())
 }
 
 fn render_forin_statement(node: Node, ctx: &mut EmitCtx) -> (String, String) {
@@ -2001,7 +2238,8 @@ pub fn emit(source: &str, program: &Program) -> EmitOutput {
                 patches.push(Patch { start: node.start_byte(), end: node.end_byte(), text });
             }
             "class_implementation" => {
-                let (name, _, _category) = crate::collect::class_header(node, source);
+                let (name, _, category) = crate::collect::class_header(node, source);
+                let is_category_impl = category.is_some();
                 let ivars_scope = base_scope(&name, program);
                 let mut ctx = EmitCtx {
                     src: source,
@@ -2071,7 +2309,12 @@ pub fn emit(source: &str, program: &Program) -> EmitOutput {
                         }
                     }
                 }
-                if let Some(info) = program.classes.get(&name) {
+                // A category's properties merge into the class it extends,
+                // so every @implementation block for that class sees them
+                // -- synthesize the accessors only from the primary one,
+                // or each block emits its own definition of the same
+                // function.
+                if let Some(info) = program.classes.get(&name).filter(|_| !is_category_impl) {
                     for prop in &info.properties {
                         let getter_sel = prop.getter_sel.clone().unwrap_or_else(|| prop.name.clone());
                         if !defined_here.contains(&(getter_sel, false)) {
@@ -2397,7 +2640,8 @@ pub fn emit_split(source: &str, program: &Program, origins: &[(String, Range<usi
                 }
             }
             "class_implementation" => {
-                let (name, _, _category) = crate::collect::class_header(node, source);
+                let (name, _, category) = crate::collect::class_header(node, source);
+                let is_category_impl = category.is_some();
                 let ivars_scope = base_scope(&name, program);
                 let mut ctx = EmitCtx {
                     src: source,
@@ -2450,7 +2694,12 @@ pub fn emit_split(source: &str, program: &Program, origins: &[(String, Range<usi
                         }
                     }
                 }
-                if let Some(info) = program.classes.get(&name) {
+                // A category's properties merge into the class it extends,
+                // so every @implementation block for that class sees them
+                // -- synthesize the accessors only from the primary one,
+                // or each block emits its own definition of the same
+                // function.
+                if let Some(info) = program.classes.get(&name).filter(|_| !is_category_impl) {
                     for prop in &info.properties {
                         let getter_sel = prop.getter_sel.clone().unwrap_or_else(|| prop.name.clone());
                         if !defined_here.contains(&(getter_sel, false)) {

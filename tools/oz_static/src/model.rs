@@ -265,6 +265,49 @@ impl Program {
         false
     }
 
+    /// Does `class_name`, or any class up its superclass chain, conform
+    /// to `protocol` -- directly (`ClassInfo::conforms`) or via a
+    /// protocol that one extends (`ProtocolInfo::super_protocols`)?
+    ///
+    /// Used by `generics::check_program` to validate an `id<Proto>`-
+    /// constrained value's concrete class -- the same question
+    /// `render_interface`'s own conformance check answers for a class's
+    /// *declared* protocols, generalized here to protocol inheritance
+    /// and to an arbitrary value rather than a whole class's contract.
+    /// Mirrors the oracle's `_class_conforms_to`
+    /// (`tools/oz_transpile/resolve.py`), except that one does not walk
+    /// protocol inheritance -- only a class's own declared list, checked
+    /// up the superclass chain. Following inheritance too is strictly
+    /// more correct and costs nothing extra to compute here, so this
+    /// implementation isn't held back to match that gap.
+    pub fn class_conforms_to(&self, class_name: &str, protocol: &str) -> bool {
+        let extends = |declared: &[String]| -> bool {
+            let mut stack: Vec<String> = declared.to_vec();
+            let mut seen: HashSet<String> = HashSet::new();
+            while let Some(p) = stack.pop() {
+                if p == protocol {
+                    return true;
+                }
+                if !seen.insert(p.clone()) {
+                    continue;
+                }
+                if let Some(info) = self.protocols.get(&p) {
+                    stack.extend(info.super_protocols.iter().cloned());
+                }
+            }
+            false
+        };
+        let mut current = Some(class_name.to_string());
+        while let Some(name) = current {
+            let Some(info) = self.classes.get(&name) else { break };
+            if extends(&info.conforms) {
+                return true;
+            }
+            current = info.superclass.clone();
+        }
+        false
+    }
+
     /// Does any strict subclass of `class_name` implement `selector`?
     ///
     /// This is the class-hierarchy-analysis test that decides whether a
