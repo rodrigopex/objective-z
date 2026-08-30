@@ -113,6 +113,75 @@ function(objz_transpile_sources_static target)
     set(_manifest ${_outdir}/oz_static_manifest.txt)
     file(MAKE_DIRECTORY ${_outdir}/Foundation)
 
+    # ── Clang AST dumps ───────────────────────────────────────────────
+    #
+    # tree-sitter gives oz2c syntax but no resolved types, so it cannot tell
+    # on its own whether an `id`-typed ivar is an object the class owns. That
+    # answer decides whether ARC releases the ivar: releasing a non-object
+    # corrupts memory, skipping a real one leaks it, so without a dump oz2c
+    # stays conservative and skips every `id` ivar. This build path passed no
+    # --ast at all, which meant the on-target build was the one place those
+    # facts were missing.
+    #
+    # One dump per source, and `--ast` is repeatable because a single dump
+    # is not enough: Clang preprocesses `#import`s, so a dump of `main.m`
+    # carries every `@interface` it imports but only the `@implementation`s
+    # written in that one file. The module's own `src/*.m` are dumped too --
+    # oz2c splices them via `--impl-dir`, and their ivars are exactly the
+    # ones the Foundation classes own. oz2c unions the facts
+    # (`astinfo::AstFacts::merge`).
+    objz_find_clang()
+    _objz_build_ast_flags(_ast_flags)
+    list(APPEND _ast_flags -w)  # AST dump is transpiler input; warnings are noise
+    list(PREPEND _ast_flags -I${_mod}/include/oz_sdk)
+    # -fobjc-arc, or the dump carries no ownership qualifiers at all and the
+    # whole exercise is pointless.
+    list(APPEND _ast_flags -fobjc-arc)
+
+    file(GLOB _sdk_impls ${_mod}/src/*.m)
+    set(_ast_dir ${_outdir}/ast)
+    file(MAKE_DIRECTORY ${_ast_dir})
+    set(_ast_script "${_ast_dir}/oz_static_ast.sh")
+    set(_ast_lines "#!/bin/sh\n")
+    set(_ast_args "")
+    foreach(_src ${_src_abs_list} ${_sdk_impls})
+        get_filename_component(_name ${_src} NAME)
+        string(MAKE_C_IDENTIFIER "${_name}" _safe)
+        set(_ast "${_ast_dir}/${_safe}.ast.json")
+        string(JOIN " " _one ${OBJZ_CLANG_COMPILER} ${_ast_flags}
+               -fsyntax-only -Xclang -ast-dump=json ${_src})
+        # `|| true`: a source Clang cannot fully parse still yields a usable
+        # partial dump, and oz2c's own diagnostics are the better error
+        # anyway. A dump that comes out empty is skipped below.
+        string(APPEND _ast_lines "${_one} > ${_ast} 2>/dev/null || true\n")
+        list(APPEND _ast_args --ast ${_ast})
+    endforeach()
+    file(WRITE ${_ast_script} "${_ast_lines}")
+    execute_process(COMMAND sh ${_ast_script} RESULT_VARIABLE _ast_rc)
+    if(NOT _ast_rc EQUAL 0)
+        message(FATAL_ERROR
+            "objz_transpile_sources_static: Clang AST dump failed -- see ${_ast_dir}")
+    endif()
+    # Only non-empty dumps are handed over: oz2c rejects one it cannot parse,
+    # and an empty file is not a fact about anything.
+    set(_oz2c_ast "")
+    foreach(_src ${_src_abs_list} ${_sdk_impls})
+        get_filename_component(_name ${_src} NAME)
+        string(MAKE_C_IDENTIFIER "${_name}" _safe)
+        set(_ast "${_ast_dir}/${_safe}.ast.json")
+        if(EXISTS ${_ast})
+            file(SIZE ${_ast} _ast_size)
+            if(_ast_size GREATER 0)
+                list(APPEND _oz2c_ast --ast ${_ast})
+            endif()
+        endif()
+    endforeach()
+    if(NOT _oz2c_ast)
+        message(WARNING
+            "objz_transpile_sources_static: no usable Clang AST dump -- ARC will "
+            "skip every id-typed ivar rather than risk releasing a non-object")
+    endif()
+
     # src/OZLog.c (linked in below, shared verbatim with the Python
     # backend) `#include`s "oz_dispatch.h" and "OZObject_ozh.h" -- the
     # Python pipeline's own generated filenames. Shim both to oz_static's
@@ -125,7 +194,8 @@ function(objz_transpile_sources_static target)
 
     # ── Configure-time: run once to discover output files ─────────────
     execute_process(
-        COMMAND ${_oz2c} ${_oz2c_flags} ${_src_abs_list} ${_outdir} --manifest ${_manifest}
+        COMMAND ${_oz2c} ${_oz2c_flags} ${_oz2c_ast} ${_src_abs_list} ${_outdir}
+                --manifest ${_manifest}
         RESULT_VARIABLE _rc
     )
     if(NOT _rc EQUAL 0)
@@ -139,7 +209,9 @@ function(objz_transpile_sources_static target)
         COMMAND ${CMAKE_COMMAND} -E env --unset=CC --unset=CXX --unset=CFLAGS --unset=CXXFLAGS
                 --unset=LDFLAGS --unset=AR --unset=RANLIB --unset=NM
                 cargo build --manifest-path ${_oz_static_dir}/Cargo.toml
-        COMMAND ${_oz2c} ${_oz2c_flags} ${_src_abs_list} ${_outdir} --manifest ${_manifest}
+        COMMAND sh ${_ast_script}
+        COMMAND ${_oz2c} ${_oz2c_flags} ${_oz2c_ast} ${_src_abs_list} ${_outdir}
+                --manifest ${_manifest}
         DEPENDS ${_src_abs_list}
         COMMENT "oz_static: generating C from ObjC (oz2c)"
     )
@@ -177,17 +249,12 @@ function(objz_transpile_sources_static target)
     target_compile_definitions(${target} PRIVATE __unsafe_unretained=)
 
     # Add OZLog support (pure C, matching the prototypes hardcoded into
-    # oz_static's own generated companion header -- see companion.rs).
-    #
-    # OZ_BACKEND_STATIC picks the generated header names in that file: it
-    # reaches for the dispatch header and the root class's struct, and the
-    # two backends name both differently. Without the define it includes
-    # "oz_dispatch.h" and "OZObject_ozh.h", which exist only in the Python
-    # backend's output, so no sample that logs could be built at all.
+    # oz_static's own generated companion header -- see companion.rs). It
+    # reaches for "oz_dispatch.h" and "OZObject_ozh.h", the Python
+    # pipeline's generated filenames; the two shim headers written into
+    # ${_outdir}/Foundation above are what make the same file compile here,
+    # and ${_outdir}/Foundation is on this target's include path.
     target_sources(${target} PRIVATE ${_mod}/src/OZLog.c)
-    set_source_files_properties(${_mod}/src/OZLog.c
-        DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-        PROPERTIES COMPILE_DEFINITIONS OZ_BACKEND_STATIC)
 
     set_target_properties(${target} PROPERTIES LINKER_LANGUAGE C)
 endfunction()

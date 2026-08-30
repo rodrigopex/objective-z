@@ -34,19 +34,24 @@ when the sample states it), plus one Clang AST dump per entry `.m` via
 cc -DOZ_PLATFORM_HOST -DOZ_HEAP_SUPPORT \
    -I include -I tests/behavior/include/zephyr_stubs \
    -I <outdir> -I <outdir>/Foundation -c <file> -o <file>.o
-cc <every .o> src/OZLog.c tests/behavior/zephyr_stubs.c \
-   -DOZ_BACKEND_STATIC -o a.out
+cc <every .o> src/OZLog.c tests/behavior/zephyr_stubs.c -o a.out
 ./a.out            # checked against the sample's own sample.yaml
 ```
 
-The real `src/OZLog.c` is linked, not a stand-in: `OZ_BACKEND_STATIC` now
-selects oz_static's generated header names inside it (see gap K), and the
-host stubs gained `<zephyr/sys/printk.h>` plus a `zephyr_stubs.c` defining
-`printk`, so the file both backends share is exercised rather than
-substituted.
+The real `src/OZLog.c` is linked, not a stand-in. The sweep writes the same
+two shim headers `cmake/oz_static.cmake` writes (`oz_dispatch.h`,
+`OZObject_ozh.h`, each forwarding to oz_static's own spelling), and the host
+stubs gained `<zephyr/sys/printk.h>` plus a `zephyr_stubs.c` defining
+`printk` -- so the file both backends share is exercised the way the real
+build exercises it, rather than substituted. See gap K.
 
 Each linked sample is then **run** under an ordinary build and again under
 `-fsanitize=address,undefined` with leak detection on. All nine are clean.
+
+A separate pass compiles the generated C with `-Wall -Wextra` and counts
+warnings by kind. Zephyr builds with `-Werror`, so a warning in generated
+output is a build failure there rather than a style note — see gap M. What
+is left is 58 `-Wunused-parameter`, which is `-Wextra` only.
 
 | Sample | Transpiles | Compiles + links | Runs | Notes |
 | --- | --- | --- | --- | --- |
@@ -342,26 +347,34 @@ by setting `deallocating = 1` on a boxed literal from birth -- which says
 "currently being deallocated" to mean "never deallocate". That one is left
 as is for now; it works, and changing the release path is a separate step.
 
-**K. `src/OZLog.c` could not be built by the static backend at all.**
-Fixed. `cmake/oz_static.cmake` links that file unconditionally, but it
-opened with `#include "oz_dispatch.h"` and `#include "OZObject_ozh.h"` --
-names that exist only in the Python backend's output. So no sample that logs
-could ever have been built through the static backend, which had gone
-unnoticed because none selects it. The two includes are now switched on
-`OZ_BACKEND_STATIC`, which `cmake/oz_static.cmake` defines for that one
-source; everything else the file needs (`struct OZObject`, and
-`OZ_PROTOCOL_SEND_cDescription_maxLength_` with the same signature) both
-backends already provide alike.
+**K. The sample sweep never compiled `src/OZLog.c`, and a claim here was
+wrong about why.**
 
-Verified rather than assumed: the host stubs gained
-`<zephyr/sys/printk.h>` and a `tests/behavior/zephyr_stubs.c` defining
-`printk`, so the real file now compiles and links in the sample sweep.
+The correction first, since it was recorded here as a finding: an earlier
+version of this file said the static backend could not build `src/OZLog.c`
+at all, because that file includes `"oz_dispatch.h"` and
+`"OZObject_ozh.h"` -- the Python pipeline's generated filenames. That was
+wrong. `cmake/oz_static.cmake` has written shim headers of exactly those two
+names into `<outdir>/Foundation` since oz_static was first wired into the
+build (`472a44c`), each forwarding to oz_static's own spelling, and that
+directory is on the target's include path. The unmodified file compiles
+against oz_static's output; verified by reproducing the shims by hand and
+compiling it. A conditional-include change made on the strength of the wrong
+claim has been reverted -- two mechanisms for one problem is worse than one.
+
+What was real: the sweep could not compile that file on host, because it
+includes `<zephyr/sys/printk.h>` and the host stubs had no such header. So
+the one pure-C runtime file both backends link was never exercised by any
+host check, which is what let the mistaken claim stand. The stubs now
+provide it, plus a `tests/behavior/zephyr_stubs.c` defining `printk`, and
+the sweep links the real file.
+
 `printk` is a prototype plus a definition rather than a macro, because a
 macro would collide with transpiled sources that declare the function
 themselves -- `samples/pool_demo` does exactly that so its Clang AST dump
 resolves without Zephyr headers.
 
-Adding those stubs moved four more samples from Zephyr-blocked to running:
+Adding those stubs moved four samples from Zephyr-blocked to running:
 `pool_demo`, `transpiled_blocks`, `transpiled_generics`, `transpiled_led`.
 They had never needed anything but `printk`.
 
@@ -386,6 +399,56 @@ to balance a second one; anything else is borrowed and gets retained. Order
 is assign, retain new, release old -- what makes `_x = _x` safe. Properties
 were never affected: a synthesized setter already did retain-new /
 release-old, so only *direct* ivar assignment was missing it.
+
+**M. Generated C produced `-Wall` warnings, and one was a wrong type.**
+Zephyr builds with `-Werror`, so each of these was a build failure waiting
+on target, and none of them showed up in a plain compile check. Found by
+compiling the samples' generated output with `-Wall -Wextra` and counting.
+
+- **`const` was dropped from every method signature** (6 warnings, and the
+  real problem). `extract_type_and_stars` never looked at `type_qualifier`
+  nodes, so `- (const char *)cString` in
+  `include/oz_sdk/Foundation/OZString.h` came out as
+  `char *OZString_cString(...)`. Returning the `const char *` ivar from it
+  warns "discards qualifiers" — but the signature was simply wrong, and a
+  caller could write through the result. Qualifiers written before the type
+  name are now kept.
+
+  The fix needs an allowlist, not a denylist: `type_qualifier` also covers
+  Objective-C's ARC and bridging qualifiers, and preserving those emitted
+  `(__bridge void *)` into `src/OZTimer.m`'s generated cast, which is not C.
+  Keeping only `const`/`volatile`/`restrict`/`_Atomic` means an unrecognised
+  qualifier keeps the old behaviour of being dropped — at worst a weaker
+  type, where passing an unknown word through is invalid C.
+
+- **`'/*' within block comment`** (36 warnings). Banner comments echo the
+  source they describe, and the escaping was one-sided: an embedded `*/` was
+  neutralised, the opening `/*` was not. `OZQ31.h`'s ivar doc comments
+  account for all 36 on their own.
+
+- **`expression result unused`** on the strong-ivar assignment from gap L.
+  It is emitted as a comma expression so it stays usable wherever an
+  assignment was, and the trailing read of the ivar is what gives it a
+  value — but as a bare statement, which is nearly every case, that read is
+  discarded. The trailing value is now emitted only where something can use
+  it.
+
+**N. The production build passed no `--ast`.** Fixed.
+`cmake/oz_static.cmake` now dumps one Clang AST per source -- each entry
+`.m` plus the module's own `src/*.m`, which oz2c splices through
+`--impl-dir` -- and passes them all.
+
+This was the one place the facts were missing. tree-sitter gives oz2c syntax
+but no resolved types, so it cannot tell on its own whether an `id`-typed
+ivar is an object the class owns, and that answer decides whether ARC
+releases it: releasing a non-object corrupts memory, skipping a real one
+leaks it. Without a dump oz2c stays conservative and skips every `id` ivar
+-- correct, but a leak on target that neither the corpus harness nor the
+sample sweep would show, since both do pass `--ast`.
+
+One dump is not enough, which is why `--ast` is repeatable: Clang
+preprocesses `#import`s, so a dump of `main.m` carries every `@interface` it
+imports but only the `@implementation`s written in that one file.
 
 **D. File-scope `static` object variables are not type-tracked.** Reduced
 to a 20-line reproducer:
@@ -582,16 +645,16 @@ CONFIG_OBJZ_BACKEND_STATIC=y
 
 ## Not verified
 
-**No Zephyr cross-build was run.** Everything above is a host measurement.
-Nothing here claims any sample builds or runs on target, and one finding
-says the Zephyr path is still not fully exercised:
+**No Zephyr cross-build was run.** Everything above is a host measurement,
+and nothing here claims any sample builds or runs on target.
 
-- **`cmake/oz_static.cmake` passes no `--ast`.** So the production build
-  path gets none of the Clang ownership facts, and `--ast` support is
-  exercised only by the corpus harness and the sample sweep. Since
-  definedness now rests on the parse (gap G), the AST's remaining job there
-  is ivar ownership — which is what decides whether ARC releases an
-  `id`-typed ivar.
+`cmake/oz_static.cmake` now dumps one Clang AST per source and passes them
+all with `--ast` (gap N), so that path is no longer missing the ownership
+facts — but the CMake wiring itself is unverified here, since configuring it
+needs a Zephyr cross-build. What *was* verified is the part most likely to be
+wrong: the generated dump script and the multi-`--ast` handoff were
+reproduced under `cmake -P` against the real Clang, producing 12 non-empty
+dumps that oz2c accepted.
 
 **The samples are run on host, not on target.** Nine of them execute and
 are checked against their own `sample.yaml`, which is a real and
@@ -599,13 +662,13 @@ independent oracle — but a host run says nothing about `k_mem_slab`, real
 interrupt-disabled spinlocks, or code size, and the three samples needing
 kernel or device-tree infrastructure are not run at all.
 
-Recorded because the reasoning is worth keeping: an earlier note here asked
-whether making `src/OZLog.c` a `.m` and letting each backend transpile it
-would fix gap K. It would not have. The Python backend *does* model
-top-level C functions (`collect.py::_collect_function`) but has no variadic
-support anywhere — no `isVariadic`, no `...`, and every signature is built
-as `", ".join(p.oz_type.c_param_decl(p.name) for p in func.params)`
+Recorded because the reasoning is worth keeping: it was asked whether making
+`src/OZLog.c` a `.m` and letting each backend transpile it would be an
+improvement. It would not. The Python backend *does* model top-level C
+functions (`collect.py::_collect_function`) but has no variadic support
+anywhere — no `isVariadic`, no `...`, and every signature is built as
+`", ".join(p.oz_type.c_param_decl(p.name) for p in func.params)`
 (`emit.py:567`, `:795`, `:858`) — so `void OZLog(const char *fmt, ...)`
 would silently lose its varargs and its `va_start(args, fmt)` would be
 undefined. OZLog is inherently variadic, making it the file least suited to
-that conversion. Gap K fixes it the other way instead.
+that conversion. Nothing needed changing there in any case; see gap K.

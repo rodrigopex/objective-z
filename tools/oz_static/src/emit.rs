@@ -26,12 +26,24 @@ fn node_text<'a>(node: Node, src: &'a str) -> &'a str {
 /// Collapse whitespace (including newlines) into single spaces, for a
 /// readable one-line `/* ... */` comment out of a possibly multi-line or
 /// oddly-indented original statement. Every caller wraps the result in
-/// `/* ... */`, so any embedded `*/` in the original text (a real inline
-/// comment, or even a string/char literal containing those two
-/// characters) is neutralized to `* /` here too -- C block comments
-/// don't nest, so left as-is it would close the wrapping comment early.
+/// `/* ... */`, so any embedded comment delimiter in the original text (a
+/// real inline comment, or even a string literal containing those two
+/// characters) is neutralized here -- C block comments don't nest.
 fn one_line(text: &str) -> String {
-    text.split_whitespace().collect::<Vec<_>>().join(" ").replace("*/", "* /")
+    neutralize_comment_delimiters(&text.split_whitespace().collect::<Vec<_>>().join(" "))
+}
+
+/// Make `text` safe to place inside a `/* ... */` block comment.
+///
+/// Both delimiters have to go, not just the closing one. `*/` left as-is
+/// closes the wrapping comment early and hands the rest to the compiler as
+/// live code -- the obvious hazard, and the only one this used to handle.
+/// But a surviving `/*` is a diagnostic in its own right: Clang and GCC both
+/// warn "'/*' within block comment" under `-Wall`, and Zephyr builds with
+/// `-Werror`, so echoing a source comment into a banner was enough to fail
+/// the build. 36 of those came from `OZQ31.h`'s ivar doc comments alone.
+fn neutralize_comment_delimiters(text: &str) -> String {
+    text.replace("*/", "* /").replace("/*", "/ *")
 }
 
 const BANNER_WIDTH: usize = 80;
@@ -50,11 +62,12 @@ fn rule_fill(width: usize, fill: char) -> String {
 /// comment (e.g. an ivar's own inline doc comment) -- C block comments
 /// don't nest, so an embedded `*/` would otherwise close this banner
 /// early, leaving the rest of it (and whatever real code follows) to be
-/// parsed as live C. Every `*/` inside `content` is neutralized to `* /`
-/// before wrapping, the standard escape for exactly this case; cosmetic
-/// only, since this text is documentation either way.
+/// parsed as live C, and a surviving `/*` warns under `-Wall`. Both
+/// delimiters are neutralized before wrapping -- see
+/// `neutralize_comment_delimiters`; cosmetic only, since this text is
+/// documentation either way.
 fn banner_box(content: &str, fill: char) -> String {
-    let content = content.trim_end().replace("*/", "* /");
+    let content = neutralize_comment_delimiters(content.trim_end());
     let mut out = format!("/* {}\n", rule_fill(BANNER_WIDTH - 3, fill));
     for line in content.lines() {
         out.push_str(" * ");
@@ -1278,12 +1291,26 @@ fn render_strong_ivar_assign(
     } else {
         format!("oz_static_retain((struct {root} *)(self->{path})), ", root = root, path = path)
     };
+    // The comma expression yields the stored value only where something can
+    // use it. As a bare statement -- which is nearly always -- a trailing
+    // `self->_x` is a read whose result is discarded, and Clang says so:
+    // "expression result unused" [-Wunused-value]. Zephyr builds with
+    // -Werror, so that is a build failure, not just noise.
+    let yields = if node
+        .parent()
+        .is_some_and(|parent| parent.kind() == "expression_statement")
+    {
+        String::new()
+    } else {
+        format!(", self->{path}", path = path)
+    };
     let expr = format!(
-        "(self->{path} = {value}, {retain}oz_static_release({prev}), self->{path})",
+        "(self->{path} = {value}, {retain}oz_static_release({prev}){yields})",
         path = path,
         value = value,
         retain = retain,
-        prev = prev
+        prev = prev,
+        yields = yields
     );
     let ty = if value_ty == "id" { format!("struct {} *", root) } else { value_ty };
     Some((expr, ty))

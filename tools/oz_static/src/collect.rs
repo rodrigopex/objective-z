@@ -174,9 +174,58 @@ pub(crate) fn render_type(type_text: &str, stars: usize, known_classes: &HashSet
 pub(crate) fn extract_type_and_stars(node: Node, src: &str) -> (String, usize) {
     let mut type_text = String::new();
     let mut stars = 0;
+    let mut qualifiers: Vec<String> = Vec::new();
     let mut cursor = node.walk();
-    fn walk(n: Node, src: &str, type_text: &mut String, stars: &mut usize) {
+    fn walk(
+        n: Node,
+        src: &str,
+        type_text: &mut String,
+        stars: &mut usize,
+        qualifiers: &mut Vec<String>,
+    ) {
         match n.kind() {
+            // `const`/`volatile`/`restrict`, which are their own nodes and
+            // were simply dropped. That made a generated signature disagree
+            // with the source it came from: `- (const char *)cString` in
+            // `include/oz_sdk/Foundation/OZString.h` came out as
+            // `char *OZString_cString(...)`, and returning `self->_data`
+            // (a `const char *` ivar) from it warns
+            // "discards qualifiers" under `-Wall` -- a build failure under
+            // Zephyr's `-Werror`, and a quietly wrong public type either
+            // way.
+            //
+            // Only qualifiers seen *before* the type name are collected,
+            // which is where a pointee qualifier sits (`const char *`). One
+            // written after the star qualifies the pointer itself
+            // (`char *const`) and belongs to the declarator, not here.
+            "type_qualifier" => {
+                if type_text.is_empty() {
+                    let text = node_text(n, src).trim().to_string();
+                    // An allowlist, because this node kind also covers
+                    // Objective-C's ARC and bridging qualifiers -- `__bridge`,
+                    // `__strong`, `__unsafe_unretained` and friends -- which
+                    // name nothing in C and must keep being dropped.
+                    // Preserving them emitted `(__bridge void *)` into the
+                    // generated cast in `src/OZTimer.m`, which is not C:
+                    // "use of undeclared identifier '__bridge'".
+                    //
+                    // Allowlist rather than a denylist so an unrecognised
+                    // qualifier keeps the old behaviour of being dropped:
+                    // losing one is at worst a weaker type, while passing an
+                    // unknown word through is invalid C.
+                    const C_QUALIFIERS: [&str; 6] = [
+                        "const",
+                        "volatile",
+                        "restrict",
+                        "__restrict",
+                        "__restrict__",
+                        "_Atomic",
+                    ];
+                    if C_QUALIFIERS.contains(&text.as_str()) && !qualifiers.contains(&text) {
+                        qualifiers.push(text);
+                    }
+                }
+            }
             // `sized_type_specifier` is a multi-keyword primitive type
             // (`unsigned long`, `long long`, `unsigned char`, ...) --
             // tree-sitter-objc gives it its own node kind, distinct from
@@ -283,13 +332,16 @@ pub(crate) fn extract_type_and_stars(node: Node, src: &str) -> (String, usize) {
             _ => {
                 let mut c = n.walk();
                 for child in n.children(&mut c) {
-                    walk(child, src, type_text, stars);
+                    walk(child, src, type_text, stars, qualifiers);
                 }
             }
         }
     }
     for child in node.children(&mut cursor) {
-        walk(child, src, &mut type_text, &mut stars);
+        walk(child, src, &mut type_text, &mut stars, &mut qualifiers);
+    }
+    if !qualifiers.is_empty() && !type_text.is_empty() {
+        type_text = format!("{} {}", qualifiers.join(" "), type_text);
     }
     (type_text, stars)
 }
