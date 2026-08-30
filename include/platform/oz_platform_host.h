@@ -145,6 +145,13 @@ typedef int oz_spinlock_t;
 typedef int oz_spinlock_key_t;
 #define OZ_SPINLOCK(lck) if ((void)(lck), 1)
 
+/** @brief Zero a spinlock before first use -- see the Zephyr backend for
+ *  why generated code calls this instead of using a brace initializer. */
+static inline void oz_spin_init(oz_spinlock_t *lck)
+{
+        *lck = 0;
+}
+
 static inline oz_spinlock_key_t oz_spin_lock(oz_spinlock_t *lck)
 {
         (void)lck;
