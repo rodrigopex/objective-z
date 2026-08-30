@@ -237,9 +237,37 @@ oracle can release them because Clang tells it which are objects.
 
 #### The 11 static-side failures
 
-Six are runtime crashes (`exit -11`) that were previously masked: those
-cases could not be linked at all, so their generated code had never been
-executed. Each needs its own triage.
+Six are runtime crashes (`exit -11`) that were previously masked -- those
+cases could not be linked at all, so their generated code had never run.
+Triaged, and they are **not six separate bugs**: all six are the missing ARC
+(#189) again, reached by a different route.
+
+Each dies at the same instruction, `OZQ31_fixedWithInt32__cls` writing
+through a NULL. The slab ran out, `alloc` returned nil as it is supposed to,
+and the factory in the real `OZQ31.m` writes through the result without
+checking. The pool ran out because oz_static has no ARC: every temporary
+Q31 stays live for the whole run, where the oracle releases each at the end
+of the method that made it. `inline/array_fast_access.m` declares
+`OZQ31=3`, which is ample with ARC and hopeless without it.
+
+Raising the sizes for the static side only was considered and rejected:
+`lifecycle/alloc_failure_enomem.m` asserts the pool bound *exactly* -- a
+one-block pool whose second `alloc` must be NULL -- so pool sizes are part
+of what is under test, not a knob the harness may turn. These six stay
+unmeasurable until ARC lands, and that is the honest state.
+
+What did change is the diagnosis. Building with
+`-DOZ_STATIC_TRAP_POOL_EXHAUSTION` turns
+
+    EXC_BAD_ACCESS (code=1, address=0x18) in OZQ31_fixedWithInt32__cls
+
+into
+
+    Assertion failed: OZQ31 pool exhausted -- raise it with --pool-sizes OZQ31=N
+
+naming both the pool and the fix, at the point of exhaustion rather than
+wherever the nil happens to be dereferenced. Off by default, because
+returning nil is the contract.
 
 The other five are individual and understood: two drivers reach for
 `_meta`, the oracle's name for the root tracking struct that oz_static

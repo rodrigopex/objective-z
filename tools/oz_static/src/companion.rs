@@ -139,6 +139,29 @@ scoped to a parameter list */\n",
     header.replace(FORWARD_DECL_MARKER, &block)
 }
 
+/// An opt-in trap for slab exhaustion, emitted inside every class's alloc.
+///
+/// Returning nil when a pool runs out is the contract, and
+/// `tests/behavior/cases/lifecycle/alloc_failure_enomem.m` asserts it
+/// exactly -- a one-block pool, second alloc NULL. So this cannot be on by
+/// default.
+///
+/// It exists because that nil then travels. A factory like OZQ31's
+/// `+fixedWithInt32:` writes through the alloc result without checking, so
+/// exhaustion surfaces as `EXC_BAD_ACCESS` inside a function that has
+/// nothing to do with the cause, with no mention of which pool ran out.
+/// Building with `-DOZ_STATIC_TRAP_POOL_EXHAUSTION` converts that into an
+/// immediate named failure at the point of exhaustion, which is the
+/// difference between a five-minute diagnosis and a debugger session.
+fn render_exhaustion_trap(name: &str) -> String {
+    format!(
+        "#ifdef OZ_STATIC_TRAP_POOL_EXHAUSTION\n\t\toz_assert_msg(0, \
+         \"{name} pool exhausted -- raise it with --pool-sizes {name}=N or an \
+         oz-pool comment\");\n#endif\n",
+        name = name
+    )
+}
+
 fn render_slab_define(name: &str, slots: usize) -> String {
     format!(
         "/* synthesized: backing storage for every {name} instance -- {slots} slot(s), \
@@ -215,9 +238,11 @@ pub(crate) fn render_alloc_free(
     c.push_str(&format!(
         "\tstruct {name} *obj;\n\
          \tif (oz_slab_alloc(&oz_slab_{name}, (void **)&obj) != 0) {{\n\
+         {trap}\
          \t\treturn (struct {name} *)0;\n\t}}\n\
          \tmemset(obj, 0, sizeof(struct {name}));\n",
-        name = name
+        name = name,
+        trap = render_exhaustion_trap(name)
     ));
     c.push_str(&format!(
         "\t((struct {root} *)obj)->oz_class_id = OZ_STATIC_CLASS_{name};\n\
@@ -264,9 +289,11 @@ pub(crate) fn render_array_support(
     c.push_str(&format!(
         "\tstruct {name} *obj;\n\
          \tif (oz_slab_alloc(&oz_slab_{name}, (void **)&obj) != 0) {{\n\
+         {trap}\
          \t\treturn (struct {name} *)0;\n\t}}\n\
          \tmemset(obj, 0, sizeof(struct {name}));\n",
-        name = name
+        name = name,
+        trap = render_exhaustion_trap(name)
     ));
     c.push_str(&format!(
         "\t((struct {root} *)obj)->oz_class_id = OZ_STATIC_CLASS_{name};\n\
@@ -344,9 +371,11 @@ pub(crate) fn render_dict_support(
     c.push_str(&format!(
         "\tstruct {name} *obj;\n\
          \tif (oz_slab_alloc(&oz_slab_{name}, (void **)&obj) != 0) {{\n\
+         {trap}\
          \t\treturn (struct {name} *)0;\n\t}}\n\
          \tmemset(obj, 0, sizeof(struct {name}));\n",
-        name = name
+        name = name,
+        trap = render_exhaustion_trap(name)
     ));
     c.push_str(&format!(
         "\t((struct {root} *)obj)->oz_class_id = OZ_STATIC_CLASS_{name};\n\
