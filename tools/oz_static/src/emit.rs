@@ -316,6 +316,14 @@ struct EmitCtx<'a> {
     /// enclosing statement. Mirrors the Python pipeline's `ctx.pre_stmts`
     /// (see `tools/oz_transpile/emit.py`).
     pre_stmts: Vec<String>,
+    /// Cleanup statements owed by the `@synchronized` blocks currently
+    /// enclosing the node being rendered, outermost first. A `return` has
+    /// to replay them (innermost first) before leaving -- see
+    /// `render_return_statement`.
+    sync_cleanups: Vec<String>,
+    /// C return type of the method being rendered, needed to declare the
+    /// temporary a `return` inside `@synchronized` evaluates into.
+    method_return_type: String,
 }
 
 impl<'a> EmitCtx<'a> {
@@ -356,6 +364,7 @@ fn needs_translation(node: Node) -> bool {
             | "at_expression"
             | "array_literal"
             | "dictionary_literal"
+            | "synchronized_statement"
     ) {
         return true;
     }
@@ -495,6 +504,8 @@ fn render_expr(node: Node, ctx: &mut EmitCtx) -> (String, String) {
             }
         }
         "for_statement" if is_forin_shape(node) => render_forin_statement(node, ctx),
+        "synchronized_statement" => render_synchronized_statement(node, ctx),
+        "return_statement" => render_return_statement(node, ctx),
         "declaration" if is_block_qualified_declaration(node, ctx.src) => {
             hoist_block_var(node, ctx);
             (String::new(), "id".to_string())
@@ -901,6 +912,167 @@ fn declarator_name_and_stars(node: Node, src: &str) -> (String, usize) {
 /// oracle's own unconditional choice, since `collection`'s static type
 /// might be anywhere from a concrete class to plain `id` -- never a
 /// direct call resolved from one receiver type.
+/// `@synchronized(obj) { body }` lowered to a scoped critical section:
+///
+/// ```c
+/// { /* @synchronized(obj) */
+///     oz_spinlock_t _oz_sync_lock_... = {0};
+///     oz_spinlock_key_t _oz_sync_key_... = oz_spin_lock(&_oz_sync_lock_...);
+///     oz_static_retain((struct OZObject *)(obj));
+///     ... body ...
+///     oz_static_release((struct OZObject *)(obj));
+///     oz_spin_unlock(&_oz_sync_lock_..., _oz_sync_key_...);
+/// }
+/// ```
+///
+/// The lock is fresh per block rather than per object, matching the
+/// Python pipeline, which allocates a new `OZSpinLock` per block and
+/// locks that object's own field (`emit.py::_emit_synchronized_stmt` +
+/// `_inject_oz_spinlock`). What this buys on Zephyr is an
+/// interrupt-disabled critical section (`k_spin_lock`), not mutual
+/// exclusion keyed on `obj`; on host it compiles to nothing (see
+/// `platform/oz_platform_{zephyr,host}.h`).
+///
+/// Locking `obj`'s own root-level `oz_prop_lock` instead would be closer
+/// to what the source literally says, and was tried -- but real
+/// `@synchronized` is recursive, and a `k_spinlock` is not, so
+/// `@synchronized(self) { @synchronized(self) { ... } }` (a shape the
+/// oracle's own `tests/behavior/cases/synchronized/nested.m` exercises,
+/// with two receivers that may alias) would self-deadlock on hardware
+/// while passing on host, where the lock is a no-op. A per-block lock
+/// cannot deadlock, so it is the safer half of that trade until there is
+/// a recursive lock in the PAL to build on.
+///
+/// The unlock is emitted as plain statements rather than through the
+/// scoped `OZ_SPINLOCK` macro because that macro is a `for` loop, so a
+/// `break` inside it would skip the unlock. Jumps out of the body are
+/// handled instead by `ctx.sync_cleanups`: `render_return_statement`
+/// replays the pending cleanup ahead of any `return`, matching the
+/// oracle's `early_return.m`. `break`/`continue`/`goto` crossing the
+/// boundary stay hard errors (`staticbar::check_synchronized_body`) --
+/// unlike `return`, they can leave the block without a value to hand
+/// back, and no oracle case needs them.
+fn render_synchronized_statement(node: Node, ctx: &mut EmitCtx) -> (String, String) {
+    let (line, col) = line_col(ctx.src, node.start_byte());
+    let mut cursor = node.walk();
+    let children: Vec<Node> = node.children(&mut cursor).collect();
+
+    let open = children.iter().position(|c| c.kind() == "(");
+    let close = children.iter().position(|c| c.kind() == ")");
+    let (Some(open), Some(close)) = (open, close) else {
+        ctx.err(node, "malformed @synchronized: expected '@synchronized(object) { ... }'");
+        return (node_text(node, ctx.src).to_string(), "id".to_string());
+    };
+    let Some(obj_node) = children.get(open + 1).copied().filter(|_| open + 1 < close) else {
+        ctx.err(node, "@synchronized needs an object to lock: '@synchronized(object) { ... }'");
+        return (node_text(node, ctx.src).to_string(), "id".to_string());
+    };
+    let Some(body) = children.get(close + 1).copied() else {
+        ctx.err(node, "@synchronized needs a body: '@synchronized(object) { ... }'");
+        return (node_text(node, ctx.src).to_string(), "id".to_string());
+    };
+
+    let (obj_text, _) = render_expr(obj_node, ctx);
+    let root = ctx.program.root_class().unwrap_or("OZObject").to_string();
+
+    ctx.block_counter += 1;
+    let suffix = format!("L{}_C{}_{}", line, col, ctx.block_counter);
+    let lock = format!("_oz_sync_lock_{}", suffix);
+    let key = format!("_oz_sync_key_{}", suffix);
+
+    // Held across the body so the object can't be deallocated mid-section,
+    // mirroring the retain/release the oracle's OZSpinLock does in its
+    // -initWithObject:/-dealloc pair.
+    let retain = format!("oz_static_retain((struct {} *)({}));", root, obj_text);
+    let cleanup = format!(
+        "oz_static_release((struct {root} *)({obj}));\n\toz_spin_unlock(&{lock}, {key});",
+        root = root,
+        obj = obj_text,
+        lock = lock,
+        key = key
+    );
+
+    ctx.sync_cleanups.push(cleanup.clone());
+    let body_text = if body.kind() == "compound_statement" {
+        render_body_with_comments(body, ctx)
+    } else {
+        let (text, _) = render_expr(body, ctx);
+        format!("{{\n\t{}\n\t}}", text)
+    };
+    ctx.sync_cleanups.pop();
+
+    (
+        format!(
+            "{{\n\
+             \toz_spinlock_t {lock} = {{0}};\n\
+             \toz_spinlock_key_t {key} = oz_spin_lock(&{lock});\n\
+             \t{retain}\n\
+             \t{body}\n\
+             \t{cleanup}\n\
+             }}",
+            lock = lock,
+            key = key,
+            retain = retain,
+            body = body_text,
+            cleanup = cleanup
+        ),
+        "id".to_string(),
+    )
+}
+
+/// A `return` inside one or more `@synchronized` blocks has to run each
+/// pending unlock (innermost first) before leaving. A returned value is
+/// evaluated into a temporary first, so the expression still sees the
+/// locked state -- `return [self compute];` must run `compute` under the
+/// lock, not after it.
+///
+/// Mirrors the oracle's handling of the same shape, where the OZSpinLock
+/// object is released by `emit.py::_emit_scope_releases` ahead of the
+/// return (`tests/behavior/cases/synchronized/early_return.m`).
+fn render_return_statement(node: Node, ctx: &mut EmitCtx) -> (String, String) {
+    // Outside any @synchronized, behave exactly as the catch-all in
+    // `render_expr` would: byte-identical when nothing needs translating.
+    if ctx.sync_cleanups.is_empty() {
+        if !needs_translation(node) {
+            return (node_text(node, ctx.src).to_string(), "id".to_string());
+        }
+        let rebuilt = rebuild(node, ctx, &mut |child, ctx| {
+            if needs_translation(child) {
+                Some(render_expr(child, ctx).0)
+            } else {
+                None
+            }
+        });
+        return (rebuilt, "id".to_string());
+    }
+
+    let cleanups = ctx.sync_cleanups.iter().rev().cloned().collect::<Vec<_>>().join("\n\t");
+
+    let mut cursor = node.walk();
+    let value = node.children(&mut cursor).find(|c| c.kind() != "return" && c.kind() != ";");
+
+    match value {
+        None => (format!("{}\n\treturn;", cleanups), "id".to_string()),
+        Some(value) => {
+            let (value_text, _) = render_expr(value, ctx);
+            ctx.block_counter += 1;
+            let (line, col) = line_col(ctx.src, node.start_byte());
+            let tmp = format!("_oz_sync_ret_L{}_C{}_{}", line, col, ctx.block_counter);
+            let ret_ty = ctx.method_return_type.clone();
+            (
+                format!(
+                    "{ty} {tmp} = {value};\n\t{cleanups}\n\treturn {tmp};",
+                    ty = ret_ty,
+                    tmp = tmp,
+                    value = value_text,
+                    cleanups = cleanups
+                ),
+                "id".to_string(),
+            )
+        }
+    }
+}
+
 fn render_forin_statement(node: Node, ctx: &mut EmitCtx) -> (String, String) {
     let (line, col) = line_col(ctx.src, node.start_byte());
     if !ctx.program.is_dynamically_dispatched("iter", false)
@@ -1708,6 +1880,10 @@ fn render_method_definition(
     // per-statement comments below.
     let header = header_text(node, ctx.src, &["compound_statement"]);
 
+    // Needed by `render_return_statement` to type the temporary a
+    // `return` inside `@synchronized` evaluates into.
+    ctx.method_return_type = ret_ty.clone();
+
     let body_text = match body {
         Some(body) => {
             let class_info = ctx.program.classes[class_name].clone();
@@ -1815,6 +1991,8 @@ pub fn emit(source: &str, program: &Program) -> EmitOutput {
                     hoisted_statics: Vec::new(),
                     block_counter: 0,
                     pre_stmts: Vec::new(),
+                    sync_cleanups: Vec::new(),
+                    method_return_type: "int".to_string(),
                 };
                 let (header_part, alloc_free_part) = render_interface(node, &mut ctx, program);
                 let text = format!("{}\n{}", header_part, alloc_free_part);
@@ -1838,6 +2016,8 @@ pub fn emit(source: &str, program: &Program) -> EmitOutput {
                     hoisted_statics: Vec::new(),
                     block_counter: 0,
                     pre_stmts: Vec::new(),
+                    sync_cleanups: Vec::new(),
+                    method_return_type: "int".to_string(),
                 };
                 let mut out = String::new();
                 out.push_str(&banner_box(&header_text(node, source, &["implementation_definition"]), '-'));
@@ -1984,6 +2164,8 @@ pub fn emit(source: &str, program: &Program) -> EmitOutput {
                     hoisted_statics: Vec::new(),
                     block_counter: 0,
                     pre_stmts: Vec::new(),
+                    sync_cleanups: Vec::new(),
+                    method_return_type: "int".to_string(),
                 };
                 let mut c2 = node.walk();
                 if let Some(body) =
@@ -2203,6 +2385,8 @@ pub fn emit_split(source: &str, program: &Program, origins: &[(String, Range<usi
                     hoisted_statics: Vec::new(),
                     block_counter: 0,
                     pre_stmts: Vec::new(),
+                    sync_cleanups: Vec::new(),
+                    method_return_type: "int".to_string(),
                 };
                 let (header_part, alloc_free_part) = render_interface(node, &mut ctx, program);
                 diags.extend(ctx.diags);
@@ -2228,6 +2412,8 @@ pub fn emit_split(source: &str, program: &Program, origins: &[(String, Range<usi
                     hoisted_statics: Vec::new(),
                     block_counter: 0,
                     pre_stmts: Vec::new(),
+                    sync_cleanups: Vec::new(),
+                    method_return_type: "int".to_string(),
                 };
                 let mut out = String::new();
                 out.push_str(&banner_box(&header_text(node, source, &["implementation_definition"]), '-'));
@@ -2332,6 +2518,8 @@ pub fn emit_split(source: &str, program: &Program, origins: &[(String, Range<usi
                     hoisted_statics: Vec::new(),
                     block_counter: 0,
                     pre_stmts: Vec::new(),
+                    sync_cleanups: Vec::new(),
+                    method_return_type: "int".to_string(),
                 };
                 let mut text = node_text(node, source).to_string();
                 let mut c2 = node.walk();

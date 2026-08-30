@@ -82,6 +82,61 @@ struct MethodScope<'a> {
     block_locals: HashSet<String>,
 }
 
+/// `@synchronized` lowers to an explicit `oz_spin_lock` / `oz_spin_unlock`
+/// pair around the body (see `emit::render_synchronized_statement`), so a
+/// jump out of the body would skip the unlock and leave the lock held
+/// forever. Rather than silently emitting that deadlock, reject the jump
+/// and say how to restructure.
+///
+/// `return` is exempt: `emit::render_return_statement` replays the pending
+/// unlock ahead of it, so an early return works (as it does in the
+/// oracle -- `tests/behavior/cases/synchronized/early_return.m`).
+/// `break`/`continue` are only a problem when they escape the body; one
+/// belonging to a loop or switch *inside* the body is fine, so the walk
+/// stops treating them as escaping once it descends into one.
+fn check_synchronized_body(sync_node: Node, src: &str, diags: &mut Vec<Diagnostic>) {
+    fn walk(node: Node, src: &str, in_nested_breakable: bool, diags: &mut Vec<Diagnostic>) {
+        let escaping = match node.kind() {
+            "goto_statement" => Some("goto"),
+            "break_statement" if !in_nested_breakable => Some("break"),
+            "continue_statement" if !in_nested_breakable => Some("continue"),
+            _ => None,
+        };
+        if let Some(keyword) = escaping {
+            err(
+                diags,
+                src,
+                node,
+                format!(
+                    "'{}' inside @synchronized would skip the unlock and leave the lock held \
+                     (the static subset emits an explicit oz_spin_lock/oz_spin_unlock pair, not a \
+                     scope guard) -- move the value out to a local, end the @synchronized block, \
+                     then '{}'",
+                    keyword, keyword
+                ),
+            );
+            return;
+        }
+        // A loop or switch inside the body captures its own
+        // break/continue, so those no longer escape.
+        let captures_break = matches!(
+            node.kind(),
+            "for_statement" | "while_statement" | "do_statement" | "switch_statement"
+        );
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            walk(child, src, in_nested_breakable || captures_break, diags);
+        }
+    }
+
+    let mut cursor = sync_node.walk();
+    let body =
+        sync_node.children(&mut cursor).find(|c| c.kind() == "compound_statement");
+    if let Some(body) = body {
+        walk(body, src, false, diags);
+    }
+}
+
 fn walk_for_reject(
     node: Node,
     src: &str,
@@ -96,8 +151,7 @@ fn walk_for_reject(
             return;
         }
         "synchronized_statement" => {
-            err(diags, src, node, "@synchronized is not supported in the static subset spike");
-            return;
+            check_synchronized_body(node, src, diags);
         }
         "message_expression" => {
             let selector = message_selector(node, src);

@@ -17,16 +17,11 @@ fn try_catch_rejected() {
     assert!(diags.contains("@try/@catch"), "diagnostics: {}", diags);
 }
 
-#[test]
-fn synchronized_rejected() {
-    let src = format!(
-        "{}\n@interface Foo : OZObject\n- (void)test;\n@end\n@implementation Foo\n\
-         - (void)test {{\n    @synchronized(self) {{\n    }}\n}}\n@end\n",
-        PREAMBLE()
-    );
-    let diags = expect_reject(&src);
-    assert!(diags.contains("@synchronized"), "diagnostics: {}", diags);
-}
+// @synchronized used to be rejected outright; it is supported now (see
+// `emit::render_synchronized_statement`). What remains rejected is a jump
+// that would escape the body and leak the lock -- covered by
+// `behavior_synchronized::break_escaping_synchronized_rejected`, next to
+// the accepted cases it contrasts with.
 
 #[test]
 fn weak_property_rejected() {
