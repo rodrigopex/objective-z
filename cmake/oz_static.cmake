@@ -44,6 +44,11 @@ function(objz_transpile_sources_static target)
     #    matters here, not the transpiler's own runtime speed) ────────
     set(_oz_static_dir ${_mod}/tools/oz_static)
     set(_oz2c ${_oz_static_dir}/target/debug/oz2c)
+    # Globbed at configure time, which is enough for the case this exists
+    # for: editing the transpiler and rebuilding a sample. Adding a *new*
+    # source file needs a re-configure, same as any CMake glob.
+    file(GLOB_RECURSE _oz2c_srcs ${_oz_static_dir}/src/*.rs)
+    list(APPEND _oz2c_srcs ${_oz_static_dir}/Cargo.toml)
     # Zephyr's own toolchain cmake exports CC/CFLAGS (the ARM
     # cross-compiler) into ENV, which cc-rs (tree-sitter-objc's C parser
     # build script) would otherwise inherit -- unset them so cargo builds
@@ -212,7 +217,12 @@ function(objz_transpile_sources_static target)
         COMMAND sh ${_ast_script}
         COMMAND ${_oz2c} ${_oz2c_flags} ${_oz2c_ast} ${_src_abs_list} ${_outdir}
                 --manifest ${_manifest}
-        DEPENDS ${_src_abs_list}
+        # The transpiler's own sources, not just the .m inputs: without them
+        # ninja considers the generated C up to date after oz2c itself
+        # changes, so a rebuilt transpiler silently produces nothing new.
+        # That cost real debugging time -- a fix would land, the sample would
+        # be rebuilt, and the old generated C would still be compiled.
+        DEPENDS ${_src_abs_list} ${_oz2c_srcs}
         COMMENT "oz_static: generating C from ObjC (oz2c)"
     )
 

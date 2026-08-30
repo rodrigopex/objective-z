@@ -181,7 +181,12 @@ fn main() -> ExitCode {
     match oz_static::transpile_split_with_options(
         &resolved.text,
         &resolved.origins,
-        &oz_static::Options { pool_sizes: pool_overrides, ast_json, heap_support },
+        &oz_static::Options {
+            pool_sizes: pool_overrides,
+            ast_json,
+            heap_support,
+            header_ranges: resolved.header_ranges.clone(),
+        },
     ) {
         Ok(out) => {
             // Foundation/SDK-origin files land in their own subdirectory,

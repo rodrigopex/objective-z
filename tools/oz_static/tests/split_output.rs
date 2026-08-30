@@ -362,3 +362,92 @@ fn non_objc_header_content_survives_into_other_translation_units() {
     );
     assert_eq!(stdout, "state=2 reading=48\n");
 }
+
+/// A bare top-level macro *invocation* in a header has to reach every origin
+/// that includes it, not just the one file it was written in.
+///
+/// This is the shape Zephyr is full of -- `ZBUS_CHAN_DECLARE`,
+/// `LOG_MODULE_DECLARE`, `DEVICE_DT_DECLARE` -- and it is neither a
+/// `preproc` node (so the passthrough arm's macro rule missed it) nor a
+/// declaration, so it fell to the generated `.c`. `samples/zbus_service`
+/// could not be built for ARM at all because of it: its header declares the
+/// channels with `ZBUS_CHAN_DECLARE(...)` and `main` then failed with
+/// "'chan_temperature_service_report' undeclared".
+///
+/// Routing is by *provenance* now: whatever a header contributed goes into
+/// the generated header, which is what a header is for. Checked by compiling
+/// each origin as its own translation unit, since "visible from another
+/// file" is not something inspecting one string can establish.
+#[test]
+fn header_macro_invocation_reaches_other_origins() {
+    let dir = scratch_dir("header_macro_invocation");
+    fs::create_dir_all(dir.join("include")).unwrap();
+    fs::create_dir_all(dir.join("src")).unwrap();
+    // A stand-in for the Zephyr macro pair: one declares, one defines. Only
+    // the declaration is in the header, as in the real thing.
+    fs::write(
+        dir.join("include/Chan.h"),
+        "#pragma once\n#import <Foundation/OZObject.h>\n\n\
+         #define FAKE_CHAN_DECLARE(name) extern int name\n\
+         #define FAKE_CHAN_DEFINE(name)  int name = 7\n\n\
+         FAKE_CHAN_DECLARE(g_fake_chan);\n\n\
+         @interface Chan : OZObject\n- (int)value;\n@end\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("src/Chan.m"),
+        "#import \"Chan.h\"\n\nFAKE_CHAN_DEFINE(g_fake_chan);\n\n\
+         @implementation Chan\n- (int)value {\n\treturn g_fake_chan;\n}\n@end\n",
+    )
+    .unwrap();
+    // main.m reaches the channel only through the header's declaration.
+    fs::write(
+        dir.join("main.m"),
+        "#import \"Chan.h\"\n\n#include <stdio.h>\n\
+         int main(void) {\n\tChan *c = [Chan alloc];\n\
+         \tprintf(\"direct=%d method=%d\\n\", g_fake_chan, [c value]);\n\treturn 0;\n}\n",
+    )
+    .unwrap();
+
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let include_dirs = vec![repo_root.join("include/oz_sdk"), dir.join("include")];
+    let impl_dirs = vec![repo_root.join("src"), dir.join("src")];
+    let source = fs::read_to_string(dir.join("main.m")).unwrap();
+
+    let resolved = resolve_imports(&source, &dir, &include_dirs, &impl_dirs, "main")
+        .unwrap_or_else(|e| panic!("resolve failed: {}", e));
+    let out = oz_static::transpile_split_with_options(
+        &resolved.text,
+        &resolved.origins,
+        &oz_static::Options {
+            header_ranges: resolved.header_ranges.clone(),
+            ..Default::default()
+        },
+    )
+    .unwrap_or_else(|diags| {
+        panic!(
+            "transpile_split failed:\n{}",
+            diags.iter().map(|d| d.to_string()).collect::<Vec<_>>().join("\n")
+        )
+    });
+
+    let chan = out.files.iter().find(|(s, _, _)| s == "Chan").unwrap();
+    assert!(
+        chan.1.contains("FAKE_CHAN_DECLARE(g_fake_chan)"),
+        "the header's macro invocation should be in Chan.h:\n{}",
+        chan.1
+    );
+    assert!(
+        chan.2.contains("FAKE_CHAN_DEFINE(g_fake_chan)"),
+        "the .m's macro invocation should stay in Chan.c:\n{}",
+        chan.2
+    );
+
+    let stdout = compile_link_run(
+        &scratch_dir("header_macro_invocation_out"),
+        &out.files,
+        &out.companion_h,
+        &out.companion_c,
+    );
+    assert_eq!(stdout, "direct=7 method=7\n");
+}

@@ -480,6 +480,25 @@ and produced 64 new `-Wall` warnings against the one it fixed.
 `void *`, where oz_static's own casts at every call site make the looseness
 free.
 
+**P. Pass-through C from a header now goes into the generated header.**
+Routing was by node *kind*, which missed the shape Zephyr is full of: a bare
+top-level macro invocation is neither a `preproc` node nor a declaration, so
+`ZBUS_CHAN_DECLARE(chan_temperature_service_invoke, ...)` in
+`samples/zbus_service`'s header landed in the generated `.c` where no other
+origin could see it — `'chan_temperature_service_report' undeclared` in
+`main.c`, and that sample could not be built for ARM at all.
+
+`imports` now records which byte ranges came from a header rather than an
+implementation, and routing asks *provenance* first: whatever a header
+contributed goes into the generated header, because that is what a header is
+for. This subsumes the earlier special case that sent `static inline` to the
+header by kind — one in a `.m` now correctly stays in the body, and one in a
+header travels with everything else that header declared.
+
+A `.m` reached through an `#import` counts as an implementation, not a
+header: the behaviour corpus's base header does `#import "OZObject.m"`
+precisely to pull one in.
+
 **D. File-scope `static` object variables are not type-tracked.** Reduced
 to a 20-line reproducer:
 
@@ -526,15 +545,17 @@ sample's own `sample.yaml`. It is stricter than a plain `west build` in two
 ways that both mattered — it adds `-Werror`, and it checks output rather
 than exit status.
 
-`arc_demo`'s output under QEMU is byte-identical to the Python backend's.
+**All 13 samples build for ARM**, and `arc_demo`'s output under QEMU is
+byte-identical to the Python backend's.
 
 **11 of 11 twister configurations pass** — every sample that has a
-`sample.yaml`, built, run and output-checked. `gpio_demo` builds but has no
-`sample.yaml` (it wants real GPIO, so there is nothing for QEMU to check);
-`zbus_service` is the one sample that does not build, below. Which backend
-each build actually used was verified rather than assumed: all 11 resolve
-`CONFIG_OBJZ_BACKEND_STATIC=y`, produce `oz_static_generated/`, and mention
-`oz_transpile` nowhere in their build logs.
+`sample.yaml`, built, run and output-checked. The other two build but carry
+no `sample.yaml`, so twister does not cover them: `gpio_demo` wants real
+GPIO, and `zbus_service` has none.
+
+Which backend each build actually used was verified rather than assumed: all
+11 resolve `CONFIG_OBJZ_BACKEND_STATIC=y`, produce `oz_static_generated/`,
+and mention `oz_transpile` nowhere in their build logs.
 
 Twister found two things a plain `west build` of the same samples did not:
 
@@ -611,20 +632,9 @@ staleness, four of them nothing to do with any backend.
 | `prj.conf` set three Kconfig options that no longer exist | yes |
 | `@interface TemperatureService: Object` — the root is `OZObject` | yes |
 | `#include <Foundation/OZLog.h>` did not resolve at compile time | yes — `include/oz_sdk` added to the target's include path |
-| `ZBUS_CHAN_DECLARE(...)` in a header does not reach other origins | **no** |
+| `ZBUS_CHAN_DECLARE(...)` in a header did not reach other origins | yes — gap P |
 
-The last one is a real oz_static gap and the only thing still stopping this
-sample. A bare top-level macro *invocation* in a source header is routed to
-the generated `.c` rather than the generated `.h`, so no other origin sees
-it — hence `'chan_temperature_service_report' undeclared` in `main.c`. It is
-a common Zephyr shape (`ZBUS_CHAN_DECLARE`, `LOG_MODULE_DECLARE`,
-`DEVICE_DT_DECLARE`).
-
-The proper fix is the one this document has skirted twice: track per-origin
-whether a byte range came from a `.h` or a `.m`, and route that range's
-pass-through content accordingly. It would also subsume the special case
-that currently routes `static inline` to the header by kind rather than by
-provenance.
+It builds now.
 
 ## Behavior corpus (73 cases)
 
@@ -644,7 +654,7 @@ That allowlist asserts the listed case *still* fails, so fixing it without
 updating the list also fails the test; it cannot decay into silently
 skipped cases.
 
-Rust test suite: 182 passing, 0 failing.
+Rust test suite: 183 passing, 0 failing.
 
 ### Behavioral parity: 73 of 73
 
