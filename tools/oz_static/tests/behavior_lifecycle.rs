@@ -29,10 +29,10 @@ use common::{compile_and_run, ozobject_src};
 
 /// Ported from tests/behavior/cases/lifecycle/alloc_returns_valid.{m,_test.c}.
 /// Original asserted: alloc returns non-null, sets the class id
-/// (`w->base._meta.class_id` in Python's OZObject layout), and sets the
-/// refcount to 1. oz_static's root stores these fields directly
-/// (`oz_class_id`, `oz_refcount`) rather than nested under a `_meta`
-/// struct; a non-root class reaches them through the `base` embedding hop.
+/// (`w->base._meta.class_id`), and sets the refcount to 1. Both backends now
+/// spell that the same way: oz_static's root embeds the PAL's own
+/// `struct oz_metadata` as `_meta`, with `oz_refcount` a sibling. A non-root
+/// class reaches either through the `base` embedding hop.
 #[test]
 fn alloc_returns_valid_pointer_class_id_and_refcount() {
     let src = format!(
@@ -60,7 +60,7 @@ fn alloc_returns_valid_pointer_class_id_and_refcount() {
 int main(void) {
 	Widget *w = [Widget alloc];
 	printf(\"nonnull=%d\\n\", w != 0);
-	printf(\"class_id_matches=%d\\n\", w->base.oz_class_id == OZ_STATIC_CLASS_Widget);
+	printf(\"class_id_matches=%d\\n\", w->base._meta.class_id == OZ_STATIC_CLASS_Widget);
 	printf(\"refcount=%d\\n\", oz_atomic_get(&w->base.oz_refcount));
 	[w release];
 	return 0;
@@ -114,7 +114,7 @@ int main(void) {
 /// re-entrancy guard, the nested release (rc 1->0 again) would trigger
 /// `-dealloc` a second time -> infinite recursion / stack overflow.
 /// oz_static's companion.rs generates this guard directly on the root's
-/// `oz_deallocating` field (set before the dispatch switch runs, checked
+/// `_meta.deallocating` flag (set before the dispatch switch runs, checked
 /// by `oz_static_release` before it would recurse). Reaching the printf
 /// after `[p release]` without crashing/hanging is the proof the guard
 /// works, mirroring the original's `TEST_PASS()` (pass == "we got here").

@@ -100,7 +100,7 @@ fn empty_class_no_methods() {
 int main(void) {{
 	EmptyClass *obj = [EmptyClass alloc];
 	printf(\"nonnull=%d\\n\", obj != 0);
-	printf(\"class_id=%d\\n\", obj->base.oz_class_id == OZ_STATIC_CLASS_EmptyClass);
+	printf(\"class_id=%d\\n\", obj->base._meta.class_id == OZ_STATIC_CLASS_EmptyClass);
 	printf(\"refcount=%d\\n\", oz_atomic_get(&obj->base.oz_refcount));
 	[obj release];
 	return 0;

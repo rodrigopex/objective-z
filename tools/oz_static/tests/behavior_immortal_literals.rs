@@ -8,7 +8,7 @@
 // literal's refcount really does reach zero. `companion`'s release path
 // calls `{class}_oz_free` at zero, which for OZString is `free(obj)` --
 // on a static, that aborts. `emit::render_boxed_string_literal` marks
-// literals `oz_deallocating = 1` from birth so `oz_static_release`
+// literals `_meta.deallocating = 1` from birth so `oz_static_release`
 // returns before the free switch.
 //
 // This is what made a dictionary literal abort on release while an array

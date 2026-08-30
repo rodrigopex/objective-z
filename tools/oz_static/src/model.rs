@@ -114,7 +114,7 @@ pub struct Program {
     pub ast: Option<crate::astinfo::AstFacts>,
     /// Whether `--heap-support` was given, enabling `+allocWithHeap:` and the
     /// heap-aware free path. Every class then also gets a heap allocator, the
-    /// root an `oz_heap_allocated` flag, and the companion the two functions
+    /// root's `_meta` a `heap_allocated` flag, and the companion the two functions
     /// the PAL declares but leaves to generated code.
     ///
     /// A program-wide option rather than a fact about the source, kept here
