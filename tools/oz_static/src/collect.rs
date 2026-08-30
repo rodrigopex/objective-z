@@ -685,9 +685,29 @@ pub fn collect(source: &str) -> (Program, Vec<crate::model::Diagnostic>) {
                 }
             }
             "class_implementation" => {
-                let (name, _, _category) = class_header(node, source);
+                let (name, _, category) = class_header(node, source);
                 if !classes.contains_key(&name) {
                     continue;
+                }
+                // Modern Objective-C lets a class declare its ivars in the
+                // `@implementation` block rather than the `@interface`, which
+                // keeps them private to the implementation
+                // (`samples/hello_category`'s Car does exactly this). They
+                // were never collected, so the generated struct simply
+                // lacked them and every use became "use of undeclared
+                // identifier '_throttleLevel'". A category cannot declare
+                // ivars, so only the primary implementation contributes.
+                if category.is_none() {
+                    let (impl_ivars, impl_unretained) =
+                        extract_ivars_with_ownership(node, source, &known_classes);
+                    if let Some(info) = classes.get_mut(&name) {
+                        for (ivar, c_type) in impl_ivars {
+                            if !info.own_ivars.iter().any(|(n, _)| *n == ivar) {
+                                info.own_ivars.push((ivar, c_type));
+                            }
+                        }
+                        info.unretained_ivars.extend(impl_unretained);
+                    }
                 }
                 let mut c = node.walk();
                 for impl_def in node.children(&mut c) {

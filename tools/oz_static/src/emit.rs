@@ -2214,6 +2214,18 @@ fn render_interface(node: Node, ctx: &mut EmitCtx, program: &Program) -> (String
         let mut c2 = vars_node.walk();
         for child in vars_node.children(&mut c2) {
             if child.kind() == "instance_variable" {
+                // `@public`/`@private`/`@protected`/`@package` each get their
+                // own `instance_variable` wrapper holding nothing but a
+                // `visibility_specification`. They are ObjC access control
+                // with no C equivalent, and copied through they are a syntax
+                // error in the generated struct -- "type name requires a
+                // specifier or qualifier", which samples/hello_category's Car
+                // hit. Dropping them leaves every field reachable, which the
+                // generated C already was: nothing enforced visibility once
+                // the struct became plain C.
+                if child_by_kind_local(child, "visibility_specification").is_some() {
+                    continue;
+                }
                 ivars_text.push('\t');
                 let lowered = lower_ivar_decl(child, ctx);
                 ivars_text.push_str(&lowered);
@@ -2228,6 +2240,7 @@ fn render_interface(node: Node, ctx: &mut EmitCtx, program: &Program) -> (String
     let known: std::collections::HashSet<String> = program.classes.keys().cloned().collect();
     let raw_ivar_names: std::collections::HashSet<String> =
         crate::collect::extract_ivars(node, ctx.src, &known).into_iter().map(|(n, _)| n).collect();
+    let mut emitted: std::collections::HashSet<String> = raw_ivar_names.clone();
     for prop in &info.properties {
         if let Some(ivar) = &prop.ivar_name {
             if !raw_ivar_names.contains(ivar) {
@@ -2235,8 +2248,34 @@ fn render_interface(node: Node, ctx: &mut EmitCtx, program: &Program) -> (String
                     "\t{} {}; /* synthesized: backs property '{}' */\n",
                     prop.c_type, ivar, prop.name
                 ));
+                emitted.insert(ivar.clone());
             }
         }
+    }
+    // An ivar declared in the `@implementation` block rather than the
+    // `@interface` (valid modern Objective-C, and what
+    // `samples/hello_category`'s Car does) was collected onto the class but
+    // is not in *this* node's text, since that text is the interface. Add
+    // whatever the class owns that has not been emitted yet, or the struct
+    // silently lacks the field and every use is "use of undeclared
+    // identifier".
+    for (ivar, c_type) in &info.own_ivars {
+        if emitted.contains(ivar) {
+            continue;
+        }
+        // `oz_prop_lock` and friends are synthesized onto the root class by
+        // `collect::resolve_properties` and already emitted above as part of
+        // its tracking fields; re-emitting one here is a duplicate member.
+        // User ivars are `_`-prefixed by convention, so the `oz_` namespace
+        // is unambiguous.
+        if ivar.starts_with("oz_") {
+            continue;
+        }
+        ivars_text.push_str(&format!(
+            "\t{} {}; /* from the @implementation block */\n",
+            c_type, ivar
+        ));
+        emitted.insert(ivar.clone());
     }
 
     let struct_text =
@@ -3282,24 +3321,21 @@ pub fn emit_split(
             always_visible.push((helper_class.to_string(), stem.clone()));
         }
     }
+    // These go into each `.c`, never into a `.h`. They exist so *code* can
+    // reach the root class's macros and the boxed-literal helpers, and code
+    // lives in the body file. Putting them in headers caused two distinct
+    // failures: `main.h` declares nothing, so an earlier attempt to skip
+    // declaration-free headers left `main.c` unable to see
+    // `OZArray_oz_initWithItems`; and the generated `assert.h` (a shim whose
+    // only purpose is keeping `oz_assert` calls in Clang's AST) sits on the
+    // include path where the PAL's own `#include <assert.h>` finds it, so
+    // pulling the class graph in there re-entered the class headers from
+    // inside the companion header, before the root struct existed. A body
+    // file is reached by neither path.
+    let mut body_includes: HashMap<String, std::collections::BTreeSet<String>> = HashMap::new();
     for (class, target_stem) in &always_visible {
         for stem in &stem_order {
             if stem == target_stem {
-                continue;
-            }
-            // A stem that declared nothing of its own has no code here to
-            // reach the root or the helpers with, so it gains nothing from
-            // these includes -- and one of them actively breaks the build.
-            // `include/oz_sdk/assert.h` is a shim that exists only so
-            // Clang keeps `oz_assert` calls in the AST; its generated
-            // header ends up on the include path as `assert.h`, shadowing
-            // the real one, so the PAL's own `#include <assert.h>`
-            // (platform/oz_assert.h) lands here instead. Pulling the class
-            // graph in through that point re-enters the class headers from
-            // inside the companion header, before the root struct it
-            // defines exists -- `field has incomplete type 'struct
-            // OZObject'`, from a header that declares nothing at all.
-            if headers.get(stem).is_none_or(|sections| sections.is_empty()) {
                 continue;
             }
             // Never point a stem at a *descendant* of a class it owns. A
@@ -3318,7 +3354,7 @@ pub fn emit_split(
             if owns_ancestor {
                 continue;
             }
-            extra_includes.entry(stem.clone()).or_default().insert(target_stem.clone());
+            body_includes.entry(stem.clone()).or_default().insert(target_stem.clone());
         }
     }
 
@@ -3341,9 +3377,15 @@ pub fn emit_split(
         }
 
         let mut c = format!(
-            "/* Auto-generated by oz_static -- do not edit */\n#include \"oz_static_dispatch.h\"\n#include \"{}.h\"\n\n",
+            "/* Auto-generated by oz_static -- do not edit */\n#include \"oz_static_dispatch.h\"\n#include \"{}.h\"\n",
             stem
         );
+        if let Some(deps) = body_includes.get(stem) {
+            for dep in deps {
+                c.push_str(&format!("#include \"{}.h\"\n", dep));
+            }
+        }
+        c.push('\n');
         if let Some(statics) = hoisted_statics_by_stem.get(stem) {
             if !statics.is_empty() {
                 c.push_str("/* __block-qualified locals, promoted to file scope */\n");
@@ -3466,6 +3508,13 @@ fn apply_edits(src: &str, start: usize, end: usize, edits: &[(Range<usize>, Stri
         text.replace_range(range.start - start..range.end - start, replacement);
     }
     text
+}
+
+/// First child of `node` with the given kind.
+fn child_by_kind_local<'a>(node: Node<'a>, kind: &str) -> Option<Node<'a>> {
+    let mut cursor = node.walk();
+    let children: Vec<Node<'a>> = node.children(&mut cursor).collect();
+    children.into_iter().find(|c| c.kind() == kind)
 }
 
 fn base_scope(class_name: &str, program: &Program) -> HashMap<String, String> {

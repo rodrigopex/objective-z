@@ -26,13 +26,14 @@ impl ImportTarget {
     }
 }
 
-/// `#import "X.h"` or `#import <Framework/X.h>` -- `None` for anything
-/// else (including a plain `#include`, which is never a resolution
-/// candidate: only `#import` is, matching this codebase's own
-/// convention of what needs inlining vs. what's a real system/RTOS
-/// header left untouched).
+/// `#import "X.h"` or `#import <Framework/X.h>`, plus a quoted
+/// `#include "X.h"` -- see `resolve_into` for why the latter is a
+/// candidate and when it is declined. `None` for anything else.
 fn parse_import(trimmed_line: &str) -> Option<ImportTarget> {
-    let rest = trimmed_line.strip_prefix("#import")?.trim_start();
+    let rest = trimmed_line
+        .strip_prefix("#import")
+        .or_else(|| trimmed_line.strip_prefix("#include"))?
+        .trim_start();
     if let Some(inner) = rest.strip_prefix('"') {
         let end = inner.find('"')?;
         return Some(ImportTarget::Quoted(inner[..end].to_string()));
@@ -42,6 +43,17 @@ fn parse_import(trimmed_line: &str) -> Option<ImportTarget> {
         return Some(ImportTarget::Angled(inner[..end].to_string()));
     }
     None
+}
+
+/// Does this file carry Objective-C declarations oz_static has to see?
+///
+/// Only such a file is worth splicing in place of a quoted `#include`. A
+/// pure C header stays an ordinary include: the generated code is C, the
+/// header is already on the compiler's search path, and inlining it would
+/// only risk duplicating definitions the C compiler handles perfectly well
+/// on its own.
+fn declares_objc(text: &str) -> bool {
+    text.contains("@interface") || text.contains("@implementation") || text.contains("@protocol")
 }
 
 /// `impl_dirs` are searched as well as `include_dirs`, because an import
@@ -340,7 +352,45 @@ fn resolve_into(
             out.push('\n');
             continue;
         };
-        let resolved_path = resolve_import_path(&target, current_dir, include_dirs, impl_dirs)?;
+        // A quoted `#include` is only spliced when it actually carries
+        // Objective-C declarations, and is otherwise left exactly as
+        // written. `samples/zbus_objc`'s `Producer.m` opens with
+        // `#include "Producer.h"` -- an ordinary C spelling for a header
+        // holding an `@interface`, and until this existed the `@property`
+        // in it was never seen, so its own `@synthesize` failed with
+        // "'@synthesize count' but no '@property count' is declared".
+        // Real Objective-C draws no semantic line between the two
+        // directives here; only `#import`'s once-only behaviour differs,
+        // and the seen-set below gives that to both.
+        //
+        // Pure C headers stay ordinary includes: the generated code is C,
+        // the header is already on the compiler's search path, and
+        // inlining it would only risk duplicating what the C compiler
+        // handles fine. A header that cannot be resolved at all also stays
+        // put, rather than failing the build the way an unresolvable
+        // `#import` does -- a `#include` may legitimately name something
+        // only the target's toolchain provides.
+        let is_include = trimmed.starts_with("#include");
+        let resolved_path = match resolve_import_path(&target, current_dir, include_dirs, impl_dirs)
+        {
+            Ok(path) => path,
+            Err(why) => {
+                if is_include {
+                    out.push_str(line);
+                    out.push('\n');
+                    continue;
+                }
+                return Err(why);
+            }
+        };
+        if is_include {
+            let text = fs::read_to_string(&resolved_path).unwrap_or_default();
+            if !declares_objc(&text) {
+                out.push_str(line);
+                out.push('\n');
+                continue;
+            }
+        }
         let canonical = resolved_path.canonicalize().unwrap_or_else(|_| resolved_path.clone());
         if !seen.insert(canonical) {
             out.push_str(&format!("/* already resolved: #import {} */\n", target.spelled()));

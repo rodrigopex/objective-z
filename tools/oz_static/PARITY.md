@@ -36,15 +36,28 @@ cc -DOZ_PLATFORM_HOST -DOZ_HEAP_SUPPORT \
 | mem_demo | yes | yes | was gap B |
 | arc_demo | yes | Zephyr-blocked | `K_THREAD_DEFINE` only; was gap A |
 | gpio_demo | yes | Zephyr-blocked | was gap D |
-| heap_alloc | yes | **no — transpiler** | property dot syntax; was gap D |
-| hello_category | yes | **no — transpiler** | gap C below |
-| transpiled_literals | yes | **no — transpiler** | boxed-literal helper not visible in `main` |
-| zbus_objc | **no** | — | gap E below |
-| zbus_service | **no** | — | gap E, plus stale (see below) |
+| transpiled_literals | yes | yes | was: helper unreachable from `main` |
+| zbus_objc | yes | Zephyr-blocked | was gap E |
+| heap_alloc | yes | **no — transpiler** | property dot syntax |
+| hello_category | yes | **no — transpiler** | the generated `assert.c` shim |
+| zbus_service | — | — | stale independently of oz_static (see below) |
 
-12 of 13 transpile. Of those, 4 compile cleanly, 5 fail only on Zephyr
-headers (expected on host — not a transpiler problem), and 3 fail on
-transpiler gaps.
+Every sample with usable sources transpiles. Of those, 4 compile cleanly on
+host, 6 fail only on Zephyr headers (expected — not a transpiler problem),
+and 2 fail on transpiler gaps.
+
+Also fixed since: the always-visible includes (root macros, boxed-literal
+helpers) now go into each `.c` rather than each `.h`, which is where the code
+that needs them lives — an earlier attempt to keep them out of the shim
+headers had excluded `main.h`, leaving `main.c` unable to see
+`OZArray_oz_initWithItems`. A quoted `#include "X.h"` is now spliced when
+that header declares Objective-C, which is how `zbus_objc`'s
+`#include "Producer.h"` reaches its `@property`; a pure C header stays an
+ordinary include. `@public`/`@private` visibility specifiers are dropped
+rather than copied into the generated struct. And ivars declared in an
+`@implementation` block rather than the `@interface` — valid modern
+Objective-C, and what `hello_category`'s Car does — are collected and
+emitted.
 
 Fixed since the first measurement: **file-scope object variables** are now
 type-tracked, so a send to a `static GPIOOutput *led;` resolves instead of
