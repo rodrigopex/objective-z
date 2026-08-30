@@ -34,7 +34,7 @@ cc -DOZ_PLATFORM_HOST -DOZ_HEAP_SUPPORT \
 | transpiled_led | yes | Zephyr-blocked | `printk`/`k_*` only |
 | arc_demo | yes | **no — transpiler** | gap A below |
 | mem_demo | yes | **no — transpiler** | gap B below |
-| hello_category | yes | **no — transpiler** | gap C below |
+| hello_category | yes | **no — transpiler** | gap C below; 3 of 20 generated files, down from 20 |
 | gpio_demo | **no** | — | gap D below |
 | heap_alloc | **no** | — | gap D, plus no `allocWithHeap:` |
 | zbus_objc | **no** | — | gap E below |
@@ -74,16 +74,41 @@ oracle emits it as refcount introspection alongside
 `retain`/`release`/`retainCount`), producing `call to undeclared function
 '__objc_refcount_get'`.
 
-**C. Generated headers can form an include cycle.** `hello_category` fails
-with `field has incomplete type 'struct OZObject'` inside the generated
-`Foundation/OZString.h`. `OZObject.h` includes `OZString.h` and
-`OZString.h` includes `OZObject.h`; with `#pragma once`, whichever is
-entered first leaves the other looking at an incomplete `struct OZObject`,
-and `struct OZString` embeds it by value. This is a consequence of the
-`always_visible` set in `emit::emit_split` — every stem is made to include
-OZString/OZArray/OZDictionary, including the root class's own header,
-which those three in turn depend on. Guarding against a class including a
-header that (transitively) includes it back would fix it.
+**C. Generated-header ordering — four causes found, four fixed, three new
+ones behind them.** `hello_category` originally failed to compile in all
+20 of its generated files. Fixed since:
+
+1. *Include cycle.* `always_visible` in `emit::emit_split` made every stem
+   include OZString/OZArray/OZDictionary — including the root class's own
+   header, which all three depend on. With `#pragma once`, whichever
+   header was entered first left the other with an incomplete `struct
+   OZObject`, which `struct OZString` embeds by value. Now an
+   always-visible edge is never added into a stem owning an *ancestor* of
+   that class.
+2. *Typedefs after includes.* The companion header declared `id`/`Class`/
+   `BOOL` below its `#include`s, but the PAL re-enters generated headers
+   (see 3), so prototypes naming those types were reached while the
+   companion was four lines in → `unknown type name 'Class'`. The
+   typedefs are hoisted above every include; they need only `bool`.
+3. *A content-free header shadowing a system one.* `include/oz_sdk/assert.h`
+   is a shim that exists so Clang keeps `oz_assert` calls in the AST. Its
+   generated header lands on the include path as `assert.h` and shadows
+   the real one, so the PAL's own `#include <assert.h>` reached it — and
+   it had been given the always-visible includes, pulling the whole class
+   graph in from inside the companion header. A stem that declares nothing
+   no longer receives those includes.
+4. *Prototype-scoped struct tags.* The companion declares every class's
+   prototypes, and a signature can name a struct defined only in a
+   per-class header it does not include (`struct color *` from the
+   sample's `Car.h`) → `conflicting types for
+   'Car_initWithColor_andModel_'`. Every struct tag the companion mentions
+   but never declares is now forward-declared.
+
+Three distinct causes remain, each in one file: `Car.h:22 type name
+requires a specifier or qualifier`; `assert.c:20 expected identifier or
+'('` (the shim's `static inline` stubs); and `main.c:24 variable has
+incomplete type 'struct color'` (a by-value struct needing the definition
+hoisted, not just a tag).
 
 **D. File-scope `static` object variables are not type-tracked.** Reduced
 to a 20-line reproducer:
