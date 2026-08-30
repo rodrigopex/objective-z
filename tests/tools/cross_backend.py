@@ -213,6 +213,41 @@ def _generated_text(outdir: Path) -> str:
     return "\n".join(parts)
 
 
+def _dump_ast(case: Path, outdir: Path) -> Path | None:
+    """Run the same clang AST dump the oracle uses, for oz2c to read.
+
+    Reusing `compile_and_run`'s own flags is the point: the two backends must
+    be reasoning about the same translation unit, and `-fobjc-arc` is what
+    puts the ARC ownership qualifiers into the dump that oz_static needs (see
+    tools/oz_static/src/astinfo.rs). Returns None if clang is unavailable or
+    the dump fails -- oz_static then falls back to its own narrower rule
+    rather than the run failing outright.
+    """
+    inc_dir = case.parent.parent / "include"
+    if not inc_dir.is_dir():
+        inc_dir = REPO_ROOT / "tests" / "behavior" / "include"
+    ast_path = outdir / "input.ast.json"
+    try:
+        clang = compile_and_run._find_llvm_clang()
+    except SystemExit:
+        return None
+    result = subprocess.run(
+        [clang, "-Xclang", "-ast-dump=json", "-fsyntax-only",
+         "-fobjc-runtime=macosx", "-fobjc-arc",
+         "--target=x86_64-unknown-linux-gnu", "-fblocks",
+         "-isystem", str(REPO_ROOT / "tests" / "behavior" / "include" / "stubs"),
+         "-isystem", str(REPO_ROOT / "tests" / "behavior" / "include" / "zephyr_stubs"),
+         "-I", str(inc_dir),
+         "-I", str(REPO_ROOT / "include" / "oz_sdk"),
+         "-I", str(REPO_ROOT / "src"),
+         str(case)],
+        capture_output=True, text=True)
+    if result.returncode != 0 or not result.stdout:
+        return None
+    ast_path.write_text(result.stdout)
+    return ast_path
+
+
 def run_static(case: Path) -> tuple[bool, str, list[str]]:
     """oz2c -> shim -> Unity driver -> compile -> run.
 
@@ -241,6 +276,14 @@ def run_static(case: Path) -> tuple[bool, str, list[str]]:
                 "-I", str(REPO_ROOT / "include" / "oz_sdk"),
                 "-I", str(REPO_ROOT / "tests" / "behavior" / "include"),
                 "--impl-dir", str(REPO_ROOT / "src")]
+        # Clang resolves types and states ARC ownership; tree-sitter does
+        # neither. Handing oz2c the same dump the oracle parses is what lets
+        # it classify id-typed ivars and spot methods that are declared but
+        # never defined.
+        ast_dir = Path(tempfile.mkdtemp(prefix="oz_xback_ast_"))
+        ast_path = _dump_ast(case, ast_dir)
+        if ast_path is not None:
+            args += ["--ast", str(ast_path)]
         transpile = subprocess.run(
             args + [str(case), str(tmpdir)], capture_output=True, text=True)
         if transpile.returncode != 0:
@@ -307,6 +350,7 @@ def run_static(case: Path) -> tuple[bool, str, list[str]]:
         return True, "", summary
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
+        shutil.rmtree(ast_dir, ignore_errors=True) if "ast_dir" in dir() else None
 
 
 def run_python(case: Path) -> tuple[bool, str, list[str]]:
