@@ -7,8 +7,8 @@
 //
 // Only the root class's full struct lives here, because oz_static_retain/
 // oz_static_release/the dealloc switch are generic (shared by every
-// class) and need its tracking fields (oz_class_id, oz_refcount,
-// oz_deallocating) directly -- mirroring how the Python pipeline already
+// class) and need its tracking fields (`_meta`, `oz_refcount`) directly
+// -- mirroring how the Python pipeline already
 // treats OZObject as the Foundation root's own generated pair. Every
 // other class's full struct (and alloc/free, which need it for sizeof)
 // lives in-place at its own @interface/@implementation; this file only
@@ -265,8 +265,8 @@ backs '[{name} allocWithHeap:h]' (not from source) */\n\
          \t\t(struct OZHeap *)heap_obj, sizeof(struct {name}));\n\
          \tif (!obj) {{\n\t\treturn (struct {name} *)0;\n\t}}\n\
          \tmemset(obj, 0, sizeof(struct {name}));\n\
-         \t((struct {root} *)obj)->oz_class_id = OZ_STATIC_CLASS_{name};\n\
-         \t((struct {root} *)obj)->oz_heap_allocated = 1;\n\
+         \t((struct {root} *)obj)->_meta.class_id = OZ_STATIC_CLASS_{name};\n\
+         \t((struct {root} *)obj)->_meta.heap_allocated = 1;\n\
          \toz_atomic_init(&((struct {root} *)obj)->oz_refcount, 1);\n\
          \treturn obj;\n}}\n\
          #endif\n\n",
@@ -284,7 +284,7 @@ fn render_heap_free_check(root: &str, heap_support: bool) -> String {
     }
     format!(
         "#ifdef OZ_HEAP_SUPPORT\n\
-         \tif (((struct {root} *)obj)->oz_heap_allocated) {{\n\
+         \tif (((struct {root} *)obj)->_meta.heap_allocated) {{\n\
          \t\toz_heap_obj_free((void *)obj);\n\
          \t\treturn;\n\t}}\n\
          #endif\n",
@@ -328,7 +328,7 @@ pub(crate) fn render_alloc_free(
         trap = render_exhaustion_trap(name)
     ));
     c.push_str(&format!(
-        "\t((struct {root} *)obj)->oz_class_id = OZ_STATIC_CLASS_{name};\n\
+        "\t((struct {root} *)obj)->_meta.class_id = OZ_STATIC_CLASS_{name};\n\
          \toz_atomic_init(&((struct {root} *)obj)->oz_refcount, 1);\n",
         root = root,
         name = name
@@ -384,7 +384,7 @@ pub(crate) fn render_array_support(
         trap = render_exhaustion_trap(name)
     ));
     c.push_str(&format!(
-        "\t((struct {root} *)obj)->oz_class_id = OZ_STATIC_CLASS_{name};\n\
+        "\t((struct {root} *)obj)->_meta.class_id = OZ_STATIC_CLASS_{name};\n\
          \toz_atomic_init(&((struct {root} *)obj)->oz_refcount, 1);\n",
         root = root,
         name = name
@@ -470,7 +470,7 @@ pub(crate) fn render_dict_support(
         trap = render_exhaustion_trap(name)
     ));
     c.push_str(&format!(
-        "\t((struct {root} *)obj)->oz_class_id = OZ_STATIC_CLASS_{name};\n\
+        "\t((struct {root} *)obj)->_meta.class_id = OZ_STATIC_CLASS_{name};\n\
          \toz_atomic_init(&((struct {root} *)obj)->oz_refcount, 1);\n",
         root = root,
         name = name
@@ -531,7 +531,7 @@ the refcount reaches zero (not from source; OZDictionary.m has no\n * \
 /// selector (see `Program::is_dynamically_dispatched` -- protocol-
 /// declared, always-polymorphic like `isEqual:`, or implemented by more
 /// than one class) to whichever class implements it, switching on
-/// `self->oz_class_id`. Real Objective-C dispatch doesn't check
+/// `self->_meta.class_id`. Real Objective-C dispatch doesn't check
 /// protocol conformance at the call site either -- a protocol is a
 /// compile-time contract, not a runtime filter -- so this includes
 /// every class in the program with a `case`, not just the ones that
@@ -598,7 +598,7 @@ fn render_protocol_dispatch(program: &Program, root: &str) -> (String, String) {
             "/* protocol dispatch: routes '{}' to whichever class implements it\n * (not from source) */\n",
             m.selector
         ));
-        c.push_str(&format!("{} {}({})\n{{\n\tswitch (self->oz_class_id) {{\n", ret_ty, fn_name, params));
+        c.push_str(&format!("{} {}({})\n{{\n\tswitch (self->_meta.class_id) {{\n", ret_ty, fn_name, params));
         for (name, defining) in &routed {
             let target = crate::emit::method_fn_name(defining, &m.selector, m.is_class_method);
             let mut call_args = vec![format!("(struct {} *)self", defining)];
@@ -886,9 +886,9 @@ vtable\") -- never mutated at runtime. */\n",
             "void oz_static_release(struct {root} *self)\n{{\n\
              \tif (!self) {{\n\t\treturn;\n\t}}\n\
              \tif (!oz_atomic_dec_and_test(&self->oz_refcount)) {{\n\t\treturn;\n\t}}\n\
-             \tif (self->oz_deallocating) {{\n\t\treturn;\n\t}}\n\
-             \tself->oz_deallocating = 1;\n\
-             \tswitch (self->oz_class_id) {{\n",
+             \tif (self->_meta.deallocating) {{\n\t\treturn;\n\t}}\n\
+             \tself->_meta.deallocating = 1;\n\
+             \tswitch (self->_meta.class_id) {{\n",
             root = root
         ));
         for name in &program.class_order {

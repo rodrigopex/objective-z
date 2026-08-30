@@ -306,6 +306,30 @@ oracle's order under `ordered: true`, so that sample's twister check would
 not pass under the static backend without editing a file the Python backend
 also uses. Nothing fails today, since no sample selects the static backend.
 
+**J. The root object's tracking fields are now the PAL's own
+`struct oz_metadata`.** oz_static had rolled its own: three `uint8_t`
+siblings named `oz_class_id`, `oz_deallocating`, `oz_heap_allocated`. The
+PAL already defines the type both backends want
+(`platform/oz_platform_types.h`) -- a packed bitfield carrying `class_id`,
+`heap_allocated`, `deallocating` and `immortal` -- and the Python backend's
+root struct embeds it as `_meta`. oz_static now does the same, with
+`oz_refcount` left a sibling exactly as the oracle leaves `_refcount`
+(it is an `oz_atomic_t`, not a bitfield).
+
+Three of the six remaining corpus failures were nothing but that spelling.
+Their drivers assert `obj->base._meta.class_id`, and no `#define` can
+rewrite `a._meta.b` into a flat `a.oz_b` -- the names are separate tokens
+joined by `.`, so the shim had no way to bridge it. They were unbuildable
+for no better reason than two structures having answered the same question
+differently.
+
+Adopting the shared type is a small win on its own account too: four flags
+in the four bytes one of them used to take, no invented layout to keep in
+step, and an `immortal` bit that names what oz_static currently expresses
+by setting `deallocating = 1` on a boxed literal from birth -- which says
+"currently being deallocated" to mean "never deallocate". That one is left
+as is for now; it works, and changing the release path is a separate step.
+
 **D. File-scope `static` object variables are not type-tracked.** Reduced
 to a 20-line reproducer:
 
@@ -354,7 +378,7 @@ skipped cases.
 
 Rust test suite: 180 passing, 0 failing.
 
-### Behavioral parity: 67 of 73, and zero disagreements
+### Behavioral parity: 70 of 73, and zero disagreements
 
 Transpiling and compiling say the input was understood and the output is
 real C. They say nothing about what the code *does*. `just
@@ -364,12 +388,12 @@ the results.
 
 | Outcome | Cases | Meaning |
 | --- | --- | --- |
-| MATCH | 67 | Identical Unity results — same tests, same outcomes |
+| MATCH | 70 | Identical Unity results — same tests, same outcomes |
 | MISMATCH | **0** | No case that runs on both backends behaves differently |
-| STATIC-FAILED | 6 | oz_static's side could not be built or run |
+| STATIC-FAILED | 3 | oz_static's side could not be built or run |
 
 Every case that builds under both backends now produces identical results.
-What remains is six cases oz_static cannot build, not six it gets wrong.
+What remains is three cases oz_static cannot build, not three it gets wrong.
 
 Unity *results* are compared, not generated C: the two backends emit
 deliberately different C, so a textual diff would be noise.
@@ -424,28 +448,18 @@ oracle never faces this choice: its sources are compiled `-fobjc-arc`, under
 which an explicit `release` is a compile error, and indeed no `.m` under
 `tests/behavior/cases/` contains one.
 
-#### The 6 remaining static-side failures
+#### The 3 remaining static-side failures
 
-Two are `timer_basic`/`timer_zephyr` crashing at runtime. Two drivers reach
-for `_meta`, the oracle's name for the root tracking struct that oz_static
-spells as flat `oz_*` fields. One is a `void (*)(id)` vs `void (*)(struct
-OZObject *)` divergence inside a driver, which no shim can bridge because
-it is the driver's own code.
+Two are `timer_basic`/`timer_zephyr` crashing at runtime. One is a
+`void (*)(id)` vs `void (*)(struct OZObject *)` divergence inside
+`defer_block_ivar`'s driver, which no shim can bridge because it is the
+driver's own code.
 
-`memory/heap_alloc` now transpiles, compiles and links with
-`--heap-support` — the harness reads the case's own `/* oz-heap */`
-directive, the same one the Python harness reads — but its driver asserts
-`w->base._meta.class_id` and `w->base._meta.heap_allocated`, reaching into
-the oracle's root struct layout rather than testing behavior. oz_static
-holds the same two facts in flat `oz_class_id` / `oz_heap_allocated`
-fields, and no `#define` can rewrite `a._meta.b` into `a.c` — the two names
-are separate tokens joined by `.`. That makes three of the six a driver
-reaching for `_meta`. Grouping oz_static's tracking fields into a nested
-struct would bridge all three at once, and is the single largest remaining
-win available; it is a layout change, so it has not been made
-unilaterally. The feature itself is covered directly instead, in
-`tests/behavior_foundation_heap.rs`, where the heap's own accounting shows
-the storage taken and given back.
+The three that cleared this round were all the `_meta` spelling —
+`edge/empty_class_no_methods`, `lifecycle/alloc_returns_valid` and
+`memory/heap_alloc`. See gap J; none of them was a behavioural difference,
+and none needed a shim entry once the two backends named the same field the
+same way.
 
 `regression/issue_090_header_preservation` was the seventh and now matches.
 It is the oracle's own regression test for this exact bug — "transpiler

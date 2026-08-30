@@ -811,7 +811,7 @@ fn render_boxed_string_literal(node: Node, ctx: &mut EmitCtx) -> (String, String
     ctx.block_counter += 1;
     let name = format!("_oz_str_L{}_C{}_{}", line, col, ctx.block_counter);
     let prototype = format!("extern struct OZString {};\n", name);
-    // `oz_deallocating = 1` from birth is what makes this literal
+    // `_meta.deallocating = 1` from birth is what makes this literal
     // immortal. It lives in static storage, so `free()`-ing it aborts --
     // and something does try: `companion`'s release path runs
     // `{class}_oz_free` once a refcount hits zero, and a literal's
@@ -822,7 +822,7 @@ fn render_boxed_string_literal(node: Node, ctx: &mut EmitCtx) -> (String, String
     // instead of a crash, matching the real `OZString.m`'s own `-dealloc`
     // ("compile-time constant, never freed").
     let definition = format!(
-        "struct OZString {} = {{ .base = {{ .oz_class_id = OZ_STATIC_CLASS_OZString, .oz_refcount = 1, .oz_deallocating = 1 }}, ._length = {}, ._hash = 0, ._data = {} }};\n",
+        "struct OZString {} = {{ .base = {{ ._meta = {{ .class_id = OZ_STATIC_CLASS_OZString, .deallocating = 1 }}, .oz_refcount = 1 }}, ._length = {}, ._hash = 0, ._data = {} }};\n",
         name, byte_len, c_literal
     );
     ctx.hoisted_string_literals.push((prototype, definition));
@@ -1880,7 +1880,7 @@ fn render_message(node: Node, ctx: &mut EmitCtx) -> (String, String) {
 
 /// Builds a `OZ_PROTOCOL_SEND_{selector}(...)` call (see
 /// `companion::render_protocol_dispatch`) routing a message send
-/// through the `oz_class_id` switch -- used whenever the receiver's
+/// through the `_meta.class_id` switch -- used whenever the receiver's
 /// static type doesn't pin down which class's implementation to call
 /// directly, whether because it's genuinely unresolvable (a bare `id`)
 /// or because it's typed as the root/a protocol, standing in for "any
@@ -2509,22 +2509,28 @@ fn render_interface(node: Node, ctx: &mut EmitCtx, program: &Program) -> (String
         Some(sup) => format!("\tstruct {sup} base; /* synthesized: inherited from {sup} */\n", sup = sup),
         // Root class: synthesize the tracking fields every object needs.
         None => {
+            // `struct oz_metadata` is the PAL's own type
+            // (`platform/oz_platform_types.h`): a packed bitfield holding
+            // class_id, heap_allocated, deallocating and immortal. Using it
+            // rather than a hand-rolled set of `uint8_t` siblings costs
+            // nothing to adopt, is what the Python backend's root struct
+            // already does, and folds four flags into the four bytes one of
+            // them used to take on its own.
+            //
+            // It also settles a naming question the two backends had
+            // answered differently for no reason: three of the behavior
+            // corpus's drivers assert on `obj->base._meta.class_id`, and no
+            // `#define` can rewrite `a._meta.b` into a flat `a.oz_b` -- the
+            // names are separate tokens joined by `.`. They were
+            // unbuildable purely because of the spelling.
+            //
+            // `_refcount` stays a sibling, exactly as in the oracle's own
+            // root struct: it is `oz_atomic_t`, not a bitfield, and every
+            // driver reaches it through `__objc_refcount_get` anyway.
             let mut f = String::from(
-                "\tuint8_t oz_class_id; /* synthesized: which concrete class this is -- indexes the dealloc dispatch switch */\n\
-                 \toz_atomic_t oz_refcount; /* synthesized: retain count */\n\
-                 \tuint8_t oz_deallocating; /* synthesized: guards against re-entrant dealloc while it runs */\n",
+                "\tstruct oz_metadata _meta; /* synthesized: class_id, and the deallocating/heap/immortal flags */\n\
+                 \toz_atomic_t oz_refcount; /* synthesized: retain count */\n",
             );
-            // Only under `--heap-support`: free has to know whether an
-            // object came from its class's slab or from an OZHeap, and
-            // nothing else can tell afterwards. Left out otherwise so a
-            // program that never allocates from a heap does not carry the
-            // byte -- the same reason the oracle guards its own uses of the
-            // equivalent `_meta.heap_allocated` behind `OZ_HEAP_SUPPORT`.
-            if program.heap_support {
-                f.push_str(
-                    "\tuint8_t oz_heap_allocated; /* synthesized: allocated from an OZHeap, not this class's slab */\n",
-                );
-            }
             // Shared lock for every atomic property in the program --
             // reached from any class via `Program::ivar_access_path`'s
             // ordinary "base." hop-chain, same as any inherited ivar.
