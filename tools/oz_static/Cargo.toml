@@ -1,6 +1,6 @@
 [package]
 name = "oz_static"
-version = "0.13.0"
+version = "0.14.0"
 edition = "2021"
 description = "OZ-091 Track B spike: static-subset Objective-C to C transpiler using in-place textual substitution"
 publish = false
@@ -16,3 +16,7 @@ path = "src/main.rs"
 [dependencies]
 tree-sitter = "0.24"
 tree-sitter-objc = "3.0.2"
+# Reads the Clang AST JSON that carries the ARC ownership facts oz_static
+# cannot see for itself (see src/astinfo.rs). A host build-tool dependency
+# only -- nothing here reaches the embedded target.
+serde_json = "1"
