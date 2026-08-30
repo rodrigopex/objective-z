@@ -85,6 +85,14 @@ test-adapted:
 test-pal:
     python3 -m pytest tests/pal/ -v
 
+# Run the behavior corpus through BOTH backends and diff the Unity results.
+# Proves the two agree on what the code *does*, not just that both compile.
+# Set OZ_CLANG to the Zephyr SDK's clang (see CLAUDE.md) for the version the
+# project is tested against; otherwise whatever clang is on PATH is used.
+test-cross-backend *args:
+    cargo build --manifest-path tools/oz_static/Cargo.toml
+    python3 tests/tools/cross_backend.py --all {{args}}
+
 test-all-transpiler:
     just test-transpiler
     just test-behavior
