@@ -3,6 +3,7 @@
 // lib.rs - OZ-091 Track B spike: static-subset Objective-C to C
 // transpiler using in-place textual substitution.
 
+pub mod arc;
 pub mod astinfo;
 pub mod collect;
 pub mod companion;
@@ -73,6 +74,7 @@ pub fn transpile_with_options(
     if let Err(why) = attach_ast(&mut program, options) {
         return Err(vec![Diagnostic::new(why, 1, 1)]);
     }
+    program.owning_methods = arc::analyze(source, &program);
     let overrides = &options.pool_sizes;
     diagnostics.extend(generics::check_program(source, &program));
     if !diagnostics.is_empty() {
@@ -133,6 +135,7 @@ pub fn transpile_split_with_options(
     if let Err(why) = attach_ast(&mut program, options) {
         return Err(vec![Diagnostic::new(why, 1, 1)]);
     }
+    program.owning_methods = arc::analyze(source, &program);
     let overrides = &options.pool_sizes;
     diagnostics.extend(generics::check_program(source, &program));
     if !diagnostics.is_empty() {

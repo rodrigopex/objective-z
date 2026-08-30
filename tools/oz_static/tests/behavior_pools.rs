@@ -19,19 +19,21 @@
 mod common;
 use common::{compile_and_run, ozobject_src};
 
-/// One `[Counter alloc]` site sizes the slab at one slot. A loop that
-/// allocates without releasing therefore succeeds once and then fails --
-/// and a failed allocation returns nil rather than corrupting anything.
+/// A one-slot pool serves one *simultaneously live* object; the next
+/// request returns nil rather than corrupting anything.
 ///
-/// The loop shape matters: the allocation initializes a fresh
-/// per-iteration local, which `staticbar` accepts precisely because it
-/// cannot accumulate live instances. It can still exhaust a one-slot pool
-/// here only because oz_static has no ARC (#189) to release the previous
-/// iteration's object at scope exit.
+/// The two allocations are held in separate locals on purpose. An earlier
+/// version of this test allocated in a loop and relied on nothing releasing
+/// the previous iteration's object -- which stopped being true once
+/// scope-based ARC landed (`emit::render_scoped_block`), because the local
+/// is now released at the end of each iteration and the slot recycles. That
+/// made the test pass for the wrong reason and then fail outright, so the
+/// bound is now demonstrated by real concurrent liveness, which no amount of
+/// reclamation can undo.
 #[test]
 fn pool_bound_is_enforced_and_exhaustion_returns_nil() {
     let src = format!(
-        "{}{}",
+        "/* oz-pool: Counter=1 */\n{}{}",
         ozobject_src(),
         "\
 @interface Counter : OZObject {
@@ -43,24 +45,16 @@ fn pool_bound_is_enforced_and_exhaustion_returns_nil() {
 
 #include <stdio.h>
 int main(void) {
-	int ok = 0;
-	int failed = 0;
-	for (int i = 0; i < 3; i++) {
-		Counter *c = [Counter alloc];
-		if (c) {
-			ok = ok + 1;
-		} else {
-			failed = failed + 1;
-		}
-	}
-	printf(\"ok=%d\\n\", ok);
-	printf(\"failed=%d\\n\", failed);
+	Counter *first = [Counter alloc];
+	Counter *second = [Counter alloc];
+	printf(\"first_ok=%d\\n\", first != 0);
+	printf(\"second_is_nil=%d\\n\", second == 0);
 	return 0;
 }
 "
     );
     let stdout = compile_and_run(&src, "pool_bound_is_enforced_and_exhaustion_returns_nil");
-    assert_eq!(stdout, "ok=1\nfailed=2\n");
+    assert_eq!(stdout, "first_ok=1\nsecond_is_nil=1\n");
 }
 
 /// Releasing returns the slot, so the same one-slot pool serves any number

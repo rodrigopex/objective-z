@@ -326,6 +326,20 @@ struct EmitCtx<'a> {
     method_return_type: String,
     /// Slots to reserve in each class's slab -- see `pools`.
     pools: &'a crate::pools::PoolSizes,
+    /// Object locals owned by each enclosing block, innermost last. Released
+    /// when their block ends and at any jump out of it -- see
+    /// `render_scoped_block`.
+    arc_scopes: Vec<ArcScope>,
+}
+
+/// One block's worth of owned object locals.
+#[derive(Default)]
+struct ArcScope {
+    owned: Vec<String>,
+    /// Is this block a loop's body? `break`/`continue` unwind through
+    /// scopes up to and including the nearest one of these, and no further:
+    /// a local declared *after* the loop is still live once it exits.
+    is_loop_body: bool,
 }
 
 impl<'a> EmitCtx<'a> {
@@ -368,6 +382,11 @@ fn needs_translation(node: Node) -> bool {
             | "dictionary_literal"
             | "synchronized_statement"
             | "cast_expression"
+            // Visited so ARC can prepend the releases a jump out of a loop
+            // owes (`render_loop_jump`). With no owned local in scope the
+            // keyword is returned unchanged, so this costs no output churn.
+            | "break_statement"
+            | "continue_statement"
     ) {
         return true;
     }
@@ -569,6 +588,14 @@ fn render_expr(node: Node, ctx: &mut EmitCtx) -> (String, String) {
         "compound_statement" if is_autoreleasepool_shape(node) => {
             render_autoreleasepool_statement(node, ctx)
         }
+        // Only a block that owns object locals is rewritten; every other one
+        // stays byte-identical, so ARC adds no churn where it changes nothing.
+        "compound_statement" if declares_owned_local(node, ctx) => {
+            render_scoped_block(node, ctx)
+        }
+        "break_statement" | "continue_statement" if !ctx.arc_scopes.is_empty() => {
+            render_loop_jump(node, ctx)
+        }
         "declaration" if is_block_qualified_declaration(node, ctx.src) => {
             hoist_block_var(node, ctx);
             (String::new(), "id".to_string())
@@ -713,7 +740,7 @@ fn is_float_literal_text(text: &str) -> bool {
 
 /// `string_literal` covers both a plain C string (`"foo"`) and a boxed
 /// ObjC one (`@"foo"`) -- distinguished only by a leading `@` child.
-fn is_boxed_string_literal(node: Node) -> bool {
+pub(crate) fn is_boxed_string_literal(node: Node) -> bool {
     let mut cursor = node.walk();
     let found = node.children(&mut cursor).any(|c| c.kind() == "@");
     found
@@ -1214,9 +1241,19 @@ fn render_synchronized_statement(node: Node, ctx: &mut EmitCtx) -> (String, Stri
 /// object is released by `emit.py::_emit_scope_releases` ahead of the
 /// return (`tests/behavior/cases/synchronized/early_return.m`).
 fn render_return_statement(node: Node, ctx: &mut EmitCtx) -> (String, String) {
+    // A local being returned hands its ownership to the caller, so it is
+    // the one thing a return must not release.
+    let mut cursor0 = node.walk();
+    let returned_children: Vec<Node> = node.children(&mut cursor0).collect();
+    let returned_name = returned_children
+        .iter()
+        .find(|c| c.kind() == "identifier")
+        .map(|c| node_text(*c, ctx.src).to_string());
+    let arc_releases = releases_for_all_scopes(ctx, returned_name.as_deref());
+
     // Outside any @synchronized, behave exactly as the catch-all in
     // `render_expr` would: byte-identical when nothing needs translating.
-    if ctx.sync_cleanups.is_empty() {
+    if ctx.sync_cleanups.is_empty() && arc_releases.is_empty() {
         if !needs_translation(node) {
             return (node_text(node, ctx.src).to_string(), "id".to_string());
         }
@@ -1230,12 +1267,15 @@ fn render_return_statement(node: Node, ctx: &mut EmitCtx) -> (String, String) {
         return (rebuilt, "id".to_string());
     }
 
-    let cleanups = ctx.sync_cleanups.iter().rev().cloned().collect::<Vec<_>>().join("\n\t");
+    let mut cleanup_lines: Vec<String> = arc_releases;
+    cleanup_lines.extend(ctx.sync_cleanups.iter().rev().cloned());
+    let cleanups = cleanup_lines.join("\n\t");
 
     let mut cursor = node.walk();
     let value = node.children(&mut cursor).find(|c| c.kind() != "return" && c.kind() != ";");
 
     match value {
+        None if cleanups.is_empty() => ("return;".to_string(), "id".to_string()),
         None => (format!("{}\n\treturn;", cleanups), "id".to_string()),
         Some(value) => {
             let (value_text, _) = render_expr(value, ctx);
@@ -1727,6 +1767,217 @@ fn render_block(node: Node, ctx: &mut EmitCtx) -> (String, String) {
 /// ordinary recursive mechanism -- they are not re-commented at every
 /// nesting level; the comment on the enclosing top-level statement is
 /// what points back to source.
+/// The object locals a `declaration` statement introduces that this block
+/// will own, if any.
+///
+/// A local is owned only when its initializer is provably +1 (see
+/// `arc::is_owning_expr`); a borrowed reference is left alone, because
+/// releasing one is a double free. `__unsafe_unretained` opts out
+/// explicitly, matching what the qualifier means everywhere else.
+fn owned_locals_of(decl: Node, ctx: &EmitCtx) -> Vec<String> {
+    owned_locals_of_in(decl, decl.parent(), ctx)
+}
+
+/// Is `name` released by hand somewhere under `root`?
+///
+/// oz_static supports manual retain/release as a feature of its own (see
+/// `behavior_memory`), and a variable cannot be managed both ways: adding an
+/// automatic release to code that already releases is a double free. So ARC
+/// defers to the author wherever the author took control.
+///
+/// The oracle never has to make this choice -- its sources are compiled with
+/// `-fobjc-arc`, under which an explicit `release` is a compile error, and
+/// indeed no `.m` under tests/behavior/cases/ contains one. oz_static
+/// accepts both styles, so it has to decide, and deferring is the only
+/// option that cannot corrupt memory.
+///
+/// The search covers `root`'s whole subtree, so a release in a nested
+/// `if`/loop counts. A release in a *sibling* scope after the declaring
+/// block has ended would be missed, but such code cannot be reached anyway
+/// -- the variable is out of scope there.
+fn released_by_hand(name: &str, root: Node, src: &str) -> bool {
+    if root.kind() == "message_expression" {
+        let mut cursor = root.walk();
+        let parts: Vec<Node> = root
+            .children(&mut cursor)
+            .filter(|c| c.kind() != "[" && c.kind() != "]")
+            .collect();
+        if parts.len() == 2
+            && &src[parts[1].byte_range()] == "release"
+            && &src[parts[0].byte_range()] == name
+        {
+            return true;
+        }
+    }
+    let mut cursor = root.walk();
+    let children: Vec<Node> = root.children(&mut cursor).collect();
+    children.into_iter().any(|child| released_by_hand(name, child, src))
+}
+
+fn owned_locals_of_in(decl: Node, search_root: Option<Node>, ctx: &EmitCtx) -> Vec<String> {
+    if node_text(decl, ctx.src).contains("__unsafe_unretained") {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    let mut cursor = decl.walk();
+    let children: Vec<Node> = decl.children(&mut cursor).collect();
+    for child in children {
+        if child.kind() != "init_declarator" {
+            continue;
+        }
+        let mut c2 = child.walk();
+        let parts: Vec<Node> = child.children(&mut c2).collect();
+        // `init_declarator` is `<declarator> = <value>`; the value is
+        // whatever follows the `=`.
+        let eq = parts.iter().position(|n| n.kind() == "=");
+        let Some(value) = eq.and_then(|i| parts.get(i + 1)).copied() else {
+            continue;
+        };
+        if !crate::arc::is_owning_expr(value, ctx.src, ctx.program, &ctx.program.owning_methods) {
+            continue;
+        }
+        let name = crate::collect::find_declared_name(child, ctx.src);
+        if name.is_empty() {
+            continue;
+        }
+        if search_root.is_some_and(|root| released_by_hand(&name, root, ctx.src)) {
+            continue;
+        }
+        out.push(name);
+    }
+    out
+}
+
+/// `oz_static_release` for each name, innermost scope first.
+fn release_lines(names: &[String], ctx: &EmitCtx) -> Vec<String> {
+    let root = ctx.program.root_class().unwrap_or("OZObject").to_string();
+    names
+        .iter()
+        .map(|name| format!("oz_static_release((struct {} *)({}));", root, name))
+        .collect()
+}
+
+/// Releases owed by every live scope, innermost first, skipping `keep` --
+/// the local being returned, whose ownership passes to the caller.
+fn releases_for_all_scopes(ctx: &EmitCtx, keep: Option<&str>) -> Vec<String> {
+    let mut names = Vec::new();
+    for scope in ctx.arc_scopes.iter().rev() {
+        for name in scope.owned.iter().rev() {
+            if Some(name.as_str()) != keep {
+                names.push(name.clone());
+            }
+        }
+    }
+    release_lines(&names, ctx)
+}
+
+/// Releases owed by the scopes a `break`/`continue` leaves: from the
+/// innermost out to and including the nearest loop body. Scopes outside the
+/// loop survive it, so their locals must not be touched.
+fn releases_up_to_loop(ctx: &EmitCtx) -> Vec<String> {
+    let mut names = Vec::new();
+    for scope in ctx.arc_scopes.iter().rev() {
+        for name in scope.owned.iter().rev() {
+            names.push(name.clone());
+        }
+        if scope.is_loop_body {
+            break;
+        }
+    }
+    release_lines(&names, ctx)
+}
+
+/// Does this block declare an object local it would own? Only such blocks
+/// need rewriting; every other one is left byte-identical, so ARC costs no
+/// churn in the generated output.
+fn declares_owned_local(body: Node, ctx: &EmitCtx) -> bool {
+    let mut cursor = body.walk();
+    let children: Vec<Node> = body.children(&mut cursor).collect();
+    children
+        .into_iter()
+        .any(|child| child.kind() == "declaration" && !owned_locals_of(child, ctx).is_empty())
+}
+
+/// Is this compound statement a loop's body?
+fn is_loop_body(body: Node) -> bool {
+    body.parent().is_some_and(|parent| {
+        matches!(parent.kind(), "for_statement" | "while_statement" | "do_statement")
+    })
+}
+
+/// `break`/`continue`, preceded by the releases owed by every scope the
+/// jump leaves.
+///
+/// Without this a loop-local allocated each iteration is leaked on the way
+/// out, which is exactly what
+/// `tests/behavior/cases/arc/break_releases_loop_local.m` detects: it breaks
+/// out of a loop holding the only block of a one-block slab, then allocates
+/// again and checks the allocation succeeded.
+fn render_loop_jump(node: Node, ctx: &mut EmitCtx) -> (String, String) {
+    let releases = releases_up_to_loop(ctx);
+    let keyword = node_text(node, ctx.src);
+    if releases.is_empty() {
+        return (keyword.to_string(), "void".to_string());
+    }
+    (format!("{}\n\t{}", releases.join("\n\t"), keyword), "void".to_string())
+}
+
+/// A nested block that owns object locals: render its statements, then
+/// release what it owns on the way out.
+///
+/// This is oz_static's ARC. The oracle does the same job by tracking
+/// `ctx.scope_vars` across its whole statement emitter
+/// (`emit.py::_emit_scope_releases`); here it is attached to the block that
+/// actually owns the locals, so a block owning none is untouched.
+///
+/// A block ending in a jump gets no trailing releases -- the jump already
+/// emitted them, and code after it would be unreachable anyway.
+fn render_scoped_block(body: Node, ctx: &mut EmitCtx) -> (String, String) {
+    let mut cursor = body.walk();
+    let children: Vec<Node> = body.children(&mut cursor).collect();
+    if children.len() < 2 {
+        return (node_text(body, ctx.src).to_string(), "void".to_string());
+    }
+    let stmts = &children[1..children.len() - 1];
+
+    ctx.arc_scopes.push(ArcScope { owned: Vec::new(), is_loop_body: is_loop_body(body) });
+    let mut out = String::from("{\n");
+    let mut ended_with_jump = false;
+    for stmt in stmts {
+        let rendered = render_expr(*stmt, ctx).0;
+        if !ctx.pre_stmts.is_empty() {
+            let pre = ctx.pre_stmts.join("\n\t");
+            ctx.pre_stmts.clear();
+            out.push('\t');
+            out.push_str(&pre);
+            out.push('\n');
+        }
+        out.push('\t');
+        out.push_str(&rendered);
+        out.push('\n');
+        if stmt.kind() == "declaration" {
+            let owned = owned_locals_of(*stmt, ctx);
+            if let Some(scope) = ctx.arc_scopes.last_mut() {
+                scope.owned.extend(owned);
+            }
+        }
+        ended_with_jump = matches!(
+            stmt.kind(),
+            "return_statement" | "break_statement" | "continue_statement" | "goto_statement"
+        );
+    }
+    let scope = ctx.arc_scopes.pop().unwrap_or_default();
+    if !ended_with_jump {
+        for line in release_lines(&scope.owned.iter().rev().cloned().collect::<Vec<_>>(), ctx) {
+            out.push('\t');
+            out.push_str(&line);
+            out.push('\n');
+        }
+    }
+    out.push('}');
+    (out, "void".to_string())
+}
+
 fn render_body_with_comments(body: Node, ctx: &mut EmitCtx) -> String {
     let mut cursor = body.walk();
     let children: Vec<Node> = body.children(&mut cursor).collect();
@@ -1735,21 +1986,39 @@ fn render_body_with_comments(body: Node, ctx: &mut EmitCtx) -> String {
     }
     let stmts = &children[1..children.len() - 1];
 
-    let rendered_stmts: Vec<(String, &str)> = stmts
-        .iter()
-        .map(|s| {
-            let rendered = render_expr(*s, ctx).0;
-            let combined = if ctx.pre_stmts.is_empty() {
-                rendered
-            } else {
-                let pre = ctx.pre_stmts.join("\n\t");
-                ctx.pre_stmts.clear();
-                format!("{}\n\t{}", pre, rendered)
-            };
-            (combined, node_text(*s, ctx.src))
-        })
-        .collect();
-    if rendered_stmts.iter().all(|(rendered, original)| rendered == original) {
+    ctx.arc_scopes.push(ArcScope { owned: Vec::new(), is_loop_body: is_loop_body(body) });
+    let mut rendered_stmts: Vec<(String, &str)> = Vec::with_capacity(stmts.len());
+    let mut ended_with_jump = false;
+    for stmt in stmts {
+        let rendered = render_expr(*stmt, ctx).0;
+        let combined = if ctx.pre_stmts.is_empty() {
+            rendered
+        } else {
+            let pre = ctx.pre_stmts.join("\n\t");
+            ctx.pre_stmts.clear();
+            format!("{}\n\t{}", pre, rendered)
+        };
+        rendered_stmts.push((combined, node_text(*stmt, ctx.src)));
+        if stmt.kind() == "declaration" {
+            let owned = owned_locals_of(*stmt, ctx);
+            if let Some(scope) = ctx.arc_scopes.last_mut() {
+                scope.owned.extend(owned);
+            }
+        }
+        ended_with_jump = matches!(
+            stmt.kind(),
+            "return_statement" | "break_statement" | "continue_statement" | "goto_statement"
+        );
+    }
+    let scope = ctx.arc_scopes.pop().unwrap_or_default();
+    let trailing: Vec<String> = if ended_with_jump {
+        Vec::new()
+    } else {
+        release_lines(&scope.owned.iter().rev().cloned().collect::<Vec<_>>(), ctx)
+    };
+    if trailing.is_empty()
+        && rendered_stmts.iter().all(|(rendered, original)| rendered == original)
+    {
         return node_text(body, ctx.src).to_string();
     }
 
@@ -1764,6 +2033,11 @@ fn render_body_with_comments(body: Node, ctx: &mut EmitCtx) -> String {
             out.push_str(" */\n\t");
             out.push_str(rendered);
         }
+        out.push('\n');
+    }
+    for line in &trailing {
+        out.push('\t');
+        out.push_str(line);
         out.push('\n');
     }
     out.push('}');
@@ -2328,6 +2602,7 @@ pub fn emit(source: &str, program: &Program, pools: &crate::pools::PoolSizes) ->
                     sync_cleanups: Vec::new(),
                     method_return_type: "int".to_string(),
                     pools,
+                    arc_scopes: Vec::new(),
                 };
                 let (header_part, alloc_free_part) = render_interface(node, &mut ctx, program);
                 let text = format!("{}\n{}", header_part, alloc_free_part);
@@ -2355,6 +2630,7 @@ pub fn emit(source: &str, program: &Program, pools: &crate::pools::PoolSizes) ->
                     sync_cleanups: Vec::new(),
                     method_return_type: "int".to_string(),
                     pools,
+                    arc_scopes: Vec::new(),
                 };
                 let mut out = String::new();
                 out.push_str(&banner_box(&header_text(node, source, &["implementation_definition"]), '-'));
@@ -2509,6 +2785,7 @@ pub fn emit(source: &str, program: &Program, pools: &crate::pools::PoolSizes) ->
                     sync_cleanups: Vec::new(),
                     method_return_type: "int".to_string(),
                     pools,
+                    arc_scopes: Vec::new(),
                 };
                 let mut c2 = node.walk();
                 if let Some(body) =
@@ -2743,6 +3020,7 @@ pub fn emit_split(
                     sync_cleanups: Vec::new(),
                     method_return_type: "int".to_string(),
                     pools,
+                    arc_scopes: Vec::new(),
                 };
                 let (header_part, alloc_free_part) = render_interface(node, &mut ctx, program);
                 diags.extend(ctx.diags);
@@ -2772,6 +3050,7 @@ pub fn emit_split(
                     sync_cleanups: Vec::new(),
                     method_return_type: "int".to_string(),
                     pools,
+                    arc_scopes: Vec::new(),
                 };
                 let mut out = String::new();
                 out.push_str(&banner_box(&header_text(node, source, &["implementation_definition"]), '-'));
@@ -2884,6 +3163,7 @@ pub fn emit_split(
                     sync_cleanups: Vec::new(),
                     method_return_type: "int".to_string(),
                     pools,
+                    arc_scopes: Vec::new(),
                 };
                 let mut text = node_text(node, source).to_string();
                 let mut c2 = node.walk();

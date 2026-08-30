@@ -92,6 +92,10 @@ pub struct Program {
     pub classes: HashMap<String, ClassInfo>,
     pub class_order: Vec<String>,
     pub protocols: HashMap<String, ProtocolInfo>,
+    /// Methods whose every return path hands back a +1 reference, so a
+    /// caller's local holding one must be released at scope exit -- see
+    /// `arc`. Empty until `lib::transpile*` fills it in.
+    pub owning_methods: crate::arc::OwningMethods,
     /// Ownership facts read from a Clang AST dump, when one was supplied
     /// (`--ast`). Clang resolves types; tree-sitter does not, so this is the
     /// only authority on whether an `id`-typed ivar is an object the class
