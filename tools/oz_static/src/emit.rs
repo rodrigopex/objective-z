@@ -1522,7 +1522,8 @@ fn send_to_resolved_class(
 ///
 /// ```c
 /// { /* @synchronized(obj) */
-///     oz_spinlock_t _oz_sync_lock_... = {0};
+///     oz_spinlock_t _oz_sync_lock_...;
+///     oz_spin_init(&_oz_sync_lock_...);
 ///     oz_spinlock_key_t _oz_sync_key_... = oz_spin_lock(&_oz_sync_lock_...);
 ///     oz_static_retain((struct OZObject *)(obj));
 ///     ... body ...
@@ -1610,7 +1611,8 @@ fn render_synchronized_statement(node: Node, ctx: &mut EmitCtx) -> (String, Stri
     (
         format!(
             "{{\n\
-             \toz_spinlock_t {lock} = {{0}};\n\
+             \toz_spinlock_t {lock};\n\
+             \toz_spin_init(&{lock});\n\
              \toz_spinlock_key_t {key} = oz_spin_lock(&{lock});\n\
              \t{retain}\n\
              \t{body}\n\

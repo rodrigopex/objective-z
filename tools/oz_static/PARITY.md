@@ -316,16 +316,20 @@ Two things only running the sample could show:
 Both compiled and linked cleanly throughout. This is the clearest case so
 far for the sample table's link column not being the last word either.
 
-**Known divergence: release order within a scope.** oz_static releases a
-scope's owned locals in *reverse* declaration order; the oracle
-(`emit.py::_emit_scope_releases`) iterates its frame in declaration order.
-Reverse is what Clang's own ARC does — its scope cleanups run LIFO, like C++
-destructors — and it is the order that matters when one object's `-dealloc`
-touches another, so oz_static keeps it. The visible cost is that
-`samples/heap_alloc/sample.yaml` lists its two `Sensor dealloc` lines in the
-oracle's order under `ordered: true`, so that sample's twister check would
-not pass under the static backend without editing a file the Python backend
-also uses. Nothing fails today, since no sample selects the static backend.
+**Release order within a scope: the two backends differ, and it no longer
+costs anything.** oz_static releases a scope's owned locals in *reverse*
+declaration order; the oracle (`emit.py::_emit_scope_releases`) iterates its
+frame forward. Reverse is what Clang's own ARC does — scope cleanups run
+LIFO, like C++ destructors — and it is the order that matters when one
+object's `-dealloc` touches another, so oz_static keeps it.
+
+`samples/heap_alloc/sample.yaml` used to pin its two `Sensor dealloc` lines
+in the oracle's order under `ordered: true`, which made that sample time out
+under twister on a run that was otherwise entirely correct. Those two
+objects are released when the same `@autoreleasepool` block ends and the
+order between them is not what the sample demonstrates, so those two lines
+are now order-agnostic. Both backends pass; nothing else in that file was
+relaxed.
 
 **J. The root object's tracking fields are now the PAL's own
 `struct oz_metadata`.** oz_static had rolled its own: three `uint8_t`
@@ -512,13 +516,49 @@ ARM toolchain, real `k_mem_slab`, real spinlocks and Zephyr's own warning
 set.
 
 ```
-west build -p -b mps2/an385 samples/<name>     # default backend is now static
-west build -d <build> -t run                   # QEMU
+just test                       # west twister -T samples/ -p mps2/an385
+just project_dir=samples/arc_demo rebuild && just run    # one sample, QEMU
 ```
 
-**12 of 13 samples build for ARM.** `arc_demo` was also run under QEMU and
-its console output is byte-identical to the Python backend's. The one
-failure is `zbus_service`, below.
+`just test` is the real harness: twister builds each sample, runs it under
+QEMU, and matches the console output against the `regex:` list in that
+sample's own `sample.yaml`. It is stricter than a plain `west build` in two
+ways that both mattered — it adds `-Werror`, and it checks output rather
+than exit status.
+
+`arc_demo`'s output under QEMU is byte-identical to the Python backend's.
+
+**11 of 11 twister configurations pass** — every sample that has a
+`sample.yaml`, built, run and output-checked. `gpio_demo` builds but has no
+`sample.yaml` (it wants real GPIO, so there is nothing for QEMU to check);
+`zbus_service` is the one sample that does not build, below. Which backend
+each build actually used was verified rather than assumed: all 11 resolve
+`CONFIG_OBJZ_BACKEND_STATIC=y`, produce `oz_static_generated/`, and mention
+`oz_transpile` nowhere in their build logs.
+
+Twister found two things a plain `west build` of the same samples did not:
+
+- **`oz_spinlock_t lock = {0}` does not compile under `-Werror`.**
+  `struct k_spinlock` has *no members* unless `CONFIG_SMP` or
+  `CONFIG_SPIN_VALIDATE` is on, so a brace initializer is "excess elements
+  in struct initializer". The PAL gained `oz_spin_init`, which `memset`s on
+  Zephyr and assigns on host — covering both an empty struct and the host
+  backend's plain `int`. `samples/pool_demo` was the case.
+- **`samples/heap_alloc` timed out on its own expected output**, and the
+  program was entirely correct: heaps back to 0, all four Sensors
+  deallocated, "Demo complete" printed. Its `sample.yaml` pinned
+  `Sensor dealloc.*42` before `.*84` under `ordered: true`, which encoded
+  one backend's scope-traversal order as a requirement. Those two objects
+  are released when the same `@autoreleasepool` block ends, and which goes
+  first is not what the sample demonstrates — real ARC destroys scope locals
+  in reverse declaration order (oz_static does, matching Clang) while
+  `oz_transpile` walks its frame forward. The two lines are now
+  order-agnostic and both backends pass; every other ordering constraint in
+  that file is untouched.
+
+  This supersedes what this document previously called a "known divergence"
+  to be lived with. The divergence is real and oz_static's order is the
+  correct one; it was the *expectation* that was over-specified.
 
 Running the cross-build found five defects in the first twenty minutes,
 after a whole day of host checks had gone green — worth recording, because

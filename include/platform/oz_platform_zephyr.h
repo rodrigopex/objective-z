@@ -6,6 +6,7 @@
 #include <zephyr/sys/atomic.h>
 #include <zephyr/sys/printk.h>
 #include <zephyr/sys/mem_blocks.h>
+#include <string.h>
 #include "oz_platform_types.h"
 
 /* ------------------------------------------------------------------ */
@@ -81,6 +82,22 @@ static inline atomic_val_t oz_atomic_get(oz_atomic_t *target)
 typedef struct k_spinlock oz_spinlock_t;
 typedef k_spinlock_key_t oz_spinlock_key_t;
 #define OZ_SPINLOCK(lck) K_SPINLOCK(lck)
+
+/**
+ * @brief Zero a spinlock before first use.
+ *
+ * Not a brace initializer, which is what generated code used to emit:
+ * `struct k_spinlock` has no members at all unless CONFIG_SMP or
+ * CONFIG_SPIN_VALIDATE is on, so `= {0}` is "excess elements in struct
+ * initializer" -- an error under Zephyr's -Werror, which is how
+ * samples/pool_demo failed under twister while an ordinary west build of it
+ * passed. memset covers both shapes: nothing to do when the struct is
+ * empty, a proper zero of `locked`/`owner`/`tail` when SMP makes it real.
+ */
+static inline void oz_spin_init(oz_spinlock_t *lck)
+{
+	memset(lck, 0, sizeof(*lck));
+}
 
 static inline oz_spinlock_key_t oz_spin_lock(oz_spinlock_t *lck)
 {
