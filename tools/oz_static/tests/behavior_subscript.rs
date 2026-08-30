@@ -48,14 +48,6 @@ int main(void) {
     assert_eq!(stdout, "first=10\nthird=30\ncount=3\n");
 }
 
-/// Does not release the dictionary, matching
-/// `behavior_foundation_dictionary`'s existing idiom: releasing a
-/// dictionary literal currently aborts, because OZDictionary has no
-/// collection dealloc in oz_static (the dispatch switch routes its
-/// dealloc to the plain root one, unlike the oracle's dedicated
-/// element-releasing dealloc). That is a separate pre-existing gap, not
-/// something subscripting introduced -- an *array* literal releases
-/// cleanly, and this test's keyed reads are correct either way.
 #[test]
 fn keyed_subscript_reads_dictionary_value() {
     let src = format!(
@@ -73,6 +65,7 @@ int main(void) {
 	OZQ31 *beta = scores[@\"beta\"];
 	printf(\"alpha=%d\\n\", [alpha int32Value]);
 	printf(\"beta=%d\\n\", [beta int32Value]);
+	[scores release];
 	return 0;
 }
 "
