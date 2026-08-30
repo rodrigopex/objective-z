@@ -33,17 +33,29 @@ cc -DOZ_PLATFORM_HOST -DOZ_HEAP_SUPPORT \
 | transpiled_blocks | yes | Zephyr-blocked | `printk`/`k_*` only |
 | transpiled_generics | yes | Zephyr-blocked | `printk`/`k_*` only |
 | transpiled_led | yes | Zephyr-blocked | `printk`/`k_*` only |
-| arc_demo | yes | **no — transpiler** | gap A below |
-| mem_demo | yes | **no — transpiler** | gap B below |
-| hello_category | yes | **no — transpiler** | gap C below; 3 of 20 generated files, down from 20 |
-| gpio_demo | **no** | — | gap D below |
-| heap_alloc | **no** | — | gap D, plus no `allocWithHeap:` |
+| mem_demo | yes | yes | was gap B |
+| arc_demo | yes | Zephyr-blocked | `K_THREAD_DEFINE` only; was gap A |
+| gpio_demo | yes | Zephyr-blocked | was gap D |
+| heap_alloc | yes | **no — transpiler** | property dot syntax; was gap D |
+| hello_category | yes | **no — transpiler** | gap C below |
+| transpiled_literals | yes | **no — transpiler** | boxed-literal helper not visible in `main` |
 | zbus_objc | **no** | — | gap E below |
 | zbus_service | **no** | — | gap E, plus stale (see below) |
 
-9 of 13 transpile. Of those, 3 compile cleanly, 3 fail only on Zephyr
+12 of 13 transpile. Of those, 4 compile cleanly, 5 fail only on Zephyr
 headers (expected on host — not a transpiler problem), and 3 fail on
 transpiler gaps.
+
+Fixed since the first measurement: **file-scope object variables** are now
+type-tracked, so a send to a `static GPIOOutput *led;` resolves instead of
+reporting the receiver as `id` (`emit::file_scope_vars`, threaded into method
+*and* plain-function scopes -- `gpio_demo`'s `[led toggle]` sits in `main`).
+**Bare class names now get their `struct` tag** in the two positions that
+were copied through verbatim, a top-level declaration and a free function's
+signature (`emit::class_tag_edits`). And `__objc_refcount_get` is emitted --
+as a function rather than the oracle's macro, because the real
+`src/OZObject.m` already declares it as one and a macro of that name would
+be expanded inside that declaration and break it.
 
 "Zephyr-blocked" means the only compile errors reference `zephyr/*`,
 `printk`, `k_msleep`, `gpio_*`, `zbus`, `DT_*` or similar. Those samples
