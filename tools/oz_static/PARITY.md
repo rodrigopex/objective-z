@@ -851,15 +851,15 @@ code size are all untested. Flipping the default is what will surface those;
 ## Not verified
 
 **The Zephyr cross-build is now run** — see "On target" above. What is still
-not covered: only `arc_demo` has been *executed* on target, no board has been
-used (mps2/an385 under QEMU only), and nothing here measures code size
-against the Python backend.
+not covered: no real board has been used (mps2/an385 under QEMU only), no
+RISC-V build has been tried, and nothing here measures code size against the
+Python backend. Filed as `issues/OZ-105.md` and `issues/OZ-106.md`.
 
-**The samples are run on host, not on target.** Nine of them execute and
-are checked against their own `sample.yaml`, which is a real and
-independent oracle — but a host run says nothing about `k_mem_slab`, real
-interrupt-disabled spinlocks, or code size, and the three samples needing
-kernel or device-tree infrastructure are not run at all.
+**All 13 samples are run under twister**, on QEMU. Each is built, executed,
+and its console output matched against its own `sample.yaml` — a real oracle,
+and one independent of the Python backend. QEMU still says nothing about real
+`k_mem_slab` contention, real interrupt-disabled critical sections, or
+timing.
 
 Recorded because the reasoning is worth keeping: it was asked whether making
 `src/OZLog.c` a `.m` and letting each backend transpile it would be an
@@ -871,3 +871,16 @@ anywhere — no `isVariadic`, no `...`, and every signature is built as
 would silently lose its varargs and its `va_start(args, fmt)` would be
 undefined. OZLog is inherently variadic, making it the file least suited to
 that conversion. Nothing needed changing there in any case; see gap K.
+
+## Follow-ups
+
+Filed rather than folded in, each with the reason it was kept separate:
+
+| Issue | What |
+| --- | --- |
+| `issues/OZ-101.md` | Static, no-heap reflection and `@selector`. Needs its own design pass; oz_static rejects them today with a located error. |
+| `issues/OZ-102.md` | Host-portable samples. Only three samples genuinely need Zephyr (`K_THREAD_DEFINE`, device tree, zbus) — stubbing `printk` alone moved four others to running on host. |
+| `issues/OZ-103.md` | Use `_meta.immortal` for boxed literals instead of pre-setting `deallocating`. The current trick works; the field just says something false. |
+| `issues/OZ-104.md` | 58 `-Wunused-parameter` in generated C, mostly `self` in an empty `-dealloc`. `-Wextra` only, so not a build failure — but it hides the next real warning. |
+| `issues/OZ-105.md` | Verify on RISC-V (`qemu_riscv32`). A second toolchain is the cheapest way to find anything ARM-specific in the generated C. |
+| `issues/OZ-106.md` | Compare code size between backends, and run at least one sample on real hardware. The default was switched on behavioural grounds; the size consequences are unknown rather than known-acceptable. |
