@@ -862,7 +862,7 @@ code size are all untested. Flipping the default is what will surface those;
 not covered: no real board has been used (mps2/an385 under QEMU only), and
 nothing here measures code size against the Python backend. RISC-V now
 builds — 12 of 13 samples, with generated C byte-identical to ARM — but no
-RISC-V sample has been *run*. Filed as OZ-105 and OZ-106.
+RISC-V sample has been *run*. Filed as #230 and #231.
 
 **All 13 samples are run under twister**, on QEMU. Each is built, executed,
 and its console output matched against its own `sample.yaml` — a real oracle,
@@ -887,9 +887,9 @@ Filed rather than folded in, each with the reason it was kept separate:
 
 | Issue | What |
 | --- | --- |
-| OZ-101 | Static, no-heap reflection and `@selector`. Needs its own design pass; oz_static rejects them today with a located error. |
-| OZ-102 | Host-portable samples. Only three samples genuinely need Zephyr (`K_THREAD_DEFINE`, device tree, zbus) — stubbing `printk` alone moved four others to running on host. |
-| OZ-103 | Use `_meta.immortal` for boxed literals instead of pre-setting `deallocating`. The current trick works; the field just says something false. Follows OZ-064. |
-| OZ-104 | 58 `-Wunused-parameter` in generated C, mostly `self` in an empty `-dealloc`. `-Wextra` only, so not a build failure — but it hides the next real warning. |
-| OZ-105 | Verify on RISC-V (`qemu_riscv32`). **Partly done:** 12 of 13 samples build, and the generated C is byte-identical to the ARM build for the five samples checked — the PAL absorbs the target as designed. Execution is still unverified, and `gpio_demo` needs device-tree aliases `qemu_riscv32` lacks. |
-| OZ-106 | Compare code size between backends, and run at least one sample on real hardware. The default was switched on behavioural grounds; the size consequences are unknown rather than known-acceptable. |
+| #226 | Static, no-heap reflection and `@selector`. Needs its own design pass; oz_static rejects them today with a located error. |
+| #227 | Host-portable samples. Only three samples genuinely need Zephyr (`K_THREAD_DEFINE`, device tree, zbus) — stubbing `printk` alone moved four others to running on host. |
+| #228 | Use `_meta.immortal` for boxed literals instead of pre-setting `deallocating`. The current trick works; the field just says something false. Follows OZ-064 (#97). |
+| #229 | 58 `-Wunused-parameter` in generated C, mostly `self` in an empty `-dealloc`. `-Wextra` only, so not a build failure — but it hides the next real warning. |
+| #230 | Verify on RISC-V (`qemu_riscv32`). **Partly done:** 12 of 13 samples build, and the generated C is byte-identical to the ARM build for the five samples checked — the PAL absorbs the target as designed. Execution is still unverified, and `gpio_demo` needs device-tree aliases `qemu_riscv32` lacks. |
+| #231 | Compare code size between backends, and run at least one sample on real hardware. The default was switched on behavioural grounds; the size consequences are unknown rather than known-acceptable. |
