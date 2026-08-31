@@ -32,6 +32,16 @@ monitor:
 test:
     west twister -T samples/ -p {{ board }} -O /tmp/twister-out
 
+# Same samples on RISC-V. gpio_demo is filtered out by its own sample.yaml:
+# qemu_riscv32 has no led0/sw0 device-tree aliases, so 12 of 13 run here.
+test-riscv:
+    west twister -T samples/ -p {{ riscv_board }} -O /tmp/twister-out-riscv
+
+# Both supported boards, so an architecture-specific regression cannot hide.
+test-boards:
+    just test
+    just test-riscv
+
 test-zephyr:
     west twister -T tests/zephyr/ -p {{ if os() == "linux" { "native_sim" } else { board } }} -O /tmp/twister-out
 

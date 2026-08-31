@@ -25,9 +25,9 @@ reference, don't extend it.
 - Use just for build automation
 - Use semantic versioning on `tools/oz_static/Cargo.toml` (see Version above)
 - All changes must validate by testing. `cargo test --manifest-path tools/oz_static/Cargo.toml`
-  is the primary gate; `just test` runs the samples on ARM under twister. Anything touching
-  emitted C also needs a real board build and run — compiling only proves the input was
-  understood.
+  is the primary gate; `just test` runs the samples on ARM under twister and `just test-riscv`
+  runs them on RISC-V (`just test-boards` does both). Anything touching emitted C also needs a
+  real board build and run — compiling only proves the input was understood.
 
 ## Build Commands
 
@@ -62,6 +62,8 @@ macOS is Apple Clang and a different version from CI.
 | `just monitor` / `just m` | Serial monitor via tio             |
 | `just clean` / `just c`   | Remove build dir                   |
 | `just test` / `just t`    | Run twister on all samples (ARM)   |
+| `just test-riscv`          | Same samples on RISC-V (12 of 13; `gpio_demo` is ARM-only) |
+| `just test-boards`         | Both boards, so neither hides an architecture-specific regression |
 | `just test-cross-backend` | Both backends over the same corpus, results diffed |
 | `just test-behavior`      | Behavior corpus (Python backend)    |
 | `just test-adapted`       | Adapted upstream tests (Python backend) |
