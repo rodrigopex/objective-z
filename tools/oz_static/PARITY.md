@@ -527,6 +527,104 @@ legitimately name something only the target's own toolchain provides).
 uses `#include "Car.h"`, but `main.m` reached `Car.h` through
 `Car+Maintenance.h` via `#import`.
 
+**Q. Assigning to a strong object *local* did not release the old value, and
+the static bar never saw a plain C function at all.** Both fixed (#234), and
+the two are the same story: the bar was rejecting a shape only because ARC
+leaked in it.
+
+`render_strong_ivar_assign` did retain-new/release-old for a strong *ivar*
+(gap L) and a synthesized setter did it for a property, but a plain local did
+neither -- that function bails out on `ctx.locals` explicitly. So each
+iteration of
+
+```objc
+Counter *c;
+for (int i = 0; i < 100; i++) {
+        c = [Counter alloc];
+}
+```
+
+abandoned a live object, and `staticbar` rejected the loop rather than emit
+the leak. Real ARC releases the previous value at every store to a strong
+variable, so this is ordinary Objective-C, and the oracle has had the same
+transform all along (`emit.py::_emit_strong_local_assign`). Diffed on the same
+source, the two now put the releases in exactly the same place: release old,
+then assign, plus one scope-exit release.
+
+`emit::render_strong_local_assign` releases before evaluating an owning
+right-hand side, which is what lets **one** slab slot serve the whole loop --
+the slot goes back to the slab and the next allocation takes it again.
+Measured on one slot: 100 allocations, 100 deallocs. Without the fix the same
+test reports `ok=1` and `deallocs=0`.
+
+Three things this needed that are worth recording:
+
+- **A bare declaration gets ARC's implicit `= nil`.** Not tidiness: the first
+  overwrite releases what the variable held, and `oz_static_release`
+  dereferences its argument.
+- **No temporary.** The first attempt captured the previous value into a
+  `ctx.pre_stmts` local, which is drained by the enclosing *top-level*
+  statement -- so inside a loop it hoisted above the `for`, read the variable
+  once while it was still nil, and every iteration released nil. The loop
+  leaked exactly as before and the output looked entirely plausible. Naming
+  the variable inside the comma expression is both simpler and correct, since
+  the comma operator sequences left to right.
+- **Ownership stays symmetric.** A local is managed only when every value it
+  can hold is owned; a store that would need a temporary to be retained
+  exactly once leaves the local unmanaged. Releasing a reference never taken
+  is a double free -- gap L in reverse.
+
+The bar itself was entered from one place, `emit.rs`'s method-body renderer,
+so a plain top-level C function was never scanned: not for `@try`, reflection
+selectors, `@selector`/`@protocol`, `@synchronized` jumps, block captures, or
+allocation. `staticbar::check_function_body` now runs the same walk there. No
+scope mode was needed -- `class_ivars` is read in exactly one place and a free
+function has none, so an empty set is the truth rather than a stand-in.
+
+Two consequences:
+
+- **The allocation rule now distinguishes reassignment from accumulation.**
+  `c = [Counter alloc]` in a loop is bounded at one live instance; storing
+  into an array element or an ivar is not, and stays a hard error. This
+  narrows OZ-098's collection-literal rule, which had rejected the
+  reassignment shape too -- verified bounded rather than assumed, with
+  `OZArray=1` and a 2-slot element pool running 100 iterations, since freeing
+  an array returns both its slot and its buffer.
+- **A bare `Counter *c;` is now type-tracked.** `collect_local_decls` matched
+  `init_declarator` and `identifier` but not the `pointer_declarator` a
+  declaration without an initializer produces, so such a local never reached
+  `ctx.scope` and a later `[c poke]` was rejected as an `id` receiver -- while
+  the identical code written `Counter *c = ...;` resolved fine. The local
+  twin of gap D.
+
+Validated on ARM, not only on host. No sample used the reassignment shape, so
+the twister run proved *no regression* and nothing about the new path --
+`samples/arc_demo` now exercises it, in `main()`, which is a plain C function
+and so covers the free-function scan at the same time. Its generated C carries
+the new form
+
+```c
+(oz_static_release((struct OZObject *)(r)), r = createSensor(100 + i));
+```
+
+and under QEMU it prints each value's dealloc before the next value exists,
+which is the release-then-allocate ordering the single-slot claim rests on.
+That sample's output stays byte-identical between the two backends with the
+loop added, so the new path is confirmed against the oracle on target and not
+only by the host tests. Its local is written `Sensor *r = nil;` rather than
+left bare for exactly that reason: the Python backend has no emission rule for
+the implicit nil (`ImplicitValueInitExpr`), and oz_static treats the two
+spellings identically.
+`Sensor` is given one slot of headroom there deliberately: the loop needs only
+one, but the moment between its release and its next allocation leaves the slot
+free, and pinning the pool to exactly 1 would make the sample depend on never
+interleaving with the Sensor that `arc_demo_extra_thread_entry`'s Driver holds.
+
+Objective-C inside a `#define` *body* is the other half of #234 and is not
+addressed: a macro body is one opaque `preproc_arg` token, so it is emitted
+verbatim and the generated C then fails to compile. Filed as #238 with a
+prototyped detector (0 false positives over the repo's 40 macro bodies).
+
 ## On target (mps2/an385, ARM, Zephyr)
 
 The check that was missing, and the one that mattered most. Every
@@ -687,7 +785,7 @@ without updating the list also fails the test; it cannot decay into
 silently skipped cases. Empty is therefore a stronger statement than a
 passing suite with entries.
 
-Rust test suite: 183 passing, 0 failing.
+Rust test suite: 209 passing, 0 failing.
 
 ### Behavioral parity: 73 of 73
 
@@ -893,3 +991,4 @@ Filed rather than folded in, each with the reason it was kept separate:
 | #229 | 58 `-Wunused-parameter` in generated C, mostly `self` in an empty `-dealloc`. `-Wextra` only, so not a build failure — but it hides the next real warning. |
 | #230 | Verify on RISC-V (`qemu_riscv32`). **Partly done:** 12 of 13 samples build, and the generated C is byte-identical to the ARM build for the five samples checked — the PAL absorbs the target as designed. Execution is still unverified, and `gpio_demo` needs device-tree aliases `qemu_riscv32` lacks. |
 | #231 | Compare code size between backends, and run at least one sample on real hardware. The default was switched on behavioural grounds; the size consequences are unknown rather than known-acceptable. |
+| #238 | Objective-C inside a `#define` *body* is emitted verbatim, so the generated C does not compile — the other half of #234, split out because a macro body is one opaque `preproc_arg` token and needs its own approach. Detector prototyped: 0 of 40 real macro bodies flagged. |
