@@ -352,14 +352,15 @@ oz_static_release, once the refcount reaches zero (not from source) */\n",
 }
 
 /// OZArray-specific replacement for `render_alloc_free`: alloc is
-/// identical, but free must also release every held item and free the
-/// items buffer -- OZArray.m (transplanted verbatim from `src/OZArray.m`)
-/// has no `-dealloc` of its own (the real Python pipeline synthesizes this
-/// at emit-time too, via a static item-pool allocator this malloc-based
-/// spike doesn't have), so the generic dealloc dispatch would otherwise
-/// fall through to OZObject's no-op `-dealloc` and leak both. Also emits
-/// `OZArray_oz_initWithItems`, the malloc-based builder backing the
-/// `@[...]` boxed array literal desugar in `emit.rs`.
+/// identical, but free must also release every held item and give the
+/// items buffer back -- OZArray.m (transplanted verbatim from
+/// `src/OZArray.m`) has no `-dealloc` of its own, so the generic dealloc
+/// dispatch would otherwise fall through to OZObject's no-op `-dealloc`
+/// and leak both. The oracle synthesizes the same thing at emit-time.
+/// Also emits `OZArray_oz_initWithItems`, the builder backing the
+/// `@[...]` boxed array literal desugar in `emit.rs`; its buffer comes
+/// from the shared `oz_item_pool` (see `render_item_buffer_alloc`), not
+/// from malloc.
 pub(crate) fn render_array_support(
     name: &str,
     root: &str,
@@ -503,12 +504,12 @@ fn render_item_buffer_free(field: &str, count: &str, item_slots: usize) -> Strin
 /// also release every key and value and free their buffer -- OZDictionary.m
 /// (transplanted from `src/OZDictionary.m`) has no `-dealloc` of its own,
 /// same reason as OZArray. Also emits `OZDictionary_oz_initWithKeysValues`,
-/// the malloc-based builder backing the `@{...}` boxed dictionary literal
-/// desugar in `emit.rs`. Keys and values share one contiguous buffer
-/// (`_keys` pointing at its first half, `_values` at its second),
-/// mirroring the real Python pipeline's own `{Name}_initWithKeysValues`
-/// template (`tools/oz_transpile/templates/class_header.h.j2`) -- pool-
-/// backed there, malloc-based here.
+/// the builder backing the `@{...}` boxed dictionary literal desugar in
+/// `emit.rs`. Keys and values share one contiguous run of `2 * count`
+/// slots (`_keys` pointing at its first half, `_values` at its second),
+/// taken from the shared `oz_item_pool` -- the same shape, and now the
+/// same allocator, as the oracle's own `{Name}_initWithKeysValues`
+/// template (`tools/oz_transpile/templates/class_header.h.j2`).
 pub(crate) fn render_dict_support(
     name: &str,
     root: &str,

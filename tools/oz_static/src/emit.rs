@@ -895,12 +895,13 @@ fn is_fresh_alloc(node: Node, src: &str) -> bool {
     }
 }
 
-/// Desugars a boxed array literal (`@[e1, e2, ...]`) into a call to the
-/// malloc-based `OZArray_oz_initWithItems` builder (see
-/// `companion::render_array_support`) -- the same shape as the Python
-/// pipeline's `ObjCArrayLiteral` handling, but backed by a stack buffer
-/// instead of the item-pool allocator that pipeline has and this
-/// malloc-based spike doesn't.
+/// Desugars a boxed array literal (`@[e1, e2, ...]`) into a call to
+/// `OZArray_oz_initWithItems` (see `companion::render_array_support`) --
+/// the same shape as the Python pipeline's `ObjCArrayLiteral` handling,
+/// and since OZ-098 the same allocator behind it: the *stack* buffer
+/// built here only carries the element pointers into the builder, which
+/// copies them into a run of slots taken from the shared
+/// `oz_item_pool`.
 ///
 /// Each element is rendered, then either passed through as-is (a fresh
 /// +1 reference, see `is_fresh_alloc`) or retained first (an existing
@@ -952,7 +953,7 @@ fn render_boxed_array_literal(node: Node, ctx: &mut EmitCtx) -> (String, String)
 }
 
 /// Desugars a boxed dictionary literal (`@{k1: v1, k2: v2, ...}`) into a
-/// call to the malloc-based `OZDictionary_oz_initWithKeysValues` builder
+/// call to the `OZDictionary_oz_initWithKeysValues` builder
 /// (see `companion::render_dict_support`) -- the dictionary counterpart
 /// of `render_boxed_array_literal` above (see its doc comment for the
 /// element-ownership rules, identical here for both keys and values).
