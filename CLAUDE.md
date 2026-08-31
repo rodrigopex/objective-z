@@ -4,15 +4,30 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**Current version: v0.5.99**
+**Version: `tools/oz_static/Cargo.toml`** — the transpiler carries its own semantic
+version, bumped in the same commit as the change it describes (patch for a fix, minor
+for a new construct or a pre-1.0 break). The repo-level `VERSION` file sits at v0.5.99
+and no longer moves: it tracked the outgoing Python pipeline through a scheme that tied
+`PATCHLEVEL` to an issue id, which is retired. Don't bump it.
 
-Objective-Z is an Objective-C transpiler for Zephyr RTOS, packaged as a Zephyr module (`zephyr/module.yml`). Converts `.m` sources to plain C via Clang AST analysis — no ObjC runtime needed. Uses the Platform Abstraction Layer (PAL) for zero-cost Zephyr integration.
+Objective-Z is an Objective-C transpiler for Zephyr RTOS, packaged as a Zephyr module
+(`zephyr/module.yml`). Converts `.m` sources to plain C — no ObjC runtime needed. Uses the
+Platform Abstraction Layer (PAL) for zero-cost Zephyr integration.
+
+**The transpiler is `tools/oz_static/` (the `oz2c` binary, Rust).** It is the default
+backend (`CONFIG_OBJZ_BACKEND_STATIC`) and where new work goes. The Python pipeline
+`tools/oz_transpile/` still builds and its suites are still the only independent oracle
+for behavioural equivalence, but it is the outgoing implementation: read it for
+reference, don't extend it.
 
 ## Project instructions
 
 - Use just for build automation
-- Use semantic versioning
-- All changes must validate by testing with `just test`
+- Use semantic versioning on `tools/oz_static/Cargo.toml` (see Version above)
+- All changes must validate by testing. `cargo test --manifest-path tools/oz_static/Cargo.toml`
+  is the primary gate; `just test` runs the samples on ARM under twister. Anything touching
+  emitted C also needs a real board build and run — compiling only proves the input was
+  understood.
 
 ## Build Commands
 
@@ -47,10 +62,17 @@ macOS is Apple Clang and a different version from CI.
 | `just monitor` / `just m` | Serial monitor via tio             |
 | `just clean` / `just c`   | Remove build dir                   |
 | `just test` / `just t`    | Run twister on all samples (ARM)   |
-| `just test-transpiler`    | Run transpiler pytest suite        |
-| `just test-behavior`      | Run compiled behavior tests        |
-| `just test-adapted`       | Run adapted upstream tests         |
-| `just transpile`          | Run OZ transpiler                  |
+| `just test-cross-backend` | Both backends over the same corpus, results diffed |
+| `just test-behavior`      | Behavior corpus (Python backend)    |
+| `just test-adapted`       | Adapted upstream tests (Python backend) |
+| `just test-transpiler`    | Python transpiler pytest suite     |
+| `just transpile`          | Run the Python transpiler directly |
+
+The Rust suite has no `just` recipe — run it directly:
+
+```sh
+cargo test --manifest-path tools/oz_static/Cargo.toml
+```
 | `just ast-dump file`      | Clang JSON AST dump                |
 | `just smoke`              | Run host-side PAL smoke test       |
 
@@ -65,23 +87,53 @@ Each sample uses `ZEPHYR_EXTRA_MODULES` to register the module and enables it wi
 
 - **`zephyr/module.yml`** — Module definition, points cmake/kconfig to root
 - **`west.yml`** — West manifest for Zephyr CI integration
-- **`CMakeLists.txt`** — Includes `oz_transpile.cmake` when `CONFIG_OBJZ` is enabled
+- **`CMakeLists.txt`** — Includes `oz_transpile.cmake` when `CONFIG_OBJZ` is enabled; that
+  file dispatches to the backend `CONFIG_OBJZ_BACKEND` selects
 - **`Kconfig`** — `CONFIG_OBJZ` master enable, auto-selects `STATIC_INIT_GNU`
 
-### OZ Transpiler (`tools/oz_transpile/`)
+### OZ Transpiler (`tools/oz_static/`) — the `oz2c` binary
 
-Primary compilation path: `.m -> clang -ast-dump=json -> oz_transpile -> .h + .c`. Generates plain C compilable by GCC alone.
+Primary compilation path: `.m -> tree-sitter CST -> oz2c -> .h + .c`. Generates plain C
+compilable by GCC alone. The source text is substituted in place rather than regenerated
+from an AST, which is why unexpanded macros survive into the output.
 
-- **`model.py`** — Dataclasses: OZModule, OZClass, OZMethod, OZIvar, OZType, OZProtocol, OZParam, DispatchKind
-- **`collect.py`** — Pass 1: Clang JSON AST → OZModule (walks ObjCInterfaceDecl, ObjCImplementationDecl, etc.)
-- **`resolve.py`** — Pass 2: hierarchy validation, topological class IDs, base_depth, dispatch classification (STATIC vs PROTOCOL)
-- **`emit.py`** — Pass 3: OZModule → per-class `.h`/`.c` (with alloc/free/slab), `oz_dispatch.h`/`.c`
-- **`__main__.py`** — CLI: `--input`, `--outdir`, `--root-class`, `--pool-sizes`, `--verbose`, `--strict`
-- Tests: `python3 -m pytest tools/oz_transpile/tests/ -v` or `just test-transpiler`
+- **`collect.rs`** — CST → `Program`: classes, ivars, methods, types, protocols
+- **`emit.rs`** — in-place substitution; expression and statement rendering
+- **`companion.rs`** — shared dispatch header/source, per-class slabs, allocators, boxed-literal builders
+- **`arc.rs`** — scope-based ARC. A Clang JSON AST may be supplied via `--ast` as an
+  *optional* secondary oracle for ivar ownership and method definedness; tree-sitter stays
+  the primary frontend
+- **`pools.rs`** — slab and element-pool sizing, counted from allocation sites
+- **`staticbar.rs`** — accept/reject scan for the static subset
+- **`imports.rs`** — `#import` resolution and per-origin provenance
+- **`generics.rs`** — generic and protocol constraint checking
+- **`model.rs`** — `Program`, `ClassInfo`, `Diagnostic`
+- CLI: `--pool-sizes`, `--item-pool-size`, `--heap-support`, `--root-class`, `--ast`, `-I`
+- Tests: `cargo test --manifest-path tools/oz_static/Cargo.toml`
+
+Two standing design rules, easy to violate with good intentions:
+
+- **It never silently degrades.** Anything outside the supported subset is a hard, *located*
+  error. That is deliberate — do not add a soft-diagnostic or best-effort mode.
+- **The Python pipeline is a reference, not an authority.** It has real defects (a
+  double-release in synthesized dealloc, no variadic support, item-slot sizing that ignores
+  loops); matching them would be a regression dressed as parity.
+
+### Legacy Transpiler (`tools/oz_transpile/`, Python)
+
+Outgoing. Still builds, still selectable via `CONFIG_OBJZ_BACKEND_PYTHON`, and its suites
+remain the only independent check that the two backends agree on *behaviour*
+(`just test-cross-backend`) — which is the reason to keep it for now.
+
+- `model.py` / `collect.py` / `resolve.py` / `emit.py` — 3-pass Clang-AST pipeline
+- Tests: `just test-transpiler`
 
 ### CMake Build Infrastructure (`cmake/`)
 
-- **`oz_transpile.cmake`** — `objz_transpile_sources()` function: Clang AST dump → Python transpiler → generated C sources + PAL include paths
+- **`oz_transpile.cmake`** — `objz_transpile_sources()`: the entry point every sample calls.
+  Dispatches on `CONFIG_OBJZ_BACKEND` to either backend
+- **`oz_static.cmake`** — the Rust backend: builds `oz2c`, optionally dumps Clang ASTs for
+  ARC facts, and emits generated sources into `oz_static_generated/`
 - **`ObjcClang.cmake`** — Clang detection (`objz_find_clang()`), target triple mapping, AST analysis flags, compile_commands.json generation for clangd IDE support
 
 ### Platform Abstraction Layer (`include/platform/`)
