@@ -5023,10 +5023,23 @@ fn file_scope_vars(root: Node, ctx_src: &str, program: &Program) -> HashMap<Stri
             continue;
         }
         let (type_text, stars) = crate::collect::extract_type_and_stars(child, ctx_src);
-        if stars == 0 || !known.contains(&type_text) {
+        // A class can be written either way at file scope, and both spellings
+        // mean the same thing: `static Widget *g;` gives a `type_identifier`,
+        // so `type_text` is `Widget`, while `static struct Widget *g;` goes
+        // through `extract_type_and_stars`'s `struct_specifier` arm and gives
+        // `struct Widget` -- which is not a key in `known`, so the tagged form
+        // was silently skipped and a send to it reported an `id` receiver
+        // (#251). `collect_local_decls` has no such gate, which is why the
+        // identical *local* resolved and only file scope was affected: the two
+        // disagreeing about what counts as an object declaration is the same
+        // asymmetry gap R and #246 both came down to.
+        //
+        // The bare name is what `render_type` wants, since it re-adds the tag.
+        let class_name = type_text.strip_prefix("struct ").unwrap_or(&type_text);
+        if stars == 0 || !known.contains(class_name) {
             continue;
         }
-        let c_type = crate::collect::render_type(&type_text, stars, &known);
+        let c_type = crate::collect::render_type(class_name, stars, &known);
         let mut c2 = child.walk();
         let declarators: Vec<Node> = child.children(&mut c2).collect();
         for declarator in declarators {
