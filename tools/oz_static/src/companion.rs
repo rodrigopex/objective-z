@@ -22,6 +22,13 @@
 
 use crate::model::Program;
 
+/// The protocol that declares a class's instances immortal
+/// (`include/oz_sdk/Foundation/Singleton+Protocol.h`). Conformance is the
+/// signal, rather than a heuristic on the `+sharedInstance` shape: every
+/// singleton in the repository declares it, and a wrong guess here would mark
+/// an ordinary object immortal, which never gets its slab slot back.
+pub(crate) const SINGLETON_PROTOCOL: &str = "SingletonProtocol";
+
 /// Walks `start`'s own superclass chain looking for whichever class
 /// actually implements `selector` -- the same single-inheritance method
 /// lookup real Objective-C dispatch does, just resolved here at
@@ -252,7 +259,33 @@ fn render_heap_inner_accessor(name: &str, heap_support: bool) -> String {
         .to_string()
 }
 
-fn render_heap_alloc(name: &str, root: &str, heap_support: bool) -> String {
+/// `_meta.immortal = 1` for a class whose instances are never deallocated.
+///
+/// Set for a class conforming to `SingletonProtocol`, whose own header states
+/// the contract outright: "Singleton objects are immortal -- they are never
+/// deallocated." Until #228 nothing marked them, so they relied on nobody ever
+/// releasing one; `oz_static_release` now returns on this bit before it
+/// decrements, so an accidental release is a no-op rather than handing the
+/// singleton's slab slot back for reuse while every holder keeps pointing at
+/// it.
+///
+/// Emitted in the allocator rather than in `+initialize`, because that is the
+/// one place every instance passes through -- both the slab path and the heap
+/// path. A singleton class allocating a second instance would mark that one
+/// immortal too, which is the conservative direction: the leak is bounded by
+/// the class's slab, whereas freeing a live singleton is memory corruption.
+fn render_immortal_marker(root: &str, immortal: bool) -> String {
+    if !immortal {
+        return String::new();
+    }
+    format!(
+        "\t/* conforms to SingletonProtocol: immortal, so release never frees it */\n\
+         \t((struct {root} *)obj)->_meta.immortal = 1;\n",
+        root = root
+    )
+}
+
+fn render_heap_alloc(name: &str, root: &str, heap_support: bool, immortal: bool) -> String {
     if !heap_support {
         return String::new();
     }
@@ -267,11 +300,13 @@ backs '[{name} allocWithHeap:h]' (not from source) */\n\
          \tmemset(obj, 0, sizeof(struct {name}));\n\
          \t((struct {root} *)obj)->_meta.class_id = OZ_STATIC_CLASS_{name};\n\
          \t((struct {root} *)obj)->_meta.heap_allocated = 1;\n\
+         {immortal}\
          \toz_atomic_init(&((struct {root} *)obj)->oz_refcount, 1);\n\
          \treturn obj;\n}}\n\
          #endif\n\n",
         name = name,
-        root = root
+        root = root,
+        immortal = render_immortal_marker(root, immortal)
     )
 }
 
@@ -310,6 +345,7 @@ pub(crate) fn render_alloc_free(
     slots: usize,
     owned_ivars: &[String],
     heap_support: bool,
+    immortal: bool,
 ) -> String {
     let mut c = render_slab_define(name, slots);
     c.push_str(&render_release_ivars(name, root, owned_ivars));
@@ -329,12 +365,14 @@ pub(crate) fn render_alloc_free(
     ));
     c.push_str(&format!(
         "\t((struct {root} *)obj)->_meta.class_id = OZ_STATIC_CLASS_{name};\n\
+         {immortal}\
          \toz_atomic_init(&((struct {root} *)obj)->oz_refcount, 1);\n",
         root = root,
-        name = name
+        name = name,
+        immortal = render_immortal_marker(root, immortal)
     ));
     c.push_str("\treturn obj;\n}\n\n");
-    c.push_str(&render_heap_alloc(name, root, heap_support));
+    c.push_str(&render_heap_alloc(name, root, heap_support, immortal));
     c.push_str(&render_heap_inner_accessor(name, heap_support));
     c.push_str(&format!(
         "/* synthesized: returns {name}'s slot to its slab -- called only from\n * \
@@ -393,7 +431,8 @@ pub(crate) fn render_array_support(
     ));
     c.push_str("\treturn obj;\n}\n\n");
 
-    c.push_str(&render_heap_alloc(name, root, heap_support));
+    /* OZArray/OZDictionary are Foundation collections, never singletons. */
+    c.push_str(&render_heap_alloc(name, root, heap_support, false));
     c.push_str(&format!(
         "/* synthesized: releases {name}'s items, its items buffer, and its own\n * \
 storage -- called only from oz_static_release, once the refcount reaches\n * \
@@ -542,7 +581,8 @@ pub(crate) fn render_dict_support(
     ));
     c.push_str("\treturn obj;\n}\n\n");
 
-    c.push_str(&render_heap_alloc(name, root, heap_support));
+    /* OZArray/OZDictionary are Foundation collections, never singletons. */
+    c.push_str(&render_heap_alloc(name, root, heap_support, false));
     c.push_str(&format!(
         "/* synthesized: releases {name}'s keys, its values, their shared\n * \
 buffer, and its own storage -- called only from oz_static_release, once\n * \
@@ -940,6 +980,7 @@ sized by counting literal sites (see pools.rs). Override with the\n * \
             pools.for_class(root),
             &program.owned_object_ivars(root),
             program.heap_support,
+            program.class_conforms_to(root, SINGLETON_PROTOCOL),
         ));
 
         if root_needs_synthetic_dealloc {
@@ -987,6 +1028,10 @@ vtable\") -- never mutated at runtime. */\n",
         c.push_str(&format!(
             "void oz_static_release(struct {root} *self)\n{{\n\
              \tif (!self) {{\n\t\treturn;\n\t}}\n\
+             \t/* Immortal objects live in static storage and are never freed, so\n\
+             \t * their refcount is not tracked either -- the check comes before\n\
+             \t * the decrement, not after it. */\n\
+             \tif (self->_meta.immortal) {{\n\t\treturn;\n\t}}\n\
              \tif (!oz_atomic_dec_and_test(&self->oz_refcount)) {{\n\t\treturn;\n\t}}\n\
              \tif (self->_meta.deallocating) {{\n\t\treturn;\n\t}}\n\
              \tself->_meta.deallocating = 1;\n\
