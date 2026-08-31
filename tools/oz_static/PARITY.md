@@ -718,12 +718,12 @@ The issue asked whoever took it to re-run the sweep afterwards rather than
 trust its number. That was the right instruction and it is the reason the
 figure here is 89 rather than 58.
 
-## On target (mps2/an385, ARM, Zephyr)
+## On target (Zephyr under QEMU: mps2/an385 ARM, and qemu_riscv32)
 
 The check that was missing, and the one that mattered most. Every
 measurement above this section is a host measurement; this one uses the real
 ARM toolchain, real `k_mem_slab`, real spinlocks and Zephyr's own warning
-set.
+set. RISC-V is covered in its own subsection below.
 
 ```
 just test                       # west twister -T samples/ -p mps2/an385
@@ -839,6 +839,74 @@ staleness, four of them nothing to do with any backend.
 | `ZBUS_CHAN_DECLARE(...)` in a header did not reach other origins | yes — gap P |
 
 It builds now.
+
+### A second architecture: RISC-V (qemu_riscv32)
+
+**12 of 13 samples build, run under QEMU and pass their own `sample.yaml`
+checks on `qemu_riscv32`** (#230). `gpio_demo` is the thirteenth and is
+correctly excluded: the board has no `led0`/`sw0` device-tree aliases, which
+`GPIO_DT_SPEC_GET(DT_ALIAS(led0), gpios)` requires, so its `sample.yaml`
+allows `mps2/an385` only. Nothing was fixed to get here — the runs passed
+first time.
+
+```
+just test-riscv                 # west twister -T samples/ -p qemu_riscv32
+just test-boards                # both boards, so neither can hide a regression
+```
+
+Two things about this measurement are worth stating precisely, because both
+were nearly recorded wrong.
+
+**Execution was never actually blocked; `platform_allow` was.** #230 recorded
+builds only, and read the obstacle as twister filtering everything out
+because "every `sample.yaml` pins `platform_allow: mps2/an385`". That was not
+so — only 7 of 13 pinned anything, `hello_category` and `transpiled_led`
+already allowed `qemu_riscv32`, and six samples pinned no platform at all.
+So **8 of 13 already built, ran and passed on RISC-V with no changes
+whatsoever**; they had simply never been pointed at the board. Four of the
+five genuinely ARM-pinned samples (`arc_demo`, `heap_alloc`, `zbus_objc`,
+`zbus_service`) gained `qemu_riscv32`, which is the entire change this
+verification needed. The mechanical obstacles #230 warned about — `west build
+-t run` blocking forever and orphaned `qemu-system-riscv32` children
+colliding on `qemu.pid` — never arose, because twister manages the guest
+lifecycle itself. Driving twister was the answer to a problem recorded as
+needing hand-run QEMU.
+
+**The generated C is byte-identical across the two architectures: 304
+generated `.c`/`.h` files over all 12 shared samples, zero differing lines.**
+#230 had checked five samples; this is the whole set. That is the design
+intent holding — the PAL absorbs the target and nothing
+architecture-specific reaches the transpiler's output — and it is why a
+RISC-V failure would have had to come from the PAL, the SDK headers or the
+board rather than from codegen.
+
+That diff has to exclude two things, and including either makes it look
+spectacularly false: `oz_static_manifest.txt` lists absolute output paths,
+and `oz_static_generated/ast/` holds the Clang AST dumps, which are oz2c's
+*inputs* and are produced per target triple. Compared naively, the twelve
+samples show ten million differing lines, essentially all of it AST JSON.
+Recorded because the first attempt here did exactly that and the number is
+alarming enough to be believed.
+
+Which backend ran was verified rather than assumed, as on ARM: all 12
+resolve `CONFIG_OBJZ_BACKEND_STATIC=y`, produce `oz_static_generated/`,
+mention `oz2c` in the build log and mention `oz_transpile` nowhere.
+
+Two of the passes carry weight beyond "it ran". `arc_demo` passes its
+*ordered* ARC expectations, which pin `Sensor dealloc (value=100)` before
+101 is allocated — so gap Q's release-then-allocate ordering, and the
+single-slab-slot claim resting on it, hold on a second architecture and not
+only on ARM. `heap_alloc` passes, so the `--heap-support` path and
+`+allocWithHeap:` (gap I) are exercised there too.
+
+What RISC-V does **not** add: `struct k_spinlock` is empty on
+`qemu_riscv32` as well, because `CONFIG_SMP` and `CONFIG_SPIN_VALIDATE` are
+both off there as on `mps2/an385`. The other shape of that struct — with
+`locked`/`owner`/`tail` — and the non-trivial path through `oz_spin_init`
+stay unexercised. That needs an SMP board, not a second architecture. Nor is
+this a code-size comparison: `qemu_riscv32` reports no FLASH region at all,
+being RAM-only, so its figures are not comparable with the ARM sweep's flash
+numbers (#231 covers size, same-architecture).
 
 ## The Python backend still passes its own suites
 
@@ -1053,6 +1121,10 @@ CONFIG_OBJZ_BACKEND_PYTHON=y
   Python backend. That includes the three needing kernel or device-tree
   infrastructure (`arc_demo`, `gpio_demo`, `zbus_objc`), which no host build
   can exercise at all.
+- **12 of 13 also run under twister on `qemu_riscv32`** (#230), a second
+  architecture and a second toolchain, with the generated C byte-identical to
+  the ARM build across all 304 generated files. `gpio_demo` is excluded by the
+  board's missing device-tree aliases, not by anything in oz_static.
 - Of the samples a host build can run, all are clean under AddressSanitizer
   and UndefinedBehaviorSanitizer with leak detection on.
 - Generated C is `-Wall -Wextra` clean (gap S), so a new warning on target is
@@ -1060,14 +1132,15 @@ CONFIG_OBJZ_BACKEND_PYTHON=y
 
 What that still does not cover, and why the escape hatch stays:
 
-- **QEMU is not hardware.** `mps2/an385` under QEMU says nothing about real
-  `k_mem_slab` contention, real interrupt-disabled critical sections, or
-  timing. No physical board has been used (#231).
+- **QEMU is not hardware.** Neither board is real silicon, so nothing here
+  says anything about real `k_mem_slab` contention, real interrupt-disabled
+  critical sections, or timing. No physical board has been used (#231).
 - **Code size is unmeasured** against the Python backend. The default was
   switched on behavioural grounds, so the size consequences are unknown rather
   than known-acceptable (#231).
-- **RISC-V builds but has not been run** — 12 of 13 samples, generated C
-  byte-identical to ARM (#230).
+- **No SMP board has been used**, on either architecture, so the populated
+  shape of `struct k_spinlock` and the non-trivial path through
+  `oz_spin_init` stay unexercised.
 
 `CONFIG_OBJZ_BACKEND_PYTHON=y` remains the way back for any target this
 breaks.
@@ -1082,11 +1155,20 @@ because the work that falsifies it is filed somewhere else.
 
 ## Not verified
 
-**The Zephyr cross-build is now run** — see "On target" above. What is still
-not covered: no real board has been used (mps2/an385 under QEMU only), and
-nothing here measures code size against the Python backend. RISC-V now
-builds — 12 of 13 samples, with generated C byte-identical to ARM — but no
-RISC-V sample has been *run*. Filed as #230 and #231.
+**The Zephyr cross-build is now run, on both supported boards** — see "On
+target" above. ARM runs 13 of 13 samples; `qemu_riscv32` runs 12 of 13, the
+thirteenth excluded by that board's missing device-tree aliases rather than by
+anything in oz_static (#230). What is still not covered: **no real board has
+been used** — both are QEMU — and nothing here measures code size against the
+Python backend (#231). No SMP board has been used either, so the populated
+`struct k_spinlock` remains unexercised on both architectures.
+
+This entry is the one to distrust on principle. It has now been wrong twice in
+the same direction — first claiming no target build existed after the
+cross-build landed, then claiming no RISC-V sample had run when eight of them
+would have passed the moment anyone pointed twister at the board. Both times
+the document understated what was already working, because the work that
+falsified it was recorded in an issue rather than here.
 
 **All 13 samples are run under twister**, on QEMU. Each is built, executed,
 and its console output matched against its own `sample.yaml` — a real oracle,
@@ -1114,6 +1196,6 @@ Filed rather than folded in, each with the reason it was kept separate:
 | #226 | Static, no-heap reflection and `@selector`. Needs its own design pass; oz_static rejects them today with a located error. |
 | #227 | Host-portable samples. Only three samples genuinely need Zephyr (`K_THREAD_DEFINE`, device tree, zbus) — stubbing `printk` alone moved four others to running on host. |
 | #228 | Use `_meta.immortal` for boxed literals instead of pre-setting `deallocating`. The current trick works; the field just says something false. Follows OZ-064 (#97). |
-| #230 | Verify on RISC-V (`qemu_riscv32`). **Partly done:** 12 of 13 samples build, and the generated C is byte-identical to the ARM build for the five samples checked — the PAL absorbs the target as designed. Execution is still unverified, and `gpio_demo` needs device-tree aliases `qemu_riscv32` lacks. |
+| #230 | Verify on RISC-V (`qemu_riscv32`). **Done** — 12 of 13 samples build, run under QEMU and pass their own `sample.yaml` checks; generated C byte-identical to ARM across all 304 generated files. `gpio_demo` stays ARM-only, needing device-tree aliases the board lacks. Repeatable as `just test-riscv`. |
 | #231 | Compare code size between backends, and run at least one sample on real hardware. The default was switched on behavioural grounds; the size consequences are unknown rather than known-acceptable. |
 | #238 | Objective-C inside a `#define` *body* is emitted verbatim, so the generated C does not compile — the other half of #234, split out because a macro body is one opaque `preproc_arg` token and needs its own approach. Detector prototyped: 0 of 40 real macro bodies flagged. |
