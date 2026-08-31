@@ -18,6 +18,17 @@ common:
       - "Sensor dealloc"
       - "@autoreleasepool test"
       - "Sensor dealloc"
+      # Reassigning a strong local releases the previous object before
+      # allocating the next, so the values pin the ordering: 100 is gone
+      # before 101 exists. '.' stands in for the literal '(' rather than
+      # escaping it.
+      - "reassign loop"
+      - "reassigned value=100"
+      - "Sensor dealloc .value=100."
+      - "reassigned value=101"
+      - "Sensor dealloc .value=101."
+      - "reassigned value=102"
+      - "Sensor dealloc .value=102."
       - "=== Demo main complete ==="
       - "=== Demo Extra thread started ==="
       - "Driver created"

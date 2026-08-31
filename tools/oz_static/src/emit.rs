@@ -196,6 +196,23 @@ fn declares_bare_managed_local(decl: Node, ctx: &EmitCtx) -> bool {
     !name.is_empty() && ctx.arc_managed_locals.contains(&name)
 }
 
+/// Is this initializer just "nothing yet" -- `nil`, `NULL` or `0`?
+///
+/// `Foo *f = nil;` followed by real assignments is an everyday Objective-C
+/// idiom and means exactly what a bare `Foo *f;` means: the variable starts
+/// empty. Both must be treated the same, or the explicit spelling would
+/// silently lose ARC while the implicit one kept it. It also keeps sources
+/// portable to the Python pipeline, which cannot emit the implicit nil at all
+/// (`OZ003: unhandled AST node 'ImplicitValueInitExpr'`) and so needs the
+/// explicit form.
+///
+/// `oz_static_release` is null-safe, so a first overwrite releasing this is a
+/// no-op either way.
+fn is_null_initializer(node: Node, src: &str) -> bool {
+    let text = node_text(node, src).trim();
+    matches!(text, "0" | "nil" | "NULL" | "((id)0)" | "(id)0")
+}
+
 /// Does `root`'s subtree read the identifier `name`?
 fn references_identifier(name: &str, root: Node, src: &str) -> bool {
     if root.kind() == "identifier" && node_text(root, src) == name {
@@ -332,7 +349,20 @@ pub(crate) fn managed_object_locals(
                     if stores.contains(&LocalStore::Unsupported) {
                         continue;
                     }
-                    if bare {
+                    // An initializer that is just `nil`/`0` leaves the
+                    // variable empty, which is what a bare declaration means
+                    // too -- so the two are decided by the same rule.
+                    let starts_empty = if bare {
+                        true
+                    } else {
+                        let mut c2 = child.walk();
+                        let parts: Vec<Node> = child.children(&mut c2).collect();
+                        let eq = parts.iter().position(|n| n.kind() == "=");
+                        eq.and_then(|i| parts.get(i + 1))
+                            .copied()
+                            .is_some_and(|v| is_null_initializer(v, src))
+                    };
+                    if starts_empty {
                         // Strong only if something owned is ever stored. A
                         // local that only ever receives borrowed values is
                         // left alone: retaining those is a broader change to
@@ -2652,18 +2682,26 @@ fn owned_locals_of_in(decl: Node, search_root: Option<Node>, ctx: &EmitCtx) -> V
     let mut cursor = decl.walk();
     let children: Vec<Node> = decl.children(&mut cursor).collect();
     for child in children {
-        // A bare `Counter *c;` that ARC manages as a strong local owns
-        // whatever it ends up holding (see `note_arc_managed_locals`), so
-        // its final value needs the same scope-exit release an owning
-        // initializer gets. Without this the last object assigned in a loop
-        // would never be freed -- the release-on-overwrite only covers the
-        // ones that were overwritten.
-        if child.kind() == "pointer_declarator" {
+        if child.kind() != "pointer_declarator" && child.kind() != "init_declarator" {
+            continue;
+        }
+        // Anything ARC manages as a strong local owns whatever it ends up
+        // holding (see `managed_object_locals`), so its final value needs the
+        // same scope-exit release an owning initializer gets. Without this the
+        // last object assigned in a loop would never be freed --
+        // release-on-overwrite only covers the ones that were overwritten.
+        //
+        // This covers all three declaration forms the managed set admits: a
+        // bare `Counter *c;`, an explicit `Counter *c = nil;`, and an owning
+        // `Counter *c = [Counter alloc];`. Testing the set first rather than
+        // the initializer's shape is what makes the `nil` form work -- its
+        // initializer is not owning, so the check below would skip it.
+        {
             let name = crate::collect::find_declared_name(child, ctx.src);
             if !name.is_empty() && ctx.arc_managed_locals.contains(&name) {
                 out.push(name);
+                continue;
             }
-            continue;
         }
         if child.kind() != "init_declarator" {
             continue;

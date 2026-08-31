@@ -171,6 +171,56 @@ int main(void) { return 0; }
     );
 }
 
+/// `Foo *f = nil;` means exactly what a bare `Foo *f;` means -- the variable
+/// starts empty -- so both must get the same ARC treatment. Without this the
+/// explicit spelling would silently lose release-on-overwrite while the
+/// implicit one kept it, which is the worse way round: `= nil` is the form a
+/// careful author writes, and the only form the Python pipeline can consume.
+///
+/// One slot and 100 iterations again, so this asserts the behaviour rather
+/// than the generated text.
+#[test]
+fn explicit_nil_initializer_is_managed_like_a_bare_declaration() {
+    let src = format!(
+        "/* oz-pool: Counter=1 */\n{}{}",
+        PREAMBLE(),
+        "\
+@interface Counter : OZObject {
+	int _n;
+}
+@end
+@implementation Counter
+@end
+
+@interface Runner : OZObject
+- (int)run;
+@end
+@implementation Runner
+- (int)run {
+	Counter *c = nil;
+	int ok = 0;
+	for (int i = 0; i < 100; i++) {
+		c = [Counter alloc];
+		if (c) {
+			ok = ok + 1;
+		}
+	}
+	return ok;
+}
+@end
+
+#include <stdio.h>
+int main(void) {
+	Runner *driver = [Runner alloc];
+	printf(\"ok=%d\\n\", [driver run]);
+	return 0;
+}
+"
+    );
+    let stdout = compile_and_run(&src, "explicit_nil_initializer_is_managed_like_a_bare_declaration");
+    assert_eq!(stdout, "ok=100\n", "`= nil` must be managed exactly like a bare declaration");
+}
+
 /// Self-assignment must not free the value being stored. The generated form
 /// retains before releasing for exactly this reason -- the same ordering
 /// `render_strong_ivar_assign` uses, and what makes `_x = _x` safe there.

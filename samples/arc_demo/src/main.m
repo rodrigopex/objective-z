@@ -128,6 +128,34 @@ int main(void)
 	}
 	/* pool drains, a is released → dealloc fires */
 
+	/*
+	 * Reassignment test: storing into a strong local releases whatever it
+	 * held, so this loop holds one live Sensor however many times it runs.
+	 * The release happens before the next allocation, which is what lets a
+	 * single slab slot serve the whole loop — with no release, the third
+	 * iteration would get nil from an exhausted slab.
+	 *
+	 * main() is a plain C function, so this also exercises the static bar
+	 * over a free function body: the loop is accepted because ARC bounds
+	 * it, where accumulating into an array would still be rejected.
+	 */
+	OZLog("reassign loop");
+	{
+		/*
+		 * Written `= nil` rather than left bare so this sample still
+		 * builds under CONFIG_OBJZ_BACKEND_PYTHON: that backend has no
+		 * emission rule for the implicit nil Clang gives a bare strong
+		 * local (OZ003, ImplicitValueInitExpr). oz_static treats the
+		 * two spellings identically.
+		 */
+		Sensor *r = nil;
+		for (int i = 0; i < 3; i++) {
+			r = createSensor(100 + i);
+			OZLog("reassigned value=%d", [r value]);
+		}
+	}
+	/* r is released here → the last Sensor deallocs */
+
 	OZLog("=== Demo main complete ===");
 	return 0;
 }
