@@ -439,7 +439,13 @@ fn hoist_block_var(node: Node, ctx: &mut EmitCtx) {
 
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        if child.kind() != "init_declarator" && child.kind() != "identifier" {
+        // `pointer_declarator` covers the one shape the other two miss: a
+        // *pointer* declared with no initializer. `__block int q;` was already
+        // handled, because a bare non-pointer declarator is itself an
+        // `identifier` -- which is exactly why this went unnoticed. Only
+        // `__block Foo *p;` fell through, and then nothing was hoisted at all,
+        // leaving the block referencing a name that was not there.
+        if !matches!(child.kind(), "init_declarator" | "identifier" | "pointer_declarator") {
             continue;
         }
         let name = crate::collect::find_declared_name(child, ctx.src);
@@ -1583,8 +1589,11 @@ fn render_field_expression(node: Node, ctx: &mut EmitCtx) -> (String, String) {
 /// `Program::owned_object_ivar_names` -- the same list that path uses.
 ///
 /// Properties were never affected: a synthesized setter already does
-/// retain-new/release-old (`render_synthesized_accessor`). Only *direct*
-/// ivar assignment was missing it.
+/// retain-new/release-old (`render_synthesized_accessor`). Among *ivars*, only
+/// direct assignment was missing it. A plain strong **local** was missing it
+/// too, which is a separate storage class and a separate fix
+/// (`render_strong_local_assign`, #234) -- worth saying explicitly, because
+/// this comment used to read as though locals were already covered.
 ///
 /// A `+1` right-hand side is stored without retaining, because it already
 /// carries the reference the ivar is taking over -- retaining it as well
@@ -1755,11 +1764,12 @@ fn render_strong_local_assign(
     Some((expr, ty))
 }
 
-/// Assignment, handled here for two reasons: a property dot-syntax *target*
+/// Assignment, handled here for three reasons: a property dot-syntax *target*
 /// has to become the setter call rather than an assignment to a function
-/// call, and a strong object ivar has to take ownership of what it is given
-/// (`render_strong_ivar_assign`). Every other assignment passes through as
-/// the C it already is.
+/// call, a strong object ivar has to take ownership of what it is given
+/// (`render_strong_ivar_assign`), and a strong object *local* has to release
+/// what it held (`render_strong_local_assign`). Every other assignment passes
+/// through as the C it already is.
 ///
 /// A compound assignment (`+=`, `<<=`, ...) has to read the property and
 /// write it back, which mentions the receiver twice -- so it is only

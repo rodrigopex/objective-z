@@ -275,10 +275,20 @@ fn walk_statements(node: Node, src: &str, program: &Program, scope: &mut MethodS
     }
 }
 
-/// `declaration` shape (confirmed via probe): a type node followed by
-/// one or more comma-separated declarators, each either a bare
-/// `identifier` (no initializer) or an `init_declarator`
-/// (`[pointer_declarator] identifier = expr`).
+/// `declaration` shape: a type node followed by one or more comma-separated
+/// declarators, each of
+///
+/// - `init_declarator` (`[pointer_declarator] identifier = expr`),
+/// - `pointer_declarator` (`* identifier`) -- a *pointer* with no initializer,
+/// - a bare `identifier` -- a non-pointer with no initializer.
+///
+/// The third kind is why the second was missed for so long: this comment used
+/// to claim an uninitialized declarator was always a bare `identifier`, which
+/// is true only when it has no `*`. `OZArray<Widget *> *a;` produces a
+/// `pointer_declarator` and no `init_declarator` anywhere, so it was filtered
+/// out below and its constraint went unchecked — silently, since nothing was
+/// emitted to complain about. Verified against a CST dump, and pinned by
+/// `tests/bare_declarator_checks.rs`.
 fn check_declaration(
     node: Node,
     src: &str,
@@ -302,11 +312,21 @@ fn check_declaration(
     // `OZObject x = ...;` -- not realistic ObjC, but cheap to guard).
     let declared = classify_declared_type(type_node, src, program);
 
-    for decl in children.iter().filter(|c| matches!(c.kind(), "init_declarator" | "identifier")) {
+    for decl in children
+        .iter()
+        .filter(|c| matches!(c.kind(), "init_declarator" | "identifier" | "pointer_declarator"))
+    {
         if decl.start_byte() <= type_node.start_byte() {
             continue;
         }
         let (name_node, init) = match decl.kind() {
+            // A `pointer_declarator` is a declaration with no initializer, so
+            // it contributes a name to check the *declared* type of and no
+            // value to check against it -- handled by the `_` arm below,
+            // which digs out the identifier. Listing it was the whole fix:
+            // without it a bare `OZArray<Widget *> *a;` was skipped entirely
+            // and its later assignment went unchecked, silently, while the
+            // identical code written with an initializer was rejected.
             "init_declarator" => {
                 let mut c = decl.walk();
                 let name = decl
@@ -320,6 +340,13 @@ fn check_declaration(
                     .last()
                     .filter(|n| !matches!(n.kind(), "identifier" | "=" | "pointer_declarator"));
                 (name, init)
+            }
+            // A bare `identifier` declarator is already the name; a
+            // `pointer_declarator` wraps it (`*a`), so take the identifier
+            // inside rather than the declarator's own text -- otherwise the
+            // name would come out as `*a` and never match anything.
+            "pointer_declarator" => {
+                (find_first_of_kinds(*decl, &["identifier"]).or(Some(*decl)), None)
             }
             _ => (Some(*decl), None),
         };

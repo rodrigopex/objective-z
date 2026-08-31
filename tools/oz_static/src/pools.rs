@@ -15,12 +15,20 @@
 // the question elsewhere:
 //
 //   - the oracle also tracks "uncertain" sites -- an allocation inside a
-//     loop that doesn't initialize a fresh per-iteration local, which can
-//     accumulate live instances across iterations -- and reports them as
-//     a soft `OZ004` diagnostic asking for an explicit override.
-//     `staticbar::walk_for_reject` already makes that exact shape a hard
-//     error ("allocation of '{}' inside a loop escapes the iteration"),
-//     so by the time sizing runs it cannot occur.
+//     loop whose result can outlive the iteration -- and reports them as a
+//     soft `OZ004` diagnostic asking for an explicit override.
+//     `staticbar::walk_for_reject` makes the unbounded form of that a hard
+//     error ("allocation of '{}' inside a loop escapes the iteration"), so
+//     sizing never has to guess: what reaches it is bounded.
+//
+//     Note "bounded" is not the same as "does not occur", which is what this
+//     comment used to claim. An allocation in a loop assigned to a strong
+//     local reaches sizing routinely and is counted once, and that is
+//     correct: `emit::render_strong_local_assign` releases the previous
+//     object *before* allocating the next, so the slot is returned and one
+//     serves the whole loop. It is only accumulation -- a destination the
+//     emitter cannot bound -- that the bar rejects. Measured in
+//     `tests/arc_strong_locals.rs`: 100 iterations on a 1-slot pool.
 //   - the oracle reserves a slot per `@synchronized` block for the
 //     OZSpinLock object it allocates. oz_static's `@synchronized` lowers
 //     to a stack-local lock with no object at all (see
