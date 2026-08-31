@@ -43,6 +43,10 @@ ZBUS_CHAN_ADD_OBS(chan_acc_data_consumed, msub_acc_consumed, 3);
 
 void thread_entry_producer(void *arg1, void *arg2, void *arg3)
 {
+	(void)arg1;
+	(void)arg2;
+	(void)arg3;
+
 	AccDataProducer *producer = [[AccDataProducer alloc] init];
 
 	while (1) {

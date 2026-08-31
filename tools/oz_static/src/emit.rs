@@ -213,6 +213,141 @@ fn is_null_initializer(node: Node, src: &str) -> bool {
     matches!(text, "0" | "nil" | "NULL" | "((id)0)" | "(id)0")
 }
 
+/// `(void)name;` acknowledgements for every parameter a translated method body
+/// never mentions, innermost-scope first in signature order.
+///
+/// Zephyr's own warning set does not include `-Wextra`, so an unused parameter
+/// is not a build failure -- but it is noise that hides the next real warning,
+/// and three of the four defects gap M found were only visible because someone
+/// counted warnings by kind. 58 of these across the samples made that counting
+/// harder than it should be.
+///
+/// The same acknowledgement the SDK's own C already uses: `(void)inner;` in
+/// `oz_platform.h`'s heap stubs, `(void)expr;` in `oz_sdk/assert.h`.
+///
+/// Decided from the **rendered** body -- the C a compiler will actually see --
+/// not from the Objective-C source it came from. That distinction is not
+/// pedantic: an ivar reference like `_n` lowers to `self->_n`, so a method
+/// whose source never writes the word `self` can still use the parameter.
+/// Checking the source marked `- (int)useAll:… { return a + b + _n; }` as not
+/// using `self` and emitted a redundant `(void)self;` for it.
+///
+/// `self` is included at all because an empty `-dealloc` is idiomatic
+/// Objective-C, so the warning fires on entirely correct code.
+///
+/// Word-boundary matched, so `_next` does not count as a use of `n`. The
+/// rendered body also carries the per-statement source comments, so a name a
+/// comment mentions but the code does not is treated as used and keeps its
+/// warning -- the safe direction, and the only inaccuracy left: a false "used"
+/// leaves a warning in place, while a false "unused" would emit a redundant
+/// `(void)x;`, which is valid C either way. Neither can change behaviour.
+fn unused_param_acks(
+    rendered_body: &str,
+    params: &[(String, String)],
+    is_class_method: bool,
+) -> Vec<String> {
+    let mut names: Vec<&str> = Vec::new();
+    if !is_class_method {
+        names.push("self");
+    }
+    for (pname, _) in params {
+        names.push(pname.as_str());
+    }
+    acks_for_names(rendered_body, &names)
+}
+
+/// The name-list form, shared with `render_block`: a hoisted block literal is
+/// a function oz_static synthesizes outright, signature included, so its own
+/// unused parameters are its to acknowledge. `samples/gpio_demo`'s
+/// `blockCallback:^(const struct device *port, struct gpio_callback *cb,
+/// gpio_port_pins_t pins)` accounts for three of them and
+/// `transpiled_generics`'s `^(id obj, unsigned int idx, BOOL *stop)` for a
+/// fourth.
+fn acks_for_names(rendered_body: &str, names: &[&str]) -> Vec<String> {
+    fn mentions_word(haystack: &str, name: &str) -> bool {
+        let bytes = haystack.as_bytes();
+        let mut from = 0;
+        while let Some(rel) = haystack[from..].find(name) {
+            let start = from + rel;
+            let end = start + name.len();
+            let before_ok = start == 0 || !is_ident_byte(bytes[start - 1]);
+            let after_ok = end == bytes.len() || !is_ident_byte(bytes[end]);
+            if before_ok && after_ok {
+                return true;
+            }
+            from = start + 1;
+        }
+        false
+    }
+    fn is_ident_byte(b: u8) -> bool {
+        b.is_ascii_alphanumeric() || b == b'_'
+    }
+
+    names
+        .iter()
+        .filter(|name| !name.is_empty() && !mentions_word(rendered_body, name))
+        .map(|name| format!("\t(void){};", name))
+        .collect()
+}
+
+/// Parameter names declared by a `parameter_list`, in order. An unnamed or
+/// `void` parameter yields nothing.
+fn parameter_list_names(plist: Node, src: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cursor = plist.walk();
+    for child in plist.children(&mut cursor) {
+        if child.kind() != "parameter_declaration" {
+            continue;
+        }
+        // The *last* identifier in the subtree is the declared name: the
+        // earlier ones belong to the type (`const struct device *port` has
+        // `device` before `port`).
+        let mut found: Option<String> = None;
+        fn walk(node: Node, src: &str, found: &mut Option<String>) {
+            if node.kind() == "identifier" {
+                *found = Some(node_text(node, src).to_string());
+            }
+            let mut c = node.walk();
+            for ch in node.children(&mut c) {
+                walk(ch, src, found);
+            }
+        }
+        walk(child, src, &mut found);
+        if let Some(name) = found {
+            out.push(name);
+        }
+    }
+    out
+}
+
+/// Splice `lines` in directly after a rendered body's opening `{`.
+///
+/// The body always starts with `{` (`render_body_with_comments` builds it that
+/// way, and the untranslated fallback is the source text of a
+/// `compound_statement`). If it somehow does not, the body is returned
+/// unchanged rather than corrupted -- an acknowledgement is a nicety, and
+/// mangling a body to add one would not be.
+fn splice_after_open_brace(body_text: &str, lines: &[String]) -> String {
+    if lines.is_empty() {
+        return body_text.to_string();
+    }
+    match body_text.find('{') {
+        Some(i) => {
+            let (head, tail) = body_text.split_at(i + 1);
+            // A single-line body (`{ return a; }`) leaves the next statement
+            // sharing the last acknowledgement's line, so start a fresh one.
+            // Generated C is read by people; `(void)b; return a; }` on one line
+            // is valid and unpleasant.
+            if tail.starts_with('\n') {
+                format!("{}\n{}{}", head, lines.join("\n"), tail)
+            } else {
+                format!("{}\n{}\n\t{}", head, lines.join("\n"), tail.trim_start())
+            }
+        }
+        None => body_text.to_string(),
+    }
+}
+
 /// Does `root`'s subtree read the identifier `name`?
 fn references_identifier(name: &str, root: Node, src: &str) -> bool {
     if root.kind() == "identifier" && node_text(root, src) == name {
@@ -2605,6 +2740,19 @@ fn render_block(node: Node, ctx: &mut EmitCtx) -> (String, String) {
         None => "{\n}".to_string(),
     };
 
+    // `(void)param;` for the block's own unused parameters. This function and
+    // its signature are both synthesized here, so unlike a plain C function's
+    // body there is no author's text being edited.
+    let body_text = match found_plist {
+        Some(plist) => {
+            let names = parameter_list_names(plist, ctx.src);
+            let refs: Vec<&str> = names.iter().map(|s| s.as_str()).collect();
+            let acks = acks_for_names(&body_text, &refs);
+            splice_after_open_brace(&body_text, &acks)
+        }
+        None => body_text,
+    };
+
     // Hoisted into the *primary* generated source (see `emit()`), not the
     // companion file: a block literal can reference a file-scope
     // static/global declared in the original source (that's not a
@@ -3571,6 +3719,10 @@ fn render_method_definition(
     // `return` inside `@synchronized` evaluates into.
     ctx.method_return_type = ret_ty.clone();
 
+    // Whether the body was really translated. A body the static bar rejected
+    // is passed through as its original text and the whole transpile is going
+    // to fail, so there is nothing to tidy and no output anyone will compile.
+    let mut translated = body.is_none();
     let body_text = match body {
         Some(body) => {
             let class_info = ctx.program.classes[class_name].clone();
@@ -3581,11 +3733,23 @@ fn render_method_definition(
                 ctx.diags.extend(reject_diags);
                 node_text(body, ctx.src).to_string()
             } else {
+                translated = true;
                 collect_local_decls(body, ctx);
                 render_body_with_comments(body, ctx)
             }
         }
         None => "{\n}".to_string(),
+    };
+
+    // `(void)x;` for each parameter the body never mentions -- see
+    // `unused_param_acks`. Only for a body oz_static itself produced: a plain C
+    // function's body is the author's own text, patched in place, and adding
+    // acknowledgements to code someone wrote is not this pass's business.
+    let body_text = if translated {
+        let acks = unused_param_acks(&body_text, &sig.params, sig.is_class_method);
+        splice_after_open_brace(&body_text, &acks)
+    } else {
+        body_text
     };
 
     format!("/* {} */\n{} {}({})\n{}\n", one_line(&header), ret_ty, fn_name, sig_params, body_text)

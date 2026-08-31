@@ -54,8 +54,10 @@ Each linked sample is then **run** under an ordinary build and again under
 
 A separate pass compiles the generated C with `-Wall -Wextra` and counts
 warnings by kind. Zephyr builds with `-Werror`, so a warning in generated
-output is a build failure there rather than a style note — see gap M. What
-is left is 58 `-Wunused-parameter`, which is `-Wextra` only.
+output is a build failure there rather than a style note — see gap M.
+**Nothing is left: the generated files are `-Wall -Wextra` clean across all 13
+samples** (gap S). The 58 `-Wunused-parameter` recorded here previously were
+both stale and measured with the wrong instrument — the real figure was 89.
 
 | Sample | Transpiles | Compiles + links | Runs | Notes |
 | --- | --- | --- | --- | --- |
@@ -671,6 +673,51 @@ The bar's declarator set is now deliberately the same one
 `emit::collect_local_decls` uses. The two disagreeing about what counts as a
 local is what produced the asymmetry to begin with.
 
+**S. Generated C is now `-Wall -Wextra` clean.** Fixed (#229). Measured across
+all 13 samples with the real ARM toolchain: **89 `-Wunused-parameter` before, 0
+after**, and nothing of any other kind either before or after.
+
+`-Wunused-parameter` is `-Wextra` only, so none of these was a build failure --
+Zephyr's default warning set does not include it. They mattered as noise: three
+of the four defects gap M found were visible only because someone compiled the
+samples with `-Wall -Wextra` and counted warnings by kind, and 89 lines of it
+made that harder than it needed to be.
+
+`emit::unused_param_acks` emits `(void)param;` at the top of a translated
+method body for each parameter the body never mentions, `self` included -- an
+empty `-dealloc` is idiomatic Objective-C, so the warning fired on entirely
+correct code. The same acknowledgement the SDK's own C already uses
+(`(void)inner;` in `oz_platform.h`'s heap stubs).
+
+Three things this took that are worth recording, because two of them were
+mistakes:
+
+- **The count in the issue was wrong, and so was the first instrument.** The
+  issue said 58; the real figure is 89. The first attempt at re-measuring
+  compiled the samples' *ARM-generated* C on host with `-Wall -Wextra` and
+  produced 39 errors about `fprintf`, `stderr`, `memset` and
+  `K_THREAD_DEFINE` -- host/ARM header mismatches, not codegen warnings.
+  Building each sample for ARM with `-Wextra` added and counting only warnings
+  whose file lives under `oz_static_generated/` is the measurement that means
+  something.
+- **Usage must be decided from the *rendered* C, not the Objective-C source.**
+  An ivar reference like `_n` lowers to `self->_n`, so
+  `- (int)useAll:(int)a other:(int)b { return a + b + _n; }` uses `self`
+  despite never writing the word. Deciding from source emitted a redundant
+  `(void)self;` there.
+- **Hoisted block literals needed it too, and free functions must not have
+  it.** `render_block` synthesizes a function and its signature outright, so
+  its unused parameters are oz_static's to acknowledge -- that was 4 of the
+  last 7. The other 3 were in `samples/zbus_objc`'s own
+  `thread_entry_producer`, a plain C function whose body is the author's text
+  patched in place; adding acknowledgements to code someone wrote is not the
+  transpiler's business, and `samples/arc_demo`'s equivalent thread entry
+  already writes `(void)p1;` itself. Fixed in the sample, not the transpiler.
+
+The issue asked whoever took it to re-run the sweep afterwards rather than
+trust its number. That was the right instruction and it is the reason the
+figure here is 89 rather than 58.
+
 ## On target (mps2/an385, ARM, Zephyr)
 
 The check that was missing, and the one that mattered most. Every
@@ -831,7 +878,7 @@ without updating the list also fails the test; it cannot decay into
 silently skipped cases. Empty is therefore a stronger statement than a
 passing suite with entries.
 
-Rust test suite: 216 passing, 0 failing.
+Rust test suite: 223 passing, 0 failing.
 
 ### Behavioral parity: 73 of 73
 
@@ -1042,7 +1089,6 @@ Filed rather than folded in, each with the reason it was kept separate:
 | #226 | Static, no-heap reflection and `@selector`. Needs its own design pass; oz_static rejects them today with a located error. |
 | #227 | Host-portable samples. Only three samples genuinely need Zephyr (`K_THREAD_DEFINE`, device tree, zbus) — stubbing `printk` alone moved four others to running on host. |
 | #228 | Use `_meta.immortal` for boxed literals instead of pre-setting `deallocating`. The current trick works; the field just says something false. Follows OZ-064 (#97). |
-| #229 | 58 `-Wunused-parameter` in generated C, mostly `self` in an empty `-dealloc`. `-Wextra` only, so not a build failure — but it hides the next real warning. |
 | #230 | Verify on RISC-V (`qemu_riscv32`). **Partly done:** 12 of 13 samples build, and the generated C is byte-identical to the ARM build for the five samples checked — the PAL absorbs the target as designed. Execution is still unverified, and `gpio_demo` needs device-tree aliases `qemu_riscv32` lacks. |
 | #231 | Compare code size between backends, and run at least one sample on real hardware. The default was switched on behavioural grounds; the size consequences are unknown rather than known-acceptable. |
 | #238 | Objective-C inside a `#define` *body* is emitted verbatim, so the generated C does not compile — the other half of #234, split out because a macro body is one opaque `preproc_arg` token and needs its own approach. Detector prototyped: 0 of 40 real macro bodies flagged. |
