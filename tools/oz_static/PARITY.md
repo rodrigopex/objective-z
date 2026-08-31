@@ -143,6 +143,10 @@ this is specific to top-level function signatures — local declarations,
 ivars and method signatures all route through `collect::render_type`
 already.
 
+Fixed twice, which is the interesting part: once in `emit_split`, and then
+again in the single-file `emit()`, where it had stayed open for both
+positions. See gap U.
+
 **B. `__objc_refcount_get` is not emitted.** `mem_demo` calls it (the
 oracle emits it as refcount introspection alongside
 `retain`/`release`/`retainCount`), producing `call to undeclared function
@@ -778,13 +782,50 @@ Two things this needed that are worth recording:
   `retainCount` and were each checked to fail with the fix disabled.
 - **The real singleton spelling could not be used in a test.** All three
   samples hold their instance in a file-scope `static Config *_shared;`, and
-  the single-file emitter this suite drives does not tag bare class names in a
-  top-level declaration -- `class_tag_edits` is called only from
-  `emit_split`. The fixture uses a method-local static instead. Filed as #246;
-  it is unrelated to immortality, but it means no Rust test can use the shape
-  `gpio_demo`, `heap_alloc` and every singleton are built on, which is how
-  gaps A and D came to be fixed against samples without the suite ever
-  locking them in.
+  the single-file emitter this suite drives did not tag bare class names in a
+  top-level declaration -- `class_tag_edits` was called only from
+  `emit_split`. The fixture used a method-local static instead. Fixed as #246
+  (gap U), and the fixture now uses the real spelling.
+
+**U. Gap A was only half fixed, and the half left open was invisible to the
+test suite.** Fixed (#246). `class_tag_edits` was called from `emit_split`
+only; the single-file `emit()` had **no `declaration` arm at all** and did not
+tag a function signature either, so both of gap A's positions stayed broken
+there. `emit()` patches the original text, so anything no arm claims survives
+verbatim -- which is how an untagged `static OZHeap *sHeap;` reached the C
+compiler.
+
+No shipped output was ever wrong: every real build goes through the CLI, hence
+`emit_split`. The cost was entirely in what could be *tested*. The whole Rust
+suite drives `oz_static::transpile()`, so until this fix **no Rust test could
+use a file-scope object declaration** -- the shape `samples/gpio_demo`
+(`static GPIOOutput *led;`), `samples/heap_alloc` (`static OZHeap *sHeap;`)
+and all three singletons are built on. That is the mechanism by which gaps A
+and D were each diagnosed against a sample, fixed, and never locked in by a
+test; and it is why gap T's singleton fixture had to be written around a
+method-local static. That fixture now uses the production spelling.
+
+The asymmetry itself is the lesson, and it is the third finding of its kind:
+gap R recorded `staticbar` and `emit::collect_local_decls` disagreeing about
+what counts as a local, and the fix there was to make them share one
+definition. Two emitters that disagree about what valid output looks like will
+keep producing this shape of bug.
+
+Two adjacent gaps surfaced while writing the tests, both left open and filed,
+because each is about *type tracking* rather than about emitting the tag:
+
+- **Writing the tag by hand costs the variable its type tracking.**
+  `file_scope_vars` matches only the untagged spelling, so a send through
+  `static struct Widget *g;` is rejected as an `id` receiver while the
+  identical `static Widget *g;` resolves. Harmless in practice -- the
+  transpiler adds the tag for you, so there is no reason to write it -- but
+  the two spellings mean the same thing in C and should behave alike.
+- **A free function's parameters are not type-tracked.** A
+  `function_definition`'s scope is seeded from `file_scope_vars` alone and
+  never from the parameter list, so `[w n]` on a `Widget *w` parameter is
+  rejected as `id`. A method's parameters do resolve; only a plain C
+  function's do not, which is the same class of omission gap Q found when the
+  static bar turned out never to scan a free function at all.
 
 ## On target (Zephyr under QEMU: mps2/an385 ARM, and qemu_riscv32)
 
@@ -1014,7 +1055,7 @@ without updating the list also fails the test; it cannot decay into
 silently skipped cases. Empty is therefore a stronger statement than a
 passing suite with entries.
 
-Rust test suite: 228 passing, 0 failing.
+Rust test suite: 234 passing, 0 failing.
 
 ### Behavioral parity: 73 of 73
 
@@ -1263,7 +1304,6 @@ Filed rather than folded in, each with the reason it was kept separate:
 | --- | --- |
 | #226 | Static, no-heap reflection and `@selector`. Needs its own design pass; oz_static rejects them today with a located error. |
 | #227 | Host-portable samples. Only three samples genuinely need Zephyr (`K_THREAD_DEFINE`, device tree, zbus) — stubbing `printk` alone moved four others to running on host. |
-| #246 | Single-file `emit()` does not tag bare class names in a top-level declaration -- `class_tag_edits` is called only from `emit_split`. Production is unaffected (every real build uses the CLI), but no Rust test can use a file-scope object declaration. Found while writing gap T's tests. |
 | #230 | Verify on RISC-V (`qemu_riscv32`). **Done** — 12 of 13 samples build, run under QEMU and pass their own `sample.yaml` checks; generated C byte-identical to ARM across all 304 generated files. `gpio_demo` stays ARM-only, needing device-tree aliases the board lacks. Repeatable as `just test-riscv`. |
 | #231 | Compare code size between backends, and run at least one sample on real hardware. The default was switched on behavioural grounds; the size consequences are unknown rather than known-acceptable. |
 | #238 | Objective-C inside a `#define` *body* is emitted verbatim, so the generated C does not compile — the other half of #234, split out because a macro body is one opaque `preproc_arg` token and needs its own approach. Detector prototyped: 0 of 40 real macro bodies flagged. |

@@ -34,15 +34,13 @@ use common::{
 /// App, `samples/zbus_service`'s TemperatureService): built once and handed
 /// out by `+sharedInstance`.
 ///
-/// Those three hold the instance in a *file-scope* `static Config *_shared;`
-/// and assign it in `+initialize`. That spelling cannot be used here: the
-/// single-file emitter this harness drives (`emit`, via
-/// `oz_static::transpile`) does not tag bare class names in a top-level
-/// declaration, so it emits `static Config *_shared;` and the C compiler
-/// rejects it -- `class_tag_edits` is called only from `emit_split`, which
-/// is what the CLI and every real build use. Filed separately; it is
-/// unrelated to immortality, and the method-local static below is an
-/// equally valid singleton idiom that both emitters handle.
+/// This now uses the real spelling -- a file-scope `static Config *_shared;`
+/// assigned in `+initialize`. It could not, until #246: the single-file
+/// emitter this harness drives had no `declaration` arm, so it copied
+/// `static Config *_shared;` through untagged and the C compiler rejected it.
+/// A method-local static stood in here in the meantime. Keeping the fixture
+/// on the shape the samples actually use is the point -- a test that has to
+/// avoid the production spelling is testing something adjacent to the truth.
 fn singleton_decls() -> String {
     format!(
         "{}\n{}",
@@ -56,17 +54,16 @@ fn singleton_decls() -> String {
 - (void)dealloc;
 @end
 
+static Config *_shared;
+
 @implementation Config
 + (void)initialize
 {
+	_shared = [[Config alloc] init];
 }
 + (instancetype)sharedInstance
 {
-	static Config *shared;
-	if (shared == nil) {
-		shared = [[Config alloc] init];
-	}
-	return shared;
+	return _shared;
 }
 - (id)init
 {

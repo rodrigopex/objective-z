@@ -4054,6 +4054,22 @@ pub fn emit(source: &str, program: &Program, pools: &crate::pools::PoolSizes) ->
                 if let Some(body) =
                     node.children(&mut c2).find(|c| c.kind() == "compound_statement")
                 {
+                    // The other half of gap A, and missing here for the same
+                    // reason as the `declaration` arm above (#246): a free
+                    // function's *signature* needs its class names tagged too
+                    // -- `static Sensor *createSensor(int v)`. Patched as its
+                    // own range, disjoint from the body's, so the two edits
+                    // cannot interfere.
+                    let sig_edits = class_tag_edits(node, source, program);
+                    let sig_text =
+                        apply_edits(source, node.start_byte(), body.start_byte(), &sig_edits);
+                    if sig_text != source[node.start_byte()..body.start_byte()] {
+                        patches.push(Patch {
+                            start: node.start_byte(),
+                            end: body.start_byte(),
+                            text: sig_text,
+                        });
+                    }
                     if needs_translation(body) {
                         // The static bar applies to a plain C function's body
                         // exactly as it does to a method's -- see
@@ -4079,6 +4095,29 @@ pub fn emit(source: &str, program: &Program, pools: &crate::pools::PoolSizes) ->
                 hoisted_structs.extend(ctx.hoisted_structs);
                 hoisted_string_literals.extend(ctx.hoisted_string_literals);
                 hoisted_statics.extend(ctx.hoisted_statics);
+            }
+            "declaration" => {
+                // A bare class name in a top-level declaration is not valid
+                // C: `static OZHeap *sHeap;` has to become
+                // `static struct OZHeap *sHeap;`. `emit_split` has done this
+                // since gap A was fixed; this arm is the same edit for the
+                // single-file path, which had no `declaration` arm at all and
+                // so copied the spelling through verbatim (#246).
+                //
+                // Nothing else about the declaration is rewritten -- an
+                // initializer containing Objective-C at file scope is not
+                // something the static subset accepts, so there is no
+                // expression to render here.
+                let edits = class_tag_edits(node, source, program);
+                if !edits.is_empty() {
+                    let text =
+                        apply_edits(source, node.start_byte(), node.end_byte(), &edits);
+                    patches.push(Patch {
+                        start: node.start_byte(),
+                        end: node.end_byte(),
+                        text,
+                    });
+                }
             }
             _ => {}
         }
