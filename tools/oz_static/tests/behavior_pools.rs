@@ -426,9 +426,13 @@ int main(void) { return 0; }
 /// Two separate live locals rather than a loop, for the reason
 /// `pool_bound_is_enforced_and_exhaustion_returns_nil` above documents --
 /// scope-based ARC recycles a loop-local's slot, so a loop would prove
-/// nothing. (A literal in a loop that *isn't* a fresh local is now a hard
-/// error anyway: see
-/// `static_bar_rejects::array_literal_escaping_a_loop_rejected`.)
+/// nothing. That now holds for a *reassigned* local too, not only a fresh
+/// per-iteration one -- an overwrite releases the previous object
+/// (`emit::render_strong_local_assign`), which is why
+/// `arc_strong_locals::reassigned_literal_needs_only_one_slot_and_one_buffer`
+/// can run 100 iterations on one slot and a 2-slot item pool. What stays a
+/// hard error is a literal the loop *accumulates*: see
+/// `static_bar_rejects::array_literal_accumulated_in_a_loop_rejected`.
 #[test]
 fn item_pool_bound_is_enforced_and_exhaustion_returns_nil() {
     let src = format!(

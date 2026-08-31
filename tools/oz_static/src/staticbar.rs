@@ -71,6 +71,12 @@ fn message_selector(node: Node, src: &str) -> String {
 
 struct MethodScope<'a> {
     class_ivars: &'a HashSet<String>,
+    /// Object locals ARC manages as strong variables, so that an overwrite
+    /// releases what was there (`emit::managed_object_locals`). An
+    /// allocation stored into one of these is bounded at a single live
+    /// instance however many times the loop runs, which is what lets the
+    /// loop rule below tell *reassignment* apart from *accumulation*.
+    arc_managed_locals: &'a HashSet<String>,
     locals: HashSet<String>,
     /// `__block`-qualified locals (tree-sitter-objc parses `__block` as a
     /// `type_qualifier` child of the `declaration` node -- confirmed
@@ -137,6 +143,73 @@ fn check_synchronized_body(sync_node: Node, src: &str, diags: &mut Vec<Diagnosti
     }
 }
 
+/// Is this allocation's result stored straight into a strong local that ARC
+/// manages?
+///
+/// This is what separates the two shapes the loop rule used to conflate:
+///
+/// ```objc
+/// /* reassignment -- bounded at one live instance */
+/// Counter *c;
+/// for (...) { c = [Counter alloc]; }
+///
+/// /* accumulation -- genuinely N live instances */
+/// for (...) { [arr addObject:[Counter alloc]]; }
+/// ```
+///
+/// In the first, `emit::render_strong_local_assign` releases the previous
+/// object *before* allocating the next, so the slab slot is returned and
+/// immediately reusable -- one slot serves the whole loop, and the
+/// occurrence count `pools::count_sites` produced is right. In the second,
+/// nothing releases anything and the count is a floor the program walks
+/// straight through, so it stays a hard error.
+///
+/// The climb only follows a *receiver* position, never an argument.
+/// `[[Counter alloc] init]` keeps the allocation's identity, so the store
+/// that matters is the outer send's; `[arr addObject:[Counter alloc]]` does
+/// not, and treating its enclosing assignment as the destination would
+/// accept exactly the accumulating shape this rule exists for.
+fn stored_into_managed_local(node: Node, src: &str, scope: &MethodScope) -> bool {
+    let mut cur = node;
+    loop {
+        let Some(parent) = cur.parent() else {
+            return false;
+        };
+        match parent.kind() {
+            "parenthesized_expression" | "cast_expression" => {
+                cur = parent;
+            }
+            "message_expression" => {
+                // Only climb when `cur` is the receiver.
+                let mut c = parent.walk();
+                let parts: Vec<Node> = parent
+                    .children(&mut c)
+                    .filter(|n| n.kind() != "[" && n.kind() != "]")
+                    .collect();
+                match parts.first() {
+                    Some(receiver) if receiver.id() == cur.id() => {
+                        cur = parent;
+                    }
+                    _ => return false,
+                }
+            }
+            "assignment_expression" => {
+                let mut c = parent.walk();
+                let parts: Vec<Node> = parent.children(&mut c).collect();
+                if parts.len() >= 3
+                    && parts[0].kind() == "identifier"
+                    && node_text(parts[1], src) == "="
+                    && parts.last().map(|n| n.id()) == Some(cur.id())
+                {
+                    return scope.arc_managed_locals.contains(node_text(parts[0], src));
+                }
+                return false;
+            }
+            _ => return false,
+        }
+    }
+}
+
 fn walk_for_reject(
     node: Node,
     src: &str,
@@ -166,7 +239,11 @@ fn walk_for_reject(
                     ),
                 );
             }
-            if selector == "alloc" && in_loop && !fresh_decl {
+            if selector == "alloc"
+                && in_loop
+                && !fresh_decl
+                && !stored_into_managed_local(node, src, scope)
+            {
                 let class_name = node_text(node, src)
                     .trim_start_matches('[')
                     .split_whitespace()
@@ -195,7 +272,9 @@ fn walk_for_reject(
         // child nodes (elements; key/value pairs) still get walked by the
         // default descent below, so an unsupported construct nested
         // inside one of them is still caught.
-        "array_literal" | "dictionary_literal" if in_loop && !fresh_decl => {
+        "array_literal" | "dictionary_literal"
+            if in_loop && !fresh_decl && !stored_into_managed_local(node, src, scope) =>
+        {
             let what = if node.kind() == "array_literal" {
                 "boxed array literal"
             } else {
@@ -473,11 +552,55 @@ pub fn check_method_body(
     }
     let ivar_names: HashSet<String> =
         program.all_ivars(&class_info.name).into_iter().map(|(n, _)| n).collect();
-    let mut scope =
-        MethodScope { class_ivars: &ivar_names, locals: HashSet::new(), block_locals: HashSet::new() };
+    let managed = crate::emit::managed_object_locals(body, src, program);
+    let mut scope = MethodScope {
+        class_ivars: &ivar_names,
+        arc_managed_locals: &managed,
+        locals: HashSet::new(),
+        block_locals: HashSet::new(),
+    };
     for (name, _) in params {
         scope.locals.insert(name.clone());
     }
+    walk_for_reject(body, src, &mut scope, false, false, &mut diags);
+    diags
+}
+
+/// The same accept/reject scan, over a plain top-level C function's body.
+///
+/// A `.m` file's file-scope functions -- `main()` above all -- can contain
+/// Objective-C, and `emit` transpiles it there exactly as it does in a
+/// method. The bar, however, was entered from one place only: the
+/// `@implementation` method-body renderer. So every check was skipped for
+/// code in a free function -- not just the allocation rule but `@try`,
+/// reflection selectors, `@selector`/`@protocol`, `@synchronized` bodies with
+/// an escaping jump, and block captures of stack locals.
+///
+/// Most of those fail loudly anyway, by reaching `emit` and producing C that
+/// does not compile. The allocation rule was the one with a *silent*
+/// consequence: pool sizing counts a site once however many times it runs, so
+/// an unbounded loop in `main()` was sized as though it allocated once, and
+/// that surfaced at run time as an unexpected nil rather than at build time
+/// as a diagnostic.
+///
+/// No `MethodScope` mode is needed for this. `class_ivars` is read in exactly
+/// one place -- `find_capture`, which asks whether a name a block closes over
+/// is an ivar -- and a free function has none, so the empty set is not a
+/// stand-in but the truth. Seeding it from some nearby class instead would
+/// invent captures: `samples/gpio_demo`'s `[led toggle]` inside a block in
+/// `main` would be flagged the moment any class in that file declared an ivar
+/// named `led`. `check_dealloc_body` is likewise inapplicable and is gated on
+/// the selector, not called here.
+pub fn check_function_body(body: Node, src: &str, program: &Program) -> Vec<Diagnostic> {
+    let mut diags = Vec::new();
+    let no_ivars: HashSet<String> = HashSet::new();
+    let managed = crate::emit::managed_object_locals(body, src, program);
+    let mut scope = MethodScope {
+        class_ivars: &no_ivars,
+        arc_managed_locals: &managed,
+        locals: HashSet::new(),
+        block_locals: HashSet::new(),
+    };
     walk_for_reject(body, src, &mut scope, false, false, &mut diags);
     diags
 }
