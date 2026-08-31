@@ -814,12 +814,28 @@ keep producing this shape of bug.
 Two adjacent gaps surfaced while writing the tests, both left open and filed,
 because each is about *type tracking* rather than about emitting the tag:
 
-- **Writing the tag by hand costs the variable its type tracking.**
-  `file_scope_vars` matches only the untagged spelling, so a send through
-  `static struct Widget *g;` is rejected as an `id` receiver while the
-  identical `static Widget *g;` resolves. Harmless in practice -- the
-  transpiler adds the tag for you, so there is no reason to write it -- but
-  the two spellings mean the same thing in C and should behave alike.
+- **Writing the tag by hand cost the variable its type tracking.** Fixed
+  (#251), and the cause is one step further down than this entry first
+  guessed. `collect::extract_type_and_stars` has a `struct_specifier` arm that
+  reports `struct Widget` rather than `Widget` -- deliberately, because an
+  incomplete struct type can only ever be spelled with the keyword. But
+  `file_scope_vars` then tested that string for membership in the known-class
+  set, which is keyed on bare names, so the tagged declaration was silently
+  skipped and a send through it reported an `id` receiver. Stripping the
+  prefix before the membership test fixes it; the bare name is also what
+  `render_type` wants, since it re-adds the tag.
+
+  The prediction gap R suggests -- that the *local* collector has the same
+  hole -- was checked and is false: `collect_local_decls` has no membership
+  gate at all, so `struct Widget *w = ...;` always resolved. So this was a
+  genuinely one-sided disagreement, which makes it the third instance of the
+  same pattern rather than a fourth variant of it: two places answering "is
+  this an object declaration?" differently, and only one of them wrong.
+
+  What kept it from being a user-visible problem is that there is no reason to
+  write the tag by hand -- oz_static adds it. What made it worth fixing anyway
+  is that the two spellings mean the same thing in C, and a rule that depends
+  on which one you wrote is not a rule.
 - **A free function's parameters were not type-tracked.** Fixed as #250; see
   gap V.
 
@@ -1094,7 +1110,7 @@ without updating the list also fails the test; it cannot decay into
 silently skipped cases. Empty is therefore a stronger statement than a
 passing suite with entries.
 
-Rust test suite: 240 passing, 0 failing.
+Rust test suite: 245 passing, 0 failing.
 
 ### Behavioral parity: 73 of 73
 
