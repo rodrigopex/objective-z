@@ -3190,6 +3190,48 @@ fn lower_ivar_decl(instance_variable: Node, ctx: &mut EmitCtx) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ").replace(" ;", ";")
 }
 
+/// Seed a plain C function's parameters into `ctx`, the way
+/// `render_method_definition` seeds a method's (#250).
+///
+/// Without this a free function's scope was `file_scope_vars` and nothing
+/// else, so `[w n]` on a `Widget *w` parameter was rejected as an `id`
+/// receiver while the identical method `- (int)read:(Widget *)w` resolved.
+/// Same class of omission as gap Q, where the static bar turned out never to
+/// scan a free function at all: the free-function path kept getting a reduced
+/// version of what a method body gets.
+///
+/// Every parameter is inserted, not only the object-typed ones, because that
+/// is what a method does and the two paths drifting is what produces this
+/// shape of bug (#246, gap R).
+///
+/// Adding them to `ctx.locals` cannot make ARC release a borrowed parameter:
+/// `managed_object_locals` looks for `declaration` nodes *inside the body*,
+/// and a parameter is a `parameter_declaration` outside it.
+fn collect_function_params(func_node: Node, ctx: &mut EmitCtx) {
+    let known: std::collections::HashSet<String> = ctx.program.classes.keys().cloned().collect();
+    let mut lists = Vec::new();
+    find_parameter_lists(func_node, &mut lists);
+    // The first list is the function's own: `find_parameter_lists` stops
+    // descending once it matches, so a function-pointer parameter's own
+    // parameter list is never mistaken for it.
+    let Some(plist) = lists.first() else {
+        return;
+    };
+    let mut cursor = plist.walk();
+    for child in plist.children(&mut cursor) {
+        if child.kind() != "parameter_declaration" {
+            continue;
+        }
+        let (type_text, stars) = crate::collect::extract_type_and_stars(child, ctx.src);
+        let c_type = crate::collect::render_type(&type_text, stars, &known);
+        let name = crate::collect::find_declared_name(child, ctx.src);
+        if !name.is_empty() {
+            ctx.scope.insert(name.clone(), c_type);
+            ctx.locals.insert(name);
+        }
+    }
+}
+
 /// Every `parameter_list` under `node`.
 fn find_parameter_lists<'a>(node: Node<'a>, out: &mut Vec<Node<'a>>) {
     if node.kind() == "parameter_list" {
@@ -4082,6 +4124,10 @@ pub fn emit(source: &str, program: &Program, pools: &crate::pools::PoolSizes) ->
                         if !reject_diags.is_empty() {
                             ctx.diags.extend(reject_diags);
                         } else {
+                            // Parameters first, so a body declaration of the
+                            // same name shadows the parameter rather than the
+                            // other way round.
+                            collect_function_params(node, &mut ctx);
                             collect_local_decls(body, &mut ctx);
                             let text = render_body_with_comments(body, &mut ctx);
                             if text != node_text(body, source) {
@@ -4553,6 +4599,10 @@ pub fn emit_split(
                             ctx.diags.extend(reject_diags);
                             text = format!("{}{}", prefix, node_text(body, source));
                         } else {
+                            // Parameters first, so a body declaration of the
+                            // same name shadows the parameter rather than the
+                            // other way round.
+                            collect_function_params(node, &mut ctx);
                             collect_local_decls(body, &mut ctx);
                             let rendered_body = render_body_with_comments(body, &mut ctx);
                             text = format!("{}{}", prefix, rendered_body);
