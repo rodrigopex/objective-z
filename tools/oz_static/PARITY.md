@@ -406,7 +406,11 @@ reference the ivar is taking over and a temporary has no scope-exit release
 to balance a second one; anything else is borrowed and gets retained. Order
 is assign, retain new, release old -- what makes `_x = _x` safe. Properties
 were never affected: a synthesized setter already did retain-new /
-release-old, so only *direct* ivar assignment was missing it.
+release-old, so among *ivars* only direct assignment was missing it.
+
+A plain strong **local** was missing it too, which this entry originally
+implied it was not. That is a different storage class and was fixed
+separately -- see gap Q.
 
 **M. Generated C produced `-Wall` warnings, and one was a wrong type.**
 Zephyr builds with `-Werror`, so each of these was a build failure waiting
@@ -625,6 +629,48 @@ addressed: a macro body is one opaque `preproc_arg` token, so it is emitted
 verbatim and the generated C then fails to compile. Filed as #238 with a
 prototyped detector (0 false positives over the repo's 40 macro bodies).
 
+**R. Three checks skipped a declaration written without an initializer.** Fixed
+(#240), and found by auditing #234 for claims it had made stale rather than by
+anything failing.
+
+One grammar detail behind all of it: a declaration with no initializer has no
+`init_declarator` anywhere. A pointer gives `pointer_declarator`
+(`Counter *c;`), a non-pointer gives a bare `identifier` (`int n;`). Several
+places matched declarators by kind and listed only `init_declarator`, so each
+silently skipped those forms. #234 fixed one of them (`collect_local_decls`,
+which left such a local out of `ctx.scope`, so a send to it was rejected as an
+`id` receiver). These were the rest:
+
+| Where | Before | Consequence |
+| --- | --- | --- |
+| `staticbar` block-capture check | a bare local never entered `scope.locals` | the capture was **accepted**; the hoisted block then gave `use of undeclared identifier` against generated code the user never wrote |
+| `generics::check_declaration` | a bare declaration was skipped entirely | **silent** — the element-type constraint was bypassed and the program compiled and ran unchecked |
+| `emit::hoist_block_var` | a bare *pointer* `__block` local was not hoisted | the block referenced a name that was not there |
+
+Each was confirmed by pairing the bare spelling against the initialized one,
+because in every case the check itself was correct and simply never ran —
+asserting only the bare form would pass equally against a build with the check
+deleted.
+
+The generics one is the worst of the three, being the only silent one: a
+constraint that can be sidestepped by how a declaration is spelled is not a
+constraint.
+
+Two things worth recording, both caught by measuring rather than reasoning:
+
+- `hoist_block_var` was first ruled *out* as a false lead, because
+  `__block int q;` hoists correctly. It does — a bare *non-pointer* declarator
+  is itself an `identifier`, which is exactly why the gap went unnoticed. Only
+  `__block Foo *p;` fell through, and then nothing was hoisted at all.
+- The first `staticbar` fix matched the right node kinds and still did nothing.
+  `find_first_identifier_before_eq` searches only a node's *children*, and a
+  bare `identifier` declarator has none, so it returned `None` — the caller was
+  correct and got no name back.
+
+The bar's declarator set is now deliberately the same one
+`emit::collect_local_decls` uses. The two disagreeing about what counts as a
+local is what produced the asymmetry to begin with.
+
 ## On target (mps2/an385, ARM, Zephyr)
 
 The check that was missing, and the one that mattered most. Every
@@ -785,7 +831,7 @@ without updating the list also fails the test; it cannot decay into
 silently skipped cases. Empty is therefore a stronger statement than a
 passing suite with entries.
 
-Rust test suite: 209 passing, 0 failing.
+Rust test suite: 216 passing, 0 failing.
 
 ### Behavioral parity: 73 of 73
 
@@ -848,6 +894,14 @@ point, which catches a factory that returns another factory's result (the
 oracle's single pass does not). Anything unrecognised is treated as
 borrowed, so an unknown shape leaks rather than double-frees. That asymmetry
 is deliberate: a leak is a bug, a double free is memory corruption.
+
+Since gap Q there is a second way a local is owned, and it is not a property
+of its initializer: one ARC manages as a *strong* variable
+(`emit::managed_object_locals`) owns whatever it ends up holding, because every
+store into it is made owning. `Counter *c;` and `Counter *c = nil;` qualify on
+that basis with no owning initializer at all. The asymmetry above still holds —
+membership requires that every store be one the emitter can make owning, so an
+unrecognised shape leaves the local unmanaged rather than half-managed.
 
 **ARC defers to manual retain/release.** oz_static supports manual memory
 management as a feature of its own, and a variable cannot be managed both

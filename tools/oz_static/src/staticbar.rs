@@ -250,7 +250,7 @@ fn walk_for_reject(
                     .next()
                     .unwrap_or("?");
                 err(diags, src, node, format!(
-                    "allocation of '{}' inside a loop escapes the iteration (not a fresh per-iteration local) — the static subset cannot bound how many live instances this may need; hoist it out of the loop or restructure",
+                    "allocation of '{}' inside a loop escapes the iteration — the static subset cannot bound how many live instances this may need; store it in a fresh per-iteration local, or in a local declared before the loop (ARC then releases the previous one each time), or hoist the allocation out of the loop",
                     class_name));
             }
         }
@@ -265,10 +265,13 @@ fn walk_for_reject(
         // same loop rule as an explicit `alloc` above. Sizing counts one
         // site once however many times it runs (see `pools`), which is
         // sound only when each iteration's instance dies before the next
-        // begins; a literal in a loop that is *not* bound to a fresh
-        // per-iteration local can accumulate live instances the static
-        // count cannot bound, exhausting both the OZArray/OZDictionary
-        // slab and the shared element pool. This arm does not return:
+        // begins. Two things guarantee that: a fresh per-iteration local,
+        // released when the iteration's scope ends, and a strong local ARC
+        // manages, whose overwrite releases the previous object before
+        // allocating the next. A literal in a loop stored anywhere else can
+        // accumulate live instances the static count cannot bound, exhausting
+        // both the OZArray/OZDictionary slab and the shared element pool.
+        // This arm does not return:
         // child nodes (elements; key/value pairs) still get walked by the
         // default descent below, so an unsupported construct nested
         // inside one of them is still caught.
@@ -281,7 +284,7 @@ fn walk_for_reject(
                 "boxed dictionary literal"
             };
             err(diags, src, node, format!(
-                "a {} inside a loop escapes the iteration (not a fresh per-iteration local) — the static subset cannot bound how many live instances this may need; hoist it out of the loop or restructure",
+                "a {} inside a loop escapes the iteration — the static subset cannot bound how many live instances this may need; store it in a fresh per-iteration local, or in a local declared before the loop (ARC then releases the previous one each time), or hoist it out of the loop",
                 what));
         }
         //
@@ -351,7 +354,29 @@ fn walk_for_reject(
         };
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
-            if child.kind() == "init_declarator" {
+            // A declaration with no initializer has no `init_declarator`
+            // anywhere: a pointer gives `pointer_declarator` (`Counter *c;`)
+            // and a non-pointer gives a bare `identifier` (`int n;`). Matching
+            // only `init_declarator` left both out of `scope.locals`, so
+            // `find_capture` did not recognise them and a block closing over
+            // one was silently accepted -- while the identical code written
+            // with an initializer was rejected. The generated C then failed
+            // with `use of undeclared identifier`, naming code the user never
+            // wrote.
+            //
+            // This is deliberately the same set `emit::collect_local_decls`
+            // uses, so the bar's idea of what is a local matches the
+            // emitter's; they disagreeing is what produced the asymmetry in
+            // the first place. It carries that function's known wart too: for
+            // a declaration whose *type* is itself a bare `identifier` the
+            // type name is also recorded. That needs a typedef'd class name
+            // used without a pointer (`OZObject x;`), which is not valid ObjC
+            // for an object, and a class type otherwise parses as
+            // `type_identifier` -- so the case does not arise in practice.
+            if matches!(
+                child.kind(),
+                "init_declarator" | "pointer_declarator" | "identifier"
+            ) {
                 // record the declared name as a local
                 if let Some(name) = find_first_identifier_before_eq(child, src) {
                     scope.locals.insert(name.clone());
@@ -424,6 +449,15 @@ fn find_last_identifier(node: Node, src: &str) -> Option<String> {
 }
 
 fn find_first_identifier_before_eq(node: Node, src: &str) -> Option<String> {
+    // A declarator can *be* the identifier, with no children to search:
+    // `int n;` parses as `declaration(primitive_type, identifier, ;)`, so the
+    // declarator handed here is the bare `identifier` itself. Searching only
+    // children returned None for it, which is why recording bare declarations
+    // as locals did not work on the first attempt -- the caller matched the
+    // node kind correctly and then got no name back.
+    if node.kind() == "identifier" {
+        return Some(node_text(node, src).to_string());
+    }
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
         if child.kind() == "=" {
