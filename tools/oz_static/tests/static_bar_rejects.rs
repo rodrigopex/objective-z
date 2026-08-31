@@ -325,19 +325,35 @@ fn releasing_unretained_ivar_in_dealloc_accepted() {
 // along; `@[...]`/`@{...}` allocate too -- both a collection object and a
 // run of element slots -- so they are now held to it as well.
 //
-// These cases put the loop inside an Objective-C method, which is where
-// the rule can act: `staticbar::check_method_body` is reached only from
-// `emit.rs`'s method-body renderer, so a loop written in a plain C
-// function (`int main(void) { ... }`) is not examined by the static bar at
-// all. That predates this work and applies to the `alloc` rule above
-// identically -- it is not specific to literals.
+// What "escape" means here narrowed with #234, and the reason is worth
+// stating: reassigning a *strong local* is not an escape. ARC releases the
+// previous object before allocating the next
+// (`emit::render_strong_local_assign`), so the slot goes straight back to
+// the slab and one slot serves the whole loop -- measured, not argued:
+// `arc_strong_locals::reassigned_local_needs_only_one_slab_slot` runs 100
+// iterations on `OZArray=1` with a 2-slot item pool. What stays rejected is
+// *accumulation*, where each iteration's object is still live when the next
+// begins and nothing bounds the total.
+//
+// The cases below therefore test the accumulating shape. The
+// reassign-into-a-local shape they used to test is now accepted, and is
+// covered as an accepted case in `arc_strong_locals`.
+//
+// (These also used to note that a loop in a plain C function was not
+// examined at all, `staticbar::check_method_body` being reachable only from
+// the method-body renderer. #234 closed that: `check_function_body` runs the
+// same scan over a free function's body.)
 // ---------------------------------------------------------------------
 
-/// Assigned to a local declared *outside* the loop, so each iteration's
-/// array can outlive the one before it and the counted single site is no
-/// longer a bound.
+/// Stored into a C array of pointers, one element per iteration, so every
+/// array the loop builds is still live when it ends. Nothing releases them
+/// and the counted single site is not a bound.
+///
+/// The destination is what makes this an escape: a plain local would be
+/// released on each overwrite and need one slot. Only a store the emitter
+/// cannot bound -- anything but a strong local it manages -- is rejected.
 #[test]
-fn array_literal_escaping_a_loop_rejected() {
+fn array_literal_accumulated_in_a_loop_rejected() {
     let src = format!(
         "{}{}{}{}",
         PREAMBLE(),
@@ -349,11 +365,11 @@ fn array_literal_escaping_a_loop_rejected() {
 @end
 @implementation Keeper
 - (BOOL)run {
-	OZArray *arr;
+	OZArray *kept[3];
 	for (int i = 0; i < 3; i++) {
-		arr = @[@(1), @(2)];
+		kept[i] = @[@(1), @(2)];
 	}
-	return arr != 0;
+	return kept[0] != 0;
 }
 @end
 
@@ -368,7 +384,7 @@ int main(void) { return 0; }
 /// The dictionary counterpart, which names itself distinctly so the
 /// message points at the construct actually written.
 #[test]
-fn dictionary_literal_escaping_a_loop_rejected() {
+fn dictionary_literal_accumulated_in_a_loop_rejected() {
     let src = format!(
         "{}{}{}{}",
         PREAMBLE(),
@@ -380,11 +396,11 @@ fn dictionary_literal_escaping_a_loop_rejected() {
 @end
 @implementation Keeper
 - (BOOL)run {
-	OZDictionary *d;
+	OZDictionary *kept[3];
 	for (int i = 0; i < 3; i++) {
-		d = @{@(1): @(2)};
+		kept[i] = @{@(1): @(2)};
 	}
-	return d != 0;
+	return kept[0] != 0;
 }
 @end
 

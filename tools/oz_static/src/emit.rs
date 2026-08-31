@@ -112,7 +112,18 @@ fn header_text(node: Node, src: &str, stop_kinds: &[&str]) -> String {
 /// where they're used (C requires declare-before-use, but this scan
 /// doesn't need to respect that ordering to build the lookup table).
 /// Does not descend into block_literal bodies (a separate lexical scope).
-fn collect_local_decls(node: Node, ctx: &mut EmitCtx) {
+/// Build the scope table for `body`, then decide which of its object locals
+/// ARC manages as strong variables. Both passes are driven from here so that
+/// every caller -- method bodies and the two plain-C-function arms alike --
+/// gets the second one; an earlier shape had the strong-local decision at
+/// each call site, where a new call site would silently miss it.
+fn collect_local_decls(body: Node, ctx: &mut EmitCtx) {
+    collect_local_decls_inner(body, ctx);
+    let managed = managed_object_locals(body, ctx.src, ctx.program);
+    ctx.arc_managed_locals.extend(managed);
+}
+
+fn collect_local_decls_inner(node: Node, ctx: &mut EmitCtx) {
     if node.kind() == "block_literal" {
         return;
     }
@@ -127,7 +138,21 @@ fn collect_local_decls(node: Node, ctx: &mut EmitCtx) {
         let c_type = crate::collect::render_type(&type_text, stars, &known);
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
-            if child.kind() == "init_declarator" || child.kind() == "identifier" {
+            // `pointer_declarator` is the shape a declaration with *no*
+            // initializer takes -- `Counter *c;` parses as
+            // `type_identifier` + `pointer_declarator(* identifier)`, with
+            // no `init_declarator` anywhere. Without it such a local never
+            // reached `ctx.scope`, so a later `[c poke]` reported its
+            // receiver as `id` and was rejected, while the identical code
+            // written `Counter *c = ...;` resolved fine. That is the
+            // local-scope twin of the file-scope gap fixed by
+            // `emit::file_scope_vars`, and it also has to be fixed here for
+            // ARC to recognise a strong local declared before the loop that
+            // assigns it (see `arc_managed_locals`).
+            if child.kind() == "init_declarator"
+                || child.kind() == "identifier"
+                || child.kind() == "pointer_declarator"
+            {
                 let name = crate::collect::find_declared_name(child, ctx.src);
                 if !name.is_empty() {
                     ctx.scope.insert(name.clone(), c_type.clone());
@@ -138,8 +163,218 @@ fn collect_local_decls(node: Node, ctx: &mut EmitCtx) {
     }
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        collect_local_decls(child, ctx);
+        collect_local_decls_inner(child, ctx);
     }
+}
+
+/// Is `decl` a declaration of exactly one strong local, written with no
+/// initializer? Those need ARC's implicit `= nil` -- see the `"declaration"`
+/// arm in `render_expr`.
+///
+/// The single-declarator requirement is not cosmetic: the initializer is
+/// spliced in before the declaration's trailing `;`, which on
+/// `Counter *a, *b;` would initialize only `b` and leave `a` indeterminate
+/// -- exactly the pointer the first overwrite would then release. A
+/// multi-declarator line is therefore left alone rather than half-handled,
+/// which also keeps it out of `arc_managed_locals`' release paths (see
+/// `owned_locals_of_in`, which is reached through the same declarator kind).
+fn declares_bare_managed_local(decl: Node, ctx: &EmitCtx) -> bool {
+    let mut cursor = decl.walk();
+    let declarators: Vec<Node> = decl
+        .children(&mut cursor)
+        .filter(|c| {
+            matches!(
+                c.kind(),
+                "pointer_declarator" | "init_declarator" | "array_declarator" | "identifier"
+            )
+        })
+        .collect();
+    if declarators.len() != 1 || declarators[0].kind() != "pointer_declarator" {
+        return false;
+    }
+    let name = crate::collect::find_declared_name(declarators[0], ctx.src);
+    !name.is_empty() && ctx.arc_managed_locals.contains(&name)
+}
+
+/// Does `root`'s subtree read the identifier `name`?
+fn references_identifier(name: &str, root: Node, src: &str) -> bool {
+    if root.kind() == "identifier" && node_text(root, src) == name {
+        return true;
+    }
+    let mut cursor = root.walk();
+    let children: Vec<Node> = root.children(&mut cursor).collect();
+    children.into_iter().any(|child| references_identifier(name, child, src))
+}
+
+/// How a single store to a strong local can be emitted.
+#[derive(PartialEq, Clone, Copy)]
+enum LocalStore {
+    /// A `+1` right-hand side that does not mention the variable: the old
+    /// value can be released *before* evaluating it.
+    Owning,
+    /// A plain identifier: free of side effects, so it can be named twice
+    /// and retained before the release, which is what makes `c = c` safe.
+    BorrowedIdent,
+    /// Anything else -- a `+0` call, or a `+1` one that reads the variable
+    /// it is about to overwrite. Both would need a temporary, and a
+    /// temporary cannot be placed correctly here (see
+    /// `render_strong_local_assign`), so a local with any such store is not
+    /// managed at all.
+    Unsupported,
+}
+
+fn classify_store(name: &str, rhs: Node, src: &str, program: &Program) -> LocalStore {
+    let owning = crate::arc::is_owning_expr(rhs, src, program, &program.owning_methods);
+    let mentions_self = references_identifier(name, rhs, src);
+    if owning && !mentions_self {
+        return LocalStore::Owning;
+    }
+    if rhs.kind() == "identifier" {
+        return LocalStore::BorrowedIdent;
+    }
+    LocalStore::Unsupported
+}
+
+/// Every store to `name` under `root`, in source order.
+fn stores_to_local(
+    name: &str,
+    root: Node,
+    src: &str,
+    program: &Program,
+    out: &mut Vec<LocalStore>,
+) {
+    if root.kind() == "assignment_expression" {
+        let mut cursor = root.walk();
+        let parts: Vec<Node> = root.children(&mut cursor).collect();
+        if parts.len() >= 3 && parts[0].kind() == "identifier" && node_text(parts[0], src) == name {
+            let op = node_text(parts[1], src);
+            if op == "=" {
+                out.push(classify_store(name, *parts.last().unwrap(), src, program));
+            } else {
+                // A compound store (`|=` and friends) on an object local is
+                // not something ARC can reason about.
+                out.push(LocalStore::Unsupported);
+            }
+        }
+    }
+    let mut cursor = root.walk();
+    let children: Vec<Node> = root.children(&mut cursor).collect();
+    for child in children {
+        stores_to_local(name, child, src, program, out);
+    }
+}
+
+/// Record which object locals declared under `body` are strong locals ARC
+/// manages -- see `EmitCtx::arc_managed_locals`.
+///
+/// The membership rule is deliberately narrow, because the two halves of
+/// ownership have to match exactly: an overwrite may release the previous
+/// value only if that value was itself owned. Releasing a reference never
+/// taken is a double free, which is precisely the bug gap L was (the
+/// release half of strong-ivar ownership shipped without the retain half).
+/// So a local qualifies only when every value it can hold is owned:
+///
+/// - **Bare declaration** (`Counter *c;`) with at least one `+1` assignment.
+///   Every assignment then goes through `render_strong_local_assign`, which
+///   retains a borrowed right-hand side, so all values are owned. The
+///   declaration is also given ARC's implicit `= nil`, without which the
+///   first overwrite would release an indeterminate pointer.
+/// - **Owning initializer** (`Counter *c = [Counter alloc];`) -- already
+///   owned and already released at scope exit today; all this adds is
+///   release-on-overwrite.
+///
+/// A **borrowed initializer** (`Counter *c = [arr objectAtIndex:0];`) is
+/// excluded. Real ARC would retain it, but oz_static does not, so its value
+/// is unowned and releasing it on overwrite would be that same double free.
+/// Making those strong is a larger change to observable refcounts and is not
+/// what this fix is for.
+///
+/// A local the body releases by hand is excluded throughout, keeping the
+/// standing rule that ARC defers to manual retain/release -- see
+/// `released_by_hand`.
+pub(crate) fn managed_object_locals(
+    body: Node,
+    src: &str,
+    program: &Program,
+) -> std::collections::HashSet<String> {
+    fn walk(
+        node: Node,
+        body: Node,
+        found: &mut Vec<String>,
+        src: &str,
+        program: &Program,
+    ) {
+        if node.kind() == "declaration" && !is_block_qualified_declaration(node, src) {
+            // `extract_type_and_stars` yields the *source* spelling, so an
+            // object type is just the class name -- no `struct` prefix to
+            // strip, and `is_class` is the authority on whether the name is
+            // a class at all rather than a plain C struct.
+            let (type_text, stars) = crate::collect::extract_type_and_stars(node, src);
+            let is_object = stars == 1 && program.is_class(type_text.trim());
+            if is_object && !node_text(node, src).contains("__unsafe_unretained") {
+                let mut cursor = node.walk();
+                for child in node.children(&mut cursor) {
+                    let bare = child.kind() == "pointer_declarator";
+                    let init = child.kind() == "init_declarator";
+                    if !bare && !init {
+                        continue;
+                    }
+                    let name = crate::collect::find_declared_name(child, src);
+                    if name.is_empty() || released_by_hand(&name, body, src) {
+                        continue;
+                    }
+                    // Every store has to be one the renderer can emit, or
+                    // the variable would be managed for some assignments and
+                    // not others -- and then the scope-exit release could
+                    // free a value nothing ever retained.
+                    let mut stores = Vec::new();
+                    stores_to_local(&name, body, src, program, &mut stores);
+                    if stores.contains(&LocalStore::Unsupported) {
+                        continue;
+                    }
+                    if bare {
+                        // Strong only if something owned is ever stored. A
+                        // local that only ever receives borrowed values is
+                        // left alone: retaining those is a broader change to
+                        // observable refcounts than this fix is for.
+                        if stores.contains(&LocalStore::Owning) {
+                            found.push(name);
+                        }
+                    } else {
+                        // An owning initializer is already owned today; a
+                        // borrowed one is deliberately left alone.
+                        let mut c2 = child.walk();
+                        let parts: Vec<Node> = child.children(&mut c2).collect();
+                        let eq = parts.iter().position(|n| n.kind() == "=");
+                        let Some(value) = eq.and_then(|i| parts.get(i + 1)).copied() else {
+                            continue;
+                        };
+                        if crate::arc::is_owning_expr(
+                            value,
+                            src,
+                            program,
+                            &program.owning_methods,
+                        ) {
+                            found.push(name);
+                        }
+                    }
+                }
+            }
+        }
+        // A block literal has its own scope and its own locals; those are
+        // not this body's to manage.
+        if node.kind() == "block_literal" {
+            return;
+        }
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            walk(child, body, found, src, program);
+        }
+    }
+
+    let mut found = Vec::new();
+    walk(body, body, &mut found, src, program);
+    found.into_iter().collect()
 }
 
 /// Does `node` (a `declaration`) carry a `__block` `type_qualifier` child?
@@ -382,6 +617,27 @@ struct EmitCtx<'a> {
     /// when their block ends and at any jump out of it -- see
     /// `render_scoped_block`.
     arc_scopes: Vec<ArcScope>,
+    /// Object locals ARC manages as *strong* variables, in the sense real
+    /// ARC does: an overwrite releases what was there, so the variable
+    /// holds at most one live object at a time. Decided once per body by
+    /// `note_arc_managed_locals` and read by `render_strong_local_assign`.
+    ///
+    /// This is what makes the ordinary Objective-C shape
+    ///
+    /// ```objc
+    /// Counter *c;
+    /// for (int i = 0; i < 100; i++) {
+    ///         c = [Counter alloc];
+    /// }
+    /// ```
+    ///
+    /// correct on one slab slot instead of leaking 99 objects. oz_static
+    /// already did retain-new/release-old for strong *ivars*
+    /// (`render_strong_ivar_assign`) and for properties (a synthesized
+    /// setter); a plain local was the one strong storage class left doing
+    /// neither, which is why `staticbar` had to reject the loop above
+    /// rather than emit it.
+    arc_managed_locals: std::collections::HashSet<String>,
 }
 
 /// One block's worth of owned object locals.
@@ -596,6 +852,27 @@ fn render_expr(node: Node, ctx: &mut EmitCtx) -> (String, String) {
                 Some(base) => render_expr(base, ctx),
                 None => (node_text(node, ctx.src).to_string(), "id".to_string()),
             }
+        }
+        // ARC's implicit `= nil` on a strong local declared without an
+        // initializer. Real ARC zero-initializes every strong variable, and
+        // here it is load-bearing rather than tidy: the first
+        // `c = [Counter alloc]` releases whatever `c` held, so an
+        // indeterminate `c` would be passed to `oz_static_release` and
+        // dereferenced. `oz_static_release` is null-safe (`if (!self)
+        // return;`), so nil makes that first release a no-op.
+        "declaration" if declares_bare_managed_local(node, ctx) => {
+            let text = rebuild(node, ctx, &mut |child, ctx| {
+                if needs_translation(child) {
+                    Some(render_expr(child, ctx).0)
+                } else {
+                    None
+                }
+            });
+            let initialized = match text.rfind(';') {
+                Some(i) => format!("{} = 0{}", text[..i].trim_end(), &text[i..]),
+                None => text,
+            };
+            (initialized, "id".to_string())
         }
         "at_expression" => render_boxed_at_expression(node, ctx),
         "string_literal" => render_boxed_string_literal(node, ctx),
@@ -1352,6 +1629,102 @@ fn render_strong_ivar_assign(
     Some((expr, ty))
 }
 
+/// Assignment to a strong object *local*: release what it held, so the
+/// variable holds at most one live object at a time.
+///
+/// This is what real ARC does at every store to a strong variable, and its
+/// absence was the reason `staticbar` had to reject an ordinary loop:
+///
+/// ```objc
+/// Counter *c;
+/// for (int i = 0; i < 100; i++) {
+///         c = [Counter alloc];   /* previous c released here */
+/// }
+/// ```
+///
+/// Without the release each iteration abandoned a live object, so 100
+/// iterations needed 100 slab slots while `pools::count_sites` had counted
+/// the one allocation site once. The slab ran out and the next send wrote
+/// through a null receiver -- an MPU fault on target, and a *silent* one,
+/// since nothing about it fails to compile. With the release, one slot is
+/// genuinely correct and the shape needs no diagnostic at all.
+///
+/// The ordering is `render_strong_ivar_assign`'s, for the same reason:
+/// assign, retain new, release old. Releasing first could free the very
+/// value being stored, which is what makes self-assignment (`c = c`) safe.
+/// A `+1` right-hand side is stored without retaining -- it already carries
+/// the reference the variable is taking over, and a temporary has no
+/// scope-exit release to balance a second one.
+///
+/// Membership in `arc_managed_locals` is what guarantees the release is
+/// sound: every value such a local can hold is owned, so there is never a
+/// reference released that was not taken. See `managed_object_locals`.
+///
+/// Takes no `node`, unlike `render_strong_ivar_assign`: that one needs the
+/// assignment's position to name a temporary, and this one deliberately
+/// emits no temporary at all.
+fn render_strong_local_assign(
+    left: Node,
+    right: Node,
+    ctx: &mut EmitCtx,
+) -> Option<(String, String)> {
+    if left.kind() != "identifier" {
+        return None;
+    }
+    let name = node_text(left, ctx.src).to_string();
+    if !ctx.arc_managed_locals.contains(&name) {
+        return None;
+    }
+    let root = ctx.program.root_class()?.to_string();
+    let kind = classify_store(&name, right, ctx.src, ctx.program);
+    if kind == LocalStore::Unsupported {
+        return None;
+    }
+    let (value, _value_ty) = render_expr(right, ctx);
+
+    // No temporary, deliberately. An earlier version captured the previous
+    // value into a `ctx.pre_stmts` local, which is drained by whichever
+    // *top-level* statement is being rendered -- so for an assignment inside
+    // a loop the capture was hoisted above the `for`, read `c` once while it
+    // was still nil, and every iteration then released nil. The loop leaked
+    // exactly as before, and the generated C looked plausible. Naming `c`
+    // directly inside the comma expression is both simpler and correct: the
+    // comma operator sequences left to right, so a release written before
+    // the assignment observes the old value.
+    let expr = match kind {
+        // A `+1` right-hand side that does not mention the variable: release
+        // first, then assign. Releasing *before* the allocation is what lets
+        // one slab slot serve the whole loop -- the slot goes back to the
+        // slab and the very next allocation can take it again. Allocating
+        // first would need two slots live at once. The right-hand side is
+        // known not to read the variable (`classify_store`), so freeing it
+        // first cannot pull the ground from under the value being computed.
+        LocalStore::Owning => format!(
+            "(oz_static_release((struct {root} *)({name})), {name} = {value})",
+            root = root,
+            name = name,
+            value = value
+        ),
+        // A plain identifier: retain new, release old, assign -- the order
+        // `render_strong_ivar_assign` uses and for the same reason, that it
+        // makes self-assignment (`c = c`) safe. Naming the value twice is
+        // free of consequence only because it is an identifier, which is
+        // exactly what `classify_store` checked.
+        LocalStore::BorrowedIdent => format!(
+            "(oz_static_retain((struct {root} *)({value})), \
+             oz_static_release((struct {root} *)({name})), {name} = {value})",
+            root = root,
+            name = name,
+            value = value
+        ),
+        LocalStore::Unsupported => unreachable!("returned above"),
+    };
+    // The comma expression already yields the assigned value, so unlike the
+    // ivar path there is no trailing read to suppress for `-Wunused-value`.
+    let ty = ctx.scope.get(&name).cloned().unwrap_or_else(|| format!("struct {} *", root));
+    Some((expr, ty))
+}
+
 /// Assignment, handled here for two reasons: a property dot-syntax *target*
 /// has to become the setter call rather than an assignment to a function
 /// call, and a strong object ivar has to take ownership of what it is given
@@ -1387,6 +1760,9 @@ fn render_assignment_expression(node: Node, ctx: &mut EmitCtx) -> (String, Strin
     }
     if node_text(op, ctx.src) == "=" {
         if let Some(rendered) = render_strong_ivar_assign(node, left, right, ctx) {
+            return rendered;
+        }
+        if let Some(rendered) = render_strong_local_assign(left, right, ctx) {
             return rendered;
         }
     }
@@ -2276,6 +2652,19 @@ fn owned_locals_of_in(decl: Node, search_root: Option<Node>, ctx: &EmitCtx) -> V
     let mut cursor = decl.walk();
     let children: Vec<Node> = decl.children(&mut cursor).collect();
     for child in children {
+        // A bare `Counter *c;` that ARC manages as a strong local owns
+        // whatever it ends up holding (see `note_arc_managed_locals`), so
+        // its final value needs the same scope-exit release an owning
+        // initializer gets. Without this the last object assigned in a loop
+        // would never be freed -- the release-on-overwrite only covers the
+        // ones that were overwritten.
+        if child.kind() == "pointer_declarator" {
+            let name = crate::collect::find_declared_name(child, ctx.src);
+            if !name.is_empty() && ctx.arc_managed_locals.contains(&name) {
+                out.push(name);
+            }
+            continue;
+        }
         if child.kind() != "init_declarator" {
             continue;
         }
@@ -3246,6 +3635,7 @@ pub fn emit(source: &str, program: &Program, pools: &crate::pools::PoolSizes) ->
                     method_return_type: "int".to_string(),
                     pools,
                     arc_scopes: Vec::new(),
+                    arc_managed_locals: std::collections::HashSet::new(),
                 };
                 let (header_part, alloc_free_part) = render_interface(node, &mut ctx, program);
                 let text = format!("{}\n{}", header_part, alloc_free_part);
@@ -3279,6 +3669,7 @@ pub fn emit(source: &str, program: &Program, pools: &crate::pools::PoolSizes) ->
                     method_return_type: "int".to_string(),
                     pools,
                     arc_scopes: Vec::new(),
+                    arc_managed_locals: std::collections::HashSet::new(),
                 };
                 let mut out = String::new();
                 out.push_str(&banner_box(&header_text(node, source, &["implementation_definition"]), '-'));
@@ -3438,16 +3829,29 @@ pub fn emit(source: &str, program: &Program, pools: &crate::pools::PoolSizes) ->
                     method_return_type: "int".to_string(),
                     pools,
                     arc_scopes: Vec::new(),
+                    arc_managed_locals: std::collections::HashSet::new(),
                 };
                 let mut c2 = node.walk();
                 if let Some(body) =
                     node.children(&mut c2).find(|c| c.kind() == "compound_statement")
                 {
                     if needs_translation(body) {
-                        collect_local_decls(body, &mut ctx);
-                        let text = render_body_with_comments(body, &mut ctx);
-                        if text != node_text(body, source) {
-                            patches.push(Patch { start: body.start_byte(), end: body.end_byte(), text });
+                        // The static bar applies to a plain C function's body
+                        // exactly as it does to a method's -- see
+                        // `staticbar::check_function_body`. Guarding on
+                        // `needs_translation` costs nothing: every construct
+                        // the bar rejects is Objective-C, so a body with none
+                        // has nothing to reject.
+                        let reject_diags =
+                            crate::staticbar::check_function_body(body, source, program);
+                        if !reject_diags.is_empty() {
+                            ctx.diags.extend(reject_diags);
+                        } else {
+                            collect_local_decls(body, &mut ctx);
+                            let text = render_body_with_comments(body, &mut ctx);
+                            if text != node_text(body, source) {
+                                patches.push(Patch { start: body.start_byte(), end: body.end_byte(), text });
+                            }
                         }
                     }
                 }
@@ -3686,6 +4090,7 @@ pub fn emit_split(
                     method_return_type: "int".to_string(),
                     pools,
                     arc_scopes: Vec::new(),
+                    arc_managed_locals: std::collections::HashSet::new(),
                 };
                 let (header_part, alloc_free_part) = render_interface(node, &mut ctx, program);
                 diags.extend(ctx.diags);
@@ -3721,6 +4126,7 @@ pub fn emit_split(
                     method_return_type: "int".to_string(),
                     pools,
                     arc_scopes: Vec::new(),
+                    arc_managed_locals: std::collections::HashSet::new(),
                 };
                 let mut out = String::new();
                 out.push_str(&banner_box(&header_text(node, source, &["implementation_definition"]), '-'));
@@ -3868,6 +4274,7 @@ pub fn emit_split(
                     method_return_type: "int".to_string(),
                     pools,
                     arc_scopes: Vec::new(),
+                    arc_managed_locals: std::collections::HashSet::new(),
                 };
                 let sig_edits = class_tag_edits(node, source, program);
                 let mut text = apply_edits(source, node.start_byte(), node.end_byte(), &sig_edits);
@@ -3879,9 +4286,19 @@ pub fn emit_split(
                     let prefix =
                         apply_edits(source, node.start_byte(), body.start_byte(), &sig_edits);
                     if needs_translation(body) {
-                        collect_local_decls(body, &mut ctx);
-                        let rendered_body = render_body_with_comments(body, &mut ctx);
-                        text = format!("{}{}", prefix, rendered_body);
+                        // Same scan as the single-file arm above; both
+                        // `function_definition` paths need it, and an earlier
+                        // shape of this change had it in only one.
+                        let reject_diags =
+                            crate::staticbar::check_function_body(body, source, program);
+                        if !reject_diags.is_empty() {
+                            ctx.diags.extend(reject_diags);
+                            text = format!("{}{}", prefix, node_text(body, source));
+                        } else {
+                            collect_local_decls(body, &mut ctx);
+                            let rendered_body = render_body_with_comments(body, &mut ctx);
+                            text = format!("{}{}", prefix, rendered_body);
+                        }
                     } else {
                         text = format!("{}{}", prefix, node_text(body, source));
                     }
