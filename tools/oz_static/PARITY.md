@@ -1044,16 +1044,41 @@ To go back to the Python pipeline, per target:
 CONFIG_OBJZ_BACKEND_PYTHON=y
 ```
 
-**What this default rests on, stated plainly.** Every measurement in this
-document is a host measurement. The 73-case corpus matches on both backends,
-9 of 12 samples compile, link, run and match their own `sample.yaml`, and
-all 9 are clean under AddressSanitizer and UndefinedBehaviorSanitizer. What
-none of that covers is a Zephyr cross-build: no sample has been built on
-target through this backend, the three samples needing kernel or
-device-tree infrastructure (`arc_demo`, `gpio_demo`, `zbus_objc`) are not
-exercised at all, and `k_mem_slab`, real interrupt-disabled spinlocks and
-code size are all untested. Flipping the default is what will surface those;
-`CONFIG_OBJZ_BACKEND_PYTHON=y` is the way back for any target it breaks.
+**What this default rests on, stated plainly.**
+
+- The 73-case behavior corpus **matches** under both backends — run, not just
+  transpiled, with Unity results diffed (`just test-cross-backend`).
+- **All 13 samples build for ARM and run under twister**, each one's console
+  output matched against its own `sample.yaml` — an oracle independent of the
+  Python backend. That includes the three needing kernel or device-tree
+  infrastructure (`arc_demo`, `gpio_demo`, `zbus_objc`), which no host build
+  can exercise at all.
+- Of the samples a host build can run, all are clean under AddressSanitizer
+  and UndefinedBehaviorSanitizer with leak detection on.
+- Generated C is `-Wall -Wextra` clean (gap S), so a new warning on target is
+  visible rather than lost in noise — and Zephyr compiles with `-Werror`.
+
+What that still does not cover, and why the escape hatch stays:
+
+- **QEMU is not hardware.** `mps2/an385` under QEMU says nothing about real
+  `k_mem_slab` contention, real interrupt-disabled critical sections, or
+  timing. No physical board has been used (#231).
+- **Code size is unmeasured** against the Python backend. The default was
+  switched on behavioural grounds, so the size consequences are unknown rather
+  than known-acceptable (#231).
+- **RISC-V builds but has not been run** — 12 of 13 samples, generated C
+  byte-identical to ARM (#230).
+
+`CONFIG_OBJZ_BACKEND_PYTHON=y` remains the way back for any target this
+breaks.
+
+This paragraph previously read "every measurement in this document is a host
+measurement ... no sample has been built on target through this backend". That
+was true when the default was flipped and stopped being true once the
+cross-build landed — while contradicting both the "On target" section above it
+and the first line of "Not verified" immediately below. Left as a caution: the
+claim most likely to go stale is the one about what has *not* been checked yet,
+because the work that falsifies it is filed somewhere else.
 
 ## Not verified
 
