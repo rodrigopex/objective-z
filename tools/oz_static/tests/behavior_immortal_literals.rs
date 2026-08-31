@@ -1,19 +1,27 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// behavior_immortal_literals.rs - a boxed string literal (`@"..."`) lives
-// in static storage, so it must never be passed to free().
+// behavior_immortal_literals.rs - objects that must never be passed to
+// free(): a boxed string literal (`@"..."`), which lives in static storage,
+// and a singleton, whose own protocol declares it immortal.
 //
-// Releasing it does happen in ordinary code: a collection that absorbed a
-// literal releases its elements when it is itself deallocated, so a
+// Releasing a literal does happen in ordinary code: a collection that
+// absorbed one releases its elements when it is itself deallocated, so a
 // literal's refcount really does reach zero. `companion`'s release path
-// calls `{class}_oz_free` at zero, which for OZString is `free(obj)` --
-// on a static, that aborts. `emit::render_boxed_string_literal` marks
-// literals `_meta.deallocating = 1` from birth so `oz_static_release`
-// returns before the free switch.
+// calls `{class}_oz_free` at zero, which for OZString is `free(obj)` -- on a
+// static, that aborts. `emit::render_boxed_string_literal` marks literals
+// `_meta.immortal = 1`, and `oz_static_release` returns on that bit before
+// it even decrements (#228).
 //
-// This is what made a dictionary literal abort on release while an array
-// literal released cleanly: dictionary *keys* here are string literals,
-// whereas `@[ @10, @20 ]`'s elements are heap-allocated OZQ31 boxes.
+// It used to mark them `_meta.deallocating = 1` from birth instead and rely
+// on the re-entrancy guard, which sits *after* the decrement -- so the crash
+// was avoided but the refcount sank through zero. That is the difference the
+// refcount assertions below pin down; the abort-or-not cases pass under
+// either mechanism.
+//
+// The abort asymmetry is what made a dictionary literal abort on release
+// while an array literal released cleanly: dictionary *keys* here are string
+// literals, whereas `@[ @10, @20 ]`'s elements are heap-allocated OZQ31
+// boxes.
 
 mod common;
 use common::{
