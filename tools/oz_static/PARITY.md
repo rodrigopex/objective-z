@@ -820,12 +820,51 @@ because each is about *type tracking* rather than about emitting the tag:
   identical `static Widget *g;` resolves. Harmless in practice -- the
   transpiler adds the tag for you, so there is no reason to write it -- but
   the two spellings mean the same thing in C and should behave alike.
-- **A free function's parameters are not type-tracked.** A
-  `function_definition`'s scope is seeded from `file_scope_vars` alone and
-  never from the parameter list, so `[w n]` on a `Widget *w` parameter is
-  rejected as `id`. A method's parameters do resolve; only a plain C
-  function's do not, which is the same class of omission gap Q found when the
-  static bar turned out never to scan a free function at all.
+- **A free function's parameters were not type-tracked.** Fixed as #250; see
+  gap V.
+
+**V. A free function's parameters were not in scope for its own body.** Fixed
+(#250). `emit`'s `function_definition` arm seeded its scope from
+`file_scope_vars` alone and never from the parameter list, so
+
+```objc
+static int readWidget(Widget *w) { return [w n]; }
+```
+
+was rejected -- `cannot statically resolve the receiver type for selector 'n'
+(receiver type is 'id')` -- while the identical method
+`- (int)readWidget:(Widget *)w` resolved, because `render_method_definition`
+has always inserted `sig.params`.
+
+This is the third finding in the same shape as gap Q, where the static bar
+turned out never to scan a plain C function at all: the free-function path
+keeps getting a *reduced* version of what a method body gets, and each time
+the missing piece is invisible until someone writes the ordinary code. Passing
+an object to a helper and sending it a message is not an exotic construct, and
+the diagnostic gave no hint that the parameter rather than the send was the
+problem.
+
+`collect_function_params` inserts every parameter, not only the object-typed
+ones, because that is what a method does -- and two paths that disagree about
+what a scope contains is the mechanism behind #246 and gap R both. It is
+applied in `emit` *and* `emit_split`, which build their `EmitCtx` separately;
+#246's fix had to be made twice for the same reason.
+
+Three things worth recording:
+
+- **Adding parameters to `ctx.locals` cannot make ARC release a borrowed
+  one.** Checked before relying on it: `managed_object_locals` looks for
+  `declaration` nodes *inside the body*, and a parameter is a
+  `parameter_declaration` outside it, so it can never be picked up as owned.
+  Releasing a reference never taken is a double free -- gap L in reverse, and
+  the reason this needed checking rather than assuming.
+- **Parameters are seeded before `collect_local_decls`,** so a body
+  declaration of the same name shadows the parameter rather than the reverse,
+  which is C's own rule.
+- **The bar is unchanged.** An `id` parameter still cannot receive a send: its
+  class is genuinely unknown, and seeding a scope must not turn "unknown type"
+  into a quiet guess. Pinned by its own case, since it is the one thing here
+  that must keep *failing*.
 
 ## On target (Zephyr under QEMU: mps2/an385 ARM, and qemu_riscv32)
 
@@ -1055,7 +1094,7 @@ without updating the list also fails the test; it cannot decay into
 silently skipped cases. Empty is therefore a stronger statement than a
 passing suite with entries.
 
-Rust test suite: 234 passing, 0 failing.
+Rust test suite: 240 passing, 0 failing.
 
 ### Behavioral parity: 73 of 73
 
