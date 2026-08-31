@@ -429,6 +429,8 @@ Requires [just](https://github.com/casey/just). Default board: `mps2/an385`.
 | `just monitor` / `just m` | Serial monitor (tio)               |
 | `just clean` / `just c`  | Remove build directory               |
 | `just test` / `just t`   | Run twister on all samples (ARM)    |
+| `just test-riscv`      | Same samples on RISC-V (12 of 13)      |
+| `just test-boards`     | Both boards (ARM and RISC-V)           |
 | `just test-transpiler` | Run transpiler pytest suite            |
 | `just test-behavior`   | Run compiled behavior tests            |
 | `just test-adapted`    | Run adapted upstream tests             |
