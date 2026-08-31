@@ -32,7 +32,7 @@ config OBJZ_BACKEND_STATIC
 	help
 	  Rejects anything outside its supported subset with a located
 	  error rather than emitting code that misbehaves. Reflection and
-	  @selector are the notable exclusions -- see OZ-101.
+	  @selector are the notable exclusions -- see issue #226.
 
 config OBJZ_BACKEND_PYTHON
 	bool "Python (oz_transpile)"
