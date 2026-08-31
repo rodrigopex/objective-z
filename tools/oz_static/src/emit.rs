@@ -1307,18 +1307,23 @@ fn render_boxed_string_literal(node: Node, ctx: &mut EmitCtx) -> (String, String
     ctx.block_counter += 1;
     let name = format!("_oz_str_L{}_C{}_{}", line, col, ctx.block_counter);
     let prototype = format!("extern struct OZString {};\n", name);
-    // `_meta.deallocating = 1` from birth is what makes this literal
-    // immortal. It lives in static storage, so `free()`-ing it aborts --
-    // and something does try: `companion`'s release path runs
-    // `{class}_oz_free` once a refcount hits zero, and a literal's
-    // refcount does reach zero, because a collection that absorbed it
-    // (`@[ @"a" ]`, or a dictionary key) releases its elements when it is
-    // itself deallocated. `oz_static_release` checks this flag before the
-    // free switch, so setting it up front makes release a no-op at zero
-    // instead of a crash, matching the real `OZString.m`'s own `-dealloc`
-    // ("compile-time constant, never freed").
+    // `_meta.immortal = 1` is what keeps this literal alive. It lives in
+    // static storage, so `free()`-ing it aborts -- and something does try:
+    // `companion`'s release path runs `{class}_oz_free` once a refcount hits
+    // zero, and a literal's refcount does reach zero, because a collection
+    // that absorbed it (`@[ @"a" ]`, or a dictionary key) releases its
+    // elements when it is itself deallocated. `oz_static_release` returns on
+    // the immortal bit before it even decrements, matching the real
+    // `OZString.m`'s own `-dealloc` ("compile-time constant, never freed")
+    // and the oracle's `emit.py` literal, which sets the same bit.
+    //
+    // This used to set `deallocating = 1` from birth instead, relying on the
+    // re-entrancy guard to make release a no-op. That worked, but the field
+    // said something false -- `deallocating` means "teardown is running right
+    // now", not "never tear down" -- and it let the literal's refcount sink
+    // to zero and below on the way (#228).
     let definition = format!(
-        "struct OZString {} = {{ .base = {{ ._meta = {{ .class_id = OZ_STATIC_CLASS_OZString, .deallocating = 1 }}, .oz_refcount = 1 }}, ._length = {}, ._hash = 0, ._data = {} }};\n",
+        "struct OZString {} = {{ .base = {{ ._meta = {{ .class_id = OZ_STATIC_CLASS_OZString, .immortal = 1 }}, .oz_refcount = 1 }}, ._length = {}, ._hash = 0, ._data = {} }};\n",
         name, byte_len, c_literal
     );
     ctx.hoisted_string_literals.push((prototype, definition));
@@ -3528,6 +3533,8 @@ fn render_interface(node: Node, ctx: &mut EmitCtx, program: &Program) -> (String
                     slots,
                     &owned_ivars,
                     ctx.program.heap_support,
+                    ctx.program
+                        .class_conforms_to(&name, crate::companion::SINGLETON_PROTOCOL),
                 ),
                 String::new(),
             )

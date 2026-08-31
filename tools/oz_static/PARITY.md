@@ -352,10 +352,10 @@ differently.
 
 Adopting the shared type is a small win on its own account too: four flags
 in the four bytes one of them used to take, no invented layout to keep in
-step, and an `immortal` bit that names what oz_static currently expresses
-by setting `deallocating = 1` on a boxed literal from birth -- which says
-"currently being deallocated" to mean "never deallocate". That one is left
-as is for now; it works, and changing the release path is a separate step.
+step, and an `immortal` bit that names what oz_static used to express by
+setting `deallocating = 1` on a boxed literal from birth -- which says
+"currently being deallocated" to mean "never deallocate". That bit is now
+used for what it names; see gap T.
 
 **K. The sample sweep never compiled `src/OZLog.c`, and a claim here was
 wrong about why.**
@@ -718,6 +718,74 @@ The issue asked whoever took it to re-run the sweep afterwards rather than
 trust its number. That was the right instruction and it is the reason the
 figure here is 89 rather than 58.
 
+**T. Immortality was expressed by a field that meant something else, and for
+singletons it was not expressed at all.** Fixed (#228). Two halves, filed as
+one cosmetic issue; only the first half was cosmetic.
+
+A boxed literal lives in static storage, so it must never be freed -- and
+something does try, because a collection that absorbed it releases its
+elements when it dies. oz_static marked literals `_meta.deallocating = 1`
+from birth and relied on the release path's re-entrancy guard to turn the
+free into a no-op. That worked, but `deallocating` means "teardown is running
+right now", not "never tear down", so the generated C said something false
+and any second reader of the flag would have had to know the trick. The PAL's
+`struct oz_metadata` has carried an `immortal` bit for exactly this since
+OZ-064 (#97), and **the Python backend already used it** -- `emit.py` writes
+`.immortal = 1` on its literals and checks it in release -- so this was a
+plain parity gap with the intended shape already visible in the oracle.
+
+Placement is the substance of the fix: the check goes *before* the refcount
+decrement, not after it. The old guard sat after, so a literal's refcount
+really did sink through zero -- releasing one three times reported
+`retainCount` of **-2**. An immortal object's refcount now never moves.
+
+`retain` is deliberately left unconditional, matching the oracle: it
+increments whatever it is given. Pinning an immortal object's count would
+have been a second divergence dressed up as tidiness, and `retainCount`
+reporting the true number is more honest than a fabricated constant.
+
+**The singleton half was a use-after-free, not a naming problem.**
+`Singleton+Protocol.h` states the contract outright -- "Singleton objects are
+immortal, they are never deallocated" -- and nothing enforced it. It held only
+because no code in the repository happens to release a singleton. With the
+marker removed, releasing one runs `-dealloc` and hands its slab slot back
+while `+sharedInstance` keeps returning the same pointer; the test prints
+`config dealloc` and then reads `rate_after=0` out of a freed slot.
+
+Conformance to `SingletonProtocol` is the signal, via the existing
+`Program::class_conforms_to`, rather than a heuristic on the
+`+sharedInstance` shape: all three singletons in the repository declare it
+(`samples/arc_demo`'s AppConfig, `samples/heap_alloc`'s App,
+`samples/zbus_service`'s TemperatureService), and a wrong guess would mark an
+ordinary object immortal, whose slab slot then never comes back. The marker
+is emitted in the *allocator*, which is the one place every instance passes
+through -- so `heap_alloc`'s App gets it in both `App_oz_alloc` and
+`App_oz_alloc_with_heap`, verified in the ARM build's output.
+
+Here the oracle is *not* followed: it does not mark singletons at all. That is
+a deliberate departure on the grounds the CLAUDE.md rule states -- the Python
+pipeline is a reference, not an authority -- and it is invisible to
+`just test-cross-backend` precisely because nothing in the corpus releases a
+singleton. So this half rests on its own tests rather than on cross-backend
+agreement, which is worth knowing when reading the 73/73.
+
+Two things this needed that are worth recording:
+
+- **The four pre-existing tests could not have caught any of it.** Both
+  mechanisms prevent the crash, so `behavior_immortal_literals.rs`'s original
+  cases pass either way. The discriminating observation is the *refcount*, not
+  whether the program survives -- which is why the new cases assert
+  `retainCount` and were each checked to fail with the fix disabled.
+- **The real singleton spelling could not be used in a test.** All three
+  samples hold their instance in a file-scope `static Config *_shared;`, and
+  the single-file emitter this suite drives does not tag bare class names in a
+  top-level declaration -- `class_tag_edits` is called only from
+  `emit_split`. The fixture uses a method-local static instead. Filed as #246;
+  it is unrelated to immortality, but it means no Rust test can use the shape
+  `gpio_demo`, `heap_alloc` and every singleton are built on, which is how
+  gaps A and D came to be fixed against samples without the suite ever
+  locking them in.
+
 ## On target (Zephyr under QEMU: mps2/an385 ARM, and qemu_riscv32)
 
 The check that was missing, and the one that mattered most. Every
@@ -946,7 +1014,7 @@ without updating the list also fails the test; it cannot decay into
 silently skipped cases. Empty is therefore a stronger statement than a
 passing suite with entries.
 
-Rust test suite: 223 passing, 0 failing.
+Rust test suite: 228 passing, 0 failing.
 
 ### Behavioral parity: 73 of 73
 
@@ -1195,7 +1263,7 @@ Filed rather than folded in, each with the reason it was kept separate:
 | --- | --- |
 | #226 | Static, no-heap reflection and `@selector`. Needs its own design pass; oz_static rejects them today with a located error. |
 | #227 | Host-portable samples. Only three samples genuinely need Zephyr (`K_THREAD_DEFINE`, device tree, zbus) — stubbing `printk` alone moved four others to running on host. |
-| #228 | Use `_meta.immortal` for boxed literals instead of pre-setting `deallocating`. The current trick works; the field just says something false. Follows OZ-064 (#97). |
+| #246 | Single-file `emit()` does not tag bare class names in a top-level declaration -- `class_tag_edits` is called only from `emit_split`. Production is unaffected (every real build uses the CLI), but no Rust test can use a file-scope object declaration. Found while writing gap T's tests. |
 | #230 | Verify on RISC-V (`qemu_riscv32`). **Done** — 12 of 13 samples build, run under QEMU and pass their own `sample.yaml` checks; generated C byte-identical to ARM across all 304 generated files. `gpio_demo` stays ARM-only, needing device-tree aliases the board lacks. Repeatable as `just test-riscv`. |
 | #231 | Compare code size between backends, and run at least one sample on real hardware. The default was switched on behavioural grounds; the size consequences are unknown rather than known-acceptable. |
 | #238 | Objective-C inside a `#define` *body* is emitted verbatim, so the generated C does not compile — the other half of #234, split out because a macro body is one opaque `preproc_arg` token and needs its own approach. Detector prototyped: 0 of 40 real macro bodies flagged. |

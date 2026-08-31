@@ -508,6 +508,15 @@ pub fn iterator_protocol_src() -> String {
     strip_import_and_pragma_lines(include_str!("../../../../include/oz_sdk/Foundation/Iterator+Protocol.h"))
 }
 
+/// `SingletonProtocol`, verbatim from
+/// `include/oz_sdk/Foundation/Singleton+Protocol.h`. Conformance to it is
+/// what marks a class's instances immortal (#228), so the tests must use
+/// the real declaration rather than a look-alike -- a hand-copied protocol
+/// of the same name would keep passing if the header were renamed.
+pub fn singleton_protocol_src() -> String {
+    strip_import_and_pragma_lines(include_str!("../../../../include/oz_sdk/Foundation/Singleton+Protocol.h"))
+}
+
 /// OZHeap, the `allocWithHeap:` backing store -- assembled from
 /// `include/oz_sdk/Foundation/OZHeap.h` / `src/OZHeap.m` verbatim, no
 /// cuts and no rewrites.
