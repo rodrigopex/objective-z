@@ -817,8 +817,25 @@ assigned rather than only described here. That issue records the concrete cost
 — the two arm lists, `EmitCtx` constructed six times over — and the fact that
 makes it worse than ordinary duplication: every Rust test drives `emit()` while
 every real build drives `emit_split()`, so the path with test coverage is not
-the path that ships. It also notes that nobody has ever diffed the two
-node-kind by node-kind; all three findings were stumbled into.
+the path that ships.
+
+That issue's first task was an audit, since all three findings had been
+stumbled into rather than looked for. **It is done and found no remaining
+divergence**: `tests/emitter_agreement.rs` drives both emitters over every
+top-level node kind either walk matches on, plus `@synchronized` and a
+construct outside the static subset, and compares diagnostics and symbol
+presence — not text, since the two deliberately place text differently.
+
+Worth knowing from it: the asymmetry has bitten in *both* directions, which
+cuts against reading `emit_split` as simply the more complete one. #246 was
+`emit` missing a `declaration` arm entirely; gap C's seventh cause was
+`emit_split` *dropping* a top-level struct that `emit` kept by not touching it.
+Both directions now have a case.
+
+The audit lowers the urgency and does not close the case: it guards the *known*
+node kinds, so a new kind added to one walk and not the other still slips past
+until someone adds a case. #254 stays open for the structural fix — one shared
+renderer, or retiring `emit()` so the tested path is the shipped path.
 
 Two adjacent gaps surfaced while writing the tests, both left open and filed,
 because each is about *type tracking* rather than about emitting the tag:
