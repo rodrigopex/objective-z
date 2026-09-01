@@ -63,7 +63,9 @@ macOS is Apple Clang and a different version from CI.
 | `just clean` / `just c`   | Remove build dir                   |
 | `just test` / `just t`    | Run twister on all samples (ARM)   |
 | `just test-riscv`          | Same samples on RISC-V (12 of 13; `gpio_demo` is ARM-only) |
-| `just test-boards`         | Both boards, so neither hides an architecture-specific regression |
+| `just test-smp`            | Two cores, `qemu_cortex_a53/smp` — the only board that exercises real lock contention |
+| `just test-boards`         | ARM + RISC-V, so neither hides an architecture-specific regression |
+| `just test-all-boards`     | All three, including SMP |
 | `just test-cross-backend` | Both backends over the same corpus, results diffed |
 | `just test-behavior`      | Behavior corpus (Python backend)    |
 | `just test-adapted`       | Adapted upstream tests (Python backend) |

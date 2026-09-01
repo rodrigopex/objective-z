@@ -122,6 +122,15 @@ pub struct Program {
     /// has in hand, and threading a second parameter through each of them
     /// would say nothing extra.
     pub heap_support: bool,
+    /// Does the program use `@synchronized` anywhere? When it does, the root
+    /// struct gains an `oz_sync_lock` so `@synchronized(obj)` can lock
+    /// storage owned by `obj` rather than a fresh lock on the caller's own
+    /// stack, which serialized nothing across cores.
+    ///
+    /// A fact about the source rather than an option, unlike `heap_support`,
+    /// but kept here for the same reason: the root-struct emitter already has
+    /// `Program` in hand and nothing else would carry it.
+    pub uses_synchronized: bool,
 }
 
 impl Program {

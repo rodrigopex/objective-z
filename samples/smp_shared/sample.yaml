@@ -1,0 +1,36 @@
+sample:
+  description: Two cores contending on one object's @synchronized lock and refcount
+  name: ObjZ SMP Shared Object
+common:
+  tags: objz smp
+  harness: console
+tests:
+  # SMP only, deliberately. On a single-core board the two threads timeshare
+  # rather than contend, so the assertions below would pass without ever
+  # exercising what the sample exists to exercise -- and `main` spins waiting
+  # for the worker, which needs a second core to make progress on.
+  #
+  # `count=4000 expected=4000` is the assertion that matters: it fails if
+  # `@synchronized` does not serialize, because `-bump`'s three-step
+  # read-modify-write loses updates under real contention.
+  sample.objz.smp_shared:
+    tags: objz smp synchronized
+    platform_allow:
+      - qemu_cortex_a53/qemu_cortex_a53/smp
+    integration_platforms:
+      - qemu_cortex_a53/qemu_cortex_a53/smp
+    harness_config:
+      type: multi_line
+      ordered: false
+      regex:
+        - "=== SMP Shared Object Demo ==="
+        - "counter created, rc=1"
+        - "worker started"
+        - "main done"
+        - "worker done"
+        # The exact totals. 2 * ITERATIONS increments must all survive, and
+        # equal retains and releases from two cores must land back at +1.
+        - "count=4000 expected=4000"
+        - "rc_after=1"
+        - "still usable, count=4000"
+        - "=== Demo complete ==="

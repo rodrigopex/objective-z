@@ -109,6 +109,42 @@ static inline void oz_spin_unlock(oz_spinlock_t *lck, oz_spinlock_key_t key)
         k_spin_unlock(lck, key);
 }
 
+/**
+ * @brief A zeroed lock key, for a variable that may never be assigned one.
+ *
+ * `oz_spinlock_key_t` is `k_spinlock_key_t` here, which is a *struct*, so
+ * `oz_spinlock_key_t k = 0;` is "invalid initializer" -- the same trap as
+ * `oz_spinlock_t lock = {0}`, which fails because `struct k_spinlock` has no
+ * members unless CONFIG_SMP is on. Generated code needs a key declared
+ * outside the branch that acquires the lock (a re-entrant `@synchronized`
+ * skips the acquire), so it needs a portable way to spell "no key yet".
+ */
+static inline oz_spinlock_key_t oz_spin_key_none(void)
+{
+        oz_spinlock_key_t k;
+
+        memset(&k, 0, sizeof(k));
+        return k;
+}
+
+/**
+ * @brief Identity of the calling thread, for re-entrancy detection.
+ *
+ * `@synchronized` locks a spinlock owned by the object, and a spinlock
+ * cannot be re-locked: `@synchronized(x) { @synchronized(x) { } }` would
+ * hang on the second acquire. Objective-C's own `@synchronized` is
+ * recursive, so generated code records the owner and skips the second
+ * acquire instead of attempting it -- see
+ * `emit::render_synchronized_statement`.
+ *
+ * Only ever compared for equality, never dereferenced, so the pointer value
+ * is all that matters.
+ */
+static inline void *oz_current_thread(void)
+{
+        return (void *)k_current_get();
+}
+
 /* ------------------------------------------------------------------ */
 /* Formatted output — printk                                           */
 /* ------------------------------------------------------------------ */

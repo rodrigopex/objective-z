@@ -3,38 +3,96 @@ sample:
   name: ObjZ ARC Demo
 common:
   tags: objz
-  platform_allow:
-    - mps2/an385
-    - qemu_riscv32
-  integration_platforms:
-    - mps2/an385
   harness: console
-  harness_config:
-    type: multi_line
-    ordered: true
-    regex:
-      - "=== ARC Memory Management Demo ==="
-      - "singleton refreshRate=60 same=yes"
-      - "Sensor created, value=42"
-      - "Sensor dealloc"
-      - "@autoreleasepool test"
-      - "Sensor dealloc"
-      # Reassigning a strong local releases the previous object before
-      # allocating the next, so the values pin the ordering: 100 is gone
-      # before 101 exists. '.' stands in for the literal '(' rather than
-      # escaping it.
-      - "reassign loop"
-      - "reassigned value=100"
-      - "Sensor dealloc .value=100."
-      - "reassigned value=101"
-      - "Sensor dealloc .value=101."
-      - "reassigned value=102"
-      - "Sensor dealloc .value=102."
-      - "=== Demo main complete ==="
-      - "=== Demo Extra thread started ==="
-      - "Driver created"
-      - "Driver dealloc"
-      - "Sensor dealloc"
+# `integration_platforms` is set per scenario, not in `common`: a platform
+# named there but absent from that scenario's own `platform_allow` is a hard
+# twister error ("Not in testsuite platform allow list but is one of the
+# integration platforms"), so a shared `mps2/an385` breaks the SMP scenarios.
 tests:
+  # Single-core boards. `main` runs to completion before the priority-7
+  # extra thread gets the CPU, so one ordered list covers both threads and
+  # the cross-thread ordering is itself part of what is asserted.
   sample.objz.arc_demo:
     tags: objz arc
+    platform_allow:
+      - mps2/an385
+      - qemu_riscv32
+    integration_platforms:
+      - mps2/an385
+    harness_config:
+      type: multi_line
+      ordered: true
+      regex:
+        - "=== ARC Memory Management Demo ==="
+        - "singleton refreshRate=60 same=yes"
+        - "Sensor created, value=42"
+        - "Sensor dealloc"
+        - "@autoreleasepool test"
+        - "Sensor dealloc"
+        # Reassigning a strong local releases the previous object before
+        # allocating the next, so the values pin the ordering: 100 is gone
+        # before 101 exists. '.' stands in for the literal '(' rather than
+        # escaping it.
+        - "reassign loop"
+        - "reassigned value=100"
+        - "Sensor dealloc .value=100."
+        - "reassigned value=101"
+        - "Sensor dealloc .value=101."
+        - "reassigned value=102"
+        - "Sensor dealloc .value=102."
+        - "=== Demo main complete ==="
+        - "=== Demo Extra thread started ==="
+        - "Driver created"
+        - "Driver dealloc"
+        - "Sensor dealloc"
+
+  # Two cores (CONFIG_SMP=y, CONFIG_MP_MAX_NUM_CPUS=2), so the extra thread
+  # runs on core 1 *concurrently* with main and its output interleaves --
+  # observed printing before main's second line. The single-core list above
+  # cannot be reused: it requires "Demo Extra thread started" to follow
+  # "Demo main complete", which encodes one-core scheduling rather than
+  # anything about ARC.
+  #
+  # Split into two scenarios rather than relaxed to `ordered: false`, because
+  # the ordering *within* each thread is a real claim and dropping it would
+  # lose the one that matters most: each reassigned Sensor is released before
+  # the next is allocated, which is what lets a single slab slot serve the
+  # whole loop (gap Q). Within one thread that ordering holds on any number
+  # of cores.
+  #
+  # This is what makes the sample exercise something no other board can: two
+  # cores allocating from the same class slabs and touching the same refcount
+  # atomics at the same time.
+  sample.objz.arc_demo.smp_main:
+    tags: objz arc smp
+    platform_allow:
+      - qemu_cortex_a53/qemu_cortex_a53/smp
+    harness_config:
+      type: multi_line
+      ordered: true
+      regex:
+        - "=== ARC Memory Management Demo ==="
+        - "singleton refreshRate=60 same=yes"
+        - "Sensor created, value=42"
+        - "@autoreleasepool test"
+        - "reassign loop"
+        - "reassigned value=100"
+        - "Sensor dealloc .value=100."
+        - "reassigned value=101"
+        - "Sensor dealloc .value=101."
+        - "reassigned value=102"
+        - "Sensor dealloc .value=102."
+        - "=== Demo main complete ==="
+
+  sample.objz.arc_demo.smp_thread:
+    tags: objz arc smp
+    platform_allow:
+      - qemu_cortex_a53/qemu_cortex_a53/smp
+    harness_config:
+      type: multi_line
+      ordered: true
+      regex:
+        - "=== Demo Extra thread started ==="
+        - "Driver created"
+        - "Driver dealloc"
+        - "Sensor dealloc"

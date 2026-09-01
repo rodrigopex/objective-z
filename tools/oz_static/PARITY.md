@@ -26,7 +26,7 @@ These words are used precisely and are not interchangeable:
   is not small: it found five defects in twenty minutes that a full day of
   host checks had not (see "On target").
 
-## Samples (13)
+## Samples (14)
 
 Measured by invoking `oz2c` directly with the same flags
 `cmake/oz_static.cmake` passes (`-I <module>/include/oz_sdk`, one
@@ -74,6 +74,7 @@ both stale and measured with the wrong instrument — the real figure was 89.
 | gpio_demo | yes | Zephyr-blocked | — | device tree; was gap D |
 | zbus_objc | yes | Zephyr-blocked | — | zbus; was gap E |
 | zbus_service | — | — | — | stale independently of oz_static (see below) |
+| smp_shared | yes | — | SMP only | two cores contending on one object; needs `CONFIG_SMP`, so no host or single-core run — see gap W |
 
 Every sample with usable sources transpiles, and **none fails on a
 transpiler gap**. Nine compile, link and run on host; eight of those match
@@ -890,7 +891,103 @@ Three things worth recording:
   into a quiet guess. Pinned by its own case, since it is the one thing here
   that must keep *failing*.
 
-## On target (Zephyr under QEMU: mps2/an385 ARM, and qemu_riscv32)
+**W. `@synchronized` excluded nothing between cores, and was indistinguishable
+from no lock at all.** Fixed. Found by building the first sample where two
+threads touch the same object, on the first board with two cores.
+
+It lowered to a spinlock declared *inside the block*, on the caller's own
+stack, initialized fresh on entry:
+
+```c
+oz_spinlock_t _oz_sync_lock_L1551_C2_1;
+oz_spin_init(&_oz_sync_lock_L1551_C2_1);
+oz_spinlock_key_t key = oz_spin_lock(&_oz_sync_lock_L1551_C2_1);
+```
+
+Two threads therefore locked two different locks. Nothing keyed on the
+object's identity, though `@synchronized(self)` names it.
+
+**Measured on two cores, same sample, three configurations:**
+
+| Lock | Result |
+| --- | --- |
+| none at all | `count=2023 expected=4000` |
+| per-block (what shipped) | `count=2015 expected=4000` |
+| per-object (now) | `count=4000 expected=4000` |
+
+The first two rows are the finding. The old lock was not weak, it was absent.
+
+**Why it survived this long is the more useful part.** `k_spin_lock` calls
+`arch_irq_lock()` unconditionally, so on a single core the critical section
+really is serialized -- by disabling interrupts, for a reason unrelated to
+which lock was taken. Every board tested until now was single-core, and no
+sample or test had two threads reach the same object. It was correct by
+accident everywhere anyone looked.
+
+This was **not** an undiscovered oversight: `render_synchronized_statement`'s
+own doc comment described the per-block lock as deliberate, said plainly that
+it buys "an interrupt-disabled critical section, not mutual exclusion keyed on
+`obj`", and recorded that the per-object alternative had been tried and
+rejected because a `k_spinlock` is not recursive. What was missing was
+evidence, and the reason the trade looked acceptable was that its cost could
+not be seen on any board in use.
+
+**The fix, and why it is not the rejected one.** The lock is now a root-struct
+field (`oz_sync_lock`, added only when the program uses `@synchronized`,
+mirroring the conditional `oz_prop_lock`), plus `oz_sync_owner` recording which
+thread holds it. A re-entrant `@synchronized` on the same object *does not
+attempt the second acquire* -- it sees itself as owner and skips both lock and
+unlock:
+
+```c
+int held = (obj->oz_sync_owner != oz_current_thread());
+if (held) { key = oz_spin_lock(&obj->oz_sync_lock); obj->oz_sync_owner = oz_current_thread(); }
+...
+if (held) { obj->oz_sync_owner = 0; oz_spin_unlock(&obj->oz_sync_lock, key); }
+```
+
+`held` is a per-block local, so nesting unwinds correctly at any depth with no
+depth counter: inner blocks never acquired, so they never unlock. That is what
+makes this different from the rejected design -- the spinlock is never
+re-locked, which is the actual constraint, rather than made recursive, which it
+cannot be. Recursion now matches Objective-C's own semantics instead of being
+a hazard.
+
+The alternative -- a plain per-object lock without owner tracking -- was
+implemented first and would have **hung on target** in a shape the suite
+already exercises: `behavior_synchronized.rs`'s `[n runNested:n]` passes the
+same object as both receivers, so `@synchronized(self)` then
+`@synchronized(other)` is one object twice. It passed on host regardless,
+because the host PAL's `oz_spin_lock` is `(void)lck; return 0;`. A textual
+check for identical receiver spellings does not catch it either, the two
+spellings being `self` and `other`. That test now passes for the right reason,
+and `samples/smp_shared` runs the re-entrant path on two cores with a real
+spinlock.
+
+Three things worth recording, two of them mistakes:
+
+- **The obvious version of the sample proved nothing.** Written as a tight
+  three-statement read-modify-write, the *unlocked* build also passed, with a
+  perfect 40000: QEMU's TCG emulates cores in coarse translation blocks and
+  never interleaved a critical section that short. A 200-iteration volatile
+  spin holding the window open is what separates the numbers above. Without
+  that negative control the sample would have looked like strong evidence for
+  a lock that did nothing -- and would have concealed this gap rather than
+  finding it.
+- **`oz_spinlock_key_t key = 0;` does not compile on Zephyr.** That type is
+  `k_spinlock_key_t`, a *struct*. Same family as the `oz_spinlock_t lock = {0}`
+  failure recorded under "On target" -- assuming a PAL type is scalar. The PAL
+  gained `oz_spin_key_none()` on both backends, so "no key yet" has a spelling
+  that does not depend on the type.
+- **The refcount half of the sample cannot be falsified.** `rc_after=1` held
+  even in the unlocked build, because retain/release go through real atomics
+  rather than a plain read-modify-write, and there is no equally cheap way to
+  un-atomic them for a control. Those lines confirm the atomics behave under
+  two-core load; they do not prove the atomicity is load-bearing the way the
+  count line proves the lock is. Stated in the sample too, so nobody reads more
+  into a green run than it carries.
+
+## On target (Zephyr under QEMU: mps2/an385, qemu_riscv32, qemu_cortex_a53/smp)
 
 The check that was missing, and the one that mattered most. Every
 measurement above this section is a host measurement; this one uses the real
@@ -908,10 +1005,10 @@ sample's own `sample.yaml`. It is stricter than a plain `west build` in two
 ways that both mattered — it adds `-Werror`, and it checks output rather
 than exit status.
 
-**All 13 samples build for ARM**, and `arc_demo`'s output under QEMU is
+**All 13 single-core samples build for ARM**, and `arc_demo`'s output under QEMU is
 byte-identical to the Python backend's.
 
-**13 of 13 twister configurations pass** — every sample, built, run under
+**13 of 13 twister configurations pass on ARM** — every sample it selects, built, run under
 QEMU and output-checked. `gpio_demo` and `zbus_service` had no `sample.yaml`
 at all and so were invisible to the harness; both have one now.
 
@@ -1074,11 +1171,52 @@ only on ARM. `heap_alloc` passes, so the `--heap-support` path and
 What RISC-V does **not** add: `struct k_spinlock` is empty on
 `qemu_riscv32` as well, because `CONFIG_SMP` and `CONFIG_SPIN_VALIDATE` are
 both off there as on `mps2/an385`. The other shape of that struct — with
-`locked`/`owner`/`tail` — and the non-trivial path through `oz_spin_init`
-stay unexercised. That needs an SMP board, not a second architecture. Nor is
+`locked`/`owner`/`tail` — stays unexercised on both. That needs an SMP board,
+not a second architecture — see the SMP subsection below, which is where that
+gap was closed and where it turned out to be hiding a real defect. Nor is
 this a code-size comparison: `qemu_riscv32` reports no FLASH region at all,
 being RAM-only, so its figures are not comparable with the ARM sweep's flash
 numbers (#231 covers size, same-architecture).
+
+### Two cores: qemu_cortex_a53/smp
+
+**9 of 9 selected configurations pass on `qemu_cortex_a53/qemu_cortex_a53/smp`**
+(`just test-smp`), with `CONFIG_SMP=y` and `CONFIG_MP_MAX_NUM_CPUS=2` verified
+in every build. A third architecture (aarch64) and the first genuinely
+concurrent one.
+
+The board needed nothing installed: it is in this Zephyr tree, the SDK already
+had `aarch64-zephyr-elf`, and six samples passed on it with no changes at all.
+So the "needs an SMP board" note above was accurate about the requirement and
+misleading about the cost.
+
+**This is where `@synchronized` turned out not to work.** The full account is
+gap W; the short version is that it locked a fresh spinlock on the *caller's
+stack*, so two cores locked two different locks, and it was measurably
+indistinguishable from no lock at all.
+
+Two harness findings came with it, both the same shape as `heap_alloc`'s
+ordering timeout:
+
+- **`arc_demo`'s expectations encoded single-core scheduling.** Its extra
+  thread runs on core 1 *concurrently* with `main` and prints before main's
+  second line, so an `ordered: true` list requiring "Demo Extra thread
+  started" after "Demo main complete" could never match. The program was
+  correct throughout. Its `sample.yaml` now has separate scenarios: the
+  single-core boards keep the strict cross-thread ordering, which is
+  meaningful there, and SMP gets two scenarios each ordered *within* one
+  thread. Deliberately not relaxed to `ordered: false` — that would have
+  discarded the release-then-allocate ordering gap Q's single-slab-slot claim
+  rests on, which holds on any number of cores.
+- **`integration_platforms` cannot live in `common:` once scenarios differ by
+  platform.** A platform named there but absent from a scenario's own
+  `platform_allow` is a hard twister error, not a filter. The first attempt at
+  the above broke `mps2/an385` — and RISC-V filtered correctly, so testing
+  only the boards of interest would have shipped it.
+
+What SMP still does not cover: `CONFIG_SPIN_VALIDATE` is off there too, so
+Zephyr's own lock-misuse assertions remain unexercised. And QEMU is not
+hardware — see the caveat under "what this default rests on".
 
 ## The Python backend still passes its own suites
 
@@ -1118,7 +1256,7 @@ without updating the list also fails the test; it cannot decay into
 silently skipped cases. Empty is therefore a stronger statement than a
 passing suite with entries.
 
-Rust test suite: 245 passing, 0 failing.
+Rust test suite: 249 passing, 0 failing.
 
 ### Behavioral parity: 73 of 73
 
@@ -1288,7 +1426,7 @@ CONFIG_OBJZ_BACKEND_PYTHON=y
 
 - The 73-case behavior corpus **matches** under both backends — run, not just
   transpiled, with Unity results diffed (`just test-cross-backend`).
-- **All 13 samples build for ARM and run under twister**, each one's console
+- **All 13 samples it selects build for ARM and run under twister**, each one's console
   output matched against its own `sample.yaml` — an oracle independent of the
   Python backend. That includes the three needing kernel or device-tree
   infrastructure (`arc_demo`, `gpio_demo`, `zbus_objc`), which no host build
@@ -1297,6 +1435,11 @@ CONFIG_OBJZ_BACKEND_PYTHON=y
   architecture and a second toolchain, with the generated C byte-identical to
   the ARM build across all 304 generated files. `gpio_demo` is excluded by the
   board's missing device-tree aliases, not by anything in oz_static.
+- **Two cores, on `qemu_cortex_a53/smp`**: 9 of 9 selected configurations pass
+  with `CONFIG_SMP=y` and 2 CPUs, including `samples/smp_shared`, where two
+  threads contend on one object's `@synchronized` lock and its refcount. This
+  is the only coverage that can distinguish a working lock from a no-op one,
+  and it is how gap W was found.
 - Of the samples a host build can run, all are clean under AddressSanitizer
   and UndefinedBehaviorSanitizer with leak detection on.
 - Generated C is `-Wall -Wextra` clean (gap S), so a new warning on target is
@@ -1310,9 +1453,9 @@ What that still does not cover, and why the escape hatch stays:
 - **Code size is unmeasured** against the Python backend. The default was
   switched on behavioural grounds, so the size consequences are unknown rather
   than known-acceptable (#231).
-- **No SMP board has been used**, on either architecture, so the populated
-  shape of `struct k_spinlock` and the non-trivial path through
-  `oz_spin_init` stay unexercised.
+- **`CONFIG_SPIN_VALIDATE` has never been on**, on any board, so Zephyr's own
+  lock-misuse assertions have never run against generated code. SMP covers the
+  populated `struct k_spinlock`; this is the remaining shape of that struct.
 
 `CONFIG_OBJZ_BACKEND_PYTHON=y` remains the way back for any target this
 breaks.
@@ -1327,22 +1470,30 @@ because the work that falsifies it is filed somewhere else.
 
 ## Not verified
 
-**The Zephyr cross-build is now run, on both supported boards** — see "On
-target" above. ARM runs 13 of 13 samples; `qemu_riscv32` runs 12 of 13, the
-thirteenth excluded by that board's missing device-tree aliases rather than by
-anything in oz_static (#230). What is still not covered: **no real board has
-been used** — both are QEMU — and nothing here measures code size against the
-Python backend (#231). No SMP board has been used either, so the populated
-`struct k_spinlock` remains unexercised on both architectures.
+**The Zephyr cross-build is now run, on three boards** — see "On target"
+above. ARM runs 13 of the 14 samples; `qemu_riscv32` runs 12, the one it drops
+excluded by that board's missing device-tree aliases rather than by anything in
+oz_static (#230); `qemu_cortex_a53/smp` runs 9 of 9 selected with two CPUs.
+What is still not covered: **no real board has been used** — all three are
+QEMU — nothing here measures code size against the Python backend (#231), and
+`CONFIG_SPIN_VALIDATE` has never been enabled anywhere.
 
-This entry is the one to distrust on principle. It has now been wrong twice in
-the same direction — first claiming no target build existed after the
+This entry is the one to distrust on principle. It has now been wrong three
+times in the same direction — first claiming no target build existed after the
 cross-build landed, then claiming no RISC-V sample had run when eight of them
-would have passed the moment anyone pointed twister at the board. Both times
-the document understated what was already working, because the work that
-falsified it was recorded in an issue rather than here.
+would have passed the moment anyone pointed twister at the board, and now
+claiming no SMP board had been used when the board was in-tree and the
+toolchain already installed. Each time the document understated what was
+already reachable, because the work that falsifies it gets recorded somewhere
+else.
 
-**All 13 samples are run under twister**, on QEMU. Each is built, executed,
+The SMP entry is worth a second look for the opposite reason, though: it was
+the *only* one of the three whose absence was concealing a live defect rather
+than merely lagging behind. "Not yet checked" and "checked and fine" are not
+close together, and this section spent months implying the second while meaning
+the first.
+
+**Every sample is run under twister** on at least one board, on QEMU. Each is built, executed,
 and its console output matched against its own `sample.yaml` — a real oracle,
 and one independent of the Python backend. QEMU still says nothing about real
 `k_mem_slab` contention, real interrupt-disabled critical sections, or
