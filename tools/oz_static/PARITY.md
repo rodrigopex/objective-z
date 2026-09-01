@@ -811,6 +811,14 @@ what counts as a local, and the fix there was to make them share one
 definition. Two emitters that disagree about what valid output looks like will
 keep producing this shape of bug.
 
+Now filed as **#254**, so the mechanism is tracked somewhere a person is
+assigned rather than only described here. That issue records the concrete cost
+— the two arm lists, `EmitCtx` constructed six times over — and the fact that
+makes it worse than ordinary duplication: every Rust test drives `emit()` while
+every real build drives `emit_split()`, so the path with test coverage is not
+the path that ships. It also notes that nobody has ever diffed the two
+node-kind by node-kind; all three findings were stumbled into.
+
 Two adjacent gaps surfaced while writing the tests, both left open and filed,
 because each is about *type tracking* rather than about emitting the tag:
 
@@ -1362,3 +1370,4 @@ Filed rather than folded in, each with the reason it was kept separate:
 | #230 | Verify on RISC-V (`qemu_riscv32`). **Done** — 12 of 13 samples build, run under QEMU and pass their own `sample.yaml` checks; generated C byte-identical to ARM across all 304 generated files. `gpio_demo` stays ARM-only, needing device-tree aliases the board lacks. Repeatable as `just test-riscv`. |
 | #231 | Compare code size between backends, and run at least one sample on real hardware. The default was switched on behavioural grounds; the size consequences are unknown rather than known-acceptable. |
 | #238 | Objective-C inside a `#define` *body* is emitted verbatim, so the generated C does not compile — the other half of #234, split out because a macro body is one opaque `preproc_arg` token and needs its own approach. Detector prototyped: 0 of 40 real macro bodies flagged. |
+| #254 | `emit()` and `emit_split()` duplicate the top-level walk and have disagreed three times (gap R, #246, the tagged-declaration half of gap U). The mechanism behind three of this file's gaps, rather than a gap of its own. Worst part: the suite drives `emit()`, every real build drives `emit_split()`, so the tested path is not the shipped path. |
