@@ -1467,15 +1467,79 @@ What that still does not cover, and why the escape hatch stays:
 - **QEMU is not hardware.** Neither board is real silicon, so nothing here
   says anything about real `k_mem_slab` contention, real interrupt-disabled
   critical sections, or timing. No physical board has been used (#231).
-- **Code size is unmeasured** against the Python backend. The default was
-  switched on behavioural grounds, so the size consequences are unknown rather
-  than known-acceptable (#231).
+- **Code size is now measured** against the Python backend, and it is close:
+  **+1.3% flash overall**, smaller on five samples and larger on seven. See
+  "Code size against the Python backend" below. It was unmeasured when the
+  default was flipped, so this was "unknown" rather than "known-acceptable"
+  until now (#231).
 - **`CONFIG_SPIN_VALIDATE` has never been on**, on any board, so Zephyr's own
   lock-misuse assertions have never run against generated code. SMP covers the
   populated `struct k_spinlock`; this is the remaining shape of that struct.
 
 `CONFIG_OBJZ_BACKEND_PYTHON=y` remains the way back for any target this
 breaks.
+
+## Code size against the Python backend
+
+Both backends, same board (`mps2/an385`), same sources, same optimization
+(`-Os`, Zephyr's default for these samples). Flash is `text + data` and RAM is
+`data + bss`, read from each `zephyr.elf` with `arm-zephyr-eabi-size`. Twister's
+own `rom_size`/`ram_size` fields come back `None` unless size reporting is
+enabled explicitly, which is why the ELF is read directly — worth knowing
+before trying to reproduce this from a twister report.
+
+Reproduce with `west twister -T samples/ -p mps2/an385` and again with
+`-x CONFIG_OBJZ_BACKEND_PYTHON=y`, then size the ELFs.
+
+| Sample | Flash static | Flash python | Δ flash | RAM static | RAM python | Δ RAM |
+| --- | --- | --- | --- | --- | --- | --- |
+| pool_demo | 13300 | 13804 | -504 (-3.7%) | 6211 | 6571 | -360 |
+| transpiled_led | 13776 | 14184 | -408 (-2.9%) | 6359 | 6659 | -300 |
+| hello_world | 13936 | 15280 | -1344 (-8.8%) | 6203 | 6527 | -324 |
+| mem_demo | 16816 | 15772 | +1044 (+6.6%) | 6807 | 6723 | +84 |
+| transpiled_blocks | 17376 | 16280 | +1096 (+6.7%) | 7231 | 7087 | +144 |
+| arc_demo | 17552 | 16492 | +1060 (+6.4%) | 8051 | 7959 | +92 |
+| heap_alloc | 18864 | 18208 | +656 (+3.6%) | 15171 | 13035 | +2136 |
+| transpiled_generics | 19020 | 18168 | +852 (+4.7%) | 7323 | 7143 | +180 |
+| transpiled_literals | 20112 | 19236 | +876 (+4.6%) | 7351 | 7139 | +212 |
+| gpio_demo | 24984 | 26056 | -1072 (-4.1%) | 8370 | 8950 | -580 |
+| hello_category | 26832 | 24700 | +2132 (+8.6%) | 6971 | 6867 | +104 |
+| zbus_objc | 47070 | 48238 | -1168 (-2.4%) | 21524 | 21848 | -324 |
+| zbus_service | 51767 | — | — | 14841 | — | — |
+| **total (12)** | **249638** | **246418** | **+3220 (+1.3%)** | **107572** | **106508** | **+1064** |
+
+**The answer is "close, with no clear winner".** oz_static costs **1.3% more
+flash** in total and is smaller on five of the twelve comparable samples,
+larger on seven, over a range of -8.8% to +8.6%. Nothing here would have
+changed the default decision either way, which is the useful thing to be able
+to say — it was previously unknown rather than known-acceptable.
+
+Two entries are worth more than the total:
+
+- **`zbus_service` cannot be compared at all, and the reason is a
+  Python-backend defect.** It emits Clang's *diagnostic spelling* of an
+  anonymous aggregate straight into a header --
+  `enum (unnamed enum at /abs/path/TemperatureService.h:17:2) tag;` -- which is
+  not C, so the sample does not build under that backend. oz_static compiles
+  the same header. Recorded because it is the one place the two backends differ
+  on whether a sample is buildable at all, and it is the outgoing one that
+  fails.
+- **`heap_alloc`'s +2136 B of RAM is the largest single delta**, and it is
+  five times any other. Not investigated. It is the sample built entirely from
+  `@autoreleasepool` plus `--heap-support`, so the two backends' heap and pool
+  sizing are the obvious place to look, and the figure is worth a second look
+  before anyone quotes the 1.3% as if it were uniform.
+
+What this does *not* say: nothing here is a *performance* comparison, and the
+figures are one board at one optimization level. #231's other half -- running
+on real hardware -- is still open.
+
+One of #231's own predictions is now stale and would mislead a reader of the
+issue: it lists "oz_static's `@synchronized` allocates a per-block spinlock on
+the stack" as a difference that should show in size. Since gap W that is no
+longer how it works -- the lock is a field on the object -- so for `pool_demo`
+the comparison is a per-object spinlock plus owner pointer against the oracle's
+per-block `OZSpinLock` instance.
 
 This paragraph previously read "every measurement in this document is a host
 measurement ... no sample has been built on target through this backend". That
