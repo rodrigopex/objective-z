@@ -65,7 +65,7 @@ both stale and measured with the wrong instrument — the real figure was 89.
 | transpiled_literals | yes | yes | yes | `POOL_SIZES` honoured; was: helper unreachable from `main` |
 | mem_demo | yes | yes | yes | was gap B |
 | hello_category | yes | yes | yes | was gap C |
-| pool_demo | yes | yes | yes | exercises `@synchronized` |
+| pool_demo | yes | yes | yes | uses `@synchronized`, but single-threaded -- it exercises the lowering, not the lock (see gap W) |
 | transpiled_blocks | yes | yes | yes | |
 | transpiled_generics | yes | yes | yes | |
 | transpiled_led | yes | yes | yes | was gap L — segfaulted |

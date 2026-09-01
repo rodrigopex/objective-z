@@ -2075,37 +2075,55 @@ fn send_to_resolved_class(
     }
 }
 
-/// `@synchronized(obj) { body }` lowered to a scoped critical section:
+/// `@synchronized(obj) { body }` lowered to a scoped critical section over
+/// `obj`'s *own* lock:
 ///
 /// ```c
 /// { /* @synchronized(obj) */
-///     oz_spinlock_t _oz_sync_lock_...;
-///     oz_spin_init(&_oz_sync_lock_...);
-///     oz_spinlock_key_t _oz_sync_key_... = oz_spin_lock(&_oz_sync_lock_...);
-///     oz_static_retain((struct OZObject *)(obj));
+///     struct OZObject *_oz_sync_obj_... = (struct OZObject *)(obj);
+///     int _oz_sync_held_... = (_oz_sync_obj_...->oz_sync_owner != oz_current_thread());
+///     oz_spinlock_key_t _oz_sync_key_... = oz_spin_key_none();
+///     if (_oz_sync_held_...) {
+///         _oz_sync_key_... = oz_spin_lock(&_oz_sync_obj_...->oz_sync_lock);
+///         _oz_sync_obj_...->oz_sync_owner = oz_current_thread();
+///     }
+///     oz_static_retain(_oz_sync_obj_...);
 ///     ... body ...
-///     oz_static_release((struct OZObject *)(obj));
-///     oz_spin_unlock(&_oz_sync_lock_..., _oz_sync_key_...);
+///     oz_static_release(_oz_sync_obj_...);
+///     if (_oz_sync_held_...) {
+///         _oz_sync_obj_...->oz_sync_owner = (void *)0;
+///         oz_spin_unlock(&_oz_sync_obj_...->oz_sync_lock, _oz_sync_key_...);
+///     }
 /// }
 /// ```
 ///
-/// The lock is fresh per block rather than per object, matching the
-/// Python pipeline, which allocates a new `OZSpinLock` per block and
-/// locks that object's own field (`emit.py::_emit_synchronized_stmt` +
-/// `_inject_oz_spinlock`). What this buys on Zephyr is an
-/// interrupt-disabled critical section (`k_spin_lock`), not mutual
-/// exclusion keyed on `obj`; on host it compiles to nothing (see
-/// `platform/oz_platform_{zephyr,host}.h`).
+/// The lock is a field of the object (`SYNC_LOCK_FIELD` in the root struct,
+/// present only when the program uses `@synchronized`), so two threads
+/// synchronizing on the same object contend on the same lock. The receiver is
+/// bound to a temporary and evaluated exactly once -- it is named four times
+/// here, and `@synchronized([App sharedInstance])` must not send the message
+/// four times.
 ///
-/// Locking `obj`'s own root-level `oz_prop_lock` instead would be closer
-/// to what the source literally says, and was tried -- but real
-/// `@synchronized` is recursive, and a `k_spinlock` is not, so
-/// `@synchronized(self) { @synchronized(self) { ... } }` (a shape the
-/// oracle's own `tests/behavior/cases/synchronized/nested.m` exercises,
-/// with two receivers that may alias) would self-deadlock on hardware
-/// while passing on host, where the lock is a no-op. A per-block lock
-/// cannot deadlock, so it is the safer half of that trade until there is
-/// a recursive lock in the PAL to build on.
+/// **This used to be a lock declared inside the block, on the caller's own
+/// stack, fresh per call**, matching the Python pipeline's per-block
+/// `OZSpinLock` (`emit.py::_emit_synchronized_stmt`). Two threads then locked
+/// two different locks, so it bought an interrupt-disabled critical section
+/// and no mutual exclusion keyed on `obj` at all. It looked correct because
+/// `k_spin_lock` calls `arch_irq_lock()` unconditionally, which on a single
+/// core does serialize the section -- and every board in use was single-core.
+/// Measured on two cores it was indistinguishable from no lock:
+/// `count=2015 expected=4000` against `2023` unlocked (`samples/smp_shared`,
+/// PARITY.md gap W).
+///
+/// `oz_sync_owner` is what makes the per-object lock safe, and it is not a
+/// recursive lock -- a `k_spinlock` cannot be one. A re-entrant
+/// `@synchronized` on the same object *does not attempt the second acquire*:
+/// it sees itself as owner and skips both lock and unlock. `held` is a
+/// per-block local, so nesting unwinds correctly at any depth with no counter,
+/// since inner blocks never acquired. Without this, the oracle's own
+/// `tests/behavior/cases/synchronized/nested.m` shape -- two receivers that
+/// may alias, as `[n runNested:n]` does -- would deadlock on hardware while
+/// passing on host, where `oz_spin_lock` is a no-op.
 ///
 /// The unlock is emitted as plain statements rather than through the
 /// scoped `OZ_SPINLOCK` macro because that macro is a `for` loop, so a
