@@ -1514,6 +1514,12 @@ larger on seven, over a range of -8.8% to +8.6%. Nothing here would have
 changed the default decision either way, which is the useful thing to be able
 to say — it was previously unknown rather than known-acceptable.
 
+On RAM the total (+1064 B) is misleading and should not be quoted. All of it is
+`heap_alloc`, where the oracle is wrong rather than smaller: **exclude that one
+sample and oz_static uses 1072 B _less_ RAM across the other eleven**, smaller
+on five of them and never more than 580 B apart. See the `heap_alloc` entry
+below.
+
 Two entries are worth more than the total:
 
 - **`zbus_service` cannot be compared at all, and the reason is a
@@ -1524,11 +1530,35 @@ Two entries are worth more than the total:
   the same header. Recorded because it is the one place the two backends differ
   on whether a sample is buildable at all, and it is the outgoing one that
   fails.
-- **`heap_alloc`'s +2136 B of RAM is the largest single delta**, and it is
-  five times any other. Not investigated. It is the sample built entirely from
-  `@autoreleasepool` plus `--heap-support`, so the two backends' heap and pool
-  sizing are the obvious place to look, and the figure is worth a second look
-  before anyone quotes the 1.3% as if it were uniform.
+- **`heap_alloc`'s +2136 B of RAM is the largest single delta, and it is the
+  price of being correct.** Investigated, and it is not a footprint cost at
+  all. `samples/heap_alloc/src/App.m` writes, inside `-init`:
+
+  ```objc
+  static char appHeapBuffer[2048];
+  _heap = [[OZHeap alloc] initWithBuffer:appHeapBuffer size:sizeof(appHeapBuffer)];
+  ```
+
+  oz_static keeps the `static`, so the buffer lives in bss --
+  `appHeapBuffer.0`, 2048 B, which is 2048 of the 2116-byte bss difference and
+  essentially the whole delta. **The Python backend drops the `static`** and
+  emits `char appHeapBuffer[2048];`, a plain stack array
+  (`oz_generated/App_ozm.c`), whose address it then hands to `OZHeap` and
+  stores in the ivar. Once `-init` returns, that heap is backed by a dead
+  stack frame, and every later allocation from it writes into whatever now
+  occupies that region -- a use-after-return.
+
+  Two things make it worse than a leak. The array's address escapes into the
+  ivar, so the compiler cannot elide it: the frame really is 2048 bytes, in a
+  function reached from a `z_main_stack` of 1024 bytes (both builds), so it
+  also overflows the main stack. And the sample still *passes* its
+  `sample.yaml` checks under that backend, which is the whole reason the
+  defect is invisible from the harness.
+
+  So the honest reading of this row is inverted: oz_static is not 2136 bytes
+  worse, it is 2048 bytes of correctly-owned storage against 2048 bytes the
+  oracle does not own. Another entry for the standing rule that the Python
+  pipeline is a reference and not an authority.
 
 What this does *not* say: nothing here is a *performance* comparison, and the
 figures are one board at one optimization level. #231's other half -- running
