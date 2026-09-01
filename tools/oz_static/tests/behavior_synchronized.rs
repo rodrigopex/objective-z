@@ -4,17 +4,25 @@
 // (tests/behavior/cases/synchronized/*.m and their _test.c drivers):
 // basic_lock, counter, nested, with_locals, early_return.
 //
-// @synchronized lowers to a scoped critical section over a per-block
-// lock -- see `emit::render_synchronized_statement` for why the lock is
-// per block rather than per object, and how a `return` out of the body
+// @synchronized lowers to a scoped critical section over the *object's own*
+// lock -- a field in the root struct -- so two threads synchronizing on the
+// same object contend on the same lock. See
+// `emit::render_synchronized_statement`, and how a `return` out of the body
 // replays the pending unlock.
+//
+// It used to be a lock declared inside the block, on the caller's own stack,
+// fresh per call. That excluded nothing between cores, and looked correct
+// because on a single core `k_spin_lock` disables interrupts and that alone
+// serializes the section. `samples/smp_shared` measures the difference on two
+// cores: `count=2015 expected=4000` with the old per-block lock, 4000 with the
+// per-object one.
 //
 // On the host PAL `oz_spin_lock`/`oz_spin_unlock` are no-ops (single
 // threaded), the same as they are for the oracle's own host-side behavior
 // tests, so what these assert is that the lowering produces correct,
 // compilable C with the body's effects intact and the lock/unlock
 // balanced -- not mutual exclusion under real contention, which needs
-// Zephyr.
+// Zephyr and two cores (`just test-smp`).
 
 mod common;
 use common::{compile_and_run, expect_reject, ozobject_src};
@@ -317,4 +325,152 @@ int main(void) {
     );
     let stdout = compile_and_run(&src, "sync_break_inside_loop_within_synchronized");
     assert_eq!(stdout, "n=2\n");
+}
+
+/// The lock is the object's own field, not a fresh one per block.
+///
+/// This is the assertion that separates the two designs. Both compile and
+/// both pass every single-threaded test, so only the *shape* of the emitted
+/// C distinguishes them here; `samples/smp_shared` is what distinguishes
+/// them by behaviour, and it needs two cores.
+#[test]
+fn synchronized_locks_the_objects_own_field() {
+    let src = format!(
+        "{}{}",
+        ozobject_src(),
+        "\
+@interface Box : OZObject { int _n; }
+- (void)set:(int)v;
+@end
+@implementation Box
+- (void)set:(int)v
+{
+	@synchronized(self) {
+		_n = v;
+	}
+}
+@end
+int main(void) { return 0; }
+"
+    );
+    let out = oz_static::transpile(&src).expect("should transpile").source_c;
+    assert!(
+        out.contains("->oz_sync_lock"),
+        "@synchronized must lock the object's own field; got:\n{}",
+        out
+    );
+    assert!(
+        !out.contains("oz_spinlock_t _oz_sync_lock"),
+        "a per-block lock on the caller's stack excludes nothing between cores:\n{}",
+        out
+    );
+}
+
+/// The field is only added when the program actually uses `@synchronized`,
+/// the same way `oz_prop_lock` is only added for atomic properties. On a
+/// single-core target `struct k_spinlock` has no members, so this costs
+/// nothing there either way -- but an unused field in every object is still
+/// a footprint claim this project should not make idly.
+#[test]
+fn no_sync_lock_field_without_synchronized() {
+    let src = format!("{}{}", ozobject_src(), "int main(void) { return 0; }\n");
+    let out = oz_static::transpile(&src).expect("should transpile");
+    let all = format!("{}{}", out.source_c, out.companion_h);
+    assert!(
+        !all.contains("oz_sync_lock"),
+        "no @synchronized in the program, so no lock field:\n{}",
+        all
+    );
+}
+
+/// Nesting on the *same* object works, which is what real Objective-C does.
+///
+/// A spinlock cannot be re-locked, so the second entry must not attempt the
+/// acquire at all: generated code records the owning thread on the object and
+/// the inner block sees itself as already holding it, skipping both the lock
+/// and the unlock. Only the outermost block releases.
+///
+/// This is exercised on host because `oz_current_thread()` returns a stable
+/// identity there too -- the branch is real even though the spinlock beneath
+/// it is a no-op.
+#[test]
+fn nesting_on_the_same_object_does_not_deadlock() {
+    let src = format!(
+        "{}{}",
+        ozobject_src(),
+        "\
+#include <stdio.h>
+@interface Box : OZObject { int _n; }
+- (void)twice;
+- (int)n;
+@end
+@implementation Box
+- (void)twice
+{
+	@synchronized(self) {
+		_n = _n + 1;
+		@synchronized(self) {
+			_n = _n + 10;
+			@synchronized(self) {
+				_n = _n + 100;
+			}
+		}
+	}
+}
+- (int)n { return _n; }
+@end
+int main(void) {
+	Box *b = [[Box alloc] init];
+	[b twice];
+	/* Entering again proves the outermost block really did release. */
+	[b twice];
+	printf(\"n=%d\\n\", [b n]);
+	return 0;
+}
+"
+    );
+    let stdout = compile_and_run(&src, "nesting_on_the_same_object_does_not_deadlock");
+    assert_eq!(stdout, "n=222\n");
+}
+
+/// Nesting on *different* objects stays supported -- it is what the oracle's
+/// own `tests/behavior/cases/synchronized/nested.m` does, and rejecting it
+/// would break a corpus case for no reason. Two distinct objects mean two
+/// distinct locks.
+#[test]
+fn nesting_on_different_objects_is_accepted() {
+    let src = format!(
+        "{}{}",
+        ozobject_src(),
+        "\
+#include <stdio.h>
+@interface Box : OZObject { int _outer; int _inner; }
+- (void)runNested:(Box *)other;
+- (int)outer;
+- (int)inner;
+@end
+@implementation Box
+- (void)runNested:(Box *)other
+{
+	@synchronized(self) {
+		_outer = 1;
+		@synchronized(other) {
+			_inner = 2;
+		}
+	}
+}
+- (int)outer { return _outer; }
+- (int)inner { return _inner; }
+@end
+int main(void) {
+	Box *a = [[Box alloc] init];
+	Box *b = [[Box alloc] init];
+	[a runNested:b];
+	printf(\"outer=%d inner=%d\\n\", [a outer], [a inner]);
+	return 0;
+}
+"
+    );
+    let stdout = compile_and_run(&src, "nesting_on_different_objects_is_accepted");
+    assert_eq!(stdout, "outer=1 inner=2\n");
 }

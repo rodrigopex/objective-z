@@ -164,6 +164,41 @@ static inline void oz_spin_unlock(oz_spinlock_t *lck, oz_spinlock_key_t key)
         (void)key;
 }
 
+/**
+ * @brief A zeroed lock key, for a variable that may never be assigned one.
+ *
+ * Trivial here, where the key is a scalar, but it must exist on both backends:
+ * on Zephyr `oz_spinlock_key_t` is a struct and `= 0` does not compile. Kept
+ * as a memset for the same reason `oz_spin_init` is one -- so the spelling
+ * does not depend on the type being scalar.
+ */
+static inline oz_spinlock_key_t oz_spin_key_none(void)
+{
+        oz_spinlock_key_t k;
+
+        memset(&k, 0, sizeof(k));
+        return k;
+}
+
+/**
+ * @brief Identity of the calling thread, for re-entrancy detection.
+ *
+ * The host backend is single threaded, so one constant identity is the
+ * truth. It must be non-NULL and stable: generated code compares it against
+ * an object's recorded owner, which is zero when the lock is free, so a NULL
+ * identity would make a free lock look like one this thread already holds
+ * and the acquire would be skipped.
+ *
+ * Returning a constant is also what makes the re-entrancy path testable on
+ * host at all: `@synchronized(x) { @synchronized(x) { } }` takes the
+ * skip-the-second-acquire branch here exactly as it does on Zephyr, even
+ * though the spinlock itself is a no-op.
+ */
+static inline void *oz_current_thread(void)
+{
+        return (void *)1;
+}
+
 /* ------------------------------------------------------------------ */
 /* Formatted output — printf                                           */
 /* ------------------------------------------------------------------ */

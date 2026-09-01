@@ -2116,6 +2116,17 @@ fn send_to_resolved_class(
 /// boundary stay hard errors (`staticbar::check_synchronized_body`) --
 /// unlike `return`, they can leave the block without a value to hand
 /// back, and no oracle case needs them.
+/// The root-struct field that `@synchronized` locks. One per object, so two
+/// threads synchronizing on the same object contend on the same lock -- which
+/// a per-block lock on each caller's own stack could never do.
+pub(crate) const SYNC_LOCK_FIELD: &str = "oz_sync_lock";
+
+/// The root-struct field recording which thread holds `oz_sync_lock`, so a
+/// re-entrant `@synchronized` on the same object skips the acquire instead of
+/// deadlocking on a spinlock it already holds. Zero when the lock is free,
+/// which is why `oz_current_thread()` must never return NULL.
+pub(crate) const SYNC_OWNER_FIELD: &str = "oz_sync_owner";
+
 fn render_synchronized_statement(node: Node, ctx: &mut EmitCtx) -> (String, String) {
     let (line, col) = line_col(ctx.src, node.start_byte());
     let mut cursor = node.walk();
@@ -2141,18 +2152,33 @@ fn render_synchronized_statement(node: Node, ctx: &mut EmitCtx) -> (String, Stri
 
     ctx.block_counter += 1;
     let suffix = format!("L{}_C{}_{}", line, col, ctx.block_counter);
-    let lock = format!("_oz_sync_lock_{}", suffix);
     let key = format!("_oz_sync_key_{}", suffix);
 
     // Held across the body so the object can't be deallocated mid-section,
     // mirroring the retain/release the oracle's OZSpinLock does in its
     // -initWithObject:/-dealloc pair.
-    let retain = format!("oz_static_retain((struct {} *)({}));", root, obj_text);
+    // The receiver is bound to a temporary and evaluated exactly once. It
+    // has to be: the lock, the retain, the release and the unlock all name
+    // it, and `@synchronized([App sharedInstance]) { ... }` must not send
+    // the message four times. The previous per-block form evaluated it
+    // twice, which was already one too many.
+    let obj_var = format!("_oz_sync_obj_{}", suffix);
+    let held = format!("_oz_sync_held_{}", suffix);
+    let bind = format!("struct {} *{} = (struct {} *)({});", root, obj_var, root, obj_text);
+    let retain = format!("oz_static_retain({});", obj_var);
+    // Only the block that actually acquired the lock releases it. `held` is a
+    // per-block local, so nesting to any depth unwinds correctly without a
+    // counter: the inner blocks never acquired and never unlock.
     let cleanup = format!(
-        "oz_static_release((struct {root} *)({obj}));\n\toz_spin_unlock(&{lock}, {key});",
-        root = root,
-        obj = obj_text,
-        lock = lock,
+        "oz_static_release({obj});\n\
+         \tif ({held}) {{\n\
+         \t\t{obj}->{owner_field} = (void *)0;\n\
+         \t\toz_spin_unlock(&{obj}->{lock_field}, {key});\n\
+         \t}}",
+        obj = obj_var,
+        held = held,
+        owner_field = SYNC_OWNER_FIELD,
+        lock_field = SYNC_LOCK_FIELD,
         key = key
     );
 
@@ -2168,15 +2194,23 @@ fn render_synchronized_statement(node: Node, ctx: &mut EmitCtx) -> (String, Stri
     (
         format!(
             "{{\n\
-             \toz_spinlock_t {lock};\n\
-             \toz_spin_init(&{lock});\n\
-             \toz_spinlock_key_t {key} = oz_spin_lock(&{lock});\n\
+             \t{bind}\n\
+             \tint {held} = ({obj}->{owner_field} != oz_current_thread());\n\
+             \toz_spinlock_key_t {key} = oz_spin_key_none();\n\
+             \tif ({held}) {{\n\
+             \t\t{key} = oz_spin_lock(&{obj}->{lock_field});\n\
+             \t\t{obj}->{owner_field} = oz_current_thread();\n\
+             \t}}\n\
              \t{retain}\n\
              \t{body}\n\
              \t{cleanup}\n\
              }}",
-            lock = lock,
+            bind = bind,
+            held = held,
             key = key,
+            obj = obj_var,
+            owner_field = SYNC_OWNER_FIELD,
+            lock_field = SYNC_LOCK_FIELD,
             retain = retain,
             body = body_text,
             cleanup = cleanup
@@ -3410,6 +3444,19 @@ fn render_interface(node: Node, ctx: &mut EmitCtx, program: &Program) -> (String
             if program.has_atomic_property() {
                 f.push_str(
                     "\toz_spinlock_t oz_prop_lock; /* synthesized: guards atomic property access */\n",
+                );
+            }
+            // One lock per object, so `@synchronized(obj)` excludes on `obj`
+            // rather than on a lock the caller happened to have on its own
+            // stack -- which excluded nothing between cores. Zero-initialized
+            // for free: `{Class}_oz_alloc` memsets the whole object, a static
+            // boxed literal is zero-initialized by C, and `oz_spin_init` is
+            // itself a memset. Costs nothing on a single-core target, where
+            // `struct k_spinlock` has no members at all.
+            if program.uses_synchronized {
+                f.push_str(
+                    "\toz_spinlock_t oz_sync_lock; /* synthesized: guards @synchronized(self) */\n\
+                     \tvoid *oz_sync_owner; /* synthesized: thread holding oz_sync_lock, 0 when free */\n",
                 );
             }
             f

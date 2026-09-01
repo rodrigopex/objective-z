@@ -837,9 +837,20 @@ pub fn collect(source: &str) -> (Program, Vec<crate::model::Diagnostic>) {
             owning_methods: Default::default(),
             ast: None,
             heap_support: false,
+            uses_synchronized: contains_kind(root, "synchronized_statement"),
         },
         diagnostics,
     )
+}
+
+/// Is there a node of `kind` anywhere under `node`?
+fn contains_kind(node: Node, kind: &str) -> bool {
+    if node.kind() == kind {
+        return true;
+    }
+    let mut cursor = node.walk();
+    let children: Vec<Node> = node.children(&mut cursor).collect();
+    children.into_iter().any(|c| contains_kind(c, kind))
 }
 
 /// An inline anonymous aggregate -- `enum { A, B }`, `struct { int x; }`,

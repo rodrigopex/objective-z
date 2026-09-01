@@ -8,6 +8,7 @@ alias t := test
 project_dir := "samples/hello_world"
 board := "mps2/an385"
 riscv_board := "qemu_riscv32"
+smp_board := "qemu_cortex_a53/qemu_cortex_a53/smp"
 flags := ""
 tty := "/dev/tty.usbmodem0006850372581"
 
@@ -37,10 +38,22 @@ test:
 test-riscv:
     west twister -T samples/ -p {{ riscv_board }} -O /tmp/twister-out-riscv
 
+# Two cores (CONFIG_SMP=y, CONFIG_MP_MAX_NUM_CPUS=2). Only the samples that
+# pin no platform, plus arc_demo's own SMP scenarios -- see its sample.yaml for
+# why the single-core expectations cannot be reused under real concurrency.
+test-smp:
+    west twister -T samples/ -p {{ smp_board }} -O /tmp/twister-out-smp
+
 # Both supported boards, so an architecture-specific regression cannot hide.
 test-boards:
     just test
     just test-riscv
+
+# Every board, including SMP. The only recipe that exercises two cores.
+test-all-boards:
+    just test
+    just test-riscv
+    just test-smp
 
 test-zephyr:
     west twister -T tests/zephyr/ -p {{ if os() == "linux" { "native_sim" } else { board } }} -O /tmp/twister-out
