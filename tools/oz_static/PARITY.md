@@ -1256,7 +1256,7 @@ without updating the list also fails the test; it cannot decay into
 silently skipped cases. Empty is therefore a stronger statement than a
 passing suite with entries.
 
-Rust test suite: 249 passing, 0 failing.
+Rust test suite: 260 passing, 0 failing.
 
 ### Behavioral parity: 73 of 73
 
@@ -1521,4 +1521,4 @@ Filed rather than folded in, each with the reason it was kept separate:
 | #230 | Verify on RISC-V (`qemu_riscv32`). **Done** — 12 of 13 samples build, run under QEMU and pass their own `sample.yaml` checks; generated C byte-identical to ARM across all 304 generated files. `gpio_demo` stays ARM-only, needing device-tree aliases the board lacks. Repeatable as `just test-riscv`. |
 | #231 | Compare code size between backends, and run at least one sample on real hardware. The default was switched on behavioural grounds; the size consequences are unknown rather than known-acceptable. |
 | #238 | Objective-C inside a `#define` *body* is emitted verbatim, so the generated C does not compile — the other half of #234, split out because a macro body is one opaque `preproc_arg` token and needs its own approach. Detector prototyped: 0 of 40 real macro bodies flagged. |
-| #254 | `emit()` and `emit_split()` duplicate the top-level walk and have disagreed three times (gap R, #246, the tagged-declaration half of gap U). The mechanism behind three of this file's gaps, rather than a gap of its own. Worst part: the suite drives `emit()`, every real build drives `emit_split()`, so the tested path is not the shipped path. |
+| #254 | `emit()` and `emit_split()` duplicate the top-level walk and have disagreed three times (gap R, #246, the tagged-declaration half of gap U). The mechanism behind three of this file's gaps, rather than a gap of its own. Worst part: the suite drives `emit()`, every real build drives `emit_split()`, so the tested path is not the shipped path. **The audit it asked for is done and found no remaining divergence** — `tests/emitter_agreement.rs` compares the two over every top-level node kind, and it now runs as a test rather than being a one-off. The duplication itself is untouched. |
