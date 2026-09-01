@@ -110,11 +110,15 @@ int main(void) {
 
 #[test]
 fn nested_synchronized_blocks() {
-    // Ported from nested.m / nested_test.c. Note the two receivers may
-    // alias (`[n runNested:n]` below): a per-object lock would
-    // self-deadlock here on Zephyr, which is precisely why the lowering
-    // uses a fresh lock per block -- see
-    // `emit::render_synchronized_statement`.
+    // Ported from nested.m / nested_test.c. The two receivers may alias
+    // (`[n runNested:n]` below), which is the case that matters here: one
+    // object locked twice by one thread. A per-object lock without owner
+    // tracking deadlocks on it on Zephyr while passing here, because the host
+    // PAL's `oz_spin_lock` is a no-op -- so for a long time this test passed
+    // for a reason unrelated to what it was testing. `oz_sync_owner` makes the
+    // second entry skip the acquire, so it now passes because the lowering is
+    // right. See `emit::render_synchronized_statement`, and
+    // `samples/smp_shared` for the same shape against a real spinlock.
     let src = format!(
         "{}{}",
         ozobject_src(),
