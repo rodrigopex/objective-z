@@ -262,8 +262,11 @@ fn boxed_array_literal_helper_prototype_is_visible_across_files() {
 ///   `emit_split`, which builds each file only from what its arms push, so
 ///   the definition vanished and left just its trailing `;` -- every use of
 ///   it was then "variable has incomplete type". `emit()` never showed this,
-///   because that path patches the original text and anything unpatched
-///   survives, which is why a single-file test cannot catch it.
+///   because that path patched the original text and anything unpatched
+///   survived, so a single-file test could not catch it. Since #254 the two
+///   share one walk and so share this arm; the case stays here because the
+///   *placement* it asserts -- reachable from another translation unit -- is
+///   still something only a split build can demonstrate.
 /// - a `static inline` helper went to the body, so no other file could call
 ///   it.
 ///
