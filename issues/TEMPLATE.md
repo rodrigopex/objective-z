@@ -1,48 +1,43 @@
-# OZ-NNN: [URGENT] Short title
+# Issue body template
 
-- **status:** open
-- **filed-by:** DEV | QA
-- **date:** 2026-03-15
-- **blocking:** YES
-- **assigned-to:** (empty until MAINTAINER picks it up)
-- **resolved-by:** (empty until fixed)
-- **resolved-date:** (empty until fixed)
-- **qa-review:** (empty | QR-NNN reference | PASS | WAIVED)
-- **verified-by:** (empty until DEV confirms)
-- **commit:** (empty until fixed)
+The body shape for `gh issue create` (or the web form). Issues live in this
+repository's GitHub tracker on [Project #4](https://github.com/users/rodrigopex/projects/4)
+— see CLAUDE.md's "Issue tracking". The title is a plain descriptive sentence;
+there is no id prefix to assign.
+
+---
 
 ## Context
 
-Trying to add state machine in `src/services/PXDeviceManager.m`.
+{What you were trying to do — the source file, class, or feature area.}
 
 ## Input
 
 ```objc
-switch ([self state]) {
-    case SensorStateIdle: ...
-}
+{The smallest snippet that reproduces it. Worth more than any amount of prose.}
 ```
 
 ## Observed
 
-Build fails — transpiler emits `/* TODO: SwitchStmt */` comment. GCC then
-fails on the incomplete generated C.
+{What actually happened. Paste the exact error text when there is one — the
+located diagnostic, or the compiler's own message on the generated C.}
 
 ## Expected
 
-Transpiled C equivalent using if/else chain or jump table.
+{What should have happened instead.}
 
 ## Workaround
 
-Rewrote as if/else chain manually. See WORKAROUNDS.md entry WA-001.
+{What unblocks it in the meantime, or "None".}
 
-## Discussion
+## Metadata
 
-- **MAINTAINER (2026-03-15):** Is this a collect.py gap or emit.py gap?
-- **RODRIGO (2026-03-15):** collect.py — `SwitchStmt` is not walked at all.
-  Add a handler in `_walk_stmt()` that decomposes into chained `IfStmt`.
-- **MAINTAINER (2026-03-15):** Got it, implementing.
+| Field | Value |
+|-------|-------|
+| Filed by | MAINTAINER \| DEV \| QA |
+| Blocking | {YES \| NO} |
 
-## Resolution
-
-(filled by MAINTAINER when fixed)
+Only fields GitHub does not already track belong here. Assignee, labels, state
+and dates are native fields, and a second copy in the body just drifts out of
+step with the real one. `Filed by` earns its place because the workspace runs
+several agents and GitHub attributes them all to one account.
