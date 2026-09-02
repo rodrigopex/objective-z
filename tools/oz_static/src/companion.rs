@@ -957,6 +957,16 @@ src/OZLog.c provides the strong definition where it is linked. */\n\
     // that is what an element slot holds; the oracle sizes it the same way
     // (`templates/oz_dispatch.c.j2`: `OZ_MEM_BLOCKS_DEFINE(oz_item_pool,
     // sizeof(struct {{ root_class }} *), ...)`).
+    //
+    // No trailing `;`: OZ_MEM_BLOCKS_DEFINE is self-terminating on both
+    // PAL backends. It has to be, and this line is why (#266). On Zephyr
+    // it expands to SYS_MEM_BLOCKS_DEFINE, whose body already ends in
+    // `;`, so the one written here became a bare `;` at file scope -- an
+    // empty declaration, which ISO C does not allow. The host backend's
+    // macro ended in `}` and needed it, so the same emission was correct
+    // on host and invalid on target, and no host check could ever see
+    // the difference. Unlike gap X's other producers this reached only
+    // programs that build an item pool, which is why it outlived them.
     if pools.item_slots() > 0 {
         let pool_root = root.as_deref().unwrap_or("OZObject");
         // No nested comment delimiters in this text: the directive is
@@ -966,7 +976,7 @@ src/OZLog.c provides the strong definition where it is linked. */\n\
             "/* Element buffers for '@[...]' and '@{{...}}': {slots} id-slot(s),\n * \
 sized by counting literal sites (see pools.rs). Override with the\n * \
 --item-pool-size flag or an 'oz-item-pool: N' source directive. */\n\
-             OZ_MEM_BLOCKS_DEFINE(oz_item_pool, sizeof(struct {root} *), {slots}, {align});\n\n",
+             OZ_MEM_BLOCKS_DEFINE(oz_item_pool, sizeof(struct {root} *), {slots}, {align})\n\n",
             slots = pools.item_slots(),
             root = pool_root,
             align = crate::pools::SLAB_ALIGNMENT

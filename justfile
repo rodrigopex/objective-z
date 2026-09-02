@@ -49,6 +49,15 @@ test-boards:
     just test
     just test-riscv
 
+# `-Wall -Wextra` clean is not the same as valid C: a bare `;` at file scope
+# lived in every generated program until #264 and passed that sweep, the corpus
+# compile check and `-Werror` on three boards alike. Reports rather than gates,
+# a few sites remaining with their reasons in the script; the host half of this
+# claim *is* a gate, in corpus_parity.rs.
+# ISO C constraint violations in generated C, on target with the ARM toolchain.
+test-pedantic *args:
+    python3 scripts/objz_pedantic_sweep.py --board {{ board }} {{args}}
+
 # Every board, including SMP. The only recipe that exercises two cores.
 test-all-boards:
     just test

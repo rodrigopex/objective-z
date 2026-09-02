@@ -53,7 +53,7 @@
 // genuinely the two assemblers' own.
 
 mod common;
-use common::ozobject_src;
+use common::{ozarray_src, ozobject_src, ozq31_src};
 
 /// Run both emitters over one source. Returns (single-file diagnostics,
 /// split diagnostics, single-file text, split text-of-everything).
@@ -357,6 +357,62 @@ int main(void) { struct color c; c.r = NORTH; return c.r; }
             label,
             strays.len(),
             strays.iter().map(|(n, _)| *n).collect::<Vec<_>>()
+        );
+    }
+}
+
+/// The item-pool definition must carry no trailing `;`, on either
+/// assembler.
+///
+/// This is the one producer of gap X that survived #264, and it survived by
+/// being invisible to every host check rather than by being missed. The line
+/// is `OZ_MEM_BLOCKS_DEFINE(oz_item_pool, ...)`, a PAL macro that used to be
+/// self-terminating on *one* backend only: on Zephyr it expands to
+/// `SYS_MEM_BLOCKS_DEFINE`, whose body ends in `;` (`sys/mem_blocks.h`), so
+/// the `;` written at the call site became a bare one at file scope -- while
+/// on host the macro ended in `}` and needed exactly that `;`. The same
+/// emission was therefore correct on host and a constraint violation on
+/// target, which is why no amount of host compiling could find it and why
+/// `no_bare_semicolon_at_file_scope` above cannot either: at the text level
+/// the `;` is attached to a macro call, and only the preprocessor separates
+/// them. Both PAL backends are self-terminating since #266.
+///
+/// Asserted on the text rather than by compiling, because compiling is the
+/// instrument that could not see it. Confirmed to fail with the `;` restored
+/// in `companion::emit_dispatch_source`.
+#[test]
+fn item_pool_definition_has_no_trailing_semicolon() {
+    let src = format!(
+        "{}{}{}\n@interface Runner : OZObject\n- (void)run;\n@end\n@implementation Runner\n\
+         - (void)run {{\n\tOZArray<OZQ31 *> *a = @[@(1), @(2)];\n\t(void)a;\n}}\n@end\n\
+         int main(void) {{ return 0; }}\n",
+        ozobject_src(),
+        ozq31_src(),
+        ozarray_src()
+    );
+    let (single_diags, split_diags, single_text, split_text) = both(&src);
+    assert_eq!(single_diags, split_diags, "diagnostics differ");
+    assert!(single_diags.is_empty(), "expected this to transpile: {:?}", single_diags);
+
+    for (label, text) in [("emit()", &single_text), ("emit_split()", &split_text)] {
+        let defines: Vec<&str> = text
+            .lines()
+            .map(str::trim)
+            .filter(|line| line.starts_with("OZ_MEM_BLOCKS_DEFINE("))
+            .collect();
+        assert_eq!(
+            defines.len(),
+            1,
+            "{} should define the item pool exactly once, found {:?}",
+            label,
+            defines
+        );
+        assert!(
+            !defines[0].ends_with(';'),
+            "{} emitted the item pool with a trailing `;`, which leaves a bare `;` at \
+             file scope once SYS_MEM_BLOCKS_DEFINE expands: {}",
+            label,
+            defines[0]
         );
     }
 }

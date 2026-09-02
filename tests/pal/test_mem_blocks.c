@@ -4,7 +4,7 @@
 
 void test_mem_blocks_alloc_returns_ok(void)
 {
-	OZ_MEM_BLOCKS_DEFINE(pool, sizeof(void *), 8, 4);
+	OZ_MEM_BLOCKS_DEFINE(pool, sizeof(void *), 8, 4)
 	void *mem = NULL;
 	int rc = oz_mem_blocks_alloc_contiguous(&pool, 2, &mem);
 	TEST_ASSERT_EQUAL_INT(OZ_OK, rc);
@@ -14,7 +14,7 @@ void test_mem_blocks_alloc_returns_ok(void)
 
 void test_mem_blocks_tracks_usage(void)
 {
-	OZ_MEM_BLOCKS_DEFINE(pool, sizeof(void *), 8, 4);
+	OZ_MEM_BLOCKS_DEFINE(pool, sizeof(void *), 8, 4)
 	void *mem = NULL;
 	oz_mem_blocks_alloc_contiguous(&pool, 3, &mem);
 	TEST_ASSERT_EQUAL_UINT32(3, pool.num_used);
@@ -24,7 +24,7 @@ void test_mem_blocks_tracks_usage(void)
 
 void test_mem_blocks_exhaustion(void)
 {
-	OZ_MEM_BLOCKS_DEFINE(pool, sizeof(void *), 4, 4);
+	OZ_MEM_BLOCKS_DEFINE(pool, sizeof(void *), 4, 4)
 	void *a = NULL;
 	void *b = NULL;
 	oz_mem_blocks_alloc_contiguous(&pool, 3, &a);
@@ -36,7 +36,7 @@ void test_mem_blocks_exhaustion(void)
 
 void test_mem_blocks_free_at_zero_safe(void)
 {
-	OZ_MEM_BLOCKS_DEFINE(pool, sizeof(void *), 4, 4);
+	OZ_MEM_BLOCKS_DEFINE(pool, sizeof(void *), 4, 4)
 	/* num_used is 0; free should not underflow */
 	TEST_ASSERT_EQUAL_UINT32(0, pool.num_used);
 }

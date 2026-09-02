@@ -80,12 +80,20 @@ struct oz_mem_blocks {
 
 typedef struct oz_mem_blocks oz_mem_blocks_t;
 
+/**
+ * Self-terminating, like the Zephyr backend's SYS_MEM_BLOCKS_DEFINE:
+ * write it without a trailing `;`. The two backends have to agree on
+ * that, because generated code is written once and compiled against
+ * both -- and Zephyr's own macro carries the `;` inside its body, so a
+ * call site that adds one leaves a bare `;` at file scope there, an
+ * empty declaration and a constraint violation (#266).
+ */
 #define OZ_MEM_BLOCKS_DEFINE(name, blk_size, n_blocks, alignment)              \
         oz_mem_blocks_t name = {                                               \
                 .block_size = (blk_size),                                      \
                 .num_blocks = (n_blocks),                                      \
                 .num_used = 0                                                  \
-        }
+        };
 
 static inline int oz_mem_blocks_alloc_contiguous(oz_mem_blocks_t *pool,
                                                  uint32_t count, void **mem)
