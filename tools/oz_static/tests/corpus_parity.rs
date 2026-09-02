@@ -142,7 +142,23 @@ fn compile_generated(dir: &Path) -> Result<(), String> {
             .args(["-std=c17", "-pedantic-errors"])
             .args(["-DOZ_PLATFORM_HOST", "-I"])
             .arg(root.join("include"))
-            .arg("-I")
+            // `-isystem`, not `-I`, and the distinction is what this
+            // check is *about*. These headers stand in for Zephyr's on
+            // host; holding them to ISO C measures the wrong thing,
+            // because the real ones they replace are full of pedantic
+            // violations -- 153 in one translation unit, measured. Their
+            // own `__oz_timer_setup` casts `void *` to a function
+            // pointer, the mirror of the conversion #267 tracks in
+            // generated C, and `-pedantic-errors` under gcc made that a
+            // hard error in the two timer cases. Suppressed here on
+            // provenance, exactly as `objz_pedantic_sweep.py`'s baseline
+            // excludes diagnostics that arise inside Zephyr's macros:
+            // the claim is about generated C, not about the stand-ins.
+            //
+            // Apple clang does not diagnose that conversion at all,
+            // which is why this only surfaced once CI ran the suite
+            // against gcc (#269).
+            .arg("-isystem")
             .arg(root.join("tests/behavior/include/zephyr_stubs"))
             .arg("-I")
             .arg(dir)
