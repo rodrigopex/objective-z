@@ -6,8 +6,13 @@ Where the Rust backend (`oz2c`) stands against the Python pipeline
 These words are used precisely and are not interchangeable:
 
 - **transpiles** — `oz2c` exits 0 and writes output. The input was understood.
-- **compiles** — the generated `.c` files pass the host compiler. The output
-  is real C.
+- **compiles** — the generated `.c` files pass the host compiler as
+  `-std=c17 -pedantic-errors`: ISO C17, with no constraint violation. The
+  output is real C. The flags are part of the definition and were added late
+  (gap Y). Without them this word meant "compiles as GNU C with whatever the
+  compiler defaults to", which is how a constraint violation lived in every
+  generated program for the life of the backend while satisfying every use of
+  the word on this page.
 - **links** — the generated objects link into a binary. Strictly more than
   compiling, and it took finding a bug to make the distinction earn its
   place: a call to a method that is declared but defined nowhere compiles
@@ -58,6 +63,12 @@ output is a build failure there rather than a style note — see gap M.
 **Nothing is left: the generated files are `-Wall -Wextra` clean across all 13
 samples** (gap S). The 58 `-Wunused-parameter` recorded here previously were
 both stale and measured with the wrong instrument — the real figure was 89.
+
+Warning-free is not the same as *valid*, and the two were read as one until
+gap X. Validity has its own instrument now: `-std=c17 -pedantic-errors` over
+the whole corpus, which is a gate at **0**, and `just test-pedantic` over the
+samples on ARM, which is a report at **26** sites. See gap Y — including why
+the obvious way to measure that on target reports zero regardless.
 
 | Sample | Transpiles | Compiles + links | Runs | Notes |
 | --- | --- | --- | --- | --- |
@@ -730,6 +741,12 @@ whether the output is *valid* C. Every generated program was carrying a bare
 `-Wpedantic` to be diagnosed — so it passed this sweep and Zephyr's `-Werror`
 alike. Read "clean" here as clean under the flags actually passed.
 
+Validity is measured on its own account since gap Y, so that caution is now a
+pointer rather than an open hole: the corpus is gated at `-std=c17
+-pedantic-errors` and the samples are swept on ARM. Gap Y also found that
+gap X's fix had missed a producer which was *only* wrong on target, so the
+distinction this caution draws turned out to be load-bearing twice.
+
 **T. Immortality was expressed by a field that meant something else, and for
 singletons it was not expressed at all.** Fixed (#228). Two halves, filed as
 one cosmetic issue; only the first half was cosmetic.
@@ -1079,6 +1096,88 @@ carries no information in any C dialect. Pinned by
 producers in one source and was confirmed to report 4 stray semicolons with
 the guard disabled.
 
+**It had a fourth producer, and only on target.** See gap Y.
+
+**Y. Nothing measured whether generated C is *valid*, and the first
+measurement found gap X still alive on Zephyr.** Fixed (#266): the corpus
+compile check now passes `-std=c17 -pedantic-errors` and `just test-pedantic`
+asks the same of the samples with the real ARM toolchain.
+
+Gap X is the reason this was worth doing and gap S's history is the reason it
+started with a count rather than a fix. Before it, PARITY.md's own definition
+of **compiles** — "the generated `.c` files pass the host compiler" — meant
+*compiles as GNU C with the flags Zephyr happens to pass*. `c17` is what
+Zephyr itself pins (`CONFIG_STD_C17`; nothing here selects
+`CONFIG_GNU_C_EXTENSIONS`), so the corpus is now asked exactly what the target
+asks and no more.
+
+**The counts, which are not close to each other.** The corpus is at **0**
+across all 73 cases and 410 generated `.c` files, which is why it is a gate
+(`-pedantic-errors`) rather than a report. The samples were at **29 sites** on
+ARM. A host sweep could not have found any of the ones that mattered, and that
+asymmetry is the entry's substance.
+
+**The survivor was the item pool, and it was correct on host.**
+`OZ_MEM_BLOCKS_DEFINE(oz_item_pool, ...);` is a PAL macro that was
+self-terminating on *one* backend: on Zephyr it expands to
+`SYS_MEM_BLOCKS_DEFINE`, whose body ends in `;` (`sys/mem_blocks.h:156`), so
+the `;` at the call site became a bare one at file scope — while the host
+backend's macro ended in `}` and needed exactly that `;`. **The same emission
+was valid on host and a constraint violation on target**, so no host check
+could ever see the difference, and unlike gap X's other three producers this
+one reached only programs that build an item pool, which is how it outlived
+them. Both PAL macros are self-terminating now, matching Zephyr's own
+convention; the four call sites in `tests/pal/` and the Python backend's
+emission of the same line (`templates/oz_dispatch.c.j2`) follow. Pinned by
+`emitter_agreement::item_pool_definition_has_no_trailing_semicolon`, which
+asserts on the text rather than by compiling — compiling is the instrument
+that could not see it, and at the text level the `;` is attached to a macro
+call, so only the preprocessor separates them.
+
+**Two ways to measure this and get zero, both of which read as good news.**
+Recorded at length because each one wasted a pass here, and because gap S's
+first re-measurement failed the same way:
+
+- **`-Wpedantic` cannot go in `EXTRA_CFLAGS`.** It reaches Zephyr's own
+  sources, where it does not merely warn: `subsys/mem_mgmt/mem_attr.c` fails
+  with `error: zero or negative size array`, so all 13 samples stop building.
+  The sweep therefore builds each sample entirely normally and recompiles only
+  the files under `oz_static_generated/`, from the exact command
+  `compile_commands.json` records.
+- **CMSIS switches `-Wpedantic` off for the rest of the translation unit.**
+  `modules/hal/cmsis_6/CMSIS/Core/Include/core_cm3.h:28` opens with
+  `#pragma GCC diagnostic ignored "-Wpedantic"` — no `push`, no `pop` — so
+  once anything reaches `zephyr/kernel.h`, which every generated TU does,
+  pedantic diagnostics stop being reported for everything after it. This is
+  not a subtle degradation: injecting a bare `;` **and** an empty struct into
+  generated files produced **zero** diagnostics, while `-Wall`'s
+  `-Wunused-variable` still fired from the same file, and a single
+  `#pragma GCC diagnostic pop` restored both. So the sweep compiles each TU
+  through a wrapper that pulls Zephyr in first, re-enables the flag, and only
+  then includes the real TU — which covers generated *headers* too, unlike
+  inserting the pragma at the top of the `.c`.
+
+  Worth stating plainly: an ARM `-Wpedantic` sweep written the obvious way
+  reports a clean result on output that is not clean. That is the same failure
+  mode as `tests/zephyr/` exercising no transpiler — a green run whose subject
+  is not what the reader thinks.
+
+**What remains, and why it is a report rather than a gate.** 26 sites, each in
+`scripts/objz_pedantic_sweep.py`'s `KNOWN_PEDANTIC` with its reason, and that
+list asserts every entry *still* occurs, so fixing one forces an update —
+`KNOWN_CC_FAILURES`'s discipline, for the same reason.
+
+| Sites | What | Whose |
+| --- | --- | --- |
+| 18 | `ISO C forbids conversion of function pointer to object pointer type` — `(void*)(expBlock)` in `src/OZTimer.m`, 2 sites × 9 samples | oz_static's lowering of `(__bridge void *)`; needs a `__oz_timer_setup` signature decision on both PAL backends, so filed as **#267** |
+| 6 | `ISO C99 requires at least one argument for the "..."` — `GPIO_DT_SPEC_GET`, `ZBUS_CHAN_DEFINE` | inside Zephyr's own macros, invoked from sample passthrough C. No spelling of those calls avoids it |
+| 2 | `extra ';' outside of a function` after `ZBUS_CHAN_DEFINE(...)` | Zephyr's documented idiom — every Zephyr zbus sample writes it, and with `ZBUS_OBSERVERS_EMPTY` the terminator macro emits nothing and the `;` becomes *required*. Removing it would make the source depend on those channels keeping their observers |
+
+The last row is a deliberate non-fix and the reasoning generalises: a
+diagnostic whose cause is inside the *target's* macro is not evidence about
+generated code, and "fixing" it by writing the call differently would trade a
+pedantic warning for a real dependency on a macro's internals.
+
 ## On target (Zephyr under QEMU: mps2/an385, qemu_riscv32, qemu_cortex_a53/smp)
 
 The check that was missing, and the one that mattered most. Every
@@ -1333,8 +1432,11 @@ driven through oz_static by `tools/oz_static/tests/corpus_parity.rs`
 rather than being re-implemented as separate fixtures.
 
 - **73 of 73 transpile.** Enforced with no allowlist.
-- **73 of 73 produce compiling C.** `KNOWN_CC_FAILURES` is now empty
-  (`corpus_parity.rs:43`). Its last entry was `memory/heap_alloc.m`,
+- **73 of 73 produce compiling C, as ISO C17 with no constraint
+  violation** — `-std=c17 -pedantic-errors` since gap Y, which is what
+  makes this line mean more than "the host compiler accepted it".
+  `KNOWN_CC_FAILURES` is now empty
+  (`corpus_parity.rs`). Its last entry was `memory/heap_alloc.m`,
   which failed for two reasons, both since fixed: `struct oz_heap_inner`
   was defined by both `OZHeap.h` and `platform/oz_platform.h` — each
   guarded on `OZ_HEAP_INNER_DEFINED`, which neither then defined — and it
@@ -1348,7 +1450,7 @@ without updating the list also fails the test; it cannot decay into
 silently skipped cases. Empty is therefore a stronger statement than a
 passing suite with entries.
 
-Rust test suite: 261 passing, 0 failing.
+Rust test suite: 262 passing, 0 failing.
 
 ### Behavioral parity: 73 of 73
 
@@ -1535,9 +1637,15 @@ CONFIG_OBJZ_BACKEND_PYTHON=y
 - Of the samples a host build can run, all are clean under AddressSanitizer
   and UndefinedBehaviorSanitizer with leak detection on.
 - Generated C is `-Wall -Wextra` clean (gap S), so a new warning on target is
-  visible rather than lost in noise — and Zephyr compiles with `-Werror`. Not
-  the same as valid: gap X was a constraint violation in every generated
-  program that these flags do not diagnose.
+  visible rather than lost in noise — and Zephyr compiles with `-Werror`.
+- **Validity is measured separately, because it is a different claim** (gap
+  Y). The corpus compiles under `-std=c17 -pedantic-errors` — the standard
+  Zephyr itself pins — with an empty allowlist, so a constraint violation in
+  generated output fails a test. On the samples the same question is a report
+  at 26 sites rather than a gate: 18 are one function-pointer cast awaiting a
+  PAL signature decision (#267) and 8 are inside Zephyr's own macros. Gap X's
+  history is why this is listed apart from the line above rather than folded
+  into it.
 
 What that still does not cover, and why the escape hatch stays:
 
@@ -1663,23 +1771,33 @@ above. ARM runs 13 of the 14 samples; `qemu_riscv32` runs 12, the one it drops
 excluded by that board's missing device-tree aliases rather than by anything in
 oz_static (#230); `qemu_cortex_a53/smp` runs 9 of 9 selected with two CPUs.
 What is still not covered: **no real board has been used** — all three are
-QEMU — nothing here measures code size against the Python backend (#231), and
-`CONFIG_SPIN_VALIDATE` has never been enabled anywhere.
+QEMU — and `CONFIG_SPIN_VALIDATE` has never been enabled anywhere. Code size
+against the Python backend was listed here too and is measured; see that
+section. Validity was listed nowhere at all, and is now checked on both sides
+(gap Y).
 
-This entry is the one to distrust on principle. It has now been wrong three
+This entry is the one to distrust on principle. It has now been wrong four
 times in the same direction — first claiming no target build existed after the
 cross-build landed, then claiming no RISC-V sample had run when eight of them
-would have passed the moment anyone pointed twister at the board, and now
+would have passed the moment anyone pointed twister at the board, then
+claiming no code-size comparison existed when this file carries one, and
 claiming no SMP board had been used when the board was in-tree and the
 toolchain already installed. Each time the document understated what was
 already reachable, because the work that falsifies it gets recorded somewhere
 else.
 
-The SMP entry is worth a second look for the opposite reason, though: it was
-the *only* one of the three whose absence was concealing a live defect rather
-than merely lagging behind. "Not yet checked" and "checked and fine" are not
-close together, and this section spent months implying the second while meaning
-the first.
+Two of the four are worth a second look for the opposite reason, though: SMP
+and validity were the ones whose absence was concealing a live defect rather
+than merely lagging behind — `@synchronized` excluding nothing between cores
+(gap W), and gap X still alive on Zephyr (gap Y). "Not yet checked" and
+"checked and fine" are not close together, and this section spent months
+implying the second while meaning the first.
+
+Both were also *absent* from this list rather than wrong in it, which is the
+harder failure to notice: a claim recorded here can go stale and be corrected,
+while a question nobody has asked leaves no trace at all. Validity is the
+clearer case — the word **compiles** at the top of this file had a definition
+that quietly excluded it.
 
 **Every sample is run under twister** on at least one board, on QEMU. Each is built, executed,
 and its console output matched against its own `sample.yaml` — a real oracle,
@@ -1710,4 +1828,5 @@ Filed rather than folded in, each with the reason it was kept separate:
 | #231 | Compare code size between backends, and run at least one sample on real hardware. **Size half done** — +1.3% flash overall, and on RAM oz_static is 1072 B *smaller* once `heap_alloc` is excluded, where the oracle drops a `static` and backs its heap with a dead stack frame. See "Code size against the Python backend". Hardware is untouched and needs a board. |
 | #238 | Objective-C inside a `#define` *body* is emitted verbatim, so the generated C does not compile — the other half of #234, split out because a macro body is one opaque `preproc_arg` token and needs its own approach. Detector prototyped: 0 of 40 real macro bodies flagged. |
 | #254 | `emit()` and `emit_split()` duplicated the top-level walk and had disagreed four times (gap R, #246, #250, #251). The mechanism behind three of this file's gaps, rather than a gap of its own. **Done** — one `emit::walk_top_level`, two assemblers over it, so a node kind is handled in exactly one place; `EmitCtx::new` replaces the six hand-spelled constructions. The refactor left generated output byte-identical across 820 corpus and 342 sample files; gap X, found by that comparison and fixed alongside, then removed a stray `;` from 146 of them and added nothing anywhere. The audit that preceded it (`tests/emitter_agreement.rs`) survives with a smaller claim — it guards the two assemblers, not two walks. |
-| #266 | Nothing checks generated C for *validity*, only for warnings. Gap X was a constraint violation in every generated program and passed gap S's `-Wall -Wextra` sweep, the corpus compile check, `-Werror` on three boards and 73/73 cross-backend — it was found by diffing bytes. No check passes `-Wpedantic` or pins a `-std=`, so "compiles" here means "compiles as GNU C with the flags Zephyr happens to pass". First task is a count, not a fix; gap S's own history is why. |
+| #266 | Nothing checked generated C for *validity*, only for warnings. **Done** — `corpus_parity.rs` compiles with `-std=c17 -pedantic-errors` (the standard Zephyr pins) and it is a gate, the count there being 0 across 73 cases and 410 files; `just test-pedantic` asks the same of the samples on ARM and reports 26 sites, each in `KNOWN_PEDANTIC` with its reason. The count came first, as the issue asked, and it found gap X's fourth producer — an item-pool `;` that was valid on host and a constraint violation on Zephyr, so no host check could see it. It also found that the obvious way to sweep `-Wpedantic` on target reports zero on output that is not clean: CMSIS disables the flag for the rest of every Cortex-M TU. See gap Y. |
+| #267 | Generated C converts a block's function pointer to `void *` (`(void*)(expBlock)`, `src/OZTimer.m`), which ISO C forbids in either direction. 18 of the 26 sites `just test-pedantic` still reports, and the reason it is a report rather than a gate. Split out because the fix is a `__oz_timer_setup` signature decision on both PAL backends — the current `void *` exists because ARC forbids a direct block-to-function-pointer cast — not a codegen change. |
