@@ -202,8 +202,9 @@ compiles:
    each file from what its per-kind arms push, and no arm handled a
    `struct Tag { ... };` with a body — so `struct color` came out as
    nothing but its trailing `;` → `variable has incomplete type 'struct
-   color'`. (`emit()` never showed this: it patches the original text, so
-   anything unpatched survives.) Struct *and* union definitions now hoist
+   color'`. (`emit()` never showed this: it patched the original text, so
+   anything unpatched survived — it shares the one walk since #254, and so
+   shares this arm.) Struct *and* union definitions now hoist
    to the companion header, in source order, after the enums.
 
 Two smaller gaps surfaced on the way and are also fixed: a stem that names
@@ -792,7 +793,7 @@ Two things this needed that are worth recording:
 test suite.** Fixed (#246). `class_tag_edits` was called from `emit_split`
 only; the single-file `emit()` had **no `declaration` arm at all** and did not
 tag a function signature either, so both of gap A's positions stayed broken
-there. `emit()` patches the original text, so anything no arm claims survives
+there. `emit()` patched the original text, so anything no arm claimed survived
 verbatim -- which is how an untagged `static OZHeap *sHeap;` reached the C
 compiler.
 
@@ -810,7 +811,8 @@ The asymmetry itself is the lesson, and it is the third finding of its kind:
 gap R recorded `staticbar` and `emit::collect_local_decls` disagreeing about
 what counts as a local, and the fix there was to make them share one
 definition. Two emitters that disagree about what valid output looks like will
-keep producing this shape of bug.
+keep producing this shape of bug — which is what eventually got the walk
+merged; see the end of this entry.
 
 Now filed as **#254**, so the mechanism is tracked somewhere a person is
 assigned rather than only described here. That issue records the concrete cost
@@ -832,10 +834,45 @@ cuts against reading `emit_split` as simply the more complete one. #246 was
 `emit_split` *dropping* a top-level struct that `emit` kept by not touching it.
 Both directions now have a case.
 
-The audit lowers the urgency and does not close the case: it guards the *known*
-node kinds, so a new kind added to one walk and not the other still slips past
-until someone adds a case. #254 stays open for the structural fix — one shared
-renderer, or retiring `emit()` so the tested path is the shipped path.
+The audit lowered the urgency and did not close the case: it guarded the
+*known* node kinds, so a new kind added to one walk and not the other still
+slipped past until someone added a case.
+
+**The structural fix has since landed, and the mechanism is gone.** There is
+one `emit::walk_top_level` returning per-origin buckets, and two *assemblers*
+over it: `emit_split` (one `.h`/`.c` pair per origin — the CLI, and so every
+real build) and `emit` (one translation unit — what `transpile()` exposes and
+the Rust suite drives). A node kind is now handled in exactly one place and
+reaches both by construction, which is the property gap R, #246, #250 and #251
+each restored by hand for one case. `EmitCtx::new` replaces the eighteen fields
+that were spelled out at six call sites, three per emitter — the reason #250's
+fix had to be written twice.
+
+What decided the shape was a measurement #254 itself asked for: `emit()` has no
+consumer but the test suite (`main.rs` calls `transpile_split_with_options`
+only), so the choice was between sharing a renderer and retiring the walk
+outright. Sharing it keeps a convenient one-string API for tests; retiring the
+*walk* rather than the entry point gets the same guarantee without porting
+fifteen test files to a file-writing harness.
+
+**The shipped path was proved not to move**, which is the whole risk of a
+refactor like this: every file `oz2c` generates is byte-identical before and
+after — 820 across the 73 corpus cases, and 342 across the samples' real ARM
+twister build. The manifest is excluded, as the RISC-V comparison excludes it,
+because it lists absolute paths.
+
+Three things did change in the single-file output, each of them the split
+assembler's existing behaviour winning: a full `struct Tag { … };` goes to the
+companion header rather than staying in `source_c`, top-level trivia groups
+ahead of the bodies rather than sitting where it was written, and
+inter-construct whitespace comes from the assembler rather than the original
+text. No test assertion needed changing, which is a weaker statement than it
+sounds — the assertions are `contains` checks, and what moved was placement.
+
+`tests/emitter_agreement.rs` survives with a smaller claim, stated in the file:
+it can no longer compare two walks, so it guards the two *assemblers* and the
+presence of each node kind in both. A green run means "both assemblers surface
+every kind these cases name", not "two implementations agree".
 
 Two adjacent gaps surfaced while writing the tests, both left open and filed,
 because each is about *type tracking* rather than about emitting the tag:
@@ -1632,4 +1669,4 @@ Filed rather than folded in, each with the reason it was kept separate:
 | #230 | Verify on RISC-V (`qemu_riscv32`). **Done** — 12 of 13 samples build, run under QEMU and pass their own `sample.yaml` checks; generated C byte-identical to ARM across all 304 generated files. `gpio_demo` stays ARM-only, needing device-tree aliases the board lacks. Repeatable as `just test-riscv`. |
 | #231 | Compare code size between backends, and run at least one sample on real hardware. **Size half done** — +1.3% flash overall, and on RAM oz_static is 1072 B *smaller* once `heap_alloc` is excluded, where the oracle drops a `static` and backs its heap with a dead stack frame. See "Code size against the Python backend". Hardware is untouched and needs a board. |
 | #238 | Objective-C inside a `#define` *body* is emitted verbatim, so the generated C does not compile — the other half of #234, split out because a macro body is one opaque `preproc_arg` token and needs its own approach. Detector prototyped: 0 of 40 real macro bodies flagged. |
-| #254 | `emit()` and `emit_split()` duplicate the top-level walk and have disagreed three times (gap R, #246, the tagged-declaration half of gap U). The mechanism behind three of this file's gaps, rather than a gap of its own. Worst part: the suite drives `emit()`, every real build drives `emit_split()`, so the tested path is not the shipped path. **The audit it asked for is done and found no remaining divergence** — `tests/emitter_agreement.rs` compares the two over every top-level node kind, and it now runs as a test rather than being a one-off. The duplication itself is untouched. |
+| #254 | `emit()` and `emit_split()` duplicated the top-level walk and had disagreed four times (gap R, #246, #250, #251). The mechanism behind three of this file's gaps, rather than a gap of its own. **Done** — one `emit::walk_top_level`, two assemblers over it, so a node kind is handled in exactly one place; `EmitCtx::new` replaces the six hand-spelled constructions. Generated output byte-identical: 820 corpus files and 342 sample files. The audit that preceded it (`tests/emitter_agreement.rs`) survives with a smaller claim — it guards the two assemblers, not two walks. |
