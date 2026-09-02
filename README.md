@@ -401,8 +401,16 @@ objz_transpile_sources(<target> <source1.m> [source2.m ...]
 
 ## Prerequisites
 
-- Zephyr SDK + west (see [Zephyr Getting Started](https://docs.zephyrproject.org/latest/develop/getting_started/index.html))
-- Clang 20+ (for AST analysis — Apple Clang works for ARM, Homebrew LLVM for RISC-V; older versions may crash on ObjC JSON AST dump)
+- Zephyr SDK + west (see [Zephyr Getting Started](https://docs.zephyrproject.org/latest/develop/getting_started/index.html)).
+  Tested against **Zephyr v4.4.2** and **Zephyr SDK 1.0.1**.
+- **The SDK's LLVM component**, which is a separate opt-in download —
+  `west sdk install --llvm`, or `setup.sh -l`. Its **Clang 19** is the tested
+  compiler for the JSON AST that decides ivar ownership and method
+  definedness in the generated C, so `objz_find_clang()` prefers it and warns
+  on anything else. Build with `-DOBJZ_REQUIRE_TESTED_CLANG=ON` to make that
+  warning an error, as CI does. Apple Clang and Homebrew LLVM work with the
+  warning; on macOS, RISC-V needs Homebrew LLVM rather than Apple Clang,
+  which has no RISC-V backend.
 - Python 3
 - [just](https://github.com/casey/just) (build automation)
 

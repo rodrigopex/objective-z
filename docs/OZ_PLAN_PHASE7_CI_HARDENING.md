@@ -1,5 +1,11 @@
 # Phase 7 — CI Hardening, Hardware Verification, and Regression Workflow
 
+> **Historical planning document. Do not read it as a description of CI.**
+> The "Current State" below is the six-job pipeline as it stood when this was
+> written; the workflow has eleven jobs now, and the YAML quoted here pins a
+> Zephyr SDK version and an `apt install clang-20` that #269 replaced.
+> `.github/workflows/ci.yml` is the only authority on what CI does.
+
 ## Current State
 
 CI pipeline has 6 jobs:
