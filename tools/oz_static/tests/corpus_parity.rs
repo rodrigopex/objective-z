@@ -15,11 +15,25 @@
 //      resolution over the real SDK headers and sources, the whole
 //      collect/generics/emit pipeline, and each case's own
 //      `/* oz-pool: ... */` directive.
-//   2. the generated C must *compile*. Transpiling proves the input was
-//      understood; compiling proves the output is real C. A few cases
-//      still fail here, listed and explained in `KNOWN_CC_FAILURES` --
-//      an allowlist rather than a skip, so anything new fails loudly and
-//      fixing one of these fails too, forcing the list to be updated.
+//   2. the generated C must *compile*, as ISO C17 with no constraint
+//      violation -- `-std=c17 -pedantic-errors`. Transpiling proves the
+//      input was understood; compiling proves the output is real C. A few
+//      cases still fail here, listed and explained in
+//      `KNOWN_CC_FAILURES` -- an allowlist rather than a skip, so
+//      anything new fails loudly and fixing one of these fails too,
+//      forcing the list to be updated.
+//
+//      The flags are the substance of that claim and are not incidental
+//      (#266). Before them this check meant "compiles as GNU C with
+//      whatever the host compiler defaults to", which is how a bare `;`
+//      at file scope -- an empty declaration, a constraint violation --
+//      survived in 146 of this corpus's generated files and every
+//      generated program besides, passing here, passing a `-Wall
+//      -Wextra` sweep, and passing `-Werror` on three boards. It was
+//      found by diffing bytes. `c17` is the standard Zephyr itself pins
+//      (`CONFIG_STD_C17`, and nothing here selects
+//      `CONFIG_GNU_C_EXTENSIONS`), so this asks of the output exactly
+//      what the target asks of it, and no more.
 //
 // Not covered here: *running* the cases. That is
 // `tests/tools/cross_backend.py`'s job -- it drives each case through both
@@ -125,6 +139,7 @@ fn compile_generated(dir: &Path) -> Result<(), String> {
     let root = repo_root();
     for c_file in generated_c_files(dir) {
         let output = Command::new("cc")
+            .args(["-std=c17", "-pedantic-errors"])
             .args(["-DOZ_PLATFORM_HOST", "-I"])
             .arg(root.join("include"))
             .arg("-I")

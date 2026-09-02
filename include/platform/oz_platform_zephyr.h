@@ -34,6 +34,14 @@ static inline void oz_slab_free(oz_slab_t *slab, void *mem)
 
 typedef struct sys_mem_blocks oz_mem_blocks_t;
 
+/**
+ * Self-terminating: SYS_MEM_BLOCKS_DEFINE carries the `;` inside its own
+ * body (`_SYS_MEM_BLOCKS_DEFINE`, `sys/mem_blocks.h`), so write this
+ * without a trailing one. A call site that adds a `;` leaves a bare one
+ * at file scope -- an empty declaration, which ISO C does not allow, and
+ * which no host build can see because the host backend's macro used to
+ * need the `;` that this one supplies (#266). The two now agree.
+ */
 #define OZ_MEM_BLOCKS_DEFINE(name, blk_size, n_blocks, alignment)              \
         SYS_MEM_BLOCKS_DEFINE(name, blk_size, n_blocks, alignment)
 
