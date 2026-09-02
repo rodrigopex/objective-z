@@ -7,7 +7,67 @@ on:
   pull_request:
     branches: [main]
 
+# One clang for the whole workflow, and it is the tested one.
+#
+# Every job that needs clang needs it for the same reason: the Python
+# pipeline and oz_static's `--ast` both read a Clang JSON AST, and that
+# AST decides ivar ownership and method definedness in the generated C.
+# Until #269 this workflow had three answers at once -- `apt install
+# clang-20` in eight places, `objz_find_clang()` silently falling through
+# to Ubuntu's preinstalled clang 18.1 because the SDK was installed
+# without its LLVM component, and the Python harness's own version search
+# picking whichever `clang-NN` it found first. The project is tested
+# against the SDK's clang 19.
+#
+# So the SDK is installed once with `-l`, cached under a single key that
+# does not vary by board, and `OZ_CLANG` plus a `/usr/local/bin/clang`
+# symlink point both mechanisms at it.
+env:
+  ZEPHYR_SDK_VERSION: "1.0.1"
+  ZEPHYR_SDK_INSTALL_DIR: /home/runner/zephyr-sdk-1.0.1
+  OZ_CLANG: /home/runner/zephyr-sdk-1.0.1/llvm/bin/clang
+
 jobs:
+  # The primary gate for the static backend, and until #269 it never ran
+  # here at all: this workflow built oz2c only indirectly, through
+  # oz_static.cmake, and never invoked `cargo test`. So all 262 tests --
+  # the corpus's `-std=c17 -pedantic-errors` compile check among them
+  # (#266) -- held on a maintainer's machine and were unverified on every
+  # PR.
+  #
+  # It needs no Zephyr, no west and no SDK: the suite shells out to `cc`
+  # and nothing else, and `ast_facts.rs` deliberately uses a checked-in
+  # dump excerpt rather than running clang. So this is the cheapest job
+  # in the file despite guarding the most.
+  rust-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache cargo registry and build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            tools/oz_static/target
+          key: cargo-${{ runner.os }}-${{ hashFiles('tools/oz_static/Cargo.lock') }}
+          restore-keys: cargo-${{ runner.os }}-
+
+      - name: Show toolchain
+        run: |
+          cargo --version
+          rustc --version
+          cc --version | head -1
+
+      # Warnings are part of the gate, not decoration -- the maintainer
+      # workflow requires the suite clean including them.
+      - name: Build (warnings are errors)
+        run: RUSTFLAGS="-D warnings" cargo build --manifest-path tools/oz_static/Cargo.toml --all-targets
+
+      - name: Run the Rust test suite
+        run: cargo test --manifest-path tools/oz_static/Cargo.toml
+
   # Python tests (transpiler unit + golden tests)
   python-tests:
     runs-on: ubuntu-latest
@@ -18,13 +78,14 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install system dependencies
-        run: |
-          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/llvm.asc
-          echo "deb http://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-20 main" | sudo tee /etc/apt/sources.list.d/llvm-20.list
-          sudo apt-get update
-          sudo apt-get install -y clang-20
-          sudo ln -sf /usr/bin/clang-20 /usr/local/bin/clang
+      - name: Cache Zephyr SDK
+        uses: actions/cache@v4
+        with:
+          path: /home/runner/zephyr-sdk-1.0.1
+          key: zephyr-sdk-1.0.1-arm-riscv-llvm
+
+      - name: Install Zephyr SDK (with LLVM)
+        run: .github/install-zephyr-sdk.sh
 
       - name: Install dependencies
         run: pip install pytest pytest-cov jinja2 tree-sitter tree-sitter-objc
@@ -56,16 +117,22 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install system dependencies
-        run: |
-          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/llvm.asc
-          echo "deb http://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-20 main" | sudo tee /etc/apt/sources.list.d/llvm-20.list
-          sudo apt-get update
-          sudo apt-get install -y clang-20
+      - name: Cache Zephyr SDK
+        uses: actions/cache@v4
+        with:
+          path: /home/runner/zephyr-sdk-1.0.1
+          key: zephyr-sdk-1.0.1-arm-riscv-llvm
+
+      - name: Install Zephyr SDK (with LLVM)
+        run: .github/install-zephyr-sdk.sh
 
       - name: Install Python dependencies
         run: pip install pytest jinja2 tree-sitter tree-sitter-objc
 
+      # `--compiler=clang` is the C compiler for the generated code, a
+      # separate role from the AST clang above. The symlink the SDK
+      # install writes makes both of them 19; before it, this leg
+      # compiled with Ubuntu's 18.1 while dumping ASTs with 20.
       - name: Run behavior tests
         run: >
           PYTHONPATH=tools
@@ -83,12 +150,14 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install system dependencies
-        run: |
-          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/llvm.asc
-          echo "deb http://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-20 main" | sudo tee /etc/apt/sources.list.d/llvm-20.list
-          sudo apt-get update
-          sudo apt-get install -y clang-20
+      - name: Cache Zephyr SDK
+        uses: actions/cache@v4
+        with:
+          path: /home/runner/zephyr-sdk-1.0.1
+          key: zephyr-sdk-1.0.1-arm-riscv-llvm
+
+      - name: Install Zephyr SDK (with LLVM)
+        run: .github/install-zephyr-sdk.sh
 
       - name: Install Python dependencies
         run: pip install pytest jinja2 tree-sitter tree-sitter-objc
@@ -113,10 +182,17 @@ jobs:
 
       - name: Install system dependencies
         run: |
-          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/llvm.asc
-          echo "deb http://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-20 main" | sudo tee /etc/apt/sources.list.d/llvm-20.list
           sudo apt-get update
-          sudo apt-get install -y clang-20 gcovr
+          sudo apt-get install -y gcovr
+
+      - name: Cache Zephyr SDK
+        uses: actions/cache@v4
+        with:
+          path: /home/runner/zephyr-sdk-1.0.1
+          key: zephyr-sdk-1.0.1-arm-riscv-llvm
+
+      - name: Install Zephyr SDK (with LLVM)
+        run: .github/install-zephyr-sdk.sh
 
       - name: Install Python dependencies
         run: pip install pytest jinja2 tree-sitter tree-sitter-objc
@@ -150,12 +226,14 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install system dependencies
-        run: |
-          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/llvm.asc
-          echo "deb http://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-20 main" | sudo tee /etc/apt/sources.list.d/llvm-20.list
-          sudo apt-get update
-          sudo apt-get install -y clang-20
+      - name: Cache Zephyr SDK
+        uses: actions/cache@v4
+        with:
+          path: /home/runner/zephyr-sdk-1.0.1
+          key: zephyr-sdk-1.0.1-arm-riscv-llvm
+
+      - name: Install Zephyr SDK (with LLVM)
+        run: .github/install-zephyr-sdk.sh
 
       - name: Install Python dependencies
         run: pip install pytest jinja2 tree-sitter tree-sitter-objc
@@ -189,12 +267,14 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install system dependencies
-        run: |
-          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/llvm.asc
-          echo "deb http://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-20 main" | sudo tee /etc/apt/sources.list.d/llvm-20.list
-          sudo apt-get update
-          sudo apt-get install -y clang-20
+      - name: Cache Zephyr SDK
+        uses: actions/cache@v4
+        with:
+          path: /home/runner/zephyr-sdk-1.0.1
+          key: zephyr-sdk-1.0.1-arm-riscv-llvm
+
+      - name: Install Zephyr SDK (with LLVM)
+        run: .github/install-zephyr-sdk.sh
 
       - name: Install Python dependencies
         run: pip install pytest jinja2 tree-sitter tree-sitter-objc
@@ -208,14 +288,17 @@ jobs:
           --check-leaks
 
   # Hardware build verification (compile-only for ARM + RISC-V)
+  #
+  # No `continue-on-error` here any more (#269). It was the only job in
+  # this file with it, and it was the only job that cross-compiles for a
+  # board -- so the check most worth believing was the one that could not
+  # fail, and it reported `pass` whatever the build did. Verified safe to
+  # remove: the last ten runs had every step succeed on both boards.
   hw-build-check:
     runs-on: ubuntu-latest
-    continue-on-error: true
     strategy:
       matrix:
         board: [mps2/an385, qemu_riscv32]
-    env:
-      ZEPHYR_SDK_INSTALL_DIR: /home/runner/zephyr-sdk-1.0.0
     steps:
       - uses: actions/checkout@v4
 
@@ -234,36 +317,29 @@ jobs:
       - name: Cache Zephyr SDK
         uses: actions/cache@v4
         with:
-          path: /home/runner/zephyr-sdk-1.0.0
-          key: zephyr-sdk-1.0.0-${{ matrix.board }}
+          path: /home/runner/zephyr-sdk-1.0.1
+          key: zephyr-sdk-1.0.1-arm-riscv-llvm
 
-      - name: Install Zephyr SDK
-        run: |
-          if [ ! -d "/home/runner/zephyr-sdk-1.0.0" ]; then
-            wget -q https://github.com/zephyrproject-rtos/sdk-ng/releases/download/v1.0.0/zephyr-sdk-1.0.0_linux-x86_64_minimal.tar.xz
-            tar xf zephyr-sdk-1.0.0_linux-x86_64_minimal.tar.xz -C /home/runner
-            /home/runner/zephyr-sdk-1.0.0/setup.sh -t arm-zephyr-eabi -t riscv64-zephyr-elf -h -c
-          fi
+      - name: Install Zephyr SDK (with LLVM)
+        run: .github/install-zephyr-sdk.sh
 
       - name: Initialize workspace
         run: |
           west init -l .
           west update --fetch-opt=--depth=1
 
-      - name: Install system dependencies (Clang for transpiler)
-        run: |
-          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/llvm.asc
-          echo "deb http://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-20 main" | sudo tee /etc/apt/sources.list.d/llvm-20.list
-          sudo apt-get update
-          sudo apt-get install -y clang-20
-
       - name: Install Zephyr deps
         run: |
           pip install -r ../zephyr/scripts/requirements-base.txt natsort tabulate
           pip install jinja2 tree-sitter tree-sitter-objc
 
+      # -DOBJZ_REQUIRE_TESTED_CLANG=ON turns objz_find_clang()'s
+      # compatibility warning into a hard error. Without it this job spent
+      # its whole life dumping ASTs with a clang nobody chose.
       - name: Build sample (compile only)
-        run: PYTHONPATH=tools west build -b ${{ matrix.board }} samples/hello_world
+        run: >
+          PYTHONPATH=tools west build -b ${{ matrix.board }} samples/hello_world
+          -- -DOBJZ_REQUIRE_TESTED_CLANG=ON
 
       - name: Verify PAL inlining (ARM only)
         if: contains(matrix.board, 'mps2')
@@ -278,10 +354,14 @@ jobs:
           echo "PASS: All PAL functions inlined (zero call sites)"
 
   # Zephyr integration tests (native_sim)
+  #
+  # Note what this does and does not prove: tests/zephyr/CMakeLists.txt
+  # globs the *pre-generated* C committed under tests/zephyr/generated/,
+  # so a green run says that committed C runs on Zephyr and nothing about
+  # oz_static. `generated-freshness` below is what ties those files back
+  # to the transpiler.
   zephyr-integration:
     runs-on: ubuntu-latest
-    env:
-      ZEPHYR_SDK_INSTALL_DIR: /home/runner/zephyr-sdk-1.0.0
     steps:
       - uses: actions/checkout@v4
 
@@ -300,16 +380,11 @@ jobs:
       - name: Cache Zephyr SDK
         uses: actions/cache@v4
         with:
-          path: /home/runner/zephyr-sdk-1.0.0
-          key: zephyr-sdk-1.0.0-arm
+          path: /home/runner/zephyr-sdk-1.0.1
+          key: zephyr-sdk-1.0.1-arm-riscv-llvm
 
-      - name: Install Zephyr SDK (minimal + ARM only)
-        run: |
-          if [ ! -d "/home/runner/zephyr-sdk-1.0.0" ]; then
-            wget -q https://github.com/zephyrproject-rtos/sdk-ng/releases/download/v1.0.0/zephyr-sdk-1.0.0_linux-x86_64_minimal.tar.xz
-            tar xf zephyr-sdk-1.0.0_linux-x86_64_minimal.tar.xz -C /home/runner
-            /home/runner/zephyr-sdk-1.0.0/setup.sh -t arm-zephyr-eabi -h -c
-          fi
+      - name: Install Zephyr SDK (with LLVM)
+        run: .github/install-zephyr-sdk.sh
 
       - name: Initialize Zephyr workspace
         run: |
@@ -325,7 +400,6 @@ jobs:
       - name: Build and run tests on native_sim
         run: west twister -T tests/zephyr/ -p native_sim --inline-logs
 
-
   # Generated file freshness check
   generated-freshness:
     runs-on: ubuntu-latest
@@ -336,12 +410,14 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install system dependencies
-        run: |
-          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/llvm.asc
-          echo "deb http://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-20 main" | sudo tee /etc/apt/sources.list.d/llvm-20.list
-          sudo apt-get update
-          sudo apt-get install -y clang-20
+      - name: Cache Zephyr SDK
+        uses: actions/cache@v4
+        with:
+          path: /home/runner/zephyr-sdk-1.0.1
+          key: zephyr-sdk-1.0.1-arm-riscv-llvm
+
+      - name: Install Zephyr SDK (with LLVM)
+        run: .github/install-zephyr-sdk.sh
 
       - name: Install Python dependencies
         run: pip install jinja2 tree-sitter tree-sitter-objc

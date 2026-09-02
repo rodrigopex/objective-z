@@ -4,9 +4,15 @@ manifest:
       url-base: https://github.com/zephyrproject-rtos
 
   projects:
+    # Pinned, not `main`. CI runs `west init -l .` against this file, so an
+    # unpinned revision meant every run built against whatever upstream main
+    # was that morning -- a red build could be someone else's commit, and a
+    # green one said nothing reproducible. v4.4.2 is what the samples are
+    # tested against; cmsis and cmsis_6 are the same revisions main carried,
+    # so the pin changes the kernel and nothing else here.
     - name: zephyr
       remote: zephyrproject-rtos
-      revision: main
+      revision: v4.4.2
       import:
         name-allowlist:
           - cmsis
