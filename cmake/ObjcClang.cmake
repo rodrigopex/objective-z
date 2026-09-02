@@ -16,7 +16,23 @@ include_guard(GLOBAL)
 #   4. System clang       (PATH — Apple Clang or distro LLVM)
 #
 # The Zephyr SDK LLVM Clang 19 is the tested reference toolchain.
-# Other compilers work but emit a compatibility warning.
+# Other compilers work but emit a compatibility warning — or a hard
+# error, with -DOBJZ_REQUIRE_TESTED_CLANG=ON.
+#
+# Set that in CI. A warning here is indistinguishable from silence: for
+# the whole life of this project's CI the SDK was installed without its
+# LLVM component, so step 2 found nothing, step 4 picked Ubuntu's
+# preinstalled `/usr/bin/clang`, and every run printed
+#
+#   Objective-Z: Using non-Zephyr-SDK Clang 18.1: /usr/bin/clang
+#
+# into a 1400-line log that nobody read. The AST facts oz_static relies
+# on for ivar ownership and method definedness were being produced by
+# clang 18.1 while the project was tested against 19 — and while CI
+# separately installed clang 20 and never used it. Anything that decides
+# whether generated code is correct should not degrade quietly; that is
+# oz_static's own standing rule, and this is the build applying it to
+# itself.
 #
 function(objz_find_clang)
     set(_oz_tested_clang_ver "19")
@@ -77,16 +93,40 @@ function(objz_find_clang)
     string(REGEX MATCH "[0-9]+\\.[0-9]+" _ver "${_ver_full}")
     string(REGEX MATCH "^[0-9]+" _ver_major "${_ver}")
 
-    # Detect whether this is the Zephyr SDK LLVM
+    # Two independent questions, and only the first used to be asked.
+    #
+    # Vendor: is this the SDK's LLVM? Version: is it the major version the
+    # AST facts were validated against? The old check tested the path for
+    # "zephyr-sdk" and stopped, computing `_ver_major` and never using it
+    # — so an SDK carrying a different clang would have reported "Using
+    # Zephyr SDK Clang 21" with no complaint at all, which is the one case
+    # `_oz_tested_clang_ver` exists for.
     string(FIND "${OBJZ_CLANG_COMPILER}" "zephyr-sdk" _is_zsdk)
     if(_is_zsdk GREATER -1)
-        message(STATUS "Objective-Z: Using Zephyr SDK Clang ${_ver}: ${OBJZ_CLANG_COMPILER}")
+        set(_oz_clang_source "Zephyr SDK")
     else()
-        message(WARNING
-            "Objective-Z: Using non-Zephyr-SDK Clang ${_ver}: ${OBJZ_CLANG_COMPILER}\n"
+        set(_oz_clang_source "non-Zephyr-SDK")
+    endif()
+
+    if(_is_zsdk GREATER -1 AND _ver_major STREQUAL _oz_tested_clang_ver)
+        message(STATUS
+            "Objective-Z: Using Zephyr SDK Clang ${_ver}: ${OBJZ_CLANG_COMPILER}")
+    else()
+        set(_oz_clang_complaint
+            "Objective-Z: Using ${_oz_clang_source} Clang ${_ver}: ${OBJZ_CLANG_COMPILER}\n"
             "The tested environment is Zephyr SDK LLVM Clang ${_oz_tested_clang_ver}. "
-            "Other versions may produce different AST output. "
-            "Set ZEPHYR_SDK_INSTALL_DIR or -DOBJZ_CLANG_PATH to use the Zephyr SDK LLVM.")
+            "Other versions may produce different AST output, which decides ivar "
+            "ownership and method definedness in the generated C. "
+            "Install the SDK's LLVM component (west sdk install --llvm, or setup.sh -l) "
+            "and set ZEPHYR_SDK_INSTALL_DIR, or point -DOBJZ_CLANG_PATH at a Clang "
+            "${_oz_tested_clang_ver}.")
+        if(OBJZ_REQUIRE_TESTED_CLANG)
+            message(FATAL_ERROR ${_oz_clang_complaint}
+                "\nThis is fatal because -DOBJZ_REQUIRE_TESTED_CLANG=ON. "
+                "Unset it to downgrade this to a warning.")
+        else()
+            message(WARNING ${_oz_clang_complaint})
+        endif()
     endif()
 
     set(OBJZ_CLANG_COMPILER ${OBJZ_CLANG_COMPILER} CACHE INTERNAL
