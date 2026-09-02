@@ -724,6 +724,12 @@ The issue asked whoever took it to re-run the sweep afterwards rather than
 trust its number. That was the right instruction and it is the reason the
 figure here is 89 rather than 58.
 
+One caution this entry now carries, added by gap X: it says nothing about
+whether the output is *valid* C. Every generated program was carrying a bare
+`;` at file scope throughout, which is a constraint violation and needs
+`-Wpedantic` to be diagnosed — so it passed this sweep and Zephyr's `-Werror`
+alike. Read "clean" here as clean under the flags actually passed.
+
 **T. Immortality was expressed by a field that meant something else, and for
 singletons it was not expressed at all.** Fixed (#228). Two halves, filed as
 one cosmetic issue; only the first half was cosmetic.
@@ -817,14 +823,14 @@ merged; see the end of this entry.
 Now filed as **#254**, so the mechanism is tracked somewhere a person is
 assigned rather than only described here. That issue records the concrete cost
 — the two arm lists, `EmitCtx` constructed six times over — and the fact that
-makes it worse than ordinary duplication: every Rust test drives `emit()` while
-every real build drives `emit_split()`, so the path with test coverage is not
-the path that ships.
+made it worse than ordinary duplication: every Rust test drove `emit()` while
+every real build drove `emit_split()`, so the path with test coverage was not
+the path that shipped.
 
 That issue's first task was an audit, since all three findings had been
 stumbled into rather than looked for. **It is done and found no remaining
 divergence**: `tests/emitter_agreement.rs` drives both emitters over every
-top-level node kind either walk matches on, plus `@synchronized` and a
+top-level node kind the walk matches on, plus `@synchronized` and a
 construct outside the static subset, and compares diagnostics and symbol
 presence — not text, since the two deliberately place text differently.
 
@@ -1529,7 +1535,9 @@ CONFIG_OBJZ_BACKEND_PYTHON=y
 - Of the samples a host build can run, all are clean under AddressSanitizer
   and UndefinedBehaviorSanitizer with leak detection on.
 - Generated C is `-Wall -Wextra` clean (gap S), so a new warning on target is
-  visible rather than lost in noise — and Zephyr compiles with `-Werror`.
+  visible rather than lost in noise — and Zephyr compiles with `-Werror`. Not
+  the same as valid: gap X was a constraint violation in every generated
+  program that these flags do not diagnose.
 
 What that still does not cover, and why the escape hatch stays:
 
@@ -1701,4 +1709,4 @@ Filed rather than folded in, each with the reason it was kept separate:
 | #230 | Verify on RISC-V (`qemu_riscv32`). **Done** — 12 of 13 samples build, run under QEMU and pass their own `sample.yaml` checks; generated C byte-identical to ARM across all 304 generated files. `gpio_demo` stays ARM-only, needing device-tree aliases the board lacks. Repeatable as `just test-riscv`. |
 | #231 | Compare code size between backends, and run at least one sample on real hardware. **Size half done** — +1.3% flash overall, and on RAM oz_static is 1072 B *smaller* once `heap_alloc` is excluded, where the oracle drops a `static` and backs its heap with a dead stack frame. See "Code size against the Python backend". Hardware is untouched and needs a board. |
 | #238 | Objective-C inside a `#define` *body* is emitted verbatim, so the generated C does not compile — the other half of #234, split out because a macro body is one opaque `preproc_arg` token and needs its own approach. Detector prototyped: 0 of 40 real macro bodies flagged. |
-| #254 | `emit()` and `emit_split()` duplicated the top-level walk and had disagreed four times (gap R, #246, #250, #251). The mechanism behind three of this file's gaps, rather than a gap of its own. **Done** — one `emit::walk_top_level`, two assemblers over it, so a node kind is handled in exactly one place; `EmitCtx::new` replaces the six hand-spelled constructions. Generated output byte-identical: 820 corpus files and 342 sample files. The audit that preceded it (`tests/emitter_agreement.rs`) survives with a smaller claim — it guards the two assemblers, not two walks. |
+| #254 | `emit()` and `emit_split()` duplicated the top-level walk and had disagreed four times (gap R, #246, #250, #251). The mechanism behind three of this file's gaps, rather than a gap of its own. **Done** — one `emit::walk_top_level`, two assemblers over it, so a node kind is handled in exactly one place; `EmitCtx::new` replaces the six hand-spelled constructions. The refactor left generated output byte-identical across 820 corpus and 342 sample files; gap X, found by that comparison and fixed alongside, then removed a stray `;` from 146 of them and added nothing anywhere. The audit that preceded it (`tests/emitter_agreement.rs`) survives with a smaller claim — it guards the two assemblers, not two walks. |
