@@ -1074,29 +1074,35 @@ reason — nothing was failing, and nothing was going to.
 
 Several arms consume a specifier node whose grammar span stops short of its
 trailing semicolon, so the semicolon arrives at the passthrough arm as a
-top-level node of its own and was copied through. Three producers, one of them
-in every program: `@compatibility_alias NSObject OZObject;` in
-`include/oz_sdk/Foundation/OZObject.h`, plus a full `struct`/`union`
+top-level node of its own and was copied through. Three producers of that
+shape, one of them in every program: `@compatibility_alias NSObject OZObject;`
+in `include/oz_sdk/Foundation/OZObject.h`, plus a full `struct`/`union`
 definition and an `enum` definition. **51 of the samples' generated files and
-146 of the corpus's** had one.
+146 of the corpus's** had one. A fourth producer, of a different shape and
+visible only on target, outlived this fix — see gap Y.
 
 An empty declaration at file scope is a constraint violation, not a style
-question — but diagnosing it needs `-Wpedantic`, which Zephyr does not pass
+question — but diagnosing it needed `-Wpedantic`, which Zephyr does not pass
 and which the `-Wall -Wextra` sweep behind gap S did not either. So gap S's
 claim that generated C is `-Wall -Wextra` clean was true and this was invalid
 anyway, which is the useful thing to notice: **"warning-free under the flags
 we pass" is a narrower statement than "valid C"**, and the two had been read
-as the same.
+as the same. Since gap Y the corpus is compiled with `-std=c17
+-pedantic-errors`, so this shape now fails a test rather than waiting to be
+noticed.
 
 Fixed at the passthrough arm rather than in each arm that leaves one. That is
 the single place every unclaimed node goes, so a future arm gets the same
 treatment without knowing to ask, and nothing is lost — a top-level `;`
 carries no information in any C dialect. Pinned by
-`emitter_agreement::no_bare_semicolon_at_file_scope`, which puts all three
+`emitter_agreement::no_bare_semicolon_at_file_scope`, which puts those three
 producers in one source and was confirmed to report 4 stray semicolons with
 the guard disabled.
 
-**It had a fourth producer, and only on target.** See gap Y.
+**It had a fourth producer, and only on target.** That test cannot reach it —
+in the generated text the `;` is attached to a macro call, so only the
+preprocessor separates them — and reading it as covering "all producers" is
+what would make the gap look closed. See gap Y.
 
 **Y. Nothing measured whether generated C is *valid*, and the first
 measurement found gap X still alive on Zephyr.** Fixed (#266): the corpus

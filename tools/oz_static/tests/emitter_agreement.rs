@@ -320,14 +320,24 @@ int main(void) { return 0; }
 /// the trailing semicolon, which then arrives at the passthrough arm as a
 /// top-level node of its own. Passing it through left an empty declaration at
 /// file scope -- not valid ISO C, and present in 51 of the samples' generated
-/// files and 146 of the corpus's, because diagnosing it needs `-Wpedantic`
-/// and neither Zephyr nor the `-Wall -Wextra` sweep behind gap S passes that.
+/// files and 146 of the corpus's, because diagnosing it needed `-Wpedantic`
+/// and neither Zephyr nor the `-Wall -Wextra` sweep behind gap S passed that.
+/// The corpus is compiled with `-std=c17 -pedantic-errors` since #266, so
+/// this shape now fails a test as well as being pinned here.
 ///
-/// All three known producers are in one source here, so the test says
+/// Three of the four known producers are in one source here, so the test says
 /// something about the rule and not just about `@compatibility_alias`:
 /// that alias (the one that reaches every generated program, via
 /// `include/oz_sdk/Foundation/OZObject.h`), a full `struct` definition, and
 /// an `enum` definition.
+///
+/// **The fourth is out of this test's reach**, and reading "all producers"
+/// here is what would let it look covered. `OZ_MEM_BLOCKS_DEFINE(...)` left a
+/// bare `;` only *after preprocessing on Zephyr* -- in the generated text the
+/// `;` is attached to a macro call, so no text-level scan can see it, and it
+/// was valid on the host backend besides. It has its own case,
+/// `item_pool_definition_has_no_trailing_semicolon` below, which asserts the
+/// shape rather than the outcome for exactly that reason. See gap Y.
 #[test]
 fn no_bare_semicolon_at_file_scope() {
     let src = format!(
