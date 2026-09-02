@@ -29,6 +29,19 @@ reference, don't extend it.
   runs them on RISC-V (`just test-boards` does both). Anything touching emitted C also needs a
   real board build and run — compiling only proves the input was understood.
 
+## Issue tracking
+
+**Issues live in this repository — its GitHub issue tracker (`rodrigopex/objective-z`),
+tracked on [Project #4](https://github.com/users/rodrigopex/projects/4).** Not in files in
+the tree, not in a separate repo. `issues/TEMPLATE.md` is only a body template for filing
+one; the `issues/OZ-NNN.md` files that scheme once produced were removed, and re-creating
+them splits the record in two — it has happened, and the copies disagreed within a day.
+
+**Reference an issue by its GitHub number (`#226`)** — in commit messages, PR bodies, code
+comments and docs alike. **The `OZ-NNN` id scheme is retired:** don't assign new ones and
+don't rename an issue into that form. Older commits, closed issues and `PARITY.md` entries
+still carry OZ-NNN ids; leave those as the historical references they are.
+
 ## Build Commands
 
 Default board: `mps2/an385` (ARM). RISC-V: `qemu_riscv32`. Requires Zephyr SDK, west, and Clang (for AST analysis). RISC-V requires LLVM Clang (not Apple Clang) — auto-detected from Homebrew.
