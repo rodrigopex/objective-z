@@ -7,7 +7,7 @@ on:
   pull_request:
     branches: [main]
 
-# One clang for the whole workflow, and it is the tested one.
+# Two clangs, both 19, differing by target -- and that is the point.
 #
 # Every job that needs clang needs it for the same reason: the Python
 # pipeline and oz_static's `--ast` both read a Clang JSON AST, and that
@@ -16,16 +16,30 @@ on:
 # clang-20` in eight places, `objz_find_clang()` silently falling through
 # to Ubuntu's preinstalled clang 18.1 because the SDK was installed
 # without its LLVM component, and the Python harness's own version search
-# picking whichever `clang-NN` it found first. The project is tested
-# against the SDK's clang 19.
+# picking whichever `clang-NN` it found first. The tested version is 19
+# (`cmake/ObjcClang.cmake`).
 #
-# So the SDK is installed once with `-l`, cached under a single key that
-# does not vary by board, and `OZ_CLANG` plus a `/usr/local/bin/clang`
-# symlink point both mechanisms at it.
+# The first attempt at fixing that used the SDK's clang everywhere, on
+# the reasoning that one clang beats three. Wrong, and CI said so in two
+# minutes: the SDK's clang is a *cross* toolchain, so on a host compile
+# it reaches `/usr/include/stdint.h` and cannot find
+# `bits/libc-header-start.h`, which Debian multiarch puts in
+# `/usr/include/x86_64-linux-gnu/`. 276 of 539 Python tests failed.
+#
+# So the split is by target, not by version:
+#
+#   install-host-clang.sh   clang 19 for x86_64 Linux -- the jobs whose
+#                           ASTs describe code compiled and run here
+#   install-zephyr-sdk.sh   the SDK's cross clang 19 -- the jobs that
+#                           build for a board, where cmake finds it via
+#                           ZEPHYR_SDK_INSTALL_DIR and hands it a triple
 env:
   ZEPHYR_SDK_VERSION: "1.0.1"
   ZEPHYR_SDK_INSTALL_DIR: /home/runner/zephyr-sdk-1.0.1
-  OZ_CLANG: /home/runner/zephyr-sdk-1.0.1/llvm/bin/clang
+  # The host jobs' clang. The Zephyr jobs override nothing -- cmake finds
+  # the SDK's cross clang through ZEPHYR_SDK_INSTALL_DIR, and passes it a
+  # target triple, which is the whole reason there are two.
+  OZ_CLANG: /usr/bin/clang-19
 
 jobs:
   # The primary gate for the static backend, and until #269 it never ran
@@ -78,14 +92,8 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Cache Zephyr SDK
-        uses: actions/cache@v4
-        with:
-          path: /home/runner/zephyr-sdk-1.0.1
-          key: zephyr-sdk-1.0.1-arm-riscv-llvm
-
-      - name: Install Zephyr SDK (with LLVM)
-        run: .github/install-zephyr-sdk.sh
+      - name: Install host clang 19
+        run: .github/install-host-clang.sh
 
       - name: Install dependencies
         run: pip install pytest pytest-cov jinja2 tree-sitter tree-sitter-objc
@@ -117,22 +125,17 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Cache Zephyr SDK
-        uses: actions/cache@v4
-        with:
-          path: /home/runner/zephyr-sdk-1.0.1
-          key: zephyr-sdk-1.0.1-arm-riscv-llvm
-
-      - name: Install Zephyr SDK (with LLVM)
-        run: .github/install-zephyr-sdk.sh
+      - name: Install host clang 19
+        run: .github/install-host-clang.sh
 
       - name: Install Python dependencies
         run: pip install pytest jinja2 tree-sitter tree-sitter-objc
 
       # `--compiler=clang` is the C compiler for the generated code, a
-      # separate role from the AST clang above. The symlink the SDK
-      # install writes makes both of them 19; before it, this leg
-      # compiled with Ubuntu's 18.1 while dumping ASTs with 20.
+      # separate role from the AST clang. The symlink install-host-clang.sh
+      # writes makes both of them 19; before it, this leg compiled with
+      # Ubuntu's preinstalled 18.1 while dumping ASTs with 20 -- two
+      # clangs in one job, neither of them chosen.
       - name: Run behavior tests
         run: >
           PYTHONPATH=tools
@@ -150,14 +153,8 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Cache Zephyr SDK
-        uses: actions/cache@v4
-        with:
-          path: /home/runner/zephyr-sdk-1.0.1
-          key: zephyr-sdk-1.0.1-arm-riscv-llvm
-
-      - name: Install Zephyr SDK (with LLVM)
-        run: .github/install-zephyr-sdk.sh
+      - name: Install host clang 19
+        run: .github/install-host-clang.sh
 
       - name: Install Python dependencies
         run: pip install pytest jinja2 tree-sitter tree-sitter-objc
@@ -185,14 +182,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y gcovr
 
-      - name: Cache Zephyr SDK
-        uses: actions/cache@v4
-        with:
-          path: /home/runner/zephyr-sdk-1.0.1
-          key: zephyr-sdk-1.0.1-arm-riscv-llvm
-
-      - name: Install Zephyr SDK (with LLVM)
-        run: .github/install-zephyr-sdk.sh
+      - name: Install host clang 19
+        run: .github/install-host-clang.sh
 
       - name: Install Python dependencies
         run: pip install pytest jinja2 tree-sitter tree-sitter-objc
@@ -226,14 +217,8 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Cache Zephyr SDK
-        uses: actions/cache@v4
-        with:
-          path: /home/runner/zephyr-sdk-1.0.1
-          key: zephyr-sdk-1.0.1-arm-riscv-llvm
-
-      - name: Install Zephyr SDK (with LLVM)
-        run: .github/install-zephyr-sdk.sh
+      - name: Install host clang 19
+        run: .github/install-host-clang.sh
 
       - name: Install Python dependencies
         run: pip install pytest jinja2 tree-sitter tree-sitter-objc
@@ -267,14 +252,8 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Cache Zephyr SDK
-        uses: actions/cache@v4
-        with:
-          path: /home/runner/zephyr-sdk-1.0.1
-          key: zephyr-sdk-1.0.1-arm-riscv-llvm
-
-      - name: Install Zephyr SDK (with LLVM)
-        run: .github/install-zephyr-sdk.sh
+      - name: Install host clang 19
+        run: .github/install-host-clang.sh
 
       - name: Install Python dependencies
         run: pip install pytest jinja2 tree-sitter tree-sitter-objc
@@ -410,14 +389,8 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Cache Zephyr SDK
-        uses: actions/cache@v4
-        with:
-          path: /home/runner/zephyr-sdk-1.0.1
-          key: zephyr-sdk-1.0.1-arm-riscv-llvm
-
-      - name: Install Zephyr SDK (with LLVM)
-        run: .github/install-zephyr-sdk.sh
+      - name: Install host clang 19
+        run: .github/install-host-clang.sh
 
       - name: Install Python dependencies
         run: pip install jinja2 tree-sitter tree-sitter-objc
