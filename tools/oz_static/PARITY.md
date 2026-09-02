@@ -1459,23 +1459,36 @@ driven through oz_static by `tools/oz_static/tests/corpus_parity.rs`
 rather than being re-implemented as separate fixtures.
 
 - **73 of 73 transpile.** Enforced with no allowlist.
-- **73 of 73 produce compiling C, as ISO C17 with no constraint
+- **71 of 73 produce compiling C, as ISO C17 with no constraint
   violation** — `-std=c17 -pedantic-errors` since gap Y, which is what
   makes this line mean more than "the host compiler accepted it".
-  `KNOWN_CC_FAILURES` is now empty
-  (`corpus_parity.rs`). Its last entry was `memory/heap_alloc.m`,
+  `KNOWN_CC_FAILURES` holds two: `foundation/timer_basic` and
+  `foundation/timer_zephyr`, both on #267's function-pointer-to-object-
+  pointer conversion. Its previous last entry was `memory/heap_alloc.m`,
   which failed for two reasons, both since fixed: `struct oz_heap_inner`
   was defined by both `OZHeap.h` and `platform/oz_platform.h` — each
   guarded on `OZ_HEAP_INNER_DEFINED`, which neither then defined — and it
   needed the `allocWithHeap:` path, now emitted under `--heap-support`.
   Note the corpus compiles with `-DOZ_PLATFORM_HOST` and *no*
-  `-DOZ_HEAP_SUPPORT` (`corpus_parity.rs:128`), so the guard fix carries
-  it, not the heap configuration.
+  `-DOZ_HEAP_SUPPORT`, so the guard fix carries it, not the heap
+  configuration.
 
 That allowlist asserts each listed case *still* fails, so fixing one
 without updating the list also fails the test; it cannot decay into
 silently skipped cases. Empty is therefore a stronger statement than a
-passing suite with entries.
+passing suite with entries, and this file said "empty" for a while.
+
+**Nothing regressed to lose that.** The two entries are the tightened
+check finding something that had always been there: every generated
+program using OZTimer carried the cast, and it became visible only once
+the flags asked for ISO C (#266) and once CI actually ran the suite
+against gcc (#269). Apple clang does not diagnose that conversion at all,
+so a maintainer's machine reported 73 of 73 — which is why
+`cc_diagnoses_fptr_to_object_pointer()` probes the compiler rather than
+trusting its name, and why the "still fails" half of the allowlist is
+enforced only where the compiler agrees there is something to fail on.
+Two compilers disagreeing about whether the corpus compiles is worth
+knowing on its own account.
 
 Rust test suite: 262 passing, 0 failing.
 
@@ -1571,10 +1584,11 @@ the typedef, so assigning an ordinary `void (*)(struct OZObject *)` function
 to it did not compile. See gap O.
 
 `memory/heap_alloc` needed `+allocWithHeap:` (gap I) and the SDK header fix
-found by the ARM build. It was the last entry in
-`tests/oz_static/tests/corpus_parity.rs`'s `KNOWN_CC_FAILURES`, which is now
-empty — and that list asserts a listed case *still* fails, so emptying it
-was forced rather than chosen.
+found by the ARM build. It emptied `corpus_parity.rs`'s
+`KNOWN_CC_FAILURES` — and that list asserts a listed case *still* fails, so
+emptying it was forced rather than chosen. The list has two entries again
+since #269, both #267's cast; see the corpus section above for why that is
+a tightened instrument rather than a regression.
 
 `regression/issue_090_header_preservation` was the seventh and now matches.
 It is the oracle's own regression test for this exact bug — "transpiler
