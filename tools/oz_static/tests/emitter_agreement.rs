@@ -361,10 +361,17 @@ int main(void) { struct color c; c.r = NORTH; return c.r; }
     }
 }
 
-/// A rejection must be a rejection in both. If one emitter refuses a
+/// A rejection must be a rejection in both. If one entry point refuses a
 /// construct and the other emits it, the static bar is only as strong as
-/// whichever path a given caller happens to use -- and the path with test
-/// coverage is not the path that ships.
+/// whichever path a given caller happens to use.
+///
+/// This is the case the merged walk makes closest to tautological: the bar
+/// runs inside `walk_top_level`, so both entry points now collect the same
+/// diagnostics from the same call. It is kept because that is a property of
+/// the current structure rather than of the contract -- an assembler that
+/// swallowed or reordered diagnostics would still break it -- and because a
+/// rejection that only half the callers see is the failure this whole file
+/// exists to catch.
 #[test]
 fn a_rejection_is_a_rejection_in_both() {
     let src = format!(
