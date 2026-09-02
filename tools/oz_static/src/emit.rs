@@ -4431,6 +4431,31 @@ fn walk_top_level(
                 if text.is_empty() {
                     continue;
                 }
+                // A lone `;` is dropped rather than copied. Several arms
+                // above consume a specifier node whose grammar span stops
+                // short of the trailing semicolon -- `@compatibility_alias
+                // NSObject OZObject;` in `include/oz_sdk/Foundation/
+                // OZObject.h` is the one that reaches every generated
+                // program -- so the semicolon arrives here as a top-level
+                // node of its own, and passing it through left a bare `;`
+                // at file scope in 51 of the samples' generated files and
+                // 146 of the corpus's.
+                //
+                // An empty declaration at file scope is not valid ISO C. It
+                // has never failed a build because it needs `-Wpedantic` to
+                // be diagnosed and Zephyr does not pass that (nor do `-Wall
+                // -Wextra`, which is why the sweep behind gap S never saw
+                // it), but it is invalid rather than untidy, and a stricter
+                // compiler is entitled to reject it.
+                //
+                // Handled here rather than in each arm that leaves one: this
+                // is the one place every unclaimed node passes through, so a
+                // new arm gets the same treatment without knowing to ask for
+                // it, and nothing meaningful is lost -- a top-level `;`
+                // carries no information in any C dialect.
+                if text == ";" {
+                    continue;
+                }
                 // Provenance first: anything a *header* contributed belongs in
                 // the generated header, because that is what a header is for
                 // -- every file including it should see it. A bare top-level

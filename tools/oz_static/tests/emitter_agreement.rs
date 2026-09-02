@@ -314,6 +314,53 @@ int main(void) { return 0; }
     assert_agree("synchronized_statement", &src, "->oz_sync_lock");
 }
 
+/// No output may contain a bare `;` at file scope.
+///
+/// Several arms consume a specifier node whose grammar span stops short of
+/// the trailing semicolon, which then arrives at the passthrough arm as a
+/// top-level node of its own. Passing it through left an empty declaration at
+/// file scope -- not valid ISO C, and present in 51 of the samples' generated
+/// files and 146 of the corpus's, because diagnosing it needs `-Wpedantic`
+/// and neither Zephyr nor the `-Wall -Wextra` sweep behind gap S passes that.
+///
+/// All three known producers are in one source here, so the test says
+/// something about the rule and not just about `@compatibility_alias`:
+/// that alias (the one that reaches every generated program, via
+/// `include/oz_sdk/Foundation/OZObject.h`), a full `struct` definition, and
+/// an `enum` definition.
+#[test]
+fn no_bare_semicolon_at_file_scope() {
+    let src = format!(
+        "{}{}",
+        ozobject_src(),
+        "\
+@compatibility_alias NSObject OZObject;
+struct color { int r; };
+enum Direction { NORTH, SOUTH };
+int main(void) { struct color c; c.r = NORTH; return c.r; }
+"
+    );
+    let (single_diags, split_diags, single_text, split_text) = both(&src);
+    assert_eq!(single_diags, split_diags, "diagnostics differ");
+    assert!(single_diags.is_empty(), "expected this to transpile: {:?}", single_diags);
+
+    for (label, text) in [("emit()", &single_text), ("emit_split()", &split_text)] {
+        let strays: Vec<(usize, &str)> = text
+            .lines()
+            .enumerate()
+            .filter(|(_, line)| line.trim() == ";")
+            .map(|(n, line)| (n + 1, line))
+            .collect();
+        assert!(
+            strays.is_empty(),
+            "{} emitted {} bare `;` line(s) at file scope (invalid ISO C), at line(s) {:?}",
+            label,
+            strays.len(),
+            strays.iter().map(|(n, _)| *n).collect::<Vec<_>>()
+        );
+    }
+}
+
 /// A rejection must be a rejection in both. If one emitter refuses a
 /// construct and the other emits it, the static bar is only as strong as
 /// whichever path a given caller happens to use -- and the path with test

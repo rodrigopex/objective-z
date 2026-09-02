@@ -859,7 +859,10 @@ fifteen test files to a file-writing harness.
 refactor like this: every file `oz2c` generates is byte-identical before and
 after — 820 across the 73 corpus cases, and 342 across the samples' real ARM
 twister build. The manifest is excluded, as the RISC-V comparison excludes it,
-because it lists absolute paths.
+because it lists absolute paths. (Gap X, found by that comparison and fixed in
+the same change, then moved 146 of those files by deleting a stray `;` from
+each. Nothing else moved: **0 lines added anywhere**, 184 removed, all of them
+a bare `;` or a blank line left behind by one.)
 
 Three things did change in the single-file output, each of them the split
 assembler's existing behaviour winning: a full `struct Tag { … };` goes to the
@@ -1040,6 +1043,35 @@ Three things worth recording, two of them mistakes:
   two-core load; they do not prove the atomicity is load-bearing the way the
   count line proves the lock is. Stated in the sample too, so nobody reads more
   into a green run than it carries.
+
+**X. Every generated program carried a bare `;` at file scope, which is not
+valid ISO C.** Fixed (#254, folded into the same change). Found by comparing
+generated output byte for byte, which is a measurement taken for a different
+reason — nothing was failing, and nothing was going to.
+
+Several arms consume a specifier node whose grammar span stops short of its
+trailing semicolon, so the semicolon arrives at the passthrough arm as a
+top-level node of its own and was copied through. Three producers, one of them
+in every program: `@compatibility_alias NSObject OZObject;` in
+`include/oz_sdk/Foundation/OZObject.h`, plus a full `struct`/`union`
+definition and an `enum` definition. **51 of the samples' generated files and
+146 of the corpus's** had one.
+
+An empty declaration at file scope is a constraint violation, not a style
+question — but diagnosing it needs `-Wpedantic`, which Zephyr does not pass
+and which the `-Wall -Wextra` sweep behind gap S did not either. So gap S's
+claim that generated C is `-Wall -Wextra` clean was true and this was invalid
+anyway, which is the useful thing to notice: **"warning-free under the flags
+we pass" is a narrower statement than "valid C"**, and the two had been read
+as the same.
+
+Fixed at the passthrough arm rather than in each arm that leaves one. That is
+the single place every unclaimed node goes, so a future arm gets the same
+treatment without knowing to ask, and nothing is lost — a top-level `;`
+carries no information in any C dialect. Pinned by
+`emitter_agreement::no_bare_semicolon_at_file_scope`, which puts all three
+producers in one source and was confirmed to report 4 stray semicolons with
+the guard disabled.
 
 ## On target (Zephyr under QEMU: mps2/an385, qemu_riscv32, qemu_cortex_a53/smp)
 
@@ -1310,7 +1342,7 @@ without updating the list also fails the test; it cannot decay into
 silently skipped cases. Empty is therefore a stronger statement than a
 passing suite with entries.
 
-Rust test suite: 260 passing, 0 failing.
+Rust test suite: 261 passing, 0 failing.
 
 ### Behavioral parity: 73 of 73
 
