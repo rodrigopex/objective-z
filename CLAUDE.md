@@ -63,8 +63,19 @@ priority 2 in `objz_find_clang()`'s search order and the version the
 project is tested against (clang 19). Point the test harnesses at it with
 `OZ_CLANG=$ZEPHYR_SDK_INSTALL_DIR/llvm/bin/clang`; both
 `tests/tools/compile_and_run.py` and `tests/tools/cross_backend.py` honour
-that variable. Without it they pick whatever clang is on `PATH`, which on
-macOS is Apple Clang and a different version from CI.
+that variable. Without it they pick whatever clang is on `PATH` — Apple
+Clang on macOS, which is a different version and only warns.
+
+**Build with `-DOBJZ_REQUIRE_TESTED_CLANG=ON` to make that a hard error.**
+CI does, since #269: the AST decides ivar ownership and method definedness,
+and it was being produced there by Ubuntu's clang 18.1 for the life of the
+workflow because the SDK had been installed without `-l`. The warning that
+exists to catch it printed on every run, unread. `objz_find_clang()` checks
+the *version* as well as whether the path is the SDK's, so a future SDK
+carrying a different clang is caught too.
+
+Versions CI pins, and so the ones to match locally: **Zephyr v4.4.2**
+(`west.yml`) and **SDK 1.0.1** with LLVM (`.github/install-zephyr-sdk.sh`).
 
 | Command                    | Description                        |
 | -------------------------- | ---------------------------------- |
