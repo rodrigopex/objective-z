@@ -1117,6 +1117,16 @@ across all 73 cases and 410 generated `.c` files, which is why it is a gate
 ARM. A host sweep could not have found any of the ones that mattered, and that
 asymmetry is the entry's substance.
 
+Read "gate" precisely, though, and it is narrower than it sounds: **CI does
+not run the Rust suite at all** — `.github/workflows/ci.yml` is the only
+workflow and never invokes `cargo test`, so this gate and every other
+assertion in `corpus_parity.rs` hold on a maintainer's machine and are
+unverified on every PR. Filed as #269, along with `hw-build-check` being
+`continue-on-error: true` and so reporting `pass` whatever the build did.
+Found while landing this change, which is itself the pattern gap S and the
+"Not verified" section keep recording: the claim that goes stale is the one
+about what has been checked.
+
 **The survivor was the item pool, and it was correct on host.**
 `OZ_MEM_BLOCKS_DEFINE(oz_item_pool, ...);` is a PAL macro that was
 self-terminating on *one* backend: on Zephyr it expands to
@@ -1829,4 +1839,5 @@ Filed rather than folded in, each with the reason it was kept separate:
 | #238 | Objective-C inside a `#define` *body* is emitted verbatim, so the generated C does not compile — the other half of #234, split out because a macro body is one opaque `preproc_arg` token and needs its own approach. Detector prototyped: 0 of 40 real macro bodies flagged. |
 | #254 | `emit()` and `emit_split()` duplicated the top-level walk and had disagreed four times (gap R, #246, #250, #251). The mechanism behind three of this file's gaps, rather than a gap of its own. **Done** — one `emit::walk_top_level`, two assemblers over it, so a node kind is handled in exactly one place; `EmitCtx::new` replaces the six hand-spelled constructions. The refactor left generated output byte-identical across 820 corpus and 342 sample files; gap X, found by that comparison and fixed alongside, then removed a stray `;` from 146 of them and added nothing anywhere. The audit that preceded it (`tests/emitter_agreement.rs`) survives with a smaller claim — it guards the two assemblers, not two walks. |
 | #266 | Nothing checked generated C for *validity*, only for warnings. **Done** — `corpus_parity.rs` compiles with `-std=c17 -pedantic-errors` (the standard Zephyr pins) and it is a gate, the count there being 0 across 73 cases and 410 files; `just test-pedantic` asks the same of the samples on ARM and reports 26 sites, each in `KNOWN_PEDANTIC` with its reason. The count came first, as the issue asked, and it found gap X's fourth producer — an item-pool `;` that was valid on host and a constraint violation on Zephyr, so no host check could see it. It also found that the obvious way to sweep `-Wpedantic` on target reports zero on output that is not clean: CMSIS disables the flag for the rest of every Cortex-M TU. See gap Y. |
+| #269 | **CI never runs the Rust suite** — `ci.yml` never invokes `cargo test`, so all 262 tests, `corpus_parity.rs`'s `-pedantic-errors` gate included, hold locally and are unverified on every PR. `oz2c` is built in CI only indirectly, by `oz_static.cmake`. Also: `hw-build-check` is `continue-on-error: true` and so reports `pass` whatever the build did, which makes the only job that cross-compiles for a board the only one that cannot fail. Filed rather than fixed in #266, since that change should not be what alters what CI enforces. |
 | #267 | Generated C converts a block's function pointer to `void *` (`(void*)(expBlock)`, `src/OZTimer.m`), which ISO C forbids in either direction. 18 of the 26 sites `just test-pedantic` still reports, and the reason it is a report rather than a gate. Split out because the fix is a `__oz_timer_setup` signature decision on both PAL backends — the current `void *` exists because ARC forbids a direct block-to-function-pointer cast — not a codegen change. |
