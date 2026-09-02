@@ -6,17 +6,22 @@
 //
 // This is gap A, fixed once in `emit_split` and then found still open in the
 // single-file `emit()`, which had no `declaration` arm at all and did not tag
-// a function signature either. `emit()` works by patching the original text,
-// so anything no arm claims survives verbatim -- which is exactly how an
+// a function signature either. `emit()` worked by patching the original text,
+// so anything no arm claimed survived verbatim -- which is exactly how an
 // untagged `static OZHeap *sHeap;` reached the C compiler.
 //
 // Production was never affected: every real build goes through the CLI, hence
 // `emit_split`. What was affected is this suite, which drives
-// `oz_static::transpile()` -- so until now no Rust test could use a file-scope
-// object declaration, the shape `samples/gpio_demo` (`static GPIOOutput
-// *led;`), `samples/heap_alloc` (`static OZHeap *sHeap;`) and all three
-// singletons are built on. That is why gaps A and D were both diagnosed
+// `oz_static::transpile()` -- so until #246 no Rust test could use a
+// file-scope object declaration, the shape `samples/gpio_demo` (`static
+// GPIOOutput *led;`), `samples/heap_alloc` (`static OZHeap *sHeap;`) and all
+// three singletons are built on. That is why gaps A and D were both diagnosed
 // against samples and never locked in by a test.
+//
+// #254 removed the mechanism: there is one `emit::walk_top_level` now, and
+// this arm is reached from both entry points by construction. These cases
+// stay as the behavioural pin -- they say the tag is emitted, which is worth
+// asserting however the walk is organised.
 //
 // Each case below therefore asserts the *compiled and run* behaviour, not
 // just the emitted text: an untagged declaration is a hard C error, so a

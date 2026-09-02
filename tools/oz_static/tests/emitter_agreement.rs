@@ -3,25 +3,40 @@
 // emitter_agreement.rs -- do `emit` and `emit_split` agree about each
 // top-level node kind? (#254)
 //
-// The two are independent walks over the same CST, each with its own match on
-// node kind, and they have disagreed three times:
+// **What this guards has changed, and it is now weaker on purpose.** These
+// cases were written when the two were independent walks over the same CST,
+// each with its own match on node kind, having disagreed four times:
 //
 //   gap R   `staticbar` and `emit::collect_local_decls` listed different
 //           declarator kinds as "a local"
 //   #246    `class_tag_edits` was called from `emit_split` only; `emit` had no
 //           `declaration` arm at all
+//   #250    a free function's parameters were seeded into scope in one walk
+//           and had to be added to the other by hand
 //   #251    `file_scope_vars` gated on the known-class set keyed by bare name
 //           while `collect_local_decls` had no gate
 //
-// Every one was stumbled into. Nobody had ever compared the two deliberately,
-// which is the first task #254 names -- this file is that comparison, kept as
-// a test so it runs rather than being a one-off sweep.
+// Every one was stumbled into, and the audit these cases are is what #254
+// asked for first. It found no *remaining* divergence, which is why the walks
+// could then be merged: there is now one `emit::walk_top_level`, and both
+// entry points assemble what it returns. A node kind can no longer be handled
+// in one and not the other, so no case here can fail for that reason again.
 //
-// **The asymmetry that makes this necessary**: every other test in this suite
-// drives `oz_static::transpile()`, hence `emit`. Every real build drives the
-// CLI, hence `emit_split`. So the path with test coverage is not the path that
-// ships, and a divergence can exist in either direction without anything going
-// red.
+// It is kept, rather than deleted with the duplication, because two things it
+// checks are still real:
+//
+//   - **The two assemblers.** Placement is still decided twice -- one
+//     translation unit versus a `.h`/`.c` pair per origin -- and a bucket one
+//     assembler forgets to emit is exactly the shape of gap C's seventh cause
+//     (`emit_split` dropped a top-level struct that `emit` kept by not
+//     touching it). These cases would catch that.
+//   - **A construct reaching output at all.** Each case names a node kind and
+//     a symbol its output must contain, so deleting an arm from the shared
+//     walk fails here for both entry points at once.
+//
+// What it no longer proves is that the two *walks* agree, because there is
+// only one. Read a green run as "both assemblers surface every kind these
+// cases name", not as a diff of two implementations.
 //
 // What is compared, and why that and not the text:
 //
@@ -33,8 +48,9 @@
 //     place text differently -- one file versus a per-origin pair -- so the
 //     text cannot be diffed. That a construct is *present somewhere* can be.
 //
-// Everything before `emit` is shared (`collect`, `generics`, `arc`, `pools`),
-// so any divergence found here is genuinely the emitters' own.
+// Everything before assembly is shared (`collect`, `generics`, `arc`,
+// `pools`, and now the walk itself), so any divergence found here is
+// genuinely the two assemblers' own.
 
 mod common;
 use common::ozobject_src;

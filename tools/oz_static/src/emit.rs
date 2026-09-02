@@ -10,6 +10,14 @@
 // implementor dispatch (dealloc's const-vtable) and pool registration are
 // isolated into one small generated companion file, mirroring the
 // existing oz_dispatch.c/h pattern.
+//
+// The substitution is per *construct*: `rebuild` and `apply_edits` replace
+// spans inside one top-level node and copy the gaps between them verbatim.
+// The top level itself is assembled from what `walk_top_level` buckets, not
+// patched over the whole file -- `emit()` did once work that way, and its
+// doing so is how it managed to disagree with `emit_split()` four times
+// (#254): anything no arm claimed simply survived, so a missing arm produced
+// no error and no output difference until a C compiler saw it.
 
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
@@ -822,6 +830,42 @@ struct ArcScope {
 }
 
 impl<'a> EmitCtx<'a> {
+    /// A fresh context for one top-level construct.
+    ///
+    /// Only the four things that actually vary between call sites are
+    /// arguments; everything else starts empty or at its one sensible
+    /// default. This exists because the eighteen fields used to be spelled
+    /// out at six separate call sites -- three per emitter -- so adding a
+    /// field meant six edits and seeding something into scope meant at
+    /// least two, which is the exact shape of #250's fix (see #254).
+    fn new(
+        src: &'a str,
+        program: &'a Program,
+        class_name: String,
+        scope: HashMap<String, String>,
+        pools: &'a crate::pools::PoolSizes,
+    ) -> Self {
+        EmitCtx {
+            src,
+            program,
+            class_name,
+            scope,
+            locals: HashSet::new(),
+            diags: Vec::new(),
+            hoisted_blocks: Vec::new(),
+            hoisted_structs: Vec::new(),
+            hoisted_string_literals: Vec::new(),
+            hoisted_statics: Vec::new(),
+            block_counter: 0,
+            pre_stmts: Vec::new(),
+            sync_cleanups: Vec::new(),
+            method_return_type: "int".to_string(),
+            pools,
+            arc_scopes: Vec::new(),
+            arc_managed_locals: HashSet::new(),
+        }
+    }
+
     fn err(&mut self, node: Node, message: impl Into<String>) {
         let (line, col) = line_col(self.src, node.start_byte());
         self.diags.push(Diagnostic::new(message, line, col));
@@ -3876,442 +3920,110 @@ pub struct EmitOutput {
     pub diagnostics: Vec<Diagnostic>,
 }
 
+/// Single-translation-unit assembler: the whole program as one `source_c`,
+/// plus the shared companion pair. This is the form `transpile()` exposes
+/// and the one the Rust suite drives.
+///
+/// It used to be a top-level walk of its own, which is how it managed to
+/// disagree with the shipped one four times (#254). It is now the same
+/// `walk_top_level` with a different assembly, so a node kind cannot be
+/// handled there and not here.
+///
+/// One synthetic origin covers the whole text: at this level there are no
+/// `#import`s resolved into the source and so no header/implementation
+/// provenance to distinguish, which is why nothing is passed for
+/// `header_ranges`. Every construct therefore lands under the same stem,
+/// and the two buckets become an ordering rather than two files --
+/// declarations first, bodies after, which is what C requires of a single
+/// translation unit anyway.
 pub fn emit(source: &str, program: &Program, pools: &crate::pools::PoolSizes) -> EmitOutput {
-    let tree = crate::parse::parse(source);
-    let root = tree.root_node();
-    let file_vars = file_scope_vars(root, source, program);
-    let mut diags: Vec<Diagnostic> = Vec::new();
-    let mut hoisted_blocks: Vec<(String, String)> = Vec::new();
-    let mut hoisted_structs: Vec<(String, String)> = Vec::new();
-    let mut hoisted_enums: Vec<String> = Vec::new();
-    let mut hoisted_forward_decls: Vec<String> = Vec::new();
-    let mut hoisted_string_literals: Vec<(String, String)> = Vec::new();
-    let mut hoisted_statics: Vec<(String, String)> = Vec::new();
+    let origins = [("main".to_string(), 0..source.len())];
+    let walked = walk_top_level(source, program, pools, &origins, &[]);
 
-    struct Patch {
-        start: usize,
-        end: usize,
-        text: String,
-    }
-    let mut patches: Vec<Patch> = Vec::new();
+    // One stem in practice, but driven off `stem_order` rather than the
+    // maps' own iteration order, which a `HashMap` does not promise.
+    let per_stem = |m: &HashMap<String, Vec<(String, String)>>| -> Vec<(String, String)> {
+        walked.stem_order.iter().filter_map(|s| m.get(s)).flatten().cloned().collect()
+    };
+    let statics = per_stem(&walked.hoisted_statics_by_stem);
+    let blocks = per_stem(&walked.hoisted_blocks_by_stem);
+    let strings = per_stem(&walked.hoisted_strings_by_stem);
 
-    let mut cursor = root.walk();
-    for node in root.children(&mut cursor) {
-        match node.kind() {
-            "compatibility_alias_declaration" => {
-                // `@compatibility_alias NSObject OZObject;` (real
-                // Foundation headers use this so Clang accepts either
-                // name) is, like `@protocol`, never valid C -- elided to
-                // a comment rather than left to break compilation. The
-                // alias itself needs no C-level equivalent: oz_static
-                // resolves class names by their own spelling only, so
-                // code would have to say `OZObject` either way.
-                let mut cursor = node.walk();
-                let names: Vec<&str> = node
-                    .children(&mut cursor)
-                    .filter(|c| c.kind() == "identifier")
-                    .map(|c| node_text(c, source))
-                    .collect();
-                patches.push(Patch {
-                    start: node.start_byte(),
-                    end: node.end_byte(),
-                    text: format!(
-                        "/* @compatibility_alias {} -- not needed, oz_static resolves classes by their own name only */",
-                        names.join(" ")
-                    ),
-                });
-            }
-            "protocol_declaration" => {
-                // A protocol is purely a compile-time contract in this
-                // design too, same as in real Objective-C -- there's no C
-                // runtime representation of it (see `companion.rs`'s
-                // `render_protocol_dispatch`, which dispatches by
-                // "who implements this selector," not by protocol
-                // identity). Its own declaration text is never valid C,
-                // so it must be replaced, not left in place.
-                let (name, _, _) = crate::collect::class_header(node, source);
-                patches.push(Patch {
-                    start: node.start_byte(),
-                    end: node.end_byte(),
-                    text: format!("/* @protocol {} -- compile-time only, see oz_static_dispatch.h/.c */", name),
-                });
-            }
-            "class_interface" => {
-                let (name, _, category) = crate::collect::class_header(node, source);
-                if category.is_some() {
-                    let text = render_category_interface(node, source, &name, program);
-                    patches.push(Patch { start: node.start_byte(), end: node.end_byte(), text });
-                    continue;
-                }
-                let scope = base_scope(&name, program);
-                let mut ctx = EmitCtx {
-                    src: source,
-                    program,
-                    class_name: name.clone(),
-                    scope,
-                    locals: std::collections::HashSet::new(),
-                    diags: Vec::new(),
-                    hoisted_blocks: Vec::new(),
-                    hoisted_structs: Vec::new(),
-                    hoisted_string_literals: Vec::new(),
-                    hoisted_statics: Vec::new(),
-                    block_counter: 0,
-                    pre_stmts: Vec::new(),
-                    sync_cleanups: Vec::new(),
-                    method_return_type: "int".to_string(),
-                    pools,
-                    arc_scopes: Vec::new(),
-                    arc_managed_locals: std::collections::HashSet::new(),
-                };
-                let (header_part, alloc_free_part) = render_interface(node, &mut ctx, program);
-                let text = format!("{}\n{}", header_part, alloc_free_part);
-                diags.extend(ctx.diags);
-                hoisted_structs.extend(ctx.hoisted_structs);
-                patches.push(Patch { start: node.start_byte(), end: node.end_byte(), text });
-            }
-            "class_implementation" => {
-                let (name, _, category) = crate::collect::class_header(node, source);
-                let is_category_impl = category.is_some();
-                let mut ivars_scope = base_scope(&name, program);
-        // File-scope statics are visible inside every method too, and an
-        // ivar of the same name shadows one, so these go in first.
-        for (var, ty) in &file_vars {
-            ivars_scope.entry(var.clone()).or_insert_with(|| ty.clone());
-        }
-                let mut ctx = EmitCtx {
-                    src: source,
-                    program,
-                    class_name: name.clone(),
-                    scope: ivars_scope.clone(),
-                    locals: std::collections::HashSet::new(),
-                    diags: Vec::new(),
-                    hoisted_blocks: Vec::new(),
-                    hoisted_structs: Vec::new(),
-                    hoisted_string_literals: Vec::new(),
-                    hoisted_statics: Vec::new(),
-                    block_counter: 0,
-                    pre_stmts: Vec::new(),
-                    sync_cleanups: Vec::new(),
-                    method_return_type: "int".to_string(),
-                    pools,
-                    arc_scopes: Vec::new(),
-                    arc_managed_locals: std::collections::HashSet::new(),
-                };
-                let mut out = String::new();
-                out.push_str(&banner_box(&header_text(node, source, &["implementation_definition"]), '-'));
-                out.push('\n');
-                // Selectors with a real hand-written body somewhere in
-                // *this* @implementation -- a property's getter/setter
-                // is only synthesized below if it isn't one of these,
-                // regardless of what collect.rs decided when populating
-                // `info.methods` (that bookkeeping is for dispatch
-                // classification, not for "does this need a body").
-                let mut defined_here: std::collections::HashSet<(String, bool)> =
-                    std::collections::HashSet::new();
-                let mut c2 = node.walk();
-                for child in node.children(&mut c2) {
-                    if child.kind() != "implementation_definition" {
-                        continue;
-                    }
-                    let mut c3 = child.walk();
-                    let found_def = child.children(&mut c3).find(|c| c.kind() == "method_definition");
-                    match found_def {
-                        Some(method_def) => {
-                            let known: std::collections::HashSet<String> =
-                                ctx.program.classes.keys().cloned().collect();
-                            let sig = crate::collect::extract_method_sig(method_def, source, &name, &known);
-                            defined_here.insert((sig.selector, sig.is_class_method));
-                            out.push_str(&render_method_definition(
-                                method_def, &mut ctx, &name, &ivars_scope,
-                            ));
-                            out.push('\n');
-                        }
-                        None => {
-                            let mut c4 = child.walk();
-                            let synth =
-                                child.children(&mut c4).find(|c| c.kind() == "property_implementation");
-                            if synth.is_some() {
-                                out.push_str(&format!(
-                                    "/* {} -- synthesized accessor(s) emitted below */\n",
-                                    one_line(node_text(child, source))
-                                ));
-                                continue;
-                            }
-                            // Not a method: e.g. a `static Foo *g;` file-scope
-                            // declaration written directly inside
-                            // @implementation. Copy through (translating any
-                            // message send it happens to contain, with a
-                            // before-comment if so) instead of silently
-                            // dropping it.
-                            ctx.scope = ivars_scope.clone();
-                            out.push_str(&render_stmt_with_comment(child, &mut ctx, ""));
-                            out.push('\n');
-                        }
-                    }
-                }
-                // A category's properties merge into the class it extends,
-                // so every @implementation block for that class sees them
-                // -- synthesize the accessors only from the primary one,
-                // or each block emits its own definition of the same
-                // function.
-                if let Some(info) = program.classes.get(&name).filter(|_| !is_category_impl) {
-                    for prop in &info.properties {
-                        let getter_sel = prop.getter_sel.clone().unwrap_or_else(|| prop.name.clone());
-                        if !defined_here.contains(&(getter_sel, false)) {
-                            out.push_str(&render_synthesized_accessor(&name, prop, true, program));
-                            out.push('\n');
-                        }
-                        if !prop.is_readonly {
-                            let setter_sel = prop
-                                .setter_sel
-                                .clone()
-                                .unwrap_or_else(|| crate::collect::default_setter_sel(&prop.name));
-                            if !defined_here.contains(&(setter_sel, false)) {
-                                out.push_str(&render_synthesized_accessor(&name, prop, false, program));
-                                out.push('\n');
-                            }
-                        }
-                    }
-                }
-                out.push_str(&banner_rule(&format!("end implementation: {}", name), '-'));
-                out.push('\n');
-                diags.extend(ctx.diags);
-                hoisted_blocks.extend(ctx.hoisted_blocks);
-                hoisted_structs.extend(ctx.hoisted_structs);
-                hoisted_string_literals.extend(ctx.hoisted_string_literals);
-                hoisted_statics.extend(ctx.hoisted_statics);
-                patches.push(Patch { start: node.start_byte(), end: node.end_byte(), text: out });
-            }
-            "enum_specifier" => {
-                // A top-level named `enum Tag { ... };` definition. Method
-                // prototypes in the companion header may reference this
-                // type by value (an enum param/return, not just a pointer),
-                // which -- unlike a class's struct -- C cannot forward-
-                // declare: the full definition must be visible before any
-                // such prototype. So this moves to the companion header
-                // (ahead of the per-class prototype sections) exactly like
-                // the root class's struct does, and is elided in-place here
-                // to avoid a duplicate-definition error.
-                let mut c = node.walk();
-                let has_body = node.children(&mut c).any(|ch| ch.kind() == "enumerator_list");
-                if has_body {
-                    hoisted_enums.push(node_text(node, source).to_string());
-                    patches.push(Patch {
-                        start: node.start_byte(),
-                        end: node.end_byte(),
-                        text: "/* enum hoisted to the companion header -- needed there before any method prototype references it by value */".to_string(),
-                    });
-                }
-            }
-            "struct_specifier" | "union_specifier" => {
-                // A top-level `struct Tag;` forward-declaration (no
-                // `field_declaration_list` body -- a real, full `struct
-                // Tag { ... };` definition, if this spike ever needs to
-                // support one, isn't this case). Real Foundation headers
-                // use this for a type only ever referenced by pointer in
-                // a method signature (e.g. `NSFastEnumerationState` in
-                // `countByEnumeratingWithState:`), letting Clang parse
-                // the AST without the real type -- but the *generated*
-                // method prototype needs that forward declare visible
-                // too, and not just wherever this text happened to sit
-                // in the original source: the shared companion header
-                // (OZ-091) unconditionally declares every class's every
-                // method prototype, `NSFastEnumerationState` included,
-                // regardless of which file's `source_c` this text landed
-                // in. Same fix and same hoist-to-companion-header
-                // mechanism as `enum_specifier` just above.
-                let mut c = node.walk();
-                let has_body = node.children(&mut c).any(|ch| ch.kind() == "field_declaration_list");
-                if !has_body {
-                    hoisted_forward_decls.push(node_text(node, source).to_string());
-                    patches.push(Patch {
-                        start: node.start_byte(),
-                        end: node.end_byte(),
-                        text: "/* forward-declared struct hoisted to the companion header -- needed there before any method prototype references it by pointer */".to_string(),
-                    });
-                }
-            }
-            "function_definition" => {
-                // Plain top-level C function (e.g. main()): may still
-                // contain message sends. No self/ivars in scope.
-                let mut ctx = EmitCtx {
-                    src: source,
-                    program,
-                    class_name: String::new(),
-                    // No self or ivars here, but a file-scope object
-                    // variable is in scope for a top-level function just as
-                    // much as for a method -- `samples/gpio_demo`'s
-                    // `[led toggle]` sits in `main()`.
-                    scope: file_vars.clone(),
-                    locals: std::collections::HashSet::new(),
-                    diags: Vec::new(),
-                    hoisted_blocks: Vec::new(),
-                    hoisted_structs: Vec::new(),
-                    hoisted_string_literals: Vec::new(),
-                    hoisted_statics: Vec::new(),
-                    block_counter: 0,
-                    pre_stmts: Vec::new(),
-                    sync_cleanups: Vec::new(),
-                    method_return_type: "int".to_string(),
-                    pools,
-                    arc_scopes: Vec::new(),
-                    arc_managed_locals: std::collections::HashSet::new(),
-                };
-                let mut c2 = node.walk();
-                if let Some(body) =
-                    node.children(&mut c2).find(|c| c.kind() == "compound_statement")
-                {
-                    // The other half of gap A, and missing here for the same
-                    // reason as the `declaration` arm above (#246): a free
-                    // function's *signature* needs its class names tagged too
-                    // -- `static Sensor *createSensor(int v)`. Patched as its
-                    // own range, disjoint from the body's, so the two edits
-                    // cannot interfere.
-                    let sig_edits = class_tag_edits(node, source, program);
-                    let sig_text =
-                        apply_edits(source, node.start_byte(), body.start_byte(), &sig_edits);
-                    if sig_text != source[node.start_byte()..body.start_byte()] {
-                        patches.push(Patch {
-                            start: node.start_byte(),
-                            end: body.start_byte(),
-                            text: sig_text,
-                        });
-                    }
-                    if needs_translation(body) {
-                        // The static bar applies to a plain C function's body
-                        // exactly as it does to a method's -- see
-                        // `staticbar::check_function_body`. Guarding on
-                        // `needs_translation` costs nothing: every construct
-                        // the bar rejects is Objective-C, so a body with none
-                        // has nothing to reject.
-                        let reject_diags =
-                            crate::staticbar::check_function_body(body, source, program);
-                        if !reject_diags.is_empty() {
-                            ctx.diags.extend(reject_diags);
-                        } else {
-                            // Parameters first, so a body declaration of the
-                            // same name shadows the parameter rather than the
-                            // other way round.
-                            collect_function_params(node, &mut ctx);
-                            collect_local_decls(body, &mut ctx);
-                            let text = render_body_with_comments(body, &mut ctx);
-                            if text != node_text(body, source) {
-                                patches.push(Patch { start: body.start_byte(), end: body.end_byte(), text });
-                            }
-                        }
-                    }
-                }
-                diags.extend(ctx.diags);
-                hoisted_blocks.extend(ctx.hoisted_blocks);
-                hoisted_structs.extend(ctx.hoisted_structs);
-                hoisted_string_literals.extend(ctx.hoisted_string_literals);
-                hoisted_statics.extend(ctx.hoisted_statics);
-            }
-            "declaration" => {
-                // A bare class name in a top-level declaration is not valid
-                // C: `static OZHeap *sHeap;` has to become
-                // `static struct OZHeap *sHeap;`. `emit_split` has done this
-                // since gap A was fixed; this arm is the same edit for the
-                // single-file path, which had no `declaration` arm at all and
-                // so copied the spelling through verbatim (#246).
-                //
-                // Nothing else about the declaration is rewritten -- an
-                // initializer containing Objective-C at file scope is not
-                // something the static subset accepts, so there is no
-                // expression to render here.
-                let edits = class_tag_edits(node, source, program);
-                if !edits.is_empty() {
-                    let text =
-                        apply_edits(source, node.start_byte(), node.end_byte(), &edits);
-                    patches.push(Patch {
-                        start: node.start_byte(),
-                        end: node.end_byte(),
-                        text,
-                    });
-                }
-            }
-            _ => {}
-        }
-    }
-
-    patches.sort_by(|a, b| b.start.cmp(&a.start));
-    let mut out = source.to_string();
-    for p in &patches {
-        out.replace_range(p.start..p.end, &p.text);
-    }
-
-    // Hoisted-block prototypes go ahead of every call site (so forward
-    // references to a not-yet-defined function still compile); the
-    // definitions are appended once, after everything else, so each one
-    // still sees whatever file-scope static/global it references,
-    // wherever in the original source that was declared.
-    let mut prototypes = String::new();
-    let mut definitions = String::new();
-
-    // `__block`-qualified locals, promoted to file-scope statics (see
-    // `hoist_block_var`) -- fully self-contained (only a simple literal
-    // initializer survives the promotion), so unlike blocks/string
-    // literals below there's no separate prototype/definition split:
-    // the whole `static TYPE name [= init];` line just needs to precede
-    // every reference to it, guaranteed by living in `prototypes`, ahead
-    // of the class code in `out` and of the hoisted block definitions
-    // that may reference it.
-    if !hoisted_statics.is_empty() {
-        prototypes.push_str("/* __block-qualified locals, promoted to file scope */\n");
-        for (_, decl) in &hoisted_statics {
-            prototypes.push_str(decl);
-            prototypes.push('\n');
-        }
-        prototypes.push('\n');
-    }
-
-    if !hoisted_blocks.is_empty() {
-        prototypes.push_str("/* non-capturing blocks, hoisted out of their enclosing methods -- prototypes (defined below, after every class) */\n");
-        definitions.push_str("\n/* non-capturing blocks, hoisted out of their enclosing methods */\n");
-        for (prototype, definition) in &hoisted_blocks {
-            prototypes.push_str(prototype);
-            definitions.push_str(definition);
-            definitions.push('\n');
-        }
-        prototypes.push('\n');
-    }
-
-    // Boxed string literals (`@"..."`) -- same prototype-ahead /
-    // definition-after split as blocks, for the same reason: the real
-    // definition needs `struct OZString` (defined inline at OZString's
-    // own `@interface`, which may appear later in the source than an
-    // earlier class's use of the literal) already visible.
-    if !hoisted_string_literals.is_empty() {
-        prototypes.push_str("/* boxed string literals, hoisted -- extern forward declarations (defined below, after every class) */\n");
-        definitions.push_str("\n/* boxed string literals, hoisted -- static struct OZString instances */\n");
-        for (prototype, definition) in &hoisted_string_literals {
-            prototypes.push_str(prototype);
-            definitions.push_str(definition);
-        }
-        prototypes.push('\n');
-    }
-
-    out = format!(
-        "/* Auto-generated by oz_static -- do not edit */\n#include \"oz_static_dispatch.h\"\n\n{}{}{}",
-        prototypes, out, definitions
+    let mut out = String::from(
+        "/* Auto-generated by oz_static -- do not edit */\n#include \"oz_static_dispatch.h\"\n\n",
     );
 
-    let (companion_h, companion_c) =
-        crate::companion::render(
-            program,
-            &hoisted_structs,
-            &hoisted_enums,
-            &hoisted_forward_decls,
-            // Nothing to hoist: this path emits one file, patching the
-            // original text, so a plain C `struct Tag { ... };` already
-            // stands exactly where the source put it -- ahead of every
-            // use of it, since C requires that of the source too.
-            &[],
-            pools,
-            &crate::imports::collect_system_includes(source),
-        );
+    // A promoted `__block` local is a self-contained
+    // `static TYPE name [= init];` line, so unlike the blocks and literals
+    // below it needs no prototype/definition split: it only has to precede
+    // every reference to it, which living up here guarantees.
+    if !statics.is_empty() {
+        out.push_str("/* __block-qualified locals, promoted to file scope */\n");
+        for (_, decl) in &statics {
+            out.push_str(decl);
+            out.push('\n');
+        }
+        out.push('\n');
+    }
 
-    EmitOutput { source_c: out, companion_h, companion_c, diagnostics: diags }
+    // Prototypes ahead of every call site, definitions once at the very
+    // end. A hoisted block or boxed literal can be used by a class that
+    // appears earlier in the text than the type its own definition needs
+    // (`struct OZString` is defined at OZString's `@interface`), so the
+    // definition cannot go where the prototype does.
+    if !blocks.is_empty() {
+        out.push_str("/* non-capturing blocks, hoisted out of their enclosing methods -- prototypes (defined below, after every class) */\n");
+        for (prototype, _) in &blocks {
+            out.push_str(prototype);
+        }
+        out.push('\n');
+    }
+    if !strings.is_empty() {
+        out.push_str("/* boxed string literals, hoisted -- extern forward declarations (defined below, after every class) */\n");
+        for (prototype, _) in &strings {
+            out.push_str(prototype);
+        }
+        out.push('\n');
+    }
+
+    for stem in &walked.stem_order {
+        if let Some(sections) = walked.headers.get(stem) {
+            out.push_str(&sections.join("\n"));
+            out.push('\n');
+        }
+    }
+    for stem in &walked.stem_order {
+        if let Some(sections) = walked.bodies.get(stem) {
+            out.push_str(&sections.join("\n\n"));
+            out.push('\n');
+        }
+    }
+
+    if !blocks.is_empty() {
+        out.push_str("\n/* non-capturing blocks, hoisted out of their enclosing methods */\n");
+        for (_, definition) in &blocks {
+            out.push_str(definition);
+            out.push('\n');
+        }
+    }
+    if !strings.is_empty() {
+        out.push_str("\n/* boxed string literals, hoisted -- static struct OZString instances */\n");
+        for (_, definition) in &strings {
+            out.push_str(definition);
+        }
+    }
+
+    let (companion_h, companion_c) = crate::companion::render(
+        program,
+        &walked.hoisted_structs,
+        &walked.hoisted_enums,
+        &walked.hoisted_forward_decls,
+        &walked.hoisted_c_structs,
+        pools,
+        &crate::imports::collect_system_includes(source),
+    );
+
+    EmitOutput { source_c: out, companion_h, companion_c, diagnostics: walked.diags }
 }
 
 pub struct EmitSplitOutput {
@@ -4329,29 +4041,66 @@ fn note_stem(order: &mut Vec<String>, stem: &str) {
     }
 }
 
-/// Origin-aware sibling of `emit()` (OZ-096): instead of one combined
-/// `source_c` covering the whole (possibly multi-file,
-/// `#import`-resolved) `source`, buckets each top-level construct's
-/// already-rendered text by which `origins` range it falls in, and by
-/// whether it's interface-shaped (struct + prototypes, no bodies --
-/// exactly what `class_interface` already renders as) or
-/// implementation-shaped (method bodies -- exactly what
-/// `class_implementation` already renders as). Reuses every render_*
-/// helper `emit()` itself uses, completely unchanged; only the outer
-/// assembly differs. `emit()` itself is untouched, still used directly
-/// by every existing test via `transpile()`, which has no concept of
-/// multiple origin files.
+/// Everything the top-level walk produces, before either assembler has
+/// decided where to put it.
+///
+/// Each construct is bucketed by which origin file it came from and by
+/// whether it is interface-shaped (struct + prototypes, no bodies --
+/// exactly what `class_interface` renders as) or implementation-shaped
+/// (method bodies -- exactly what `class_implementation` renders as). What
+/// an assembler then does with a bucket is a placement decision: one file
+/// per origin (`emit_split`) or one translation unit (`emit`).
+struct TopLevel {
+    /// Origin stems in first-seen (textual) order.
+    stem_order: Vec<String>,
+    headers: HashMap<String, Vec<String>>,
+    bodies: HashMap<String, Vec<String>>,
+    /// Stems whose generated `.h` must include another stem's `.h`, because
+    /// a class there embeds a non-root superclass by value.
+    extra_includes: HashMap<String, HashSet<String>>,
+    hoisted_blocks_by_stem: HashMap<String, Vec<(String, String)>>,
+    hoisted_strings_by_stem: HashMap<String, Vec<(String, String)>>,
+    hoisted_statics_by_stem: HashMap<String, Vec<(String, String)>>,
+    /// Destined for the shared companion header rather than any one
+    /// origin's -- see `companion::render`.
+    hoisted_structs: Vec<(String, String)>,
+    hoisted_enums: Vec<String>,
+    hoisted_forward_decls: Vec<String>,
+    hoisted_c_structs: Vec<String>,
+    /// Which origin owns each class's declaration.
+    class_to_stem: HashMap<String, String>,
+    diags: Vec<Diagnostic>,
+}
+
+/// The one walk over the top-level nodes, and so the one place a node kind
+/// is handled (#254).
+///
+/// There used to be two: this one and a second inside `emit()`, each with
+/// its own match on `node.kind()`. They disagreed about what valid output
+/// looks like four separate times -- gap R (#240), #246, #250 and #251 --
+/// and none of those was a forgotten case so much as two places answering
+/// the same question (*is this a local? is this an object declaration? does
+/// this type need a tag?*) with nothing forcing them to answer alike. The
+/// asymmetry bit in both directions, so neither walk was simply the more
+/// complete one: #246 was `emit()` missing a `declaration` arm outright,
+/// while gap C's seventh cause was the split walk *dropping* a top-level
+/// struct that `emit()` kept by not touching it.
+///
+/// Both entry points now call this, and differ only in how they assemble
+/// what it returns. Adding a node kind here reaches both by construction,
+/// which is the property the four fixes above each restored by hand.
 ///
 /// `origins` is `imports::ResolvedSource::origins`: an ordered list of
 /// `(stem, byte_range)` covering every byte of `source` (the same stem
-/// may appear more than once, non-contiguously).
-pub fn emit_split(
+/// may appear more than once, non-contiguously). `emit()` passes a single
+/// synthetic origin covering the whole text.
+fn walk_top_level(
     source: &str,
     program: &Program,
-    origins: &[(String, Range<usize>)],
     pools: &crate::pools::PoolSizes,
+    origins: &[(String, Range<usize>)],
     header_ranges: &[Range<usize>],
-) -> EmitSplitOutput {
+) -> TopLevel {
     let tree = crate::parse::parse(source);
     let root = tree.root_node();
     let file_vars = file_scope_vars(root, source, program);
@@ -4442,25 +4191,7 @@ pub fn emit_split(
                     }
                 }
                 let scope = base_scope(&name, program);
-                let mut ctx = EmitCtx {
-                    src: source,
-                    program,
-                    class_name: name.clone(),
-                    scope,
-                    locals: HashSet::new(),
-                    diags: Vec::new(),
-                    hoisted_blocks: Vec::new(),
-                    hoisted_structs: Vec::new(),
-                    hoisted_string_literals: Vec::new(),
-                    hoisted_statics: Vec::new(),
-                    block_counter: 0,
-                    pre_stmts: Vec::new(),
-                    sync_cleanups: Vec::new(),
-                    method_return_type: "int".to_string(),
-                    pools,
-                    arc_scopes: Vec::new(),
-                    arc_managed_locals: std::collections::HashSet::new(),
-                };
+                let mut ctx = EmitCtx::new(source, program, name.clone(), scope, pools);
                 let (header_part, alloc_free_part) = render_interface(node, &mut ctx, program);
                 diags.extend(ctx.diags);
                 hoisted_structs.extend(ctx.hoisted_structs);
@@ -4478,25 +4209,8 @@ pub fn emit_split(
         for (var, ty) in &file_vars {
             ivars_scope.entry(var.clone()).or_insert_with(|| ty.clone());
         }
-                let mut ctx = EmitCtx {
-                    src: source,
-                    program,
-                    class_name: name.clone(),
-                    scope: ivars_scope.clone(),
-                    locals: HashSet::new(),
-                    diags: Vec::new(),
-                    hoisted_blocks: Vec::new(),
-                    hoisted_structs: Vec::new(),
-                    hoisted_string_literals: Vec::new(),
-                    hoisted_statics: Vec::new(),
-                    block_counter: 0,
-                    pre_stmts: Vec::new(),
-                    sync_cleanups: Vec::new(),
-                    method_return_type: "int".to_string(),
-                    pools,
-                    arc_scopes: Vec::new(),
-                    arc_managed_locals: std::collections::HashSet::new(),
-                };
+                let mut ctx =
+                    EmitCtx::new(source, program, name.clone(), ivars_scope.clone(), pools);
                 let mut out = String::new();
                 out.push_str(&banner_box(&header_text(node, source, &["implementation_definition"]), '-'));
                 out.push('\n');
@@ -4591,15 +4305,16 @@ pub fn emit_split(
                     );
                 } else {
                     // A full `struct Tag { ... };` definition written in
-                    // plain C in one of the spliced sources. `emit()` can
-                    // leave one where it stands, because that path patches
-                    // the original text and anything unpatched survives;
-                    // here output is built only from what each arm pushes,
-                    // so until this existed such a definition was dropped
-                    // outright -- `samples/hello_category`'s `struct color`
-                    // came out as nothing but its trailing `;`, and every
-                    // use of it failed with "variable has incomplete type
-                    // 'struct color'".
+                    // plain C in one of the spliced sources. Output is built
+                    // only from what each arm pushes, so until this arm
+                    // existed such a definition was dropped outright --
+                    // `samples/hello_category`'s `struct color` came out as
+                    // nothing but its trailing `;`, and every use of it
+                    // failed with "variable has incomplete type 'struct
+                    // color'". `emit()` had concealed that by patching the
+                    // original text, where anything no arm claimed survived
+                    // untouched; since #254 it shares this walk and so
+                    // shares this arm.
                     //
                     // It goes to the companion header rather than this
                     // origin's own `.h` because that is the header every
@@ -4622,29 +4337,12 @@ pub fn emit_split(
                 }
             }
             "function_definition" => {
-                let mut ctx = EmitCtx {
-                    src: source,
-                    program,
-                    class_name: String::new(),
-                    // No self or ivars here, but a file-scope object
-                    // variable is in scope for a top-level function just as
-                    // much as for a method -- `samples/gpio_demo`'s
-                    // `[led toggle]` sits in `main()`.
-                    scope: file_vars.clone(),
-                    locals: HashSet::new(),
-                    diags: Vec::new(),
-                    hoisted_blocks: Vec::new(),
-                    hoisted_structs: Vec::new(),
-                    hoisted_string_literals: Vec::new(),
-                    hoisted_statics: Vec::new(),
-                    block_counter: 0,
-                    pre_stmts: Vec::new(),
-                    sync_cleanups: Vec::new(),
-                    method_return_type: "int".to_string(),
-                    pools,
-                    arc_scopes: Vec::new(),
-                    arc_managed_locals: std::collections::HashSet::new(),
-                };
+                // No self or ivars here, but a file-scope object variable is
+                // in scope for a top-level function just as much as for a
+                // method -- `samples/gpio_demo`'s `[led toggle]` sits in
+                // `main()`.
+                let mut ctx =
+                    EmitCtx::new(source, program, String::new(), file_vars.clone(), pools);
                 let sig_edits = class_tag_edits(node, source, program);
                 let mut text = apply_edits(source, node.start_byte(), node.end_byte(), &sig_edits);
                 let mut c2 = node.walk();
@@ -4752,6 +4450,54 @@ pub fn emit_split(
             }
         }
     }
+
+    TopLevel {
+        stem_order,
+        headers,
+        bodies,
+        extra_includes,
+        hoisted_blocks_by_stem,
+        hoisted_strings_by_stem,
+        hoisted_statics_by_stem,
+        hoisted_structs,
+        hoisted_enums,
+        hoisted_forward_decls,
+        hoisted_c_structs,
+        class_to_stem,
+        diags,
+    }
+}
+
+/// Origin-aware assembler (OZ-096): one `.h`/`.c` pair per origin file,
+/// which is what the CLI -- and therefore every real build -- emits.
+///
+/// The walk is shared with `emit()`; everything here is placement. What
+/// makes the two differ at all is that a split program has real
+/// translation-unit boundaries, so anything one origin declares and
+/// another uses needs an explicit `#include` where the single-file design
+/// got the same reach from textual order alone.
+pub fn emit_split(
+    source: &str,
+    program: &Program,
+    origins: &[(String, Range<usize>)],
+    pools: &crate::pools::PoolSizes,
+    header_ranges: &[Range<usize>],
+) -> EmitSplitOutput {
+    let TopLevel {
+        stem_order,
+        headers,
+        bodies,
+        extra_includes,
+        hoisted_blocks_by_stem,
+        hoisted_strings_by_stem,
+        hoisted_statics_by_stem,
+        hoisted_structs,
+        hoisted_enums,
+        hoisted_forward_decls,
+        hoisted_c_structs,
+        class_to_stem,
+        diags,
+    } = walk_top_level(source, program, pools, origins, header_ranges);
 
     // The root class's own header may carry file-scope macros (e.g.
     // `OZObject.h`'s `#define nil ((id)0)`) that every class implicitly

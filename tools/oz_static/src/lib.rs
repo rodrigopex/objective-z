@@ -128,6 +128,11 @@ pub fn transpile_with_options(
 /// `origins` comes from `imports::ResolvedSource` -- only `main.rs` (or
 /// any future filesystem-aware caller) has that; `transpile()` itself
 /// stays the pure, single-string function every existing test uses.
+///
+/// The two are no longer separate implementations: since #254 both
+/// assemble the output of one `emit::walk_top_level`, so they differ in
+/// where text is placed and not in what text a node kind produces. This is
+/// the one the CLI drives, and so the one every real build drives.
 pub fn transpile_split(
     source: &str,
     origins: &[(String, std::ops::Range<usize>)],
