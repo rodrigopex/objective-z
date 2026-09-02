@@ -47,14 +47,35 @@ use std::process::Command;
 /// Cases whose generated C does not compile yet, each with the reason.
 /// The cause is understood; it is not a mystery.
 ///
-/// Empty, and the test asserts that a listed case *still* fails -- so this
-/// cannot quietly decay into skipped cases, and emptying it was forced
-/// rather than chosen. The last entry was `memory/heap_alloc.m`, which
-/// needed two things that have since landed: `+allocWithHeap:` support, and
-/// a fix to the SDK headers where both `OZHeap.h` and
-/// `platform/oz_platform.h` defined `struct oz_heap_inner` under a guard
-/// neither of them set.
-const KNOWN_CC_FAILURES: &[(&str, &str)] = &[];
+/// The test asserts that a listed case *still* fails, so this cannot
+/// quietly decay into skipped cases and fixing one of these fails here
+/// until the entry is removed.
+///
+/// It was empty for a while, and worth knowing why it is not now: nothing
+/// regressed. Tightening this check to `-std=c17 -pedantic-errors` (#266)
+/// and then actually running it in CI against gcc (#269) surfaced a
+/// violation that had been in every generated program using OZTimer all
+/// along. Apple clang does not diagnose that conversion, so a maintainer's
+/// machine reported the whole corpus clean.
+///
+/// Before these two, the last entry was `memory/heap_alloc.m`, which needed
+/// two things that have since landed: `+allocWithHeap:` support, and a fix
+/// to the SDK headers where both `OZHeap.h` and `platform/oz_platform.h`
+/// defined `struct oz_heap_inner` under a guard neither of them set.
+const KNOWN_CC_FAILURES: &[(&str, &str)] = &[
+    (
+        "foundation/timer_basic.m",
+        "#267: generated `(void*)(expBlock)` converts a block's function \
+         pointer to an object pointer, which ISO C forbids in either \
+         direction. `__oz_timer_setup` takes `void *` on both PAL backends \
+         because ARC forbids a direct block-to-function-pointer cast, so the \
+         fix is a PAL signature decision rather than a codegen one.",
+    ),
+    (
+        "foundation/timer_zephyr.m",
+        "#267, same cast -- the other corpus case that builds an OZTimer.",
+    ),
+];
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -178,6 +199,37 @@ fn compile_generated(dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Does this `cc` diagnose converting a function pointer to an object
+/// pointer, under the flags `compile_generated` uses?
+///
+/// Both entries in `KNOWN_CC_FAILURES` fail for exactly that reason, and
+/// whether it *is* a reason depends on the compiler: gcc rejects it under
+/// `-pedantic-errors`, Apple clang does not diagnose it at all. So the
+/// allowlist's "these must still fail" assertion is only meaningful where
+/// the compiler agrees there is something to fail on -- probed here rather
+/// than assumed from the compiler's name, which is how you end up asserting
+/// against a version rather than a behaviour.
+///
+/// Without this the suite could not be green on both: on gcc the two timer
+/// cases fail as listed, and on Apple clang they compile and the allowlist
+/// would report them as fixed.
+fn cc_diagnoses_fptr_to_object_pointer() -> bool {
+    let probe = std::env::temp_dir().join("oz_static_fptr_probe.c");
+    if std::fs::write(&probe, "void f(void);\nvoid *p = (void *)f;\n").is_err() {
+        return false;
+    }
+    let out = Command::new("cc")
+        .args(["-std=c17", "-pedantic-errors", "-c"])
+        .arg(&probe)
+        .args(["-o", "/dev/null"])
+        .output();
+    let _ = std::fs::remove_file(&probe);
+    match out {
+        Ok(o) => !o.status.success(),
+        Err(_) => false,
+    }
+}
+
 /// Every case in the shared corpus must transpile. No allowlist: a case
 /// oz_static cannot even read is a parity gap, not a known limitation.
 #[test]
@@ -218,9 +270,16 @@ fn corpus_generated_c_compiles() {
     let mut unexpected_failures = Vec::new();
     let mut unexpected_successes = Vec::new();
 
+    // Both current entries fail on a function-pointer-to-object-pointer
+    // conversion (#267), which not every compiler diagnoses. Where this
+    // `cc` does not, they are expected to compile and the "still fails"
+    // assertion has nothing to say.
+    let strict = cc_diagnoses_fptr_to_object_pointer();
+
     for case in &cases {
         let id = case_id(case);
-        let expected_to_fail = KNOWN_CC_FAILURES.iter().any(|(known, _)| *known == id);
+        let expected_to_fail =
+            strict && KNOWN_CC_FAILURES.iter().any(|(known, _)| *known == id);
         let outdir = tmp.join(id.replace('/', "_").replace(".m", ""));
         std::fs::create_dir_all(&outdir).unwrap();
 
