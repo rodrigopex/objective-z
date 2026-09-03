@@ -40,19 +40,20 @@ pub fn compile_and_run_strict(source: &str, stem: &str) -> String {
 /// Same as `compile_and_run`, plus the host Zephyr stub headers on the
 /// include path.
 ///
-/// A class wrapping a kernel primitive (OZTimer's `struct k_timer`) keeps
-/// its `#include <zephyr/kernel.h>` through transpilation, and there is
-/// no Zephyr on host, so it resolves to
-/// `tests/behavior/include/zephyr_stubs/zephyr/kernel.h` -- the same
-/// self-contained stub (a `k_timer` with `expiry_fn`/`stop_fn`/
-/// `user_data`, no-op `k_timer_start`/`k_timer_stop`, and the real
-/// `__oz_timer_setup`) the oracle's own host-side timer tests compile
-/// against.
+/// A source that names a kernel primitive keeps its
+/// `#include <zephyr/kernel.h>` through transpilation, and there is no
+/// Zephyr on host, so it resolves to
+/// `tests/behavior/include/zephyr_stubs/zephyr/kernel.h` -- a
+/// self-contained stand-in with a `k_timer`, no-op
+/// `k_timer_start`/`k_timer_stop`, and `k_timer_user_data_get`/`_set`.
+///
+/// It used to describe `__oz_timer_setup` too, which is gone: OZTimer was
+/// retired in #267 in favour of `OZM(K_TIMER_DEFINE, ...)`, taking that
+/// helper with it from both this stub and the Zephyr PAL.
 ///
 /// This used to also force `-include zephyr/kernel.h`, standing in for a
-/// propagation oz_static didn't do: the companion header declares
-/// `OZTimer_initWithUserData_expiry_stop_`, whose parameters mention
-/// `struct k_timer`, and nothing had declared that struct at that point.
+/// propagation oz_static didn't do: a companion header's prototypes could
+/// mention `struct k_timer` with nothing having declared it at that point.
 /// `imports::collect_system_includes` now carries the source's own angled
 /// includes into that header, so a plain `-I` is enough and the ordering
 /// is fixed in the generated output rather than compensated for from
@@ -545,34 +546,3 @@ pub fn ozheap_src() -> String {
     assemble(&header, include_str!("../../../../src/OZHeap.m"))
 }
 
-/// OZTimer, the `k_timer` wrapper -- assembled from
-/// `include/oz_sdk/Foundation/OZTimer.h` / `src/OZTimer.m` verbatim, no
-/// cuts and no rewrites.
-///
-/// Its `(__bridge void *)` casts used to need rewriting to `(void *)`
-/// here, because `__bridge` was copied through into the generated C,
-/// where it is not a keyword (`error: use of undeclared identifier
-/// '__bridge'`) -- meaning the real `src/OZTimer.m` could not be
-/// transpiled at all. `emit::render_cast_expression` now drops the
-/// qualifier, as the oracle does (its committed
-/// `tests/zephyr/generated/OZTimer_ozm.c:28` reads
-/// `__oz_timer_setup(&self->_timer, (void *)expBlock, ...)`, and
-/// `__bridge` appears nowhere under `tests/zephyr/generated/`).
-///
-/// What these tests cover: a
-/// value-typed `struct k_timer` ivar, two block-typed ivars and two
-/// block-typed parameters (both lowered to plain function pointers by
-/// `emit::lower_ivar_decl` and `collect::detect_block_param_type`), a
-/// strong `id` ivar, and a `-dealloc` that touches the embedded timer.
-///
-/// Requires `OZObject` (`common::ozobject_src`) in scope, and must be
-/// compiled with `compile_and_run_with_zephyr_stubs` -- the header's
-/// `#include <zephyr/kernel.h>` resolves to the host stub under
-/// `tests/behavior/include/zephyr_stubs/`, the same one the oracle's own
-/// host-side timer behavior tests use.
-pub fn oztimer_src() -> String {
-    assemble(
-        include_str!("../../../../include/oz_sdk/Foundation/OZTimer.h"),
-        include_str!("../../../../src/OZTimer.m"),
-    )
-}

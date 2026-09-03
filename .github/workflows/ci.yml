@@ -332,6 +332,66 @@ jobs:
           fi
           echo "PASS: All PAL functions inlined (zero call sites)"
 
+  # ISO C validity of the generated C, on target (#266, gated since #267).
+  #
+  # `rust-tests` already gates the *corpus* at `-std=c17 -pedantic-errors`
+  # on host. This asks the same of the samples with the real ARM
+  # toolchain, which is a different question: the item-pool `;` gap Y
+  # found was valid on host and a constraint violation on Zephyr, so no
+  # host check could see it.
+  #
+  # It is a gate, not a report: `objz_pedantic_sweep.py` exits non-zero
+  # unless what it finds matches `KNOWN_PEDANTIC` exactly -- a new
+  # violation fails, and so does a baseline entry that stopped occurring,
+  # which is `KNOWN_CC_FAILURES`'s discipline. It ran only on a
+  # maintainer's machine until now, which is how three sites reached main
+  # in #275 unmeasured; #269 is the standing lesson that a check CI does
+  # not run is a check that holds nowhere.
+  pedantic-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build gperf device-tree-compiler gcc-multilib g++-multilib
+
+      - name: Install west
+        run: pip install west
+
+      - name: Cache Zephyr SDK
+        uses: actions/cache@v4
+        with:
+          path: /home/runner/zephyr-sdk-1.0.1
+          key: zephyr-sdk-1.0.1-arm-riscv-llvm
+
+      - name: Install Zephyr SDK (with LLVM)
+        run: .github/install-zephyr-sdk.sh
+
+      - name: Initialize workspace
+        run: |
+          west init -l .
+          west update --fetch-opt=--depth=1
+
+      - name: Install Zephyr deps
+        run: |
+          pip install -r ../zephyr/scripts/requirements-base.txt natsort tabulate
+          pip install jinja2 tree-sitter tree-sitter-objc
+
+      # OZ_CLANG so the AST dumps use the SDK's tested clang 19 rather than
+      # whatever is on PATH -- the same substitution #269 found running
+      # unnoticed for the life of this workflow.
+      - name: Pedantic sweep (mps2/an385)
+        run: >
+          PYTHONPATH=tools
+          OZ_CLANG=$ZEPHYR_SDK_INSTALL_DIR/llvm/bin/clang
+          python3 scripts/objz_pedantic_sweep.py --board mps2/an385
+
   # Zephyr integration tests (native_sim)
   #
   # Note what this does and does not prove: tests/zephyr/CMakeLists.txt

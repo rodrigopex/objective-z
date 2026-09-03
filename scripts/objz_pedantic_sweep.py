@@ -73,20 +73,6 @@ SKIP = {
 # does not churn this table, while the site count is matched exactly.
 KNOWN_PEDANTIC = {
     (
-        "*",
-        "Foundation/OZTimer.c",
-        "ISO C forbids conversion of function pointer to object pointer type",
-    ): (
-        2,
-        "oz_static lowers `(__bridge void *)block` to `(void*)(block)`, and "
-        "a block is a function pointer. __oz_timer_setup takes `void *` "
-        "because ARC forbids a direct block-to-function-pointer cast, so "
-        "this is a signature decision rather than a codegen one -- filed "
-        "as #267. Corrected by #272: the helper is not on \"both PAL "
-        "backends\" -- it is in oz_platform_zephyr.h and in the behaviour "
-        "tests' Zephyr stand-in, while the host PAL has no timer at all.",
-    ),
-    (
         "gpio_demo",
         "main.c",
         'ISO C99 requires at least one argument for the "..." in a variadic macro',
@@ -105,6 +91,24 @@ KNOWN_PEDANTIC = {
         4,
         "ZBUS_CHAN_DEFINE in the sample's own passthrough C -- same as "
         "gpio_demo's, inside Zephyr's macro.",
+    ),
+    (
+        "zbus_service",
+        "main.c",
+        'ISO C99 requires at least one argument for the "..." in a variadic macro',
+    ): (
+        2,
+        "ZBUS_OBS_DECLARE(lis_print_temp) in the sample's own passthrough "
+        "C, which the sample needs because the OZM-wrapped "
+        "ZBUS_LISTENER_DEFINE above it is discarded on the Objective-C "
+        "side and so leaves Clang no symbol to check ZBUS_CHAN_ADD_OBS "
+        "against. The violation is inside Zephyr's own "
+        "FOR_EACH_NONEMPTY_TERM, not in anything oz_static emits -- same "
+        "class as the two entries above. Its trailing `;` *was* a third "
+        "site and is fixed rather than listed: ZBUS_OBS_DECLARE "
+        "terminates each declaration itself, so the semicolon was an "
+        "empty declaration. That is the opposite of ZBUS_CHAN_DEFINE "
+        "below, where the `;` is required.",
     ),
     (
         "zbus_service",

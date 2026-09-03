@@ -47,7 +47,7 @@ OZM(ZBUS_LISTENER_DEFINE, lis_print_temp, ^(const struct zbus_channel *chan) {
 	OZLog(" + [listener] Temperature: %d", report->temperature.value);
 });
 
-ZBUS_OBS_DECLARE(lis_print_temp);
+ZBUS_OBS_DECLARE(lis_print_temp)
 
 ZBUS_CHAN_ADD_OBS(chan_temperature_service_report, lis_print_temp, 3);
 

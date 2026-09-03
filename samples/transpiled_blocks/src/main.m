@@ -49,6 +49,35 @@ static int apply_twice(int (^op)(int), int v)
 	return op(op(v));
 }
 
+/*
+ * A real Zephyr timer wired straight to an inline block -- what replaces
+ * OZTimer (#267). `K_TIMER_DEFINE` stores a `k_timer_expiry_t`, and
+ * Objective-C refuses block-to-function-pointer conversion in every
+ * position, so `OZM` carries it: discarded unparsed on the Objective-C
+ * side, expanded to the real macro in the generated C, where the literal
+ * has already become a hoisted function's name. See
+ * include/oz_sdk/Foundation/OZMacro.h.
+ *
+ * The block captures nothing -- it reaches its state through a file-scope
+ * variable, which the static bar permits and does not count as a capture.
+ * That is the constraint every hoisted block lives under, and the reason
+ * a callback needing per-instance context uses `k_timer_user_data_get`.
+ */
+static volatile int timer_fires;
+
+OZM(K_TIMER_DEFINE, demo_timer, ^(struct k_timer *t) {
+	(void)t;
+	timer_fires = timer_fires + 1;
+}, NULL);
+
+#ifdef __OBJC__
+/* The definition above is discarded on this side, so Clang needs a
+ * declaration for the `k_timer_start` below. Passed through to the
+ * generated C, where `__OBJC__` is undefined and the real macro defines
+ * it. */
+static struct k_timer demo_timer;
+#endif
+
 int main(void)
 {
 	printk("=== Blocks Demo ===\n");
@@ -108,6 +137,12 @@ int main(void)
 		dict_sum += [val intValue];
 	}
 	printk("Dict sum: %d\n", dict_sum);
+
+	/* One-shot timer, so the count is deterministic rather than a
+	 * function of how long QEMU took. */
+	k_timer_start(&demo_timer, K_MSEC(10), K_NO_WAIT);
+	k_msleep(100);
+	printk("Timer fired: %d\n", timer_fires);
 
 	printk("=== Blocks Demo Complete ===\n");
 	return 0;

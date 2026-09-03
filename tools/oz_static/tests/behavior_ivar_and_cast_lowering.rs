@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // behavior_ivar_and_cast_lowering.rs - two ObjC-only spellings that used
-// to reach the C compiler untranslated, both found while porting OZTimer
-// and OZHeap (whose real sources use them).
+// to reach the C compiler untranslated, both found while porting OZHeap
+// and the since-retired OZTimer (whose real sources used them).
 //
 //   - a bare class name as an ivar type (`OZHeap *_heap;`). The generated
 //     struct for a class is `struct Name`, never a typedef, so the
@@ -14,8 +14,11 @@
 //     keyword, so it was `error: use of undeclared identifier
 //     '__bridge'` -- meaning the real `src/OZTimer.m` transpiled to C
 //     that could not compile. `emit::render_cast_expression` drops it, as
-//     the oracle does (its committed
-//     `tests/zephyr/generated/OZTimer_ozm.c:28` renders that cast plain).
+//     the oracle did in its own output for the same file. Both that source
+//     and that generated file are gone since #267 retired OZTimer, so the
+//     lowering is pinned by this test's own fixtures rather than by any
+//     file in the tree; `__bridge` remains valid Objective-C that someone
+//     may write.
 //
 // Handling the cast node also let it report its target type, so a message
 // send against a cast receiver resolves instead of failing with "cannot

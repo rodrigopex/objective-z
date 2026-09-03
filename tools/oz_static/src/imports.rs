@@ -176,15 +176,17 @@ fn resolve_import_path(
 /// These are the includes `resolve_imports` deliberately leaves alone (only
 /// `#import` is a resolution candidate), and the companion header needs
 /// them: it declares a prototype for every method of every class, so a
-/// parameter type that came from a system or RTOS header -- OZTimer's
-/// `struct k_timer`, from `#include <zephyr/kernel.h>` -- is otherwise
+/// parameter type that came from a system or RTOS header -- a
+/// `struct k_timer` from `#include <zephyr/kernel.h>`, say -- is otherwise
 /// named there before anything has declared it. C then invents a
 /// prototype-scoped tag, and the class's own header, which does carry the
-/// include, declares the same function with the real type: `error:
-/// conflicting types for 'OZTimer_initWithUserData_expiry_stop_'`. The
-/// oracle propagates the include for the same reason -- see its committed
-/// `tests/zephyr/generated/OZTimer_ozh.h`, whose `#include
-/// <zephyr/kernel.h>` sits ahead of the struct and prototypes.
+/// include, declares the same function with the real type, giving
+/// `error: conflicting types for '...'`. The oracle propagates the include
+/// for the same reason.
+///
+/// The case this was found on was OZTimer, retired in #267; the rule is
+/// general and is pinned by `tests/import_resolution.rs` rather than by
+/// that class.
 ///
 /// Angled only, deliberately. An angled include resolves against the
 /// compiler's include path, which is identical for the companion header

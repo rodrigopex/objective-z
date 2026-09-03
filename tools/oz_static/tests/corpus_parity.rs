@@ -2,7 +2,7 @@
 //
 // corpus_parity.rs - runs the *shared* behavior corpus through oz_static.
 //
-// `tests/behavior/cases/*/*.m` is the Python pipeline's own 73-case
+// `tests/behavior/cases/*/*.m` is the Python pipeline's own 71-case
 // behavior suite. Rather than maintaining a separate, smaller, hand-picked
 // set of fixtures for oz_static, this drives those same files: they are
 // the definition of what the mature backend supports, so they are the
@@ -18,10 +18,10 @@
 //   2. the generated C must *compile*, as ISO C17 with no constraint
 //      violation -- `-std=c17 -pedantic-errors`. Transpiling proves the
 //      input was understood; compiling proves the output is real C. A few
-//      cases still fail here, listed and explained in
+//      case that failed here would be listed and explained in
 //      `KNOWN_CC_FAILURES` -- an allowlist rather than a skip, so
 //      anything new fails loudly and fixing one of these fails too,
-//      forcing the list to be updated.
+//      forcing the list to be updated. It is currently empty.
 //
 //      The flags are the substance of that claim and are not incidental
 //      (#266). Before them this check meant "compiles as GNU C with
@@ -49,38 +49,29 @@ use std::process::Command;
 ///
 /// The test asserts that a listed case *still* fails, so this cannot
 /// quietly decay into skipped cases and fixing one of these fails here
-/// until the entry is removed.
+/// until the entry is removed. Empty is therefore a stronger statement
+/// than a passing suite with entries.
 ///
-/// It was empty for a while, and worth knowing why it is not now: nothing
-/// regressed. Tightening this check to `-std=c17 -pedantic-errors` (#266)
-/// and then actually running it in CI against gcc (#269) surfaced a
-/// violation that had been in every generated program using OZTimer all
-/// along. Apple clang does not diagnose that conversion, so a maintainer's
-/// machine reported the whole corpus clean.
-///
-/// Before these two, the last entry was `memory/heap_alloc.m`, which needed
-/// two things that have since landed: `+allocWithHeap:` support, and a fix
-/// to the SDK headers where both `OZHeap.h` and `platform/oz_platform.h`
-/// defined `struct oz_heap_inner` under a guard neither of them set.
+/// The two entries it held until #267 are worth remembering, because they
+/// were not a regression: tightening this check to `-std=c17
+/// -pedantic-errors` (#266) and then actually running it in CI against gcc
+/// (#269) surfaced a violation that had been in every generated program
+/// using OZTimer all along -- Apple clang does not diagnose that
+/// conversion, so a maintainer's machine reported the whole corpus clean.
+/// Before them the last entry was `memory/heap_alloc.m`, which needed
+/// `+allocWithHeap:` support and a fix to the SDK headers where both
+/// `OZHeap.h` and `platform/oz_platform.h` defined `struct oz_heap_inner`
+/// under a guard neither of them set.
 const KNOWN_CC_FAILURES: &[(&str, &str)] = &[
-    (
-        "foundation/timer_basic.m",
-        "#267: generated `(void*)(expBlock)` converts a block's function \
-         pointer to an object pointer, which ISO C forbids in either \
-         direction. `__oz_timer_setup` takes `void *` because ARC forbids a \
-         direct block-to-function-pointer cast, so the fix is a signature \
-         decision rather than a codegen one. Two corrections from #272: the \
-         helper is not on \"both PAL backends\" as this said -- it is in \
-         `oz_platform_zephyr.h` and in the behaviour tests' Zephyr stand-in \
-         `zephyr_stubs/zephyr/kernel.h`, while the host PAL has no timer at \
-         all; and the escape of retiring OZTimer for `K_TIMER_DEFINE` with \
-         an inline block does not exist, because Objective-C refuses that \
-         conversion in every position (PARITY.md gap Z).",
-    ),
-    (
-        "foundation/timer_zephyr.m",
-        "#267, same cast -- the other corpus case that builds an OZTimer.",
-    ),
+    // Empty, and forced to be: the test asserts every listed case *still*
+    // fails, so an entry cannot outlive its defect.
+    //
+    // It last held `foundation/timer_basic.m` and `foundation/timer_zephyr.m`,
+    // both on #267's function-pointer-to-object-pointer conversion. Those
+    // cases are gone -- OZTimer was retired in favour of
+    // `OZM(K_TIMER_DEFINE, ...)`, which hands Zephyr's own macro a hoisted
+    // function rather than laundering a block through `void *`. The cast it
+    // came from no longer exists anywhere.
 ];
 
 fn repo_root() -> PathBuf {
@@ -173,18 +164,18 @@ fn compile_generated(dir: &Path) -> Result<(), String> {
             // check is *about*. These headers stand in for Zephyr's on
             // host; holding them to ISO C measures the wrong thing,
             // because the real ones they replace are full of pedantic
-            // violations -- 153 in one translation unit, measured. Their
-            // own `__oz_timer_setup` casts `void *` to a function
-            // pointer, the mirror of the conversion #267 tracks in
-            // generated C, and `-pedantic-errors` under gcc made that a
-            // hard error in the two timer cases. Suppressed here on
-            // provenance, exactly as `objz_pedantic_sweep.py`'s baseline
-            // excludes diagnostics that arise inside Zephyr's macros:
-            // the claim is about generated C, not about the stand-ins.
+            // violations -- 153 in one translation unit, measured.
+            // Suppressed here on provenance, exactly as
+            // `objz_pedantic_sweep.py`'s baseline excludes diagnostics
+            // arising inside Zephyr's macros: the claim is about
+            // generated C, not about the stand-ins.
             //
-            // Apple clang does not diagnose that conversion at all,
-            // which is why this only surfaced once CI ran the suite
-            // against gcc (#269).
+            // Until #267 the stand-in's own `__oz_timer_setup` cast
+            // `void *` to a function pointer -- the mirror of the
+            // conversion in generated C that this suppression was first
+            // needed for, and a hard error under gcc. That helper is
+            // gone with OZTimer, so the suppression now rests on the
+            // general argument above rather than on any one case.
             .arg("-isystem")
             .arg(root.join("tests/behavior/include/zephyr_stubs"))
             .arg("-I")
