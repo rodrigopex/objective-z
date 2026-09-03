@@ -243,42 +243,51 @@ int main(void) {
 }
 
 /// A top-level macro invocation carrying a block literal is hoisted too --
-/// `walk_top_level`'s passthrough arm is where both shapes land, so this
-/// follows from the same edit and needs no knowledge of the macro.
+/// `walk_top_level`'s passthrough arm is where this and a declaration both
+/// land, so it follows from the same edit and needs no knowledge of the macro.
 ///
-/// **Recorded because the shape is not writable in valid Objective-C**, which
-/// is why it is not an advertised idiom and why this test asserts on the
-/// generated text alone. The intent behind #272 was to make a Zephyr
-/// definition macro take an inline block:
-///
-/// ```objc
-/// ZBUS_LISTENER_DEFINE(lis_print_temp, ^(const struct zbus_channel *chan) { ... });
-/// ```
-///
-/// `struct zbus_observer::callback` is a `void (*)(const struct zbus_channel *)`,
-/// and Objective-C will not convert a block to a function pointer in any
-/// position -- with or without ARC, by cast or by initialization:
+/// This is what lets a Zephyr definition macro take an inline block, which is
+/// what #272 was filed for, and **whether it works turns entirely on how the
+/// macro treats the argument under `__OBJC__`.** Clang parses the same file
+/// -- `cmake/oz_static.cmake` dumps one AST per source as oz2c's ownership
+/// oracle -- so the source has to be valid Objective-C, and Objective-C
+/// refuses block-to-function-pointer conversion in every position:
 ///
 /// ```text
 /// error: initializing 'void (*)(int)' with an expression of incompatible
 ///        type 'void (^)(int)'
 /// ```
 ///
-/// So such a file parses under tree-sitter and is rejected by Clang, and
-/// Clang is not optional here: `cmake/oz_static.cmake` dumps one AST per
-/// source as oz2c's ownership oracle, and the Python backend compiles the
-/// same file. Worse than a hard failure, the dump is taken with
-/// `2>/dev/null || true` and the "no usable AST" warning fires only when
-/// *every* dump is unusable -- so one such file silently loses just its own
-/// ARC facts, and ARC then skips its `id` ivars rather than releasing them.
+/// A macro that *consumes* the argument in its ObjC expansion therefore
+/// cannot be used -- writing `ZBUS_LISTENER_DEFINE` directly is rejected,
+/// because `struct zbus_observer::callback` is a function pointer.
 ///
-/// The hoisting still earns its place from
-/// `file_scope_block_variable_with_a_literal_initializer`, which is the same
-/// code path on a shape that *is* valid Objective-C. This case guards it from
-/// regressing and records the finding so the idiom is not attempted again on
-/// the assumption that only oz_static stood in the way.
+/// A macro that *discards* it under `__OBJC__` can:
+///
+/// ```objc
+/// #ifdef __OBJC__
+/// #define OZ_TIMER_DEFINE(name, ...) static struct k_timer name
+/// #else
+/// #define OZ_TIMER_DEFINE(name, ...) K_TIMER_DEFINE(name, __VA_ARGS__)
+/// #endif
+/// ```
+///
+/// An argument whose parameter does not appear in the replacement list is
+/// discarded rather than expanded or parsed, so Clang never type-checks the
+/// block at all -- it only has to lex. `...` absorbs any unprotected comma in
+/// the block body. Under the C arm oz_static has already replaced the literal
+/// with its hoisted function's name, so the argument really is a function
+/// pointer and this is a plain `K_TIMER_DEFINE`. Verified both ways by hand:
+/// valid under `clang -x objective-c -fobjc-arc -fblocks`, and the generated
+/// C clean under `-std=c17 -pedantic-errors`.
+///
+/// The consuming shape is used below because it is the one that pins the
+/// *hoisting* without needing an SDK macro to exist yet. Its source is not
+/// valid Objective-C, which is why this case asserts on the generated text
+/// alone; `file_scope_block_variable_with_a_literal_initializer` covers the
+/// same code path on a shape that is.
 #[test]
-fn a_macro_invocation_is_hoisted_though_the_shape_is_not_valid_objc() {
+fn a_macro_invocation_carrying_a_block_literal_is_hoisted() {
     let src = format!(
         "{}{}",
         ozobject_src(),
@@ -297,5 +306,60 @@ int main(void) { return 0; }
         out.source_c.contains("REGISTER_CB(lis, oz_block_"),
         "the literal should be replaced by its hoisted function's name:\n{}",
         out.source_c
+    );
+}
+
+/// The `OZ_TIMER_DEFINE` shape end to end: a variadic macro that discards its
+/// block argument under `__OBJC__`, so the source is valid Objective-C, and
+/// expands to the real Zephyr macro in the C oz_static emits.
+///
+/// This is the case that makes the idiom real rather than merely lowered, and
+/// it pins the two properties it rests on: the literal is replaced by the
+/// hoisted function's name, and the prototype is emitted *ahead* of the
+/// invocation, since `K_TIMER_DEFINE` puts the name in a static initializer
+/// (`Z_TIMER_INITIALIZER`'s `.expiry_fn = expiry`) where only an address
+/// constant will do.
+#[test]
+fn a_discarding_variadic_macro_gives_the_zephyr_definition_shape() {
+    let src = format!(
+        "{}{}",
+        ozobject_src(),
+        "\
+struct k_timer { void (*expiry_fn)(struct k_timer *); };
+#define K_TIMER_DEFINE(name, exp, stp) \\
+	static struct k_timer name = { .expiry_fn = (exp) }
+#ifdef __OBJC__
+#define OZ_TIMER_DEFINE(name, ...) static struct k_timer name
+#else
+#define OZ_TIMER_DEFINE(name, ...) K_TIMER_DEFINE(name, __VA_ARGS__)
+#endif
+
+OZ_TIMER_DEFINE(my_timer, ^(struct k_timer *t) {
+	int a = 1, b = 2;
+	(void)t;
+	(void)(a + b);
+}, NULL);
+
+int main(void) { return 0; }
+"
+    );
+    assert_no_block_caret(&src);
+    let out = oz_static::transpile(&src).expect("should transpile");
+    assert!(
+        out.source_c.contains("OZ_TIMER_DEFINE(my_timer, oz_block_"),
+        "the literal should reach the macro as a hoisted function name:\n{}",
+        out.source_c
+    );
+    let proto = out
+        .source_c
+        .find("void oz_block_")
+        .expect("a prototype should be emitted");
+    let use_site = out
+        .source_c
+        .find("OZ_TIMER_DEFINE(my_timer, oz_block_")
+        .expect("the invocation should be present");
+    assert!(
+        proto < use_site,
+        "the prototype must precede the static initializer that names it"
     );
 }

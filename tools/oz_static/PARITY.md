@@ -77,7 +77,7 @@ the obvious way to measure that on target reports zero regardless.
 | mem_demo | yes | yes | yes | was gap B |
 | hello_category | yes | yes | yes | was gap C |
 | pool_demo | yes | yes | yes | uses `@synchronized`, but single-threaded -- it exercises the lowering, not the lock (see gap W) |
-| transpiled_blocks | yes | yes | yes | |
+| transpiled_blocks | yes | yes | yes | carries the two top-level block shapes since gap Z |
 | transpiled_generics | yes | yes | yes | |
 | transpiled_led | yes | yes | yes | was gap L — segfaulted |
 | heap_alloc | yes | yes | all but one line | was gaps F and I; see the release-order divergence below |
@@ -494,6 +494,13 @@ The field, the method parameter and a hoisted block literal's own signature
 all have to agree, so all three are lowered. The first attempt lowered only
 the field, and the `-initWithBlock:` assignment stopped compiling instead.
 
+That list of three was read as the complete set of block positions and was
+not: three more were lowered nowhere at all, and #272 (gap Z) found them.
+The three named here are the ones routed through `collect::render_type`;
+what the sentence above should have said is that those are the positions
+which *have* a rendered type, and that a position assembled by patching the
+original text has none.
+
 Deliberately *not* done the obvious way — making `id` itself a root-class
 pointer, as the Python backend's own typedef does. That was tried and is
 worse: it turns the ordinary Objective-C idiom of passing `Foo *` where `id`
@@ -603,6 +610,13 @@ selectors, `@selector`/`@protocol`, `@synchronized` jumps, block captures, or
 allocation. `staticbar::check_function_body` now runs the same walk there. No
 scope mode was needed -- `class_ivars` is read in exactly one place and a free
 function has none, so an empty set is the truth rather than a stand-in.
+
+One position was still left unscanned and this entry did not say so, because
+nothing could reach it yet: a block literal at *file scope*, which was not
+hoisted at all until #272 and so never had a body to walk. It is scanned now
+(gap Z). Two entered positions out of three is the same shape as the rest of
+this family -- the count in a sentence like the one above is a count of what
+was looked at.
 
 Two consequences:
 
@@ -1205,6 +1219,133 @@ diagnostic whose cause is inside the *target's* macro is not evidence about
 generated code, and "fixing" it by writing the call differently would trade a
 pedantic warning for a real dependency on a macro's internals.
 
+**Z. Blocks were lowered to function pointers everywhere except the top
+level, where three positions reached the C compiler with the `^` intact.**
+Fixed (#272). Not a weaker type this time but text no GCC target can parse:
+blocks are a Clang extension rather than ISO C, and
+`arm-zephyr-eabi-gcc -std=c17` reports `expected ')' before '^' token`.
+Confirmed against the real toolchain, and `clang -fno-blocks` reports
+`blocks support disabled` on the same text.
+
+Every position routed through `collect::render_type` was already correct — an
+ivar becomes `void (*_ivarBlk)(int)`, a method parameter
+`void (*b)(struct k_timer *)`, a local `void (*local)(int)`. The three that
+were not are the ones `emit::walk_top_level` assembles by *patching the
+original text*, where no edit lowered a block type:
+
+| Position | Emitted as |
+| --- | --- |
+| a file-scope block variable | `static void (^g_blk)(int);` |
+| that variable's block-literal initializer | `= ^(int v) { ... };` |
+| a free function's signature, prototype and definition alike | `static void take_cb(void (^cb)(int))` |
+
+Each is valid Objective-C — checked against
+`clang -x objective-c -fobjc-arc -fblocks` — so each was a real
+valid-in / invalid-out defect rather than a shape nobody may write. Nothing
+in the repository writes any of them, which is why they went unnoticed. The
+fourth instance of the family gaps Q, V and R record, and #246 / #250 / #251
+before it: the top-level or free-function path getting a reduced version of
+what a method body gets.
+
+`block_pointer_edits` lowers a declarator's `^` to `*` and
+`top_level_block_edits` hoists a literal to a named function, both applied at
+the passthrough arm as well as the function-definition arm — the one place
+every unclaimed node goes, which is what gap X's bare-`;` fix chose and for
+the same reason. The static bar now runs over a hoisted body too, a position
+that had no scan at all: the top-level twin of the free-function scan #234
+added.
+
+**Nothing else moved**, checked the way #254 checked its refactor rather than
+assumed: both binaries were run over all 73 corpus cases and the generated
+files diffed, excluding `oz_static_manifest.txt` because it lists absolute
+paths. **10 differing lines, all 5 of them one banner comment reworded** —
+see the third note below — and no other line anywhere. Three positions gained
+a lowering that nothing in the corpus writes, so a clean diff is what should
+have happened; it is worth having measured rather than reasoned, since the
+edits are applied at the arm every unclaimed node passes through.
+
+Three things worth recording, two of them about the instrument:
+
+- **Running the output cannot see this defect on a Mac, and nearly hid it.**
+  The Rust suite's `compile_and_run` uses the host `cc`, which is Apple
+  clang, and clang enables blocks by default — so a surviving `^` compiles
+  there as a perfectly good Clang block. One test drafted as compile-and-run
+  alone **passed with the fix disabled**, because the declaration and its
+  initializer were both left as blocks and agreed with each other. Every test
+  now asserts on the generated *text*, and `samples/transpiled_blocks`
+  carries the two writable shapes so the ARM build is the check that means
+  something. Same shape as gap Y's finding that an ARM `-Wpedantic` sweep
+  written the obvious way reports clean on output that is not.
+- **The idiom this was filed for is reachable, but only through a macro that
+  discards its block argument on the Objective-C side.** #272 was opened to
+  make a Zephyr definition macro take an inline block, which would dissolve
+  #267 by retiring `OZTimer` altogether. Writing Zephyr's macros *directly*
+  does not work: `struct zbus_observer::callback` is a
+  `void (*)(const struct zbus_channel *)`, and **Objective-C refuses
+  block-to-function-pointer conversion in every position** — by cast or by
+  initialization, with ARC or without: `error: initializing 'void (*)(int)'
+  with an expression of incompatible type 'void (^)(int)'`. Clang is not
+  optional here, since `cmake/oz_static.cmake` dumps one AST per source as
+  oz2c's ownership oracle (gap N) and the Python backend compiles the same
+  file, so a source Clang rejects is not an option however well oz_static
+  lowers it.
+
+  **An SDK macro with two faces gets around it, and this was measured rather
+  than argued:**
+
+  ```objc
+  #ifdef __OBJC__
+  #define OZ_TIMER_DEFINE(name, ...) static struct k_timer name
+  #else
+  #define OZ_TIMER_DEFINE(name, ...) K_TIMER_DEFINE(name, __VA_ARGS__)
+  #endif
+
+  OZ_TIMER_DEFINE(my_timer, ^(struct k_timer *t) { ... }, NULL);
+  ```
+
+  A macro argument whose parameter does not appear in the replacement list is
+  *discarded* rather than expanded or parsed, so under the ObjC arm Clang
+  never type-checks the block — it only has to lex, and `^` is a valid
+  punctuator. `...` absorbs any unprotected comma in the block body (`int a =
+  1, b = 2;` was tested). Under the C arm oz_static has already replaced the
+  literal with its hoisted function's name, so the argument really is a
+  function pointer and this is a plain `K_TIMER_DEFINE` — whose
+  `Z_TIMER_INITIALIZER` wants `.expiry_fn = expiry`, an address constant,
+  which a hoisted function's name is. Verified both ways: valid under `clang
+  -x objective-c -fobjc-arc -fblocks`, generated C clean under `-std=c17
+  -pedantic-errors`, and the prototype emitted ahead of the initializer that
+  names it. Pinned by
+  `top_level_blocks::a_discarding_variadic_macro_gives_the_zephyr_definition_shape`.
+
+  This document said the idiom was "not writable at all" when gap Z was first
+  written, which was wrong: it was a statement about the macros Zephyr
+  happens to ship, generalised into one about Objective-C. What holds is the
+  narrower claim — a macro that *consumes* the argument on the ObjC side
+  cannot be used.
+
+  Two costs remain, and neither is small enough to leave unsaid. A hoisted
+  block captures nothing (`staticbar` rejects captures), so such a callback
+  reaches its context only through the API's own channel —
+  `k_timer_user_data_get`, which is what `OZTimer`'s `_userdata` ivar wrapped.
+  And the Python backend's expansion is the ObjC one, so under
+  `CONFIG_OBJZ_BACKEND_PYTHON` the timer is declared and never wired: it
+  compiles and never fires. That is a silent behavioural difference on the
+  outgoing backend, not a build failure.
+- **A source Clang rejects fails silently, which is worse than a hard
+  failure**, and is why the constraint above is a real one rather than a
+  nuisance. The dump is taken with `2>/dev/null || true`, and the "no usable
+  Clang AST" warning fires only when *every* dump is unusable — so one such
+  file loses just its own ARC facts, and ARC then skips its `id` ivars rather
+  than releasing them. A leak, with a green build. The same shape #269
+  recorded: a warning about a silently-substituted oracle is not a check.
+- **A banner in the generated output had to change, and it is the only thing
+  that did.** `render_block`'s comment read "hoisted out of its enclosing
+  method", true of every caller until a file-scope literal became one — there
+  is no enclosing method to name. It says "hoisted from a block literal" now:
+  where the literal was, not what enclosed it. Worth noting because it is the
+  same stale-claim shape this document keeps recording, in the one place a
+  reader of the generated C would meet it.
+
 ## On target (Zephyr under QEMU: mps2/an385, qemu_riscv32, qemu_cortex_a53/smp)
 
 The check that was missing, and the one that mattered most. Every
@@ -1490,7 +1631,7 @@ enforced only where the compiler agrees there is something to fail on.
 Two compilers disagreeing about whether the corpus compiles is worth
 knowing on its own account.
 
-Rust test suite: 262 passing, 0 failing.
+Rust test suite: 270 passing, 0 failing, with `RUSTFLAGS=-D warnings`.
 
 ### Behavioral parity: 73 of 73
 
@@ -1714,6 +1855,12 @@ own `rom_size`/`ram_size` fields come back `None` unless size reporting is
 enabled explicitly, which is why the ELF is read directly — worth knowing
 before trying to reproduce this from a twister report.
 
+One row no longer reproduces exactly: `transpiled_blocks` gained a file-scope
+block and a C function taking one when gap Z landed, so its figures below
+predate those few hundred bytes. The totals and the conclusion are unaffected
+at this precision, and the table is left as the measurement that was actually
+taken rather than adjusted by estimate.
+
 Reproduce with `west twister -T samples/ -p mps2/an385` and again with
 `-x CONFIG_OBJZ_BACKEND_PYTHON=y`, then size the ELFs.
 
@@ -1871,4 +2018,5 @@ Filed rather than folded in, each with the reason it was kept separate:
 | #254 | `emit()` and `emit_split()` duplicated the top-level walk and had disagreed four times (gap R, #246, #250, #251). The mechanism behind three of this file's gaps, rather than a gap of its own. **Done** — one `emit::walk_top_level`, two assemblers over it, so a node kind is handled in exactly one place; `EmitCtx::new` replaces the six hand-spelled constructions. The refactor left generated output byte-identical across 820 corpus and 342 sample files; gap X, found by that comparison and fixed alongside, then removed a stray `;` from 146 of them and added nothing anywhere. The audit that preceded it (`tests/emitter_agreement.rs`) survives with a smaller claim — it guards the two assemblers, not two walks. |
 | #266 | Nothing checked generated C for *validity*, only for warnings. **Done** — `corpus_parity.rs` compiles with `-std=c17 -pedantic-errors` (the standard Zephyr pins) and it is a gate, the count there being 0 across 73 cases and 410 files; `just test-pedantic` asks the same of the samples on ARM and reports 26 sites, each in `KNOWN_PEDANTIC` with its reason. The count came first, as the issue asked, and it found gap X's fourth producer — an item-pool `;` that was valid on host and a constraint violation on Zephyr, so no host check could see it. It also found that the obvious way to sweep `-Wpedantic` on target reports zero on output that is not clean: CMSIS disables the flag for the rest of every Cortex-M TU. See gap Y. |
 | #269 | CI never ran the Rust suite, and `hw-build-check` could not fail. **Done** — a `rust-tests` job runs all 262 tests plus `RUSTFLAGS=-D warnings`, so `corpus_parity.rs`'s `-pedantic-errors` gate is now enforced on every PR rather than only locally; `continue-on-error: true` is gone from the one job that cross-compiles for a board, verified safe first by reading ten runs' step conclusions. Two things found on the way and fixed in the same change: the AST oracle in CI was clang **18.1** rather than the tested 19, because the SDK was installed without `-l` and `objz_find_clang()` fell through to `PATH` while the job separately installed an unused clang 20 — one shared SDK install with LLVM now feeds cmake, `OZ_CLANG` and a `PATH` symlink alike, and `-DOBJZ_REQUIRE_TESTED_CLANG=ON` makes a repeat fatal; and `west.yml` said `revision: main`, so every CI run built against whatever upstream main was that morning, now pinned to **v4.4.2**. |
-| #267 | Generated C converts a block's function pointer to `void *` (`(void*)(expBlock)`, `src/OZTimer.m`), which ISO C forbids in either direction. 18 of the 26 sites `just test-pedantic` still reports, and the reason it is a report rather than a gate. Split out because the fix is a `__oz_timer_setup` signature decision on both PAL backends — the current `void *` exists because ARC forbids a direct block-to-function-pointer cast — not a codegen change. |
+| #267 | Generated C converts a block's function pointer to `void *` (`(void*)(expBlock)`, `src/OZTimer.m`), which ISO C forbids in either direction. 18 of the 26 sites `just test-pedantic` still reports, and the reason it is a report rather than a gate. Split out because the fix is a `__oz_timer_setup` signature decision — the current `void *` exists because ARC forbids a direct block-to-function-pointer cast — not a codegen change. Two corrections from #272's scoping: the helper does **not** exist "on both PAL backends" as this row and both allowlists said — it is in `include/platform/oz_platform_zephyr.h` and in `tests/behavior/include/zephyr_stubs/zephyr/kernel.h`, a Zephyr *stand-in*, while the host PAL has no timer at all. And retiring `OZTimer` in favour of an `OZ_TIMER_DEFINE` that maps to `K_TIMER_DEFINE` **is available** and is now the preferred shape: Zephyr's macro cannot be written directly, because Objective-C refuses block-to-function-pointer conversion in every position, but an SDK macro that *discards* its block argument under `__OBJC__` is never type-checked by Clang and expands to the real macro in the C oz_static emits — where #272's hoisting has already turned the literal into a function name. Measured both ways; see gap Z. That dissolves this issue's cast rather than working around it, at two stated costs: a hoisted block captures nothing, so context comes through `k_timer_user_data_get` as it always did, and the Python backend gets the ObjC expansion, so a timer declared that way compiles and never fires there. |
+| #272 | Blocks were lowered to function pointers everywhere except the top level, where a file-scope block variable, its block-literal initializer and a free function's block parameter each reached the C compiler with the `^` intact — text no GCC target can parse, though each shape is valid Objective-C. **Done** — see gap Z. Filed while scoping #267 and taken first because it produces *invalid* C rather than merely non-conforming C. It also unblocks what it was filed for, though not the way the issue assumed: Zephyr's own `ZBUS_LISTENER_DEFINE`/`K_TIMER_DEFINE` cannot take an inline block, because Objective-C refuses block-to-function-pointer conversion in every position and Clang has to parse the same file for the AST oracle — but an SDK macro that discards its block argument under `__OBJC__` is never type-checked and expands to the real macro in generated C, where the literal is already a hoisted function name. So three real defects fixed and the idiom reachable through an `OZ_TIMER_DEFINE`-shaped wrapper, which belongs to #267. |

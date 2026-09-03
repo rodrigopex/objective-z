@@ -67,9 +67,15 @@ const KNOWN_CC_FAILURES: &[(&str, &str)] = &[
         "foundation/timer_basic.m",
         "#267: generated `(void*)(expBlock)` converts a block's function \
          pointer to an object pointer, which ISO C forbids in either \
-         direction. `__oz_timer_setup` takes `void *` on both PAL backends \
-         because ARC forbids a direct block-to-function-pointer cast, so the \
-         fix is a PAL signature decision rather than a codegen one.",
+         direction. `__oz_timer_setup` takes `void *` because ARC forbids a \
+         direct block-to-function-pointer cast, so the fix is a signature \
+         decision rather than a codegen one. Two corrections from #272: the \
+         helper is not on \"both PAL backends\" as this said -- it is in \
+         `oz_platform_zephyr.h` and in the behaviour tests' Zephyr stand-in \
+         `zephyr_stubs/zephyr/kernel.h`, while the host PAL has no timer at \
+         all; and the escape of retiring OZTimer for `K_TIMER_DEFINE` with \
+         an inline block does not exist, because Objective-C refuses that \
+         conversion in every position (PARITY.md gap Z).",
     ),
     (
         "foundation/timer_zephyr.m",

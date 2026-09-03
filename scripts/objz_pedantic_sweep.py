@@ -79,9 +79,12 @@ KNOWN_PEDANTIC = {
     ): (
         2,
         "oz_static lowers `(__bridge void *)block` to `(void*)(block)`, and "
-        "a block is a function pointer. __oz_timer_setup takes `void *` on "
-        "both PAL backends, so this is a PAL signature decision rather than "
-        "a codegen one -- filed separately.",
+        "a block is a function pointer. __oz_timer_setup takes `void *` "
+        "because ARC forbids a direct block-to-function-pointer cast, so "
+        "this is a signature decision rather than a codegen one -- filed "
+        "as #267. Corrected by #272: the helper is not on \"both PAL "
+        "backends\" -- it is in oz_platform_zephyr.h and in the behaviour "
+        "tests' Zephyr stand-in, while the host PAL has no timer at all.",
     ),
     (
         "gpio_demo",
