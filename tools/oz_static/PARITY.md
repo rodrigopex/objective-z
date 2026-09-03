@@ -84,7 +84,7 @@ the obvious way to measure that on target reports zero regardless.
 | arc_demo | yes | Zephyr-blocked | — | `K_THREAD_DEFINE` only; was gap A |
 | gpio_demo | yes | Zephyr-blocked | — | device tree; was gap D |
 | zbus_objc | yes | Zephyr-blocked | — | zbus; was gap E |
-| zbus_service | — | — | — | stale independently of oz_static (see below) |
+| zbus_service | yes | Zephyr-blocked | — | zbus; writes its listener as an inline block via `OZM` since gap Z |
 | smp_shared | yes | — | SMP only | two cores contending on one object; needs `CONFIG_SMP`, so no host or single-core run — see gap W |
 
 Every sample with usable sources transpiles, and **none fails on a
@@ -1290,47 +1290,77 @@ Three things worth recording, two of them about the instrument:
   file, so a source Clang rejects is not an option however well oz_static
   lowers it.
 
-  **An SDK macro with two faces gets around it, and this was measured rather
-  than argued:**
+  **`OZM` is the escape, and it is implemented (#272), not hypothetical.**
+  `include/oz_sdk/Foundation/OZMacro.h` defines `OZM(...)` as *empty* for
+  Clang, and `emit::ozm_edits` rewrites `OZM(MACRO, a, b)` into
+  `MACRO(a, b)` for the C compiler:
 
   ```objc
-  #ifdef __OBJC__
-  #define OZ_TIMER_DEFINE(name, ...) static struct k_timer name
-  #else
-  #define OZ_TIMER_DEFINE(name, ...) K_TIMER_DEFINE(name, __VA_ARGS__)
-  #endif
-
-  OZ_TIMER_DEFINE(my_timer, ^(struct k_timer *t) { ... }, NULL);
+  OZM(ZBUS_LISTENER_DEFINE, lis_print_temp, ^(const struct zbus_channel *chan) {
+          ...
+  });
   ```
 
-  A macro argument whose parameter does not appear in the replacement list is
-  *discarded* rather than expanded or parsed, so under the ObjC arm Clang
-  never type-checks the block — it only has to lex, and `^` is a valid
-  punctuator. `...` absorbs any unprotected comma in the block body (`int a =
-  1, b = 2;` was tested). Under the C arm oz_static has already replaced the
-  literal with its hoisted function's name, so the argument really is a
-  function pointer and this is a plain `K_TIMER_DEFINE` — whose
-  `Z_TIMER_INITIALIZER` wants `.expiry_fn = expiry`, an address constant,
-  which a hoisted function's name is. Verified both ways: valid under `clang
-  -x objective-c -fobjc-arc -fblocks`, generated C clean under `-std=c17
-  -pedantic-errors`, and the prototype emitted ahead of the initializer that
-  names it. Pinned by
-  `top_level_blocks::a_discarding_variadic_macro_gives_the_zephyr_definition_shape`.
+  It works because **a macro is the only construct whose argument
+  Objective-C leaves unparsed**: an argument whose parameter is absent from
+  the replacement list is discarded rather than expanded, so it need only
+  lex, and `^` is a valid punctuator. Clang therefore never type-checks the
+  block. By the time the rewrite runs, `top_level_block_edits` has already
+  turned the literal into the name of a hoisted function — so the argument
+  really is a function pointer, which is what `Z_TIMER_INITIALIZER`'s
+  `.expiry_fn = expiry` and `zbus_observer::callback` need, an address
+  constant. One name serves every target macro: no per-primitive wrapper, no
+  second arm to keep in step, and the call site still names the macro it
+  means.
+
+  Nothing more Objective-C-ish was available, and that is a consequence
+  rather than a preference: anywhere Clang actually type-checks the
+  expression the conversion is refused, so an attribute on a named C
+  function discards the inline block, `+initialize` calling `k_timer_init`
+  hits the same wall, and the language has no file-scope declarative form
+  beyond `@interface`. The macro is the only door.
+
+  **Measured on target, not just transpiled.**
+  `samples/zbus_service/src/main.m` now writes its zbus listener as an inline
+  block and its generated C reads
+  `ZBUS_LISTENER_DEFINE(lis_print_temp, oz_block_L1806_C43_1);`. Under
+  twister on `mps2/an385` it prints `+ [listener] Temperature: 11` — real
+  zbus invoking the hoisted block — and Clang's AST dump for that file comes
+  back non-empty, which is the check that matters, since a source Clang
+  rejects fails silently. `ZBUS_CHAN_ADD_OBS` goes through `OZM` too, because
+  it names the observer that the discarded definition leaves invisible to
+  Clang; discarding both together is what keeps the pair consistent.
+
+  An `OZM(...)` that somehow reached the C compiler unrewritten is a
+  `_Static_assert(0, ...)` rather than an expansion to nothing — dropping a
+  listener silently would leave a program that builds and does not work, and
+  oz_static never degrades quietly.
 
   This document said the idiom was "not writable at all" when gap Z was first
-  written, which was wrong: it was a statement about the macros Zephyr
-  happens to ship, generalised into one about Objective-C. What holds is the
-  narrower claim — a macro that *consumes* the argument on the ObjC side
-  cannot be used.
+  written, which was wrong: a fact about the macros Zephyr happens to ship,
+  generalised into a claim about Objective-C. What holds is the narrower one
+  — a macro that *consumes* the argument on the ObjC side cannot be used, so
+  Zephyr's own macros need `OZM` in front of them.
 
-  Two costs remain, and neither is small enough to leave unsaid. A hoisted
-  block captures nothing (`staticbar` rejects captures), so such a callback
-  reaches its context only through the API's own channel —
-  `k_timer_user_data_get`, which is what `OZTimer`'s `_userdata` ivar wrapped.
-  And the Python backend's expansion is the ObjC one, so under
-  `CONFIG_OBJZ_BACKEND_PYTHON` the timer is declared and never wired: it
-  compiles and never fires. That is a silent behavioural difference on the
-  outgoing backend, not a build failure.
+  Three costs, none small enough to leave unsaid. A hoisted block captures
+  nothing (`staticbar` rejects captures), so such a callback reaches its
+  context only through the API's own channel — `k_timer_user_data_get`,
+  `zbus_chan_const_msg` — which is what `OZTimer`'s `_userdata` ivar wrapped
+  and the constraint Zephyr's own C callbacks already live under. Whatever
+  the macro *declares* is invisible to Clang, since the whole invocation is
+  discarded there: code naming the object outside another `OZM(...)` must
+  declare it under `#ifdef __OBJC__`, which passes through to the generated C
+  where the real macro defines it. And **the rewrite is oz_static's**, so
+  under `CONFIG_OBJZ_BACKEND_PYTHON` the Objective-C arm is the only one
+  there is — the invocation expands to nothing and the callback is never
+  registered, in a program that still builds. A silent behavioural
+  difference on the outgoing backend rather than a build failure.
+
+  That last one costs `samples/zbus_service` nothing, which is worth checking
+  rather than assuming: it already cannot build under the Python backend, for
+  an unrelated defect of that backend's own (it emits Clang's diagnostic
+  spelling of an anonymous enum into a header — see the code-size section).
+  Any *other* sample adopting `OZM` would be making the trade for real.
 - **A source Clang rejects fails silently, which is worse than a hard
   failure**, and is why the constraint above is a real one rather than a
   nuisance. The dump is taken with `2>/dev/null || true`, and the "no usable
@@ -1631,7 +1661,7 @@ enforced only where the compiler agrees there is something to fail on.
 Two compilers disagreeing about whether the corpus compiles is worth
 knowing on its own account.
 
-Rust test suite: 270 passing, 0 failing, with `RUSTFLAGS=-D warnings`.
+Rust test suite: 275 passing, 0 failing, with `RUSTFLAGS=-D warnings`.
 
 ### Behavioral parity: 73 of 73
 
@@ -2018,5 +2048,5 @@ Filed rather than folded in, each with the reason it was kept separate:
 | #254 | `emit()` and `emit_split()` duplicated the top-level walk and had disagreed four times (gap R, #246, #250, #251). The mechanism behind three of this file's gaps, rather than a gap of its own. **Done** — one `emit::walk_top_level`, two assemblers over it, so a node kind is handled in exactly one place; `EmitCtx::new` replaces the six hand-spelled constructions. The refactor left generated output byte-identical across 820 corpus and 342 sample files; gap X, found by that comparison and fixed alongside, then removed a stray `;` from 146 of them and added nothing anywhere. The audit that preceded it (`tests/emitter_agreement.rs`) survives with a smaller claim — it guards the two assemblers, not two walks. |
 | #266 | Nothing checked generated C for *validity*, only for warnings. **Done** — `corpus_parity.rs` compiles with `-std=c17 -pedantic-errors` (the standard Zephyr pins) and it is a gate, the count there being 0 across 73 cases and 410 files; `just test-pedantic` asks the same of the samples on ARM and reports 26 sites, each in `KNOWN_PEDANTIC` with its reason. The count came first, as the issue asked, and it found gap X's fourth producer — an item-pool `;` that was valid on host and a constraint violation on Zephyr, so no host check could see it. It also found that the obvious way to sweep `-Wpedantic` on target reports zero on output that is not clean: CMSIS disables the flag for the rest of every Cortex-M TU. See gap Y. |
 | #269 | CI never ran the Rust suite, and `hw-build-check` could not fail. **Done** — a `rust-tests` job runs all 262 tests plus `RUSTFLAGS=-D warnings`, so `corpus_parity.rs`'s `-pedantic-errors` gate is now enforced on every PR rather than only locally; `continue-on-error: true` is gone from the one job that cross-compiles for a board, verified safe first by reading ten runs' step conclusions. Two things found on the way and fixed in the same change: the AST oracle in CI was clang **18.1** rather than the tested 19, because the SDK was installed without `-l` and `objz_find_clang()` fell through to `PATH` while the job separately installed an unused clang 20 — one shared SDK install with LLVM now feeds cmake, `OZ_CLANG` and a `PATH` symlink alike, and `-DOBJZ_REQUIRE_TESTED_CLANG=ON` makes a repeat fatal; and `west.yml` said `revision: main`, so every CI run built against whatever upstream main was that morning, now pinned to **v4.4.2**. |
-| #267 | Generated C converts a block's function pointer to `void *` (`(void*)(expBlock)`, `src/OZTimer.m`), which ISO C forbids in either direction. 18 of the 26 sites `just test-pedantic` still reports, and the reason it is a report rather than a gate. Split out because the fix is a `__oz_timer_setup` signature decision — the current `void *` exists because ARC forbids a direct block-to-function-pointer cast — not a codegen change. Two corrections from #272's scoping: the helper does **not** exist "on both PAL backends" as this row and both allowlists said — it is in `include/platform/oz_platform_zephyr.h` and in `tests/behavior/include/zephyr_stubs/zephyr/kernel.h`, a Zephyr *stand-in*, while the host PAL has no timer at all. And retiring `OZTimer` in favour of an `OZ_TIMER_DEFINE` that maps to `K_TIMER_DEFINE` **is available** and is now the preferred shape: Zephyr's macro cannot be written directly, because Objective-C refuses block-to-function-pointer conversion in every position, but an SDK macro that *discards* its block argument under `__OBJC__` is never type-checked by Clang and expands to the real macro in the C oz_static emits — where #272's hoisting has already turned the literal into a function name. Measured both ways; see gap Z. That dissolves this issue's cast rather than working around it, at two stated costs: a hoisted block captures nothing, so context comes through `k_timer_user_data_get` as it always did, and the Python backend gets the ObjC expansion, so a timer declared that way compiles and never fires there. |
-| #272 | Blocks were lowered to function pointers everywhere except the top level, where a file-scope block variable, its block-literal initializer and a free function's block parameter each reached the C compiler with the `^` intact — text no GCC target can parse, though each shape is valid Objective-C. **Done** — see gap Z. Filed while scoping #267 and taken first because it produces *invalid* C rather than merely non-conforming C. It also unblocks what it was filed for, though not the way the issue assumed: Zephyr's own `ZBUS_LISTENER_DEFINE`/`K_TIMER_DEFINE` cannot take an inline block, because Objective-C refuses block-to-function-pointer conversion in every position and Clang has to parse the same file for the AST oracle — but an SDK macro that discards its block argument under `__OBJC__` is never type-checked and expands to the real macro in generated C, where the literal is already a hoisted function name. So three real defects fixed and the idiom reachable through an `OZ_TIMER_DEFINE`-shaped wrapper, which belongs to #267. |
+| #267 | Generated C converts a block's function pointer to `void *` (`(void*)(expBlock)`, `src/OZTimer.m`), which ISO C forbids in either direction. 18 of the 26 sites `just test-pedantic` still reports, and the reason it is a report rather than a gate. Split out because the fix is a `__oz_timer_setup` signature decision — the current `void *` exists because ARC forbids a direct block-to-function-pointer cast — not a codegen change. Two corrections from #272's scoping: the helper does **not** exist "on both PAL backends" as this row and both allowlists said — it is in `include/platform/oz_platform_zephyr.h` and in `tests/behavior/include/zephyr_stubs/zephyr/kernel.h`, a Zephyr *stand-in*, while the host PAL has no timer at all. And the route to closing it is open and implemented as `OZM` (#272, gap Z): Zephyr's macro cannot be written directly, because Objective-C refuses block-to-function-pointer conversion in every position, but `OZM(K_TIMER_DEFINE, my_timer, ^(struct k_timer *t) { ... }, NULL)` works, being discarded unparsed by Clang and rewritten to the real macro for the C compiler. So this issue can be closed by **retiring `OZTimer`** rather than by adding a two-faced PAL signature — which removes the cast rather than working around it, along with `__oz_timer_setup` in both copies and the 18 pedantic sites `src/OZTimer.m` contributes to every sample pulling in Foundation. What that retirement still has to settle: a hoisted block captures nothing, so callers wire context through `k_timer_user_data_set`/`_get` where `OZTimer` wrapped it in a strong `_userdata` ivar; `OZTimer.h` sits in the `Foundation.h` umbrella; and the two corpus timer cases are the *Python* backend's own suite, so `just test-cross-backend` loses them unless they are rewritten for both. |
+| #272 | Blocks were lowered to function pointers everywhere except the top level, where a file-scope block variable, its block-literal initializer and a free function's block parameter each reached the C compiler with the `^` intact — text no GCC target can parse, though each shape is valid Objective-C. **Done** — see gap Z. Filed while scoping #267 and taken first because it produces *invalid* C rather than merely non-conforming C. It also delivered what it was filed for, though not the way the issue assumed. Zephyr's own `ZBUS_LISTENER_DEFINE`/`K_TIMER_DEFINE` cannot take an inline block, because Objective-C refuses block-to-function-pointer conversion in every position and Clang has to parse the same file for the AST oracle — so the same PR adds **`OZM`**: `OZM(MACRO, ...)` is discarded unparsed by Clang and rewritten to `MACRO(...)` for the C compiler, where the literal is already a hoisted function name. One name for every target macro, no per-primitive wrapper. `samples/zbus_service` writes its zbus listener as an inline block on that basis and passes on ARM, and #267 can now be closed by retiring `OZTimer`. |
