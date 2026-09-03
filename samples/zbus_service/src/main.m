@@ -21,9 +21,13 @@
  * point the literal has become the name of a hoisted function. See
  * include/oz_sdk/Foundation/OZMacro.h.
  *
- * `ZBUS_CHAN_ADD_OBS` goes through OZM as well, because it names
- * `lis_print_temp` -- a symbol the discarded definition leaves invisible to
- * Clang. Both being discarded together is what keeps the pair consistent.
+ * Only this line needs OZM. `ZBUS_CHAN_ADD_OBS` below is pure C and stays
+ * pure C: it needs `lis_print_temp` to exist for Clang, which the discarded
+ * definition above does not provide, and Zephyr's own `ZBUS_OBS_DECLARE`
+ * is exactly the idiom for that -- an `extern const struct zbus_observer`,
+ * which agrees with the definition the generated C gets. Written
+ * unconditionally rather than under `#ifdef __OBJC__`, since an extern
+ * declaration beside its own definition is fine in C.
  *
  * A hoisted block captures nothing, which costs this callback nothing: it
  * already reached its context through zbus's own channel argument.
@@ -43,7 +47,9 @@ OZM(ZBUS_LISTENER_DEFINE, lis_print_temp, ^(const struct zbus_channel *chan) {
 	OZLog(" + [listener] Temperature: %d", report->temperature.value);
 });
 
-OZM(ZBUS_CHAN_ADD_OBS, chan_temperature_service_report, lis_print_temp, 3);
+ZBUS_OBS_DECLARE(lis_print_temp);
+
+ZBUS_CHAN_ADD_OBS(chan_temperature_service_report, lis_print_temp, 3);
 
 int main(void)
 {

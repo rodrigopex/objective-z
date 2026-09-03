@@ -1325,11 +1325,26 @@ Three things worth recording, two of them about the instrument:
   block and its generated C reads
   `ZBUS_LISTENER_DEFINE(lis_print_temp, oz_block_L1806_C43_1);`. Under
   twister on `mps2/an385` it prints `+ [listener] Temperature: 11` — real
-  zbus invoking the hoisted block — and Clang's AST dump for that file comes
-  back non-empty, which is the check that matters, since a source Clang
-  rejects fails silently. `ZBUS_CHAN_ADD_OBS` goes through `OZM` too, because
-  it names the observer that the discarded definition leaves invisible to
-  Clang; discarding both together is what keeps the pair consistent.
+  zbus invoking the hoisted block.
+
+  **Only that line needs `OZM`.** `ZBUS_CHAN_ADD_OBS` is pure C and stays
+  pure C: it expands to `.obs = &_obs`, so it needs `lis_print_temp` to exist
+  for Clang, which the discarded definition does not provide — and Zephyr's
+  own `ZBUS_OBS_DECLARE` is exactly the idiom for that. It expands to
+  `extern const struct zbus_observer`, which agrees with the `const`
+  definition the generated C gets, so it is written unconditionally rather
+  than under `#ifdef __OBJC__`. This file first said the pair had to be
+  discarded together; wrapping a line with no Objective-C in it also meant
+  Clang stopped checking that line, for no gain.
+
+  **The AST check this entry originally claimed does not hold, and finding
+  that out was worth more than the claim.** It said the dump "comes back
+  non-empty, which is the check that matters, since a source Clang rejects
+  fails silently". Non-empty proves nothing: Clang writes a partial AST on a
+  fatal error and exits non-zero, and the dump is taken with
+  `2>/dev/null || true`. Run by hand, `zbus_service`'s own dump command
+  fails with `fatal error: 'TemperatureService.h' file not found` — and has
+  all along, for a reason unrelated to `OZM`. See gap AA.
 
   An `OZM(...)` that somehow reached the C compiler unrewritten is a
   `_Static_assert(0, ...)` rather than an expansion to nothing — dropping a
@@ -1375,6 +1390,55 @@ Three things worth recording, two of them about the instrument:
   where the literal was, not what enclosed it. Worth noting because it is the
   same stale-claim shape this document keeps recording, in the one place a
   reader of the generated C would meet it.
+
+**AA. A sample's Clang AST dump cannot resolve the sample's own headers, so
+five of them have been silently truncated.** Open, filed as **#274**. Found
+while checking a claim gap Z made about `zbus_service`, not by anything
+failing.
+
+`_objz_build_ast_flags` (`cmake/ObjcClang.cmake:509`) collects include
+directories from the **`zephyr_interface` target only**. A sample's own
+`include_directories(include)` — or `include_directories(app PRIVATE include)`
+— reaches neither, so a dump of that sample's `.m` stops at the first
+`#include` of its own header:
+
+```
+samples/zbus_service/src/main.m:10:10:
+        fatal error: 'TemperatureService.h' file not found
+```
+
+Clang still writes the AST it built up to that point and the wrapper swallows
+the status (`2>/dev/null || true`), so the file is large — 51 MB, all of it
+SDK and Zephyr declarations — and contains **none of the sample's own
+`@implementation`s**. Verified on a second sample: `heap_alloc`'s `App.m` and
+`main.m` each fail the same way while all eleven `src/*.m` dumps are clean,
+which is the tell — the SDK's files need only `oz_sdk` includes, which the
+flags do carry.
+
+Five samples have their own `include/` and are affected: `gpio_demo`,
+`heap_alloc`, `hello_category`, `zbus_objc`, `zbus_service`.
+
+**Latent, not active.** The dump is the only authority on whether an `id`
+ivar is an object the class owns (gap N), and without it oz2c stays
+conservative and skips every `id` ivar — correct, but a leak. None of the
+five declares an `id`-typed ivar, so nothing leaks today. What is real is
+that the oracle those builds appear to supply is absent, and `--ast` was
+added (gap N) precisely so the production build would stop being the one
+place the facts were missing.
+
+Two things this says about the instrument, which is the reason it sits here
+rather than only in an issue:
+
+- **A non-empty AST dump is not evidence Clang accepted the file.** Gap Z's
+  first draft used exactly that check and it was wrong. The status is
+  discarded by the wrapper, so the only honest check is to re-run the dump
+  command by hand and read its exit code.
+- **The existing warning cannot catch this.** `cmake/oz_static.cmake` warns
+  only when *no* dump at all is usable; a truncated one is a file with
+  content, so it counts as usable. #269 recorded the same shape one step
+  less severe — the oracle being silently the wrong clang rather than
+  silently absent — and concluded that a warning about a substituted oracle
+  is not a check. This is the stronger version of that finding.
 
 ## On target (Zephyr under QEMU: mps2/an385, qemu_riscv32, qemu_cortex_a53/smp)
 
@@ -2050,3 +2114,4 @@ Filed rather than folded in, each with the reason it was kept separate:
 | #269 | CI never ran the Rust suite, and `hw-build-check` could not fail. **Done** — a `rust-tests` job runs all 262 tests plus `RUSTFLAGS=-D warnings`, so `corpus_parity.rs`'s `-pedantic-errors` gate is now enforced on every PR rather than only locally; `continue-on-error: true` is gone from the one job that cross-compiles for a board, verified safe first by reading ten runs' step conclusions. Two things found on the way and fixed in the same change: the AST oracle in CI was clang **18.1** rather than the tested 19, because the SDK was installed without `-l` and `objz_find_clang()` fell through to `PATH` while the job separately installed an unused clang 20 — one shared SDK install with LLVM now feeds cmake, `OZ_CLANG` and a `PATH` symlink alike, and `-DOBJZ_REQUIRE_TESTED_CLANG=ON` makes a repeat fatal; and `west.yml` said `revision: main`, so every CI run built against whatever upstream main was that morning, now pinned to **v4.4.2**. |
 | #267 | Generated C converts a block's function pointer to `void *` (`(void*)(expBlock)`, `src/OZTimer.m`), which ISO C forbids in either direction. 18 of the 26 sites `just test-pedantic` still reports, and the reason it is a report rather than a gate. Split out because the fix is a `__oz_timer_setup` signature decision — the current `void *` exists because ARC forbids a direct block-to-function-pointer cast — not a codegen change. Two corrections from #272's scoping: the helper does **not** exist "on both PAL backends" as this row and both allowlists said — it is in `include/platform/oz_platform_zephyr.h` and in `tests/behavior/include/zephyr_stubs/zephyr/kernel.h`, a Zephyr *stand-in*, while the host PAL has no timer at all. And the route to closing it is open and implemented as `OZM` (#272, gap Z): Zephyr's macro cannot be written directly, because Objective-C refuses block-to-function-pointer conversion in every position, but `OZM(K_TIMER_DEFINE, my_timer, ^(struct k_timer *t) { ... }, NULL)` works, being discarded unparsed by Clang and rewritten to the real macro for the C compiler. So this issue can be closed by **retiring `OZTimer`** rather than by adding a two-faced PAL signature — which removes the cast rather than working around it, along with `__oz_timer_setup` in both copies and the 18 pedantic sites `src/OZTimer.m` contributes to every sample pulling in Foundation. What that retirement still has to settle: a hoisted block captures nothing, so callers wire context through `k_timer_user_data_set`/`_get` where `OZTimer` wrapped it in a strong `_userdata` ivar; `OZTimer.h` sits in the `Foundation.h` umbrella; and the two corpus timer cases are the *Python* backend's own suite, so `just test-cross-backend` loses them unless they are rewritten for both. |
 | #272 | Blocks were lowered to function pointers everywhere except the top level, where a file-scope block variable, its block-literal initializer and a free function's block parameter each reached the C compiler with the `^` intact — text no GCC target can parse, though each shape is valid Objective-C. **Done** — see gap Z. Filed while scoping #267 and taken first because it produces *invalid* C rather than merely non-conforming C. It also delivered what it was filed for, though not the way the issue assumed. Zephyr's own `ZBUS_LISTENER_DEFINE`/`K_TIMER_DEFINE` cannot take an inline block, because Objective-C refuses block-to-function-pointer conversion in every position and Clang has to parse the same file for the AST oracle — so the same PR adds **`OZM`**: `OZM(MACRO, ...)` is discarded unparsed by Clang and rewritten to `MACRO(...)` for the C compiler, where the literal is already a hoisted function name. One name for every target macro, no per-primitive wrapper. `samples/zbus_service` writes its zbus listener as an inline block on that basis and passes on ARM, and #267 can now be closed by retiring `OZTimer`. |
+| #274 | A sample's Clang AST dump cannot resolve the sample's own headers, and a truncated dump is indistinguishable from a complete one. `_objz_build_ast_flags` takes include directories from the `zephyr_interface` target only, so `include_directories(include)` never reaches the dump; Clang stops at the first such `#include`, and the wrapper's `2>/dev/null || true` plus a size-only usability test hide it. Five samples affected, their 51 MB dumps carrying none of their own `@implementation`s. Latent — none declares an `id` ivar, the one thing the dump is sole authority on — but five builds appear to supply an oracle they do not. See gap AA. |
