@@ -16,6 +16,7 @@
 #import "OZHeap.h"
 #import "OZDefer.h"
 #import "OZTimer.h"
+#import "OZMacro.h"
 #import "OZLog.h"
 #import "OZSpinLock.h"
 #import "Singleton+Protocol.h"
