@@ -505,6 +505,21 @@ function(_objz_build_ast_flags result_var)
     list(APPEND _flags -fobjc-arc)
     list(APPEND _flags -fblocks)
 
+    # The dump has to be produced for the *target*, not the host (#274).
+    # `_objz_get_clang_target_triple()` has existed all along and this
+    # function never called it, so every dump was parsed as the build
+    # machine: 64-bit pointers on an arm64 Mac, and — the part that broke
+    # things — Zephyr's arch headers reaching for intrinsics the host has no
+    # declaration of. Measured on `qemu_riscv32`, one `src/OZTimer.m` dump:
+    # **20 errors without the triple, 1 with it.** Twenty matters because it
+    # is Clang's default `-ferror-limit`, at which point it emits
+    # `fatal error: too many errors emitted, stopping now` and stops — so
+    # every RISC-V dump was silently truncated, and every sample's OZTimer
+    # facts along with it. The one that remains is `__oz_timer_setup` being
+    # undeclared, which is ordinary and truncates nothing (#267).
+    _objz_get_clang_target_triple(_ast_triple)
+    list(APPEND _flags --target=${_ast_triple})
+
     # Include dirs from zephyr_interface (skip generator expressions)
     get_property(_inc_dirs TARGET zephyr_interface
         PROPERTY INTERFACE_INCLUDE_DIRECTORIES)
