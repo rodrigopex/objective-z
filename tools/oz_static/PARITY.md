@@ -1391,10 +1391,11 @@ Three things worth recording, two of them about the instrument:
   same stale-claim shape this document keeps recording, in the one place a
   reader of the generated C would meet it.
 
-**AA. A sample's Clang AST dump cannot resolve the sample's own headers, so
-five of them have been silently truncated.** Open, filed as **#274**. Found
-while checking a claim gap Z made about `zbus_service`, not by anything
-failing.
+**AA. The Clang AST dumps were silently truncated — on every RISC-V sample,
+and on five samples' own files everywhere.** Fixed (#274). Found while
+checking a claim gap Z made about `zbus_service`, not by anything failing,
+and it turned out to have **two independent causes**. The one the issue was
+filed on was the smaller.
 
 `_objz_build_ast_flags` (`cmake/ObjcClang.cmake:509`) collects include
 directories from the **`zephyr_interface` target only**. A sample's own
@@ -1426,19 +1427,63 @@ that the oracle those builds appear to supply is absent, and `--ast` was
 added (gap N) precisely so the production build would stop being the one
 place the facts were missing.
 
-Two things this says about the instrument, which is the reason it sits here
+**The second cause was larger: the dumps named no `--target`.**
+`_objz_get_clang_target_triple()` has existed all along and
+`_objz_build_ast_flags` never called it, so every dump was parsed as the
+*build machine* — 64-bit pointers on an arm64 Mac — and Zephyr's arch
+headers then reached for intrinsics the host has no declaration of.
+Measured on one `src/OZTimer.m` dump for `qemu_riscv32`: **20 errors without
+the triple, 1 with it.** Twenty is Clang's default `-ferror-limit`, at which
+point it emits `fatal error: too many errors emitted, stopping now` and
+stops — so **every RISC-V dump was truncated**, 26 of 150 files reporting it
+once the diagnostics were kept. The one error that remains is
+`__oz_timer_setup` being undeclared, which is ordinary and truncates
+nothing (#267).
+
+So the include-path hole cost five samples their own `@implementation`s, and
+the missing triple cost RISC-V everything past the first arch header. Both
+are fixed; both were invisible.
+
+**After: 0 truncated dumps out of 165 on `mps2/an385` and 0 of 150 on
+`qemu_riscv32`**, with 13 of 13 and 12 of 12 samples still passing.
+
+**And no generated C moved.** Every sample's output was diffed pre-fix
+against post-fix — **0 differing lines across all 13** — which is what makes
+the "latent, not active" claim above a measurement rather than an argument:
+restoring the oracle changed no decision, because no affected sample has an
+`id` ivar for it to decide about.
+
+Three things this says about the instrument, which is why it sits here
 rather than only in an issue:
 
 - **A non-empty AST dump is not evidence Clang accepted the file.** Gap Z's
   first draft used exactly that check and it was wrong. The status is
   discarded by the wrapper, so the only honest check is to re-run the dump
-  command by hand and read its exit code.
-- **The existing warning cannot catch this.** `cmake/oz_static.cmake` warns
-  only when *no* dump at all is usable; a truncated one is a file with
-  content, so it counts as usable. #269 recorded the same shape one step
+  command and read its exit code.
+- **Nor is a non-zero exit evidence the dump is unusable**, which cost a
+  pass here to learn. Clang exits non-zero for an ordinary error and then
+  carries on; only a `fatal error` stops it. Failing on exit status alone
+  rejected dumps that had always been complete. The criterion is
+  `fatal error`, because that is the one that truncates.
+- **The existing warning could not catch any of it.** `oz_static.cmake`
+  warns only when *no* dump at all is usable; a truncated one is a file with
+  content, so it counted as usable. #269 recorded the same shape one step
   less severe — the oracle being silently the wrong clang rather than
-  silently absent — and concluded that a warning about a substituted oracle
-  is not a check. This is the stronger version of that finding.
+  silently truncated — and concluded that a warning about a substituted
+  oracle is not a check. The check now lives in its own script, run at
+  build time between the dumps and oz2c, and it is fatal by default
+  (`-DOBJZ_ALLOW_PARTIAL_AST=ON` to downgrade it).
+
+**Why the check runs at build time and not at configure time**, which is
+itself a thing worth knowing: the dump script runs twice. The configure-time
+run exists only to discover the output file list, and Zephyr's *generated*
+headers do not exist yet on a pristine build, so anything reaching
+`zephyr/kernel.h` fails there with
+`fatal error: 'zephyr/syscall_list.h' file not found`. That is expected and
+harmless — a file name does not depend on an ARC fact. The build-time run is
+ordered after `zephyr_generated_headers` and is the one whose dumps reach
+the shipped C, so it is the one checked. Putting the check at configure time
+broke every pristine build, which is how this was discovered.
 
 ## On target (Zephyr under QEMU: mps2/an385, qemu_riscv32, qemu_cortex_a53/smp)
 
@@ -1685,7 +1730,12 @@ own suites were re-run rather than assumed unaffected:
 | `just test-adapted` (`tests/adapted/`) | 40 passed |
 
 All three green, so nothing in the shared surface regressed for that
-backend.
+backend. Those are its *host* suites, though, and they are not the whole
+question: a Zephyr build of the samples under
+`CONFIG_OBJZ_BACKEND_PYTHON=y` is a separate check that no routine gate
+runs, and it is where gap Z's addition to `transpiled_blocks` turned out to
+have broken that sample for this backend -- see "Code size against the
+Python backend". Green here does not cover it.
 
 ## Behavior corpus (73 cases)
 
@@ -1949,11 +1999,34 @@ own `rom_size`/`ram_size` fields come back `None` unless size reporting is
 enabled explicitly, which is why the ELF is read directly — worth knowing
 before trying to reproduce this from a twister report.
 
-One row no longer reproduces exactly: `transpiled_blocks` gained a file-scope
-block and a C function taking one when gap Z landed, so its figures below
-predate those few hundred bytes. The totals and the conclusion are unaffected
-at this precision, and the table is left as the measurement that was actually
-taken rather than adjusted by estimate.
+One row no longer reproduces at all, and the reason is a regression this
+document has to own. `transpiled_blocks` gained a file-scope block and a C
+function taking one when gap Z landed -- and **the Python backend has no
+lowering for either**, which is the very gap Z fixed in oz_static. So that
+sample no longer builds under `CONFIG_OBJZ_BACKEND_PYTHON`:
+
+```
+main_ozm.c:74:13: error: expected identifier or '(' before '^' token
+   74 | static int (^scale_by_three)(int) = ^(int v) {
+```
+
+It joins `zbus_service` as a sample only oz_static can build, taking the
+comparison from twelve rows to eleven. Found by running the Python-backend
+sweep while verifying #274; it was missed when gap Z landed because the
+routine gates (`just test`, `just test-boards`) only exercise the *default*
+backend, so a second-backend build failure is invisible to all of them. The
+row's figures also predate the sample's growth. Left as the measurement
+actually taken rather than adjusted by estimate.
+
+**Leaving it that way is a decision, not an oversight.** The alternatives
+were to move those two shapes into a sample already unbuildable under that
+backend, or to give them one of their own; both were declined on the
+standing rule that the Python pipeline is a reference and not something to
+extend or design around. It is the outgoing implementation, oz_static is the
+default, and a sample exercising constructs only the default backend lowers
+is a fair thing for this repository to contain. The cost is stated plainly
+here rather than absorbed: eleven comparable rows instead of twelve, and one
+fewer sample proving the Python backend still builds.
 
 Reproduce with `west twister -T samples/ -p mps2/an385` and again with
 `-x CONFIG_OBJZ_BACKEND_PYTHON=y`, then size the ELFs.
@@ -2114,4 +2187,4 @@ Filed rather than folded in, each with the reason it was kept separate:
 | #269 | CI never ran the Rust suite, and `hw-build-check` could not fail. **Done** — a `rust-tests` job runs all 262 tests plus `RUSTFLAGS=-D warnings`, so `corpus_parity.rs`'s `-pedantic-errors` gate is now enforced on every PR rather than only locally; `continue-on-error: true` is gone from the one job that cross-compiles for a board, verified safe first by reading ten runs' step conclusions. Two things found on the way and fixed in the same change: the AST oracle in CI was clang **18.1** rather than the tested 19, because the SDK was installed without `-l` and `objz_find_clang()` fell through to `PATH` while the job separately installed an unused clang 20 — one shared SDK install with LLVM now feeds cmake, `OZ_CLANG` and a `PATH` symlink alike, and `-DOBJZ_REQUIRE_TESTED_CLANG=ON` makes a repeat fatal; and `west.yml` said `revision: main`, so every CI run built against whatever upstream main was that morning, now pinned to **v4.4.2**. |
 | #267 | Generated C converts a block's function pointer to `void *` (`(void*)(expBlock)`, `src/OZTimer.m`), which ISO C forbids in either direction. 18 of the 26 sites `just test-pedantic` still reports, and the reason it is a report rather than a gate. Split out because the fix is a `__oz_timer_setup` signature decision — the current `void *` exists because ARC forbids a direct block-to-function-pointer cast — not a codegen change. Two corrections from #272's scoping: the helper does **not** exist "on both PAL backends" as this row and both allowlists said — it is in `include/platform/oz_platform_zephyr.h` and in `tests/behavior/include/zephyr_stubs/zephyr/kernel.h`, a Zephyr *stand-in*, while the host PAL has no timer at all. And the route to closing it is open and implemented as `OZM` (#272, gap Z): Zephyr's macro cannot be written directly, because Objective-C refuses block-to-function-pointer conversion in every position, but `OZM(K_TIMER_DEFINE, my_timer, ^(struct k_timer *t) { ... }, NULL)` works, being discarded unparsed by Clang and rewritten to the real macro for the C compiler. So this issue can be closed by **retiring `OZTimer`** rather than by adding a two-faced PAL signature — which removes the cast rather than working around it, along with `__oz_timer_setup` in both copies and the 18 pedantic sites `src/OZTimer.m` contributes to every sample pulling in Foundation. What that retirement still has to settle: a hoisted block captures nothing, so callers wire context through `k_timer_user_data_set`/`_get` where `OZTimer` wrapped it in a strong `_userdata` ivar; `OZTimer.h` sits in the `Foundation.h` umbrella; and the two corpus timer cases are the *Python* backend's own suite, so `just test-cross-backend` loses them unless they are rewritten for both. |
 | #272 | Blocks were lowered to function pointers everywhere except the top level, where a file-scope block variable, its block-literal initializer and a free function's block parameter each reached the C compiler with the `^` intact — text no GCC target can parse, though each shape is valid Objective-C. **Done** — see gap Z. Filed while scoping #267 and taken first because it produces *invalid* C rather than merely non-conforming C. It also delivered what it was filed for, though not the way the issue assumed. Zephyr's own `ZBUS_LISTENER_DEFINE`/`K_TIMER_DEFINE` cannot take an inline block, because Objective-C refuses block-to-function-pointer conversion in every position and Clang has to parse the same file for the AST oracle — so the same PR adds **`OZM`**: `OZM(MACRO, ...)` is discarded unparsed by Clang and rewritten to `MACRO(...)` for the C compiler, where the literal is already a hoisted function name. One name for every target macro, no per-primitive wrapper. `samples/zbus_service` writes its zbus listener as an inline block on that basis and passes on ARM, and #267 can now be closed by retiring `OZTimer`. |
-| #274 | A sample's Clang AST dump cannot resolve the sample's own headers, and a truncated dump is indistinguishable from a complete one. `_objz_build_ast_flags` takes include directories from the `zephyr_interface` target only, so `include_directories(include)` never reaches the dump; Clang stops at the first such `#include`, and the wrapper's `2>/dev/null || true` plus a size-only usability test hide it. Five samples affected, their 51 MB dumps carrying none of their own `@implementation`s. Latent — none declares an `id` ivar, the one thing the dump is sole authority on — but five builds appear to supply an oracle they do not. See gap AA. |
+| #274 | The Clang AST dumps were silently truncated, with two independent causes: `_objz_build_ast_flags` took include directories from the `zephyr_interface` target only, so no sample's own `include/` reached its dump (five samples, losing their own `@implementation`s); and it named no `--target`, so every dump was parsed as the build machine and Zephyr's arch headers exhausted Clang's 20-error limit (**every RISC-V dump**). **Done** -- 0 truncated of 165 dumps on ARM and 0 of 150 on RISC-V, with generated C byte-identical pre- and post-fix across all 13 samples, which is what makes the impact latent rather than active. A truncated dump is now fatal at build time rather than counted as usable. See gap AA. |
