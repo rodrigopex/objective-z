@@ -4453,6 +4453,11 @@ fn walk_top_level(
                     Vec::new()
                 };
                 edits.extend(block_pointer_edits(node, source));
+                // `OZM(MACRO, ...)` -> `MACRO(...)`, the escape that lets a
+                // target's definition macro carry an inline block at all
+                // (#272). Before the hoisting below, whose edits land inside
+                // the arguments this leaves in place.
+                edits.extend(ozm_edits(node, source));
                 if contains_block_literal(node) {
                     let mut ctx =
                         EmitCtx::new(source, program, String::new(), file_vars.clone(), pools);
@@ -4879,15 +4884,117 @@ fn block_pointer_edits(node: Node, src: &str) -> Vec<(Range<usize>, String)> {
     out
 }
 
+/// The `OZM` escape: `OZM(MACRO, a, b)` becomes `MACRO(a, b)`.
+///
+/// A target's definition macros -- `K_TIMER_DEFINE`, `ZBUS_LISTENER_DEFINE`
+/// -- consume their callback argument as a function pointer, and
+/// Objective-C refuses block-to-function-pointer conversion in every
+/// position, so writing one directly with an inline block is rejected by
+/// Clang. Clang is not optional: `cmake/oz_static.cmake` dumps one AST per
+/// source as the ownership oracle (see `astinfo`), and the Python backend
+/// compiles the same file.
+///
+/// A macro is the only construct whose argument Objective-C leaves
+/// *unparsed*: an argument whose parameter is absent from the replacement
+/// list is discarded rather than expanded, so it need only lex. So
+/// `include/oz_sdk/OZMacro.h` defines `OZM(...)` as empty for Clang, and
+/// this rewrite puts the real call back for the C compiler:
+///
+/// ```objc
+/// OZM(K_TIMER_DEFINE, my_timer, ^(struct k_timer *t) { ... }, NULL);
+/// ```
+///
+/// becomes, once the literal is hoisted by `top_level_block_edits`:
+///
+/// ```c
+/// void oz_block_L12_C40_1(struct k_timer *t) { ... }
+/// K_TIMER_DEFINE(my_timer, oz_block_L12_C40_1, NULL);
+/// ```
+///
+/// One name serves every target macro, rather than a two-faced wrapper per
+/// primitive, and the call site still names the macro it means.
+///
+/// Done as *edits* rather than by rebuilding the text, so it composes with
+/// the block-hoisting edits inside the later arguments -- those are absolute
+/// offsets into the same source. The first argument is a macro name and so
+/// never contains a literal, which is what keeps the two from overlapping.
+///
+/// Matched on the node's own text rather than a grammar shape: a bare
+/// top-level macro invocation is not a node kind oz_static can rely on (gap
+/// P found it is "neither a `preproc` node nor a declaration"), and scanning
+/// for the balanced paren is both simpler and independent of how tree-sitter
+/// chooses to bracket it.
+fn ozm_edits(node: Node, src: &str) -> Vec<(Range<usize>, String)> {
+    let text = node_text(node, src);
+    let lead = text.len() - text.trim_start().len();
+    let rest = &text[lead..];
+    let Some(after) = rest.strip_prefix("OZM") else {
+        return Vec::new();
+    };
+    // `OZM` and not `OZMxxx`: the next thing must be the opening paren.
+    let paren_off = after.len() - after.trim_start().len();
+    if !after[paren_off..].starts_with('(') {
+        return Vec::new();
+    }
+    let base = node.start_byte() + lead;
+    let name_range = base..(base + 3);
+    let open = base + 3 + paren_off;
+
+    // The first top-level comma ends the macro-name argument. Depth counts
+    // every bracket kind, so a name is never split by a comma nested in the
+    // arguments that follow.
+    let bytes = rest.as_bytes();
+    let mut depth = 0usize;
+    let mut first_comma: Option<usize> = None;
+    let mut close: Option<usize> = None;
+    for (i, &b) in bytes.iter().enumerate().skip(3 + paren_off) {
+        match b {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    close = Some(base + i);
+                    break;
+                }
+            }
+            b',' if depth == 1 && first_comma.is_none() => first_comma = Some(base + i),
+            _ => {}
+        }
+    }
+    if close.is_none() {
+        return Vec::new();
+    }
+
+    // `OZM(MACRO)` with no further arguments still means `MACRO()`.
+    let (macro_name_end, args_start) = match first_comma {
+        Some(comma) => (comma, comma + 1),
+        None => (close.unwrap(), close.unwrap()),
+    };
+    let macro_name = src[(open + 1)..macro_name_end].trim();
+    if macro_name.is_empty() {
+        return Vec::new();
+    }
+    // Leading space after the comma goes with it, so `MACRO(a, b)` comes out
+    // spaced as it was written rather than with a stray gap.
+    let mut consumed = args_start;
+    while src[consumed..].starts_with(' ') || src[consumed..].starts_with('\t') {
+        consumed += 1;
+    }
+    vec![
+        (name_range, macro_name.to_string()),
+        ((open + 1)..consumed, String::new()),
+    ]
+}
+
 /// Hoist every `block_literal` under a top-level node that no other arm
 /// claimed, returning the edits that replace each literal with the name of
 /// the function `render_block` synthesized for it.
 ///
-/// This is what makes a Zephyr definition macro writable with an inline
-/// block (#272):
+/// With `ozm_edits` this is what makes a target definition macro writable
+/// with an inline block (#272):
 ///
 /// ```objc
-/// ZBUS_LISTENER_DEFINE(lis_print_temp, ^(const struct zbus_channel *chan) {
+/// OZM(ZBUS_LISTENER_DEFINE, lis_print_temp, ^(const struct zbus_channel *chan) {
 ///         ...
 /// });
 /// ```
