@@ -21,10 +21,16 @@
 // **A macro is the only construct whose argument Objective-C leaves
 // unparsed.** An argument whose parameter is absent from the replacement
 // list is discarded rather than expanded, so it need only lex, and `^` is a
-// valid punctuator. `include/oz_sdk/Foundation/OZMacro.h` therefore defines
-// `OZM(...)` as empty for Clang, and this rewrite puts the real call back
-// for the C compiler -- by which point `top_level_block_edits` has turned
-// the literal into the name of a function hoisted out of it.
+// valid punctuator. So `include/oz_sdk/Foundation/OZMacro.h` defines
+// `OZM(...)` as empty for Clang, and `include/platform/oz_platform.h`
+// defines `OZM(target, ...) target(__VA_ARGS__)` for the generated C.
+//
+// **Both halves are pure preprocessor**, which is the whole design: the
+// transpiler contributes only the hoist -- `top_level_block_edits` turning
+// the literal into a function name -- and the preprocessor's own rescan
+// expands the target macro. There is no OZM rule in the transpiler, so the
+// tests below assert that the invocation is left *standing* in the
+// generated C, and running the program is what proves the expansion.
 //
 // One name serves every target macro, so there is no per-primitive wrapper
 // to write and no second arm to keep in step, and the call site still names
@@ -66,15 +72,14 @@ int main(void) {
 }
 "
     );
+    // The transpiler's whole contribution is the hoist: the literal becomes
+    // a function name, and the `OZM(...)` invocation is left standing for
+    // the preprocessor to expand. Running the program is what proves that
+    // second half happened.
     let out = oz_static::transpile(&src).expect("should transpile");
     assert!(
-        out.source_c.contains("FAKE_TIMER_DEFINE(my_timer, oz_block_"),
-        "OZM should become the target macro, taking the hoisted name:\n{}",
-        out.source_c
-    );
-    assert!(
-        !out.source_c.contains("OZM("),
-        "no OZM invocation may survive into the generated C:\n{}",
+        out.source_c.contains("OZM(FAKE_TIMER_DEFINE, my_timer, oz_block_"),
+        "the literal should be hoisted and the OZM invocation left intact:\n{}",
         out.source_c
     );
     let stdout = compile_and_run(&src, "ozm_carries_an_inline_block_to_the_target_macro");
@@ -82,8 +87,8 @@ int main(void) {
 }
 
 /// An unprotected comma in the block body must not split the argument list.
-/// `OZM` is variadic on the Objective-C side for exactly this, and the
-/// rewrite counts bracket depth rather than commas.
+/// Both halves are variadic for exactly this, so the extra arguments the
+/// comma creates are simply forwarded.
 #[test]
 fn a_comma_inside_the_block_body_does_not_split_the_call() {
     let src = format!(
@@ -127,15 +132,26 @@ int main(void) {
     );
     let out = oz_static::transpile(&src).expect("should transpile");
     assert!(
-        out.source_c.contains("FAKE_TIMER_DEFINE(my_timer, on_expiry)"),
-        "the rewrite should be independent of what the arguments are:\n{}",
+        out.source_c.contains("OZM(FAKE_TIMER_DEFINE, my_timer, on_expiry)"),
+        "OZM is a macro escape, not a block feature -- nothing to hoist \
+         here, and the invocation passes through:\n{}",
         out.source_c
     );
     let stdout = compile_and_run(&src, "ozm_works_without_a_block_at_all");
     assert_eq!(stdout, "fn=3\n");
 }
 
-/// `OZM(MACRO)` with nothing after the name still means `MACRO()`.
+/// `OZM(MACRO)` with nothing after the name expands to `MACRO()` -- but
+/// only outside `-pedantic-errors`, and so is **not** part of the supported
+/// surface.
+///
+/// Leaving `__VA_ARGS__` empty is a C23 extension: `clang -std=c17
+/// -pedantic-errors` rejects it with "passing no argument for the '...'
+/// parameter of a variadic macro". `compile_and_run` does not pass that
+/// flag, which is why this passes here, and the corpus gate does -- so a
+/// case relying on it would fail there. Kept to pin the actual behaviour
+/// rather than to bless it; every definition macro OZM exists for takes
+/// arguments.
 #[test]
 fn ozm_with_no_further_arguments_calls_the_macro_with_none() {
     let src = format!(
@@ -152,26 +168,26 @@ int main(void) {
 }
 "
     );
+    // Asserting on `DECLARE_FLAG()` would be vacuous -- that text is also in
+    // the `#define` line, which passes through. The invocation is what to
+    // look for, and the run is what shows it expanded.
     let out = oz_static::transpile(&src).expect("should transpile");
     assert!(
-        out.source_c.contains("DECLARE_FLAG()"),
-        "an argument-less OZM should still call its macro:\n{}",
+        out.source_c.contains("OZM(DECLARE_FLAG)"),
+        "the invocation should pass through to the preprocessor:\n{}",
         out.source_c
     );
     let stdout = compile_and_run(&src, "ozm_with_no_further_arguments");
     assert_eq!(stdout, "flag=5\n");
 }
 
-/// A longer name beginning with those three letters is not `OZM`. The
-/// rewrite matches the identifier followed by its opening paren, so a macro
-/// somebody else called `OZMETRICS_DEFINE` is left entirely alone -- the
-/// same discipline `unused_param_acks` needed for parameter names.
+/// A longer name beginning with those three letters is not `OZM`, so a macro
+/// somebody else called `OZMETRICS_DEFINE` is left entirely alone.
 ///
-/// The one case in this file that passes with the rewrite disabled, and
-/// deliberately so: it guards against *over*-matching, a failure only the
-/// rewrite can introduce. Read it as a bound on the feature rather than as
-/// a regression test for it -- the other four are the discriminating ones,
-/// each confirmed to fail without the change.
+/// Trivially true now that both halves are preprocessor macros -- macro
+/// names match exactly, by construction -- where a transpiler rule matching
+/// text could have over-matched. Kept as a bound on the feature, and as the
+/// record of why the transpiler rule it once guarded is gone.
 #[test]
 fn a_longer_name_beginning_with_ozm_is_untouched() {
     let src = format!(
