@@ -4343,7 +4343,14 @@ fn walk_top_level(
                 // `main()`.
                 let mut ctx =
                     EmitCtx::new(source, program, String::new(), file_vars.clone(), pools);
-                let sig_edits = class_tag_edits(node, source, program);
+                let mut sig_edits = class_tag_edits(node, source, program);
+                // A block-typed parameter is lowered to a function pointer
+                // here for the same reason its class names are tagged here:
+                // this signature is patched text, not rebuilt through
+                // `collect::render_type`, so nothing else lowers it and the
+                // `^` reached GCC (#272). A method's equivalent parameter
+                // has always been lowered.
+                sig_edits.extend(block_pointer_edits(node, source));
                 let mut text = apply_edits(source, node.start_byte(), node.end_byte(), &sig_edits);
                 let mut c2 = node.walk();
                 if let Some(body) = node.children(&mut c2).find(|c| c.kind() == "compound_statement") {
@@ -4419,14 +4426,47 @@ fn walk_top_level(
                 // origin's class -- can still give it the same reach.
                 // A plain top-level declaration still needs its class
                 // names tagged -- `static OZHeap *sHeap;` is not valid C
-                // (see `class_tag_edits`). Everything else here is trivia
-                // and passes through untouched.
-                let owned_text = if node.kind() == "declaration" {
-                    let edits = class_tag_edits(node, source, program);
-                    apply_edits(source, node.start_byte(), node.end_byte(), &edits)
+                // (see `class_tag_edits`).
+                //
+                // Two more edits apply to anything that lands here, both
+                // #272 and both about blocks reaching C with their `^`
+                // intact: a block-pointer declarator is lowered to a
+                // function pointer (`block_pointer_edits` -- a file-scope
+                // `static void (^g)(int);` is the shape), and a block
+                // literal is hoisted to a named function and replaced by
+                // that name (`top_level_block_edits` -- which is what makes
+                // `ZBUS_LISTENER_DEFINE(n, ^(...){ ... })` compile).
+                //
+                // Everything else here is trivia and passes through
+                // untouched: with no edits, `apply_edits` returns the
+                // original text byte for byte.
+                let mut edits = if node.kind() == "declaration" {
+                    class_tag_edits(node, source, program)
                 } else {
-                    node_text(node, source).to_string()
+                    Vec::new()
                 };
+                edits.extend(block_pointer_edits(node, source));
+                if contains_block_literal(node) {
+                    let mut ctx =
+                        EmitCtx::new(source, program, String::new(), file_vars.clone(), pools);
+                    edits.extend(top_level_block_edits(node, &mut ctx, program));
+                    diags.extend(ctx.diags);
+                    hoisted_structs.extend(ctx.hoisted_structs);
+                    hoisted_blocks_by_stem
+                        .entry(stem.clone())
+                        .or_default()
+                        .extend(ctx.hoisted_blocks);
+                    hoisted_strings_by_stem
+                        .entry(stem.clone())
+                        .or_default()
+                        .extend(ctx.hoisted_string_literals);
+                    hoisted_statics_by_stem
+                        .entry(stem.clone())
+                        .or_default()
+                        .extend(ctx.hoisted_statics);
+                }
+                let owned_text =
+                    apply_edits(source, node.start_byte(), node.end_byte(), &edits);
                 let text = owned_text.trim();
                 if text.is_empty() {
                     continue;
@@ -4769,6 +4809,146 @@ fn class_tag_edits(node: Node, src: &str, program: &Program) -> Vec<(Range<usize
     let mut out = Vec::new();
     walk(node, src, program, &mut out);
     out
+}
+
+/// Byte-range edits that lower every block-pointer declarator in `node` to a
+/// plain function pointer -- `void (^cb)(int)` becomes `void (*cb)(int)` --
+/// as absolute offsets into the source.
+///
+/// A block *is* a function pointer in generated C, and every position that
+/// routes through `collect::render_type` already says so: an ivar becomes
+/// `void (*_ivarBlk)(int)`, a method parameter becomes
+/// `void (*b)(struct k_timer *)`, a local becomes `void (*local)(int)`. The
+/// three that did not are the ones assembled by patching the original text,
+/// where no edit lowered a block type (#272):
+///
+///   - a free function's signature, both its prototype and its definition
+///     (`static void take_cb(void (^cb)(int));`)
+///   - a file-scope block variable (`static void (^g_blk)(int);`)
+///
+/// Both reached the C compiler with the `^` intact. Blocks are a Clang
+/// extension rather than ISO C, so this is not a weaker type but text no GCC
+/// target can parse at all: `error: expected ')' before '^' token`.
+///
+/// Nothing in the repository writes either shape, which is why they went
+/// unnoticed -- the same reason gaps Q, V and R went unnoticed, and the same
+/// family: the top-level path getting a reduced version of what a method
+/// body gets.
+///
+/// A `block_literal` subtree is skipped, because `render_block` synthesizes
+/// that function's signature outright rather than patching it, and
+/// `top_level_block_edits` replaces the whole literal anyway -- an edit
+/// inside it would be discarded or would collide.
+fn block_pointer_edits(node: Node, src: &str) -> Vec<(Range<usize>, String)> {
+    fn caret(node: Node, src: &str) -> Option<Range<usize>> {
+        let mut cursor = node.walk();
+        if let Some(tok) = node.children(&mut cursor).find(|c| c.kind() == "^") {
+            return Some(tok.byte_range());
+        }
+        // The grammar names the token, but fall back to the text rather than
+        // silently emitting nothing: leaving a `^` behind does not degrade
+        // the output, it makes it uncompilable.
+        let start = node.start_byte();
+        src[node.byte_range()].find('^').map(|off| (start + off)..(start + off + 1))
+    }
+    fn walk(node: Node, src: &str, out: &mut Vec<(Range<usize>, String)>) {
+        if node.kind() == "block_literal" {
+            return;
+        }
+        if matches!(node.kind(), "block_pointer_declarator" | "abstract_block_pointer_declarator")
+        {
+            if let Some(range) = caret(node, src) {
+                out.push((range, "*".to_string()));
+            }
+        }
+        let mut cursor = node.walk();
+        let children: Vec<Node> = node.children(&mut cursor).collect();
+        for child in children {
+            walk(child, src, out);
+        }
+    }
+    let mut out = Vec::new();
+    walk(node, src, &mut out);
+    out
+}
+
+/// Hoist every `block_literal` under a top-level node that no other arm
+/// claimed, returning the edits that replace each literal with the name of
+/// the function `render_block` synthesized for it.
+///
+/// This is what makes a Zephyr definition macro writable with an inline
+/// block (#272):
+///
+/// ```objc
+/// ZBUS_LISTENER_DEFINE(lis_print_temp, ^(const struct zbus_channel *chan) {
+///         ...
+/// });
+/// ```
+///
+/// The same literal inside a method or free-function *body* has always
+/// hoisted -- `walk_top_level`'s passthrough arm copies text, so the literal
+/// was simply never reached by `render_block` and arrived at GCC with its
+/// `^`. Handled here, at the one place every unclaimed node passes through,
+/// rather than per node kind: that is what gap X's bare-`;` fix chose and
+/// for the same reason, since it means a future arm gets the same treatment
+/// without knowing to ask, and oz_static needs to know no macro's name --
+/// `ZBUS_LISTENER_DEFINE`, `K_TIMER_DEFINE` and any other shape are all just
+/// unclaimed text with a literal in it.
+///
+/// The static bar is run over each body, which this position had no scan of
+/// at all -- the top-level twin of the free-function scan gap Q added. A
+/// rejected block is left exactly as written, so the diagnostic is what the
+/// user sees rather than generated code they never wrote.
+///
+/// A literal is not descended into: `render_block` renders that whole
+/// subtree, nested literals included.
+fn top_level_block_edits(
+    node: Node,
+    ctx: &mut EmitCtx,
+    program: &Program,
+) -> Vec<(Range<usize>, String)> {
+    fn walk(
+        node: Node,
+        ctx: &mut EmitCtx,
+        program: &Program,
+        out: &mut Vec<(Range<usize>, String)>,
+    ) {
+        if node.kind() == "block_literal" {
+            let mut cursor = node.walk();
+            let body = node.children(&mut cursor).find(|c| c.kind() == "compound_statement");
+            if let Some(body) = body {
+                let reject = crate::staticbar::check_function_body(body, ctx.src, program);
+                if !reject.is_empty() {
+                    ctx.diags.extend(reject);
+                    return;
+                }
+            }
+            let (name, _) = render_block(node, ctx);
+            out.push((node.byte_range(), name));
+            return;
+        }
+        let mut cursor = node.walk();
+        let children: Vec<Node> = node.children(&mut cursor).collect();
+        for child in children {
+            walk(child, ctx, program, out);
+        }
+    }
+    let mut out = Vec::new();
+    walk(node, ctx, program, &mut out);
+    out
+}
+
+/// Does `node` contain a `block_literal` anywhere?
+///
+/// Cheap guard so the passthrough arm builds an `EmitCtx` only for the nodes
+/// that need one, rather than for every comment and `#include`.
+fn contains_block_literal(node: Node) -> bool {
+    if node.kind() == "block_literal" {
+        return true;
+    }
+    let mut cursor = node.walk();
+    let children: Vec<Node> = node.children(&mut cursor).collect();
+    children.into_iter().any(contains_block_literal)
 }
 
 /// Apply `edits` (absolute source offsets) to the text of `start..end`.
