@@ -32,6 +32,23 @@
 }
 @end
 
+/*
+ * A block at file scope, and a plain C function taking one as a parameter.
+ * Both lower to function pointers (#272) -- until then the `^` reached the
+ * C compiler verbatim, which no GCC target can parse. Kept here rather than
+ * only in the Rust suite because that suite compiles with the host clang,
+ * where a surviving `^` is a valid Clang block: the ARM build is the check
+ * that means something.
+ */
+static int (^scale_by_three)(int) = ^(int v) {
+  return v * 3;
+};
+
+static int apply_twice(int (^op)(int), int v)
+{
+	return op(op(v));
+}
+
 int main(void)
 {
 	printk("=== Blocks Demo ===\n");
@@ -58,6 +75,10 @@ int main(void)
 	  return nested_val;
 	};
 	printk("Nested block: %d\n", read_val());
+
+	/* File-scope block, and one passed to a plain C function */
+	printk("File-scope block: %d\n", scale_by_three(5));
+	printk("Block through a C function: %d\n", apply_twice(scale_by_three, 2));
 
 	/* Index-based iteration via Sensor */
 	Sensor *sensor = [[Sensor alloc] init];
