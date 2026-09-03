@@ -4,8 +4,6 @@
 #include "platform/oz_platform.h"
 #include "oz_dispatch.h"
 #include <string.h>
-#include <zephyr/kernel.h>
-
 
 struct OZObject {
 	struct oz_metadata _meta;

@@ -22,7 +22,6 @@ target_sources(app PRIVATE
     src/test_memory.c
     src/test_protocol.c
     src/test_boxed_expr.c
-    src/test_timer.c
 )
 
 # Transpiled class sources

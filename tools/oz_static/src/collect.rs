@@ -205,9 +205,11 @@ pub(crate) fn extract_type_and_stars(node: Node, src: &str) -> (String, usize) {
                     // Objective-C's ARC and bridging qualifiers -- `__bridge`,
                     // `__strong`, `__unsafe_unretained` and friends -- which
                     // name nothing in C and must keep being dropped.
-                    // Preserving them emitted `(__bridge void *)` into the
-                    // generated cast in `src/OZTimer.m`, which is not C:
-                    // "use of undeclared identifier '__bridge'".
+                    // Preserving them emitted `(__bridge void *)` into a
+                    // generated cast, which is not C: "use of undeclared
+                    // identifier '__bridge'". Found on `src/OZTimer.m`,
+                    // retired in #267 -- but `__bridge` is ordinary
+                    // Objective-C that any source may use.
                     //
                     // Allowlist rather than a denylist so an unrecognised
                     // qualifier keeps the old behaviour of being dropped:

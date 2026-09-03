@@ -18,6 +18,7 @@ common:
       - "File-scope block: 15"
       - "Block through a C function: 18"
       - "Sensor sum: 90"
+      - "Timer fired: 1"
       - "=== Blocks Demo Complete ==="
 tests:
   sample.transpiled_blocks:
