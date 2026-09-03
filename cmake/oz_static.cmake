@@ -104,15 +104,31 @@ function(objz_transpile_sources_static target)
     if(OZT_POOL_SIZES)
         list(APPEND _oz2c_flags --pool-sizes ${OZT_POOL_SIZES})
     endif()
+    # The target's own include directories, which `include_directories(include)`
+    # in a sample's CMakeLists sets. Collected once into `_target_inc_dirs`
+    # because **two consumers need them and only one used to get them** (#274):
+    # oz2c resolved a sample's own headers while the Clang AST dump below did
+    # not, so a dump of `samples/zbus_service/src/main.m` died on
+    # `fatal error: 'TemperatureService.h' file not found` -- and, being
+    # truncated rather than absent, looked like a complete oracle.
+    #
+    # `cmake/oz_transpile.cmake` has always added them to its own AST flags
+    # (its "Add target include dirs" block), so this was a port omission
+    # rather than a question anyone decided. The outgoing backend being the
+    # correct reference is unusual enough to be worth the note.
+    set(_target_inc_dirs "")
     get_target_property(_target_incs ${target} INCLUDE_DIRECTORIES)
     if(_target_incs)
         foreach(_dir ${_target_incs})
             string(FIND "${_dir}" "$<" _is_genexpr)
             if(_is_genexpr EQUAL -1)
-                list(APPEND _oz2c_flags -I ${_dir})
+                list(APPEND _target_inc_dirs ${_dir})
             endif()
         endforeach()
     endif()
+    foreach(_dir ${_target_inc_dirs})
+        list(APPEND _oz2c_flags -I ${_dir})
+    endforeach()
 
     set(_outdir ${CMAKE_CURRENT_BINARY_DIR}/oz_static_generated)
     set(_manifest ${_outdir}/oz_static_manifest.txt)
@@ -142,6 +158,12 @@ function(objz_transpile_sources_static target)
     # -fobjc-arc, or the dump carries no ownership qualifiers at all and the
     # whole exercise is pointless.
     list(APPEND _ast_flags -fobjc-arc)
+    # The target's own include dirs, so a sample's `#include "Foo.h"` resolves
+    # here as it already did for oz2c above (#274). `oz_transpile.cmake` has
+    # always done this.
+    foreach(_dir ${_target_inc_dirs})
+        list(APPEND _ast_flags -I${_dir})
+    endforeach()
 
     file(GLOB _sdk_impls ${_mod}/src/*.m)
     set(_ast_dir ${_outdir}/ast)
@@ -155,20 +177,98 @@ function(objz_transpile_sources_static target)
         set(_ast "${_ast_dir}/${_safe}.ast.json")
         string(JOIN " " _one ${OBJZ_CLANG_COMPILER} ${_ast_flags}
                -fsyntax-only -Xclang -ast-dump=json ${_src})
-        # `|| true`: a source Clang cannot fully parse still yields a usable
-        # partial dump, and oz2c's own diagnostics are the better error
-        # anyway. A dump that comes out empty is skipped below.
-        string(APPEND _ast_lines "${_one} > ${_ast} 2>/dev/null || true\n")
+        # Keep each dump's diagnostics next to it, but only the ones that
+        # mean the dump is *incomplete* -- a `fatal error`, which is where
+        # Clang stops (#274). The previous form was
+        # `> ${_ast} 2>/dev/null || true`, which threw away both the exit
+        # code and the message; and since every line ended in `|| true` the
+        # script's own status was always 0, making the
+        # `if(NOT _ast_rc EQUAL 0)` check below it dead code.
+        #
+        # Exit status alone is the wrong signal, which cost a pass here to
+        # discover. Clang exits non-zero for an ordinary error too and then
+        # *carries on*, so these dumps have always been produced with a
+        # handful of errors in them -- `__get_BASEPRI` and friends, because
+        # these flags name no `--target` and CMSIS therefore selects its
+        # A-profile header on an M-profile build, plus `__oz_timer_setup`
+        # from the PAL arm that goes with it. None of that truncates
+        # anything, and none of it touches an ivar's ownership qualifier or
+        # whether an `@implementation` was seen, which is all the oracle
+        # reads. A `fatal error` is different in kind: Clang stops, and
+        # every declaration after it is simply absent from a file that still
+        # looks complete.
+        string(APPEND _ast_lines
+            "${_one} > ${_ast} 2> ${_ast}.err\n"
+            "grep -q 'fatal error:' ${_ast}.err || rm -f ${_ast}.err\n")
         list(APPEND _ast_args --ast ${_ast})
     endforeach()
     file(WRITE ${_ast_script} "${_ast_lines}")
-    execute_process(COMMAND sh ${_ast_script} RESULT_VARIABLE _ast_rc)
-    if(NOT _ast_rc EQUAL 0)
-        message(FATAL_ERROR
-            "objz_transpile_sources_static: Clang AST dump failed -- see ${_ast_dir}")
+
+    # A dump Clang could not complete is fatal, because it is
+    # indistinguishable from a complete one by inspection and it silently
+    # weakens the only oracle for ivar ownership (PARITY.md gaps N and AA).
+    #
+    # Checked by its own script rather than here, because **this script runs
+    # at two different times and only one of them can succeed**:
+    #
+    #   - at configure time (`execute_process` below), whose sole purpose is
+    #     to discover the output file list for the manifest. Zephyr's
+    #     *generated* headers do not exist yet on a pristine build, so
+    #     anything reaching `zephyr/kernel.h` dies on
+    #     `fatal error: 'zephyr/syscall_list.h' file not found`. Expected,
+    #     and harmless: a file name does not depend on an ARC fact, and the
+    #     build-time run overwrites this output anyway.
+    #   - at build time (the `add_custom_command` further down), which
+    #     `add_dependencies(oz_static_transpile_gen zephyr_generated_headers)`
+    #     orders after those headers exist. **This is the run whose dumps
+    #     reach the shipped C**, so this is the run worth checking.
+    #
+    # #274's include-path bug affected both, which is why it mattered: the
+    # build-time dump was truncated too, for every sample with its own
+    # `include/`.
+    #
+    # Deliberately fatal rather than a warning: #269 found that the
+    # compatibility warning meant to catch a silently-substituted clang had
+    # printed on every CI run for the life of the workflow, unread in a
+    # 1400-line log. A warning about a substituted oracle is not a check.
+    set(_ast_check "${_ast_dir}/oz_static_ast_check.sh")
+    if(OBJZ_ALLOW_PARTIAL_AST)
+        file(WRITE ${_ast_check}
+            "#!/bin/sh\n"
+            "# OBJZ_ALLOW_PARTIAL_AST=ON: report, never fail. ARC then treats\n"
+            "# these files' `id` ivars conservatively and skips them --\n"
+            "# correct, but a leak.\n"
+            "for f in ${_ast_dir}/*.ast.json.err; do\n"
+            "  [ -e \"$f\" ] || exit 0\n"
+            "  echo \"oz_static: WARNING: truncated Clang AST dump:\" >&2\n"
+            "  cat \"$f\" >&2\n"
+            "done\n"
+            "exit 0\n")
+    else()
+        file(WRITE ${_ast_check}
+            "#!/bin/sh\n"
+            "found=0\n"
+            "for f in ${_ast_dir}/*.ast.json.err; do\n"
+            "  [ -e \"$f\" ] || break\n"
+            "  found=1\n"
+            "  echo \"oz_static: Clang hit a fatal error, so this AST dump stops\" >&2\n"
+            "  echo \"where the error is and the ivar-ownership oracle is\" >&2\n"
+            "  echo \"incomplete for that file (see PARITY.md gaps N and AA):\" >&2\n"
+            "  cat \"$f\" >&2\n"
+            "done\n"
+            "[ \$found -eq 0 ] && exit 0\n"
+            "echo \"oz_static: fix the diagnostics above, or configure with\" >&2\n"
+            "echo \"-DOBJZ_ALLOW_PARTIAL_AST=ON to proceed with conservative\" >&2\n"
+            "echo \"ARC (which leaks \\`id\\` ivars in those files).\" >&2\n"
+            "exit 1\n")
     endif()
+
+    execute_process(COMMAND sh ${_ast_script})
+
     # Only non-empty dumps are handed over: oz2c rejects one it cannot parse,
-    # and an empty file is not a fact about anything.
+    # and an empty file is not a fact about anything. Note this test is *not*
+    # what catches a truncated dump -- that is the `.err` check above, and
+    # conflating the two is what let #274 stand.
     set(_oz2c_ast "")
     foreach(_src ${_src_abs_list} ${_sdk_impls})
         get_filename_component(_name ${_src} NAME)
@@ -215,6 +315,10 @@ function(objz_transpile_sources_static target)
                 --unset=LDFLAGS --unset=AR --unset=RANLIB --unset=NM
                 cargo build --manifest-path ${_oz_static_dir}/Cargo.toml
         COMMAND sh ${_ast_script}
+        # Ordered between the dumps and oz2c deliberately: this is the run
+        # whose facts reach the shipped C, and a truncated dump must stop the
+        # build here rather than quietly weaken ARC (#274).
+        COMMAND sh ${_ast_check}
         COMMAND ${_oz2c} ${_oz2c_flags} ${_oz2c_ast} ${_src_abs_list} ${_outdir}
                 --manifest ${_manifest}
         # The transpiler's own sources, not just the .m inputs: without them
