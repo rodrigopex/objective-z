@@ -2865,8 +2865,15 @@ fn render_block(node: Node, ctx: &mut EmitCtx) -> (String, String) {
     // ahead of every call site (the function's own definition is
     // appended only once, after every class), hence still tracking both.
     let prototype = format!("{} {}{};\n", ret_ty, name, params);
+    // The banner says where the literal was, not what enclosed it: since
+    // #272 a literal at *file scope* is hoisted too (a block variable's
+    // initializer, `static void (^g)(int) = ^(int v){ ... };`), and there is
+    // no enclosing method to name. It read "hoisted out of its enclosing
+    // method" until then, which was true of every caller at the time and
+    // became false for the new one -- the shape of stale claim PARITY.md
+    // keeps recording, in generated output this time.
     let definition = format!(
-        "/* block at {}:{} -- synthesized function, hoisted out of its enclosing method */\n{} {}{} {}\n",
+        "/* block at {}:{} -- synthesized function, hoisted from a block literal */\n{} {}{} {}\n",
         line, col, ret_ty, name, params, body_text
     );
     ctx.hoisted_blocks.push((prototype, definition));
