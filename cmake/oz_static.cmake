@@ -217,7 +217,8 @@ function(objz_transpile_sources_static target)
 
     # A dump Clang could not complete is fatal, because it is
     # indistinguishable from a complete one by inspection and it silently
-    # weakens the only oracle for ivar ownership (PARITY.md gaps N and AA).
+    # weakens the only oracle for ivar ownership (gaps N and AA of the
+    # retired PARITY.md; docs/STATUS.md says how to read it).
     #
     # Checked by its own script rather than here, because **this script runs
     # at two different times and only one of them can succeed**:
@@ -264,7 +265,7 @@ function(objz_transpile_sources_static target)
             "  found=1\n"
             "  echo \"oz_static: Clang hit a fatal error, so this AST dump stops\" >&2\n"
             "  echo \"where the error is and the ivar-ownership oracle is\" >&2\n"
-            "  echo \"incomplete for that file (see PARITY.md gaps N and AA):\" >&2\n"
+            "  echo \"incomplete for that file (see docs/STATUS.md):\" >&2\n"
             "  cat \"$f\" >&2\n"
             "done\n"
             "[ \$found -eq 0 ] && exit 0\n"

@@ -88,7 +88,7 @@ test-spin-validate:
 # real interrupt latency and a real `k_mem_slab` in real RAM.
 #
 # Every board in `test-all-boards` is QEMU, and until this recipe existed
-# PARITY.md's "Not verified" section carried "no real board has been used"
+# docs/STATUS.md's "What is not verified" carried "no real board has been used"
 # as its oldest item. Compiling for a board proves the input was understood;
 # only running proves the output behaves, and QEMU running it proves neither
 # of those about hardware.

@@ -2173,7 +2173,7 @@ fn send_to_resolved_class(
 /// core does serialize the section -- and every board in use was single-core.
 /// Measured on two cores it was indistinguishable from no lock:
 /// `count=2015 expected=4000` against `2023` unlocked (`samples/smp_shared`,
-/// PARITY.md gap W).
+/// gap W of the retired PARITY.md; see docs/STATUS.md).
 ///
 /// `oz_sync_owner` is what makes the per-object lock safe, and it is not a
 /// recursive lock -- a `k_spinlock` cannot be one. A re-entrant
@@ -2893,7 +2893,7 @@ fn render_block(node: Node, ctx: &mut EmitCtx) -> (String, String) {
     // initializer, `static void (^g)(int) = ^(int v){ ... };`), and there is
     // no enclosing method to name. It read "hoisted out of its enclosing
     // method" until then, which was true of every caller at the time and
-    // became false for the new one -- the shape of stale claim PARITY.md
+    // became false for the new one -- the shape of stale claim docs/STATUS.md
     // keeps recording, in generated output this time.
     let definition = format!(
         "/* block at {}:{} -- synthesized function, hoisted from a block literal */\n{} {}{} {}\n",

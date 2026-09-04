@@ -467,11 +467,21 @@ just board=qemu_riscv32 rebuild   # RISC-V target
 
 ## Limitations
 
-See [docs/LIMITATIONS.md](docs/LIMITATIONS.md) for the full list. Key limitations:
+`oz2c` rejects anything outside its supported subset with a located error
+rather than emitting code that misbehaves, so the authoritative list is
+`tools/oz_static/src/staticbar.rs` and the diagnostics it produces. See
+[docs/STATUS.md](docs/STATUS.md) for what is verified and what is not.
+The notable exclusions:
 
-- **Non-capturing blocks only** — blocks that capture local variables produce a diagnostic error
-- **No `typedef`** — use explicit types
-- **No `@try`/`@catch`/`@throw`** — exception handling not supported
+- **No reflection or `@selector`** — `respondsToSelector:`, `performSelector:`,
+  `isKindOfClass:` and friends are rejected, not silently dropped (#226)
+- **No `@try`/`@catch`/`@throw`** — exception handling is not supported
+- **No Objective-C inside a `#define` body** — a macro body is one opaque
+  token to the parser, so it is a located error rather than C that will not
+  compile (#238). Objective-C in a macro *argument* is fine and the
+  invocation is preserved
+- **Blocks must not capture stack locals** — a capture is a diagnostic; a
+  non-capturing block is hoisted to a named function
 - **No dynamic dispatch** for non-protocol methods — all resolved statically
 - **OZQ31**: Q31+shift fixed-point, converts to int8/16/32 and float (no int64/double)
 

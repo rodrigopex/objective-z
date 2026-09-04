@@ -208,6 +208,6 @@ int main(void) {{
     // Reverse declaration order, which is what Clang's own ARC does (its
     // scope cleanups run LIFO, like C++ destructors) and what matters when
     // one object's -dealloc touches another. The oracle releases in
-    // declaration order instead -- see PARITY.md.
+    // declaration order instead -- see docs/STATUS.md.
     assert_eq!(stdout, "before\ndealloc 2\ndealloc 1\nafter\n");
 }

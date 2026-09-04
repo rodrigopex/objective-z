@@ -13,7 +13,7 @@
 //
 // So an inline block cannot be handed to one directly, and Clang is not
 // optional here: `cmake/oz_static.cmake` dumps one AST per source as the
-// ownership oracle (PARITY.md gap N), and the outgoing Python backend
+// ownership oracle (gap N of the retired PARITY.md), and the Python backend
 // compiles the same file. Worse, a source Clang rejects fails *silently* --
 // the dump is taken with `2>/dev/null || true` -- so the file would quietly
 // lose its ARC facts and leak its `id` ivars with a green build.
