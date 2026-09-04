@@ -572,6 +572,158 @@ fn check_dealloc_body(
     walk(body, src, &owned, &class_info.name, diags);
 }
 
+/// Objective-C node kinds that must not appear inside a `#define` body.
+///
+/// A `string_literal` is deliberately absent: the kind covers both `"foo"`
+/// and `@"foo"`, and only the second is Objective-C. It is asked about
+/// separately, via `emit::is_boxed_string_literal`.
+const MACRO_BODY_OBJC_KINDS: &[&str] = &[
+    "message_expression",
+    "at_expression",
+    "array_literal",
+    "dictionary_literal",
+    "selector_expression",
+    "block_literal",
+];
+
+/// True if `node` or any descendant is Objective-C, for the macro-body probe.
+fn contains_objc(node: Node) -> Option<Node> {
+    if MACRO_BODY_OBJC_KINDS.contains(&node.kind()) {
+        return Some(node);
+    }
+    if node.kind() == "string_literal" && crate::emit::is_boxed_string_literal(node) {
+        return Some(node);
+    }
+    let children: Vec<Node> = {
+        let mut cursor = node.walk();
+        node.children(&mut cursor).collect()
+    };
+    for child in children {
+        if let Some(found) = contains_objc(child) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+/// True if the probe parse hit anything the grammar could not read.
+///
+/// The whole detector rests on this. tree-sitter is error-tolerant, so a
+/// body that is not a valid fragment still yields a tree -- and that tree
+/// can contain a `message_expression` the grammar guessed at from a `[`,
+/// which would reject a macro containing nothing but C. So a body that does
+/// not parse cleanly keeps today's behaviour of being emitted verbatim,
+/// rather than becoming a spurious error.
+fn probe_has_errors(node: Node) -> bool {
+    if node.is_error() || node.is_missing() {
+        return true;
+    }
+    let children: Vec<Node> = {
+        let mut cursor = node.walk();
+        node.children(&mut cursor).collect()
+    };
+    children.into_iter().any(probe_has_errors)
+}
+
+/// Reject Objective-C inside a `#define` body (#238).
+///
+/// tree-sitter-objc parses a replacement list as a single opaque
+/// `preproc_arg` token with no structure inside it, so the walk never
+/// descends into it and the body is emitted verbatim. Objective-C written
+/// there therefore reaches the C compiler unchanged:
+///
+/// ```text
+/// src2.c:102:2: error: expected expression
+///   102 |         GREET_VIA_BODY(c);
+/// src2.h:6:29: note: expanded from macro 'GREET_VIA_BODY'
+///     6 | #define GREET_VIA_BODY(obj) [obj greet]
+/// ```
+///
+/// Loud rather than silent, so nothing was ever miscompiled -- but the error
+/// names generated code the user did not write, and no oz_static diagnostic
+/// pointed at the `#define` responsible. The standing rule settles what to do
+/// about that: never silently degrade, so this is a named, located hard error
+/// at the `#define` itself.
+///
+/// **Detection is a probe re-parse**, not a regex: the `preproc_arg` text is
+/// wrapped in a function body and parsed with the same grammar, and the
+/// result searched for `MACRO_BODY_OBJC_KINDS`. Letting the grammar decide is
+/// what distinguishes a real send from a C subscript -- `arr[i] + arr[j]` and
+/// `[obj greet]` are not tellable apart by shape.
+///
+/// A *statement* wrapper rather than an expression one, which is wider than
+/// the detector prototyped on #238: an expression wrapper cannot parse
+/// `do { [o greet]; } while (0)`, and a macro body wrapping statements in
+/// `do { ... } while (0)` is an ordinary idiom rather than an exotic one. It
+/// still parses every C shape the prototype measured, since an expression is
+/// also a statement.
+///
+/// Line continuations are stripped first. `preproc_arg` keeps the `\` and the
+/// newline, which the probe grammar cannot read, so every multi-line macro
+/// would fail to parse and be silently skipped by the guard above --
+/// `OZ_SLAB_DEFINE`, `OZ_MEM_BLOCKS_DEFINE`, `oz_assert_msg` and
+/// `OZ_AUTO_INIT` are all that shape. A detector that quietly ignores the
+/// longest macro bodies in the tree is worse than one that says it cannot
+/// read them.
+///
+/// Macro *arguments* are a different question and are already correct: an
+/// argument is a real `message_expression` inside a `call_expression`, so the
+/// ordinary expression renderer reaches it and the invocation is preserved
+/// unexpanded. That is the deliberate advantage of parsing source rather than
+/// a Clang AST, and it is pinned by `macro_bodies::objc_in_macro_argument_*`.
+///
+/// Full transpilation of macro bodies stays out of scope, and not only for
+/// size: a macro body need not be a complete expression, and a macro
+/// parameter has no type, so a send to one cannot resolve a receiver class at
+/// all.
+pub fn check_macro_body(node: Node, src: &str) -> Vec<Diagnostic> {
+    let mut diags = Vec::new();
+    let children: Vec<Node> = {
+        let mut cursor = node.walk();
+        node.children(&mut cursor).collect()
+    };
+    let Some(arg) = children.iter().find(|c| c.kind() == "preproc_arg") else {
+        return diags;
+    };
+    let body = node_text(*arg, src).replace("\\\n", "\n").replace("\\\r\n", "\n");
+    if body.trim().is_empty() {
+        return diags;
+    }
+
+    let probe = format!("void _oz_macro_body_probe(void) {{\n{}\n;\n}}\n", body);
+    let tree = crate::parse::parse(&probe);
+    let root = tree.root_node();
+    if probe_has_errors(root) {
+        return diags;
+    }
+    let Some(found) = contains_objc(root) else {
+        return diags;
+    };
+
+    // Located at the `#define`, not inside the probe: the probe's own
+    // coordinates are meaningless to a reader, being offsets into a string
+    // this function invented.
+    let name = children
+        .iter()
+        .find(|c| c.kind() == "identifier")
+        .map(|c| node_text(*c, src).to_string())
+        .unwrap_or_else(|| "<anonymous>".to_string());
+    let kind = if found.kind() == "string_literal" { "boxed string literal" } else { found.kind() };
+    err(
+        &mut diags,
+        src,
+        node,
+        format!(
+            "Objective-C in the body of macro '{}' is not supported: a #define body is \
+             not transpiled, so the {} would reach the C compiler unchanged. Move the \
+             Objective-C to a function, or pass it as a macro *argument* -- an argument \
+             is transpiled and the macro invocation is preserved.",
+            name, kind
+        ),
+    );
+    diags
+}
+
 pub fn check_method_body(
     body: Node,
     src: &str,
