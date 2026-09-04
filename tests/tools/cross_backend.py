@@ -53,27 +53,20 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import compile_and_run  # noqa: E402  (path set up above)
+import oz_static_build  # noqa: E402  (path set up above)
+
+# The ABI shim and the oz2c invocation live in `oz_static_build` now: the
+# pytest harnesses need them too, and they outlive this file, which exists
+# only to compare the two backends.
+ALLOC_RE = oz_static_build.ALLOC_RE
+_discover_classes = oz_static_build.discover_classes
+_write_abi_shim = oz_static_build.write_abi_shim
+_generated_text = oz_static_build.generated_text
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 UNITY_DIR = REPO_ROOT / "tests" / "lib" / "unity"
 GEN_MAIN = REPO_ROOT / "tests" / "tools" / "gen_test_main.py"
 OZ2C = REPO_ROOT / "tools" / "oz_static" / "target" / "debug" / "oz2c"
-
-#: `struct Foo *Foo_oz_alloc(void)` -- how oz_static names the allocator it
-#: synthesizes for each class, and the only reliable list of the classes a
-#: given run actually emitted.
-ALLOC_RE = re.compile(r"\bstruct\s+(\w+)\s*\*\s*(\w+)_oz_alloc\s*\(")
-
-#: `struct X *Class_sel_cls(` -- oz_static's spelling of a class method,
-#: which the drivers reach as `Class_cls_sel`.
-CLASS_METHOD_RE = re.compile(r"\b(\w+)_(\w+)_cls\s*\(")
-
-#: `OZ_PROTOCOL_SEND_foo` as referenced by a driver.
-SEND_RE = re.compile(r"\bOZ_PROTOCOL_SEND_(\w+)\b")
-
-#: An instance-method prototype in oz_static's output:
-#: `<ret> Class_sel(struct Class *self`.
-INSTANCE_METHOD_RE = re.compile(r"\b(\w+)_(\w+)\s*\(\s*struct\s+(\w+)\s*\*\s*self")
 
 #: A Unity result line: `<path>:<line>:<test name>:PASS` (or `:FAIL:...`).
 #: The leading path and line number are build-location noise and are
@@ -120,101 +113,6 @@ def _compile_failure(stderr: str) -> str:
         if "error:" in line:
             return line.strip()
     return stderr.strip()[:200]
-
-
-def _discover_classes(outdir: Path) -> list[str]:
-    """Classes oz_static emitted an allocator for, from its own output."""
-    names: set[str] = set()
-    for header in outdir.rglob("*.h"):
-        for struct_name, alloc_name in ALLOC_RE.findall(header.read_text()):
-            if struct_name == alloc_name:
-                names.add(struct_name)
-    return sorted(names)
-
-
-def _write_abi_shim(outdir: Path, classes: list[str], root: str,
-                    driver_text: str) -> None:
-    """Write the `<Class>_ozh.h` / `oz_dispatch.h` headers drivers include.
-
-    Every one of them gets the same body: oz_static's own generated
-    headers, then the name bridges.  Writing identical content under each
-    expected filename is deliberate -- which header a driver includes says
-    nothing about which classes it touches, and oz_static's split is by
-    origin file, not by class, so there is no per-class header to map onto.
-    """
-    body = ["#pragma once", '#include "oz_static_dispatch.h"']
-    # Per-origin headers after the companion: a driver may need a complete
-    # struct (`struct OZDefer d;` by value), which only the origin header
-    # has. The companion alone covers pointer use and prototypes.
-    for header in sorted(outdir.rglob("*.h")):
-        rel = header.relative_to(outdir)
-        if rel.name in ("oz_static_dispatch.h",) or rel.name.endswith("_ozh.h"):
-            continue
-        body.append(f'#include "{rel.as_posix()}"')
-    body.append("")
-    body.append("/* Python-backend ABI names, bridged to oz_static's. Naming only:")
-    body.append(" * see this file's generator in tests/tools/cross_backend.py. */")
-    for cls in classes:
-        body.append(f"#define {cls}_alloc {cls}_oz_alloc")
-        body.append(f"#define {cls}_free {cls}_oz_free")
-        # The oracle names the heap allocator after the selector; oz_static
-        # keeps its `oz_` prefix for everything it synthesizes, as it does
-        # for `_oz_alloc` itself.
-        body.append(f"#define {cls}_allocWithHeap_ {cls}_oz_alloc_with_heap")
-        body.append(f"#define OZ_CLASS_{cls} OZ_STATIC_CLASS_{cls}")
-    body.append(f"#define {root}_retain oz_static_retain")
-    body.append(f"#define {root}_release oz_static_release")
-    body.append(f"#define {root}_retainCount oz_static_retain_count")
-    body.append(f"#define __objc_refcount_get(o) oz_static_retain_count((struct {root} *)(o))")
-
-    generated = _generated_text(outdir)
-    for cls, sel in sorted(set(CLASS_METHOD_RE.findall(generated))):
-        if cls in classes:
-            body.append(f"#define {cls}_cls_{sel} {cls}_{sel}_cls")
-
-    # A driver may send through `OZ_PROTOCOL_SEND_<sel>` where oz_static
-    # emitted no dispatch function, precisely because its hierarchy
-    # analysis proved the selector is not polymorphic. If exactly one class
-    # implements it, the direct call *is* what a dispatch through it would
-    # resolve to, so the macro is defined to that -- with the receiver cast,
-    # since the driver passes a root pointer. More than one implementor
-    # would mean oz_static should have emitted a dispatcher, so that case is
-    # deliberately left undefined and surfaces as a build failure.
-    for sel in sorted(set(SEND_RE.findall(driver_text))):
-        if f"OZ_PROTOCOL_SEND_{sel}(" in generated:
-            continue
-        implementors = {c for c, s_, own in INSTANCE_METHOD_RE.findall(generated)
-                        if s_ == sel and c == own}
-        if len(implementors) == 1:
-            only = implementors.pop()
-            body.append(
-                f"#define OZ_PROTOCOL_SEND_{sel}(o) "
-                f"{only}_{sel}((struct {only} *)(o))")
-    text = "\n".join(body) + "\n"
-
-    for cls in classes:
-        (outdir / f"{cls}_ozh.h").write_text(text)
-        # Some drivers spell the include `Foundation/<Class>_ozh.h`, mirroring
-        # where the Python backend puts SDK classes.
-        foundation = outdir / "Foundation"
-        foundation.mkdir(exist_ok=True)
-        (foundation / f"{cls}_ozh.h").write_text(text)
-    (outdir / "oz_dispatch.h").write_text(text)
-
-
-def _generated_text(outdir: Path) -> str:
-    """All of oz_static's generated headers, concatenated.
-
-    Read once per case; the shim needs to ask several questions of it.
-    Shim headers themselves are skipped so a rerun cannot feed on its own
-    output.
-    """
-    parts = []
-    for header in sorted(outdir.rglob("*.h")):
-        if header.name.endswith("_ozh.h") or header.name == "oz_dispatch.h":
-            continue
-        parts.append(header.read_text())
-    return "\n".join(parts)
 
 
 def _dump_ast(case: Path, outdir: Path) -> Path | None:

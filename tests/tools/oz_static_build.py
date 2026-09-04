@@ -1,0 +1,227 @@
+#!/usr/bin/env python3
+"""Build a behavior/adapted case through oz_static, for the pytest harnesses.
+
+`compile_and_run.py` drives a case end to end -- AST dump, transpile,
+generate the Unity main, compile, run -- and only its *transpile* step is
+backend-specific. This module is that step for oz_static, plus the one thing
+the Python backend needs no equivalent of: an ABI shim.
+
+The Unity drivers under `tests/behavior/cases/` were written against the
+Python pipeline's generated ABI, which differs from oz_static's in naming
+only:
+
+  * headers are named `<Class>_ozh.h` (plus `oz_dispatch.h`), where
+    oz_static emits one header per *origin file*;
+  * `+alloc` is reached as `<Class>_alloc`, where oz_static synthesizes
+    `<Class>_oz_alloc`;
+  * root retain/release/retainCount are `OZObject_*`, where oz_static emits
+    backend-wide `oz_static_*` functions;
+  * class methods are `<Class>_cls_<sel>`, where oz_static emits
+    `<Class>_<sel>_cls`;
+  * every dynamically-dispatched selector has an `OZ_PROTOCOL_SEND_<sel>`,
+    where oz_static emits one only when a selector really is polymorphic.
+
+`write_abi_shim` bridges exactly those, so one unmodified driver compiles
+against either backend. Anything beyond naming -- a different result, a
+crash, a missing symbol -- is a real difference and shows up as a failure.
+
+This code lived in `tests/tools/cross_backend.py`, which exists to compare
+the two backends and is retired along with the Python one. It is *moved*
+here rather than imported from there for that reason: the pytest harnesses
+outlive the comparison, and a shim living in a file scheduled for deletion
+is a broken migration waiting to happen.
+"""
+
+from __future__ import annotations
+
+import re
+import shutil
+import subprocess
+import tempfile
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+OZ2C = REPO_ROOT / "tools" / "oz_static" / "target" / "debug" / "oz2c"
+
+#: `struct Foo *Foo_oz_alloc(void)` -- how oz_static names the allocator it
+#: synthesizes for each class, and the only reliable list of the classes a
+#: given run actually emitted.
+ALLOC_RE = re.compile(r"\bstruct\s+(\w+)\s*\*\s*(\w+)_oz_alloc\s*\(")
+
+#: `struct X *Class_sel_cls(` -- oz_static's spelling of a class method,
+#: which the drivers reach as `Class_cls_sel`.
+CLASS_METHOD_RE = re.compile(r"\b(\w+)_(\w+)_cls\s*\(")
+
+#: `OZ_PROTOCOL_SEND_foo` as referenced by a driver.
+SEND_RE = re.compile(r"\bOZ_PROTOCOL_SEND_(\w+)\b")
+
+#: An instance-method prototype in oz_static's output:
+#: `<ret> Class_sel(struct Class *self`.
+INSTANCE_METHOD_RE = re.compile(r"\b(\w+)_(\w+)\s*\(\s*struct\s+(\w+)\s*\*\s*self")
+
+def discover_classes(outdir: Path) -> list[str]:
+    """Classes oz_static emitted an allocator for, from its own output."""
+    names: set[str] = set()
+    for header in outdir.rglob("*.h"):
+        for struct_name, alloc_name in ALLOC_RE.findall(header.read_text()):
+            if struct_name == alloc_name:
+                names.add(struct_name)
+    return sorted(names)
+
+def write_abi_shim(outdir: Path, classes: list[str], root: str,
+                    driver_text: str) -> None:
+    """Write the `<Class>_ozh.h` / `oz_dispatch.h` headers drivers include.
+
+    Every one of them gets the same body: oz_static's own generated
+    headers, then the name bridges.  Writing identical content under each
+    expected filename is deliberate -- which header a driver includes says
+    nothing about which classes it touches, and oz_static's split is by
+    origin file, not by class, so there is no per-class header to map onto.
+    """
+    body = ["#pragma once", '#include "oz_static_dispatch.h"']
+    # Per-origin headers after the companion: a driver may need a complete
+    # struct (`struct OZDefer d;` by value), which only the origin header
+    # has. The companion alone covers pointer use and prototypes.
+    for header in sorted(outdir.rglob("*.h")):
+        rel = header.relative_to(outdir)
+        if rel.name in ("oz_static_dispatch.h",) or rel.name.endswith("_ozh.h"):
+            continue
+        body.append(f'#include "{rel.as_posix()}"')
+    body.append("")
+    body.append("/* Python-backend ABI names, bridged to oz_static's. Naming only:")
+    body.append(" * see this file's generator in tests/tools/cross_backend.py. */")
+    for cls in classes:
+        body.append(f"#define {cls}_alloc {cls}_oz_alloc")
+        body.append(f"#define {cls}_free {cls}_oz_free")
+        # The oracle names the heap allocator after the selector; oz_static
+        # keeps its `oz_` prefix for everything it synthesizes, as it does
+        # for `_oz_alloc` itself.
+        body.append(f"#define {cls}_allocWithHeap_ {cls}_oz_alloc_with_heap")
+        body.append(f"#define OZ_CLASS_{cls} OZ_STATIC_CLASS_{cls}")
+    body.append(f"#define {root}_retain oz_static_retain")
+    body.append(f"#define {root}_release oz_static_release")
+    body.append(f"#define {root}_retainCount oz_static_retain_count")
+    body.append(f"#define __objc_refcount_get(o) oz_static_retain_count((struct {root} *)(o))")
+
+    generated = generated_text(outdir)
+    for cls, sel in sorted(set(CLASS_METHOD_RE.findall(generated))):
+        if cls in classes:
+            body.append(f"#define {cls}_cls_{sel} {cls}_{sel}_cls")
+
+    # A driver may send through `OZ_PROTOCOL_SEND_<sel>` where oz_static
+    # emitted no dispatch function, precisely because its hierarchy
+    # analysis proved the selector is not polymorphic. If exactly one class
+    # implements it, the direct call *is* what a dispatch through it would
+    # resolve to, so the macro is defined to that -- with the receiver cast,
+    # since the driver passes a root pointer. More than one implementor
+    # would mean oz_static should have emitted a dispatcher, so that case is
+    # deliberately left undefined and surfaces as a build failure.
+    for sel in sorted(set(SEND_RE.findall(driver_text))):
+        if f"OZ_PROTOCOL_SEND_{sel}(" in generated:
+            continue
+        implementors = {c for c, s_, own in INSTANCE_METHOD_RE.findall(generated)
+                        if s_ == sel and c == own}
+        if len(implementors) == 1:
+            only = implementors.pop()
+            body.append(
+                f"#define OZ_PROTOCOL_SEND_{sel}(o) "
+                f"{only}_{sel}((struct {only} *)(o))")
+    text = "\n".join(body) + "\n"
+
+    for cls in classes:
+        (outdir / f"{cls}_ozh.h").write_text(text)
+        # Some drivers spell the include `Foundation/<Class>_ozh.h`, mirroring
+        # where the Python backend puts SDK classes.
+        foundation = outdir / "Foundation"
+        foundation.mkdir(exist_ok=True)
+        (foundation / f"{cls}_ozh.h").write_text(text)
+    (outdir / "oz_dispatch.h").write_text(text)
+
+def generated_text(outdir: Path) -> str:
+    """All of oz_static's generated headers, concatenated.
+
+    Read once per case; the shim needs to ask several questions of it.
+    Shim headers themselves are skipped so a rerun cannot feed on its own
+    output.
+    """
+    parts = []
+    for header in sorted(outdir.rglob("*.h")):
+        if header.name.endswith("_ozh.h") or header.name == "oz_dispatch.h":
+            continue
+        parts.append(header.read_text())
+    return "\n".join(parts)
+
+
+def transpile(case: Path, outdir: Path, pool_sizes: str, heap_support: bool,
+              ast_path: Path | None) -> str | None:
+    """Run oz2c over `case` into `outdir`. Returns an error string, or None.
+
+    Two passes, and the second is not redundant: oz_static rejects
+    `--pool-sizes` naming a class it has no record of, and a directive
+    written for the Python backend can name one it never creates
+    (`OZSpinLock`). So the first pass reveals which classes exist and the
+    second applies only the sizes that survive that filter.
+
+    Both backends must be given the *same* pool sizes or a comparison
+    measures configuration rather than behaviour: oz_static would otherwise
+    size from the allocation sites it can see, and a case whose allocations
+    all live in the `_test.c` driver has none -- its slab would hold one
+    object, the second `alloc` would return NULL, and the test would fail on
+    a null receiver.
+    """
+    if not OZ2C.is_file():
+        return f"oz2c not built at {OZ2C}"
+
+    args = [str(OZ2C),
+            "-I", str(REPO_ROOT / "include" / "oz_sdk"),
+            "-I", str(REPO_ROOT / "tests" / "behavior" / "include"),
+            "--impl-dir", str(REPO_ROOT / "src")]
+    if heap_support:
+        args.append("--heap-support")
+    # Clang resolves types and states ARC ownership; tree-sitter does
+    # neither. The dump is the one `compile_and_run` already made for step 1,
+    # so both backends reason about the identical translation unit by
+    # construction rather than by two call sites agreeing on flags.
+    if ast_path is not None:
+        args += ["--ast", str(ast_path)]
+
+    first = subprocess.run(args + [str(case), str(outdir)],
+                           capture_output=True, text=True)
+    if first.returncode != 0:
+        err = first.stderr.strip().splitlines()
+        return f"transpile: {err[0] if err else 'oz2c failed'}"
+
+    known = set(discover_classes(outdir))
+    wanted = [entry for entry in pool_sizes.split(",")
+              if entry and entry.split("=")[0] in known]
+    if wanted:
+        # Clear the first pass's output, but *selectively*: the caller keeps
+        # the Clang AST dump in this same directory, and wiping the whole
+        # tree would delete the `--ast` argument out from under the second
+        # pass. `cross_backend.py` could rmtree because it put the dump in a
+        # separate temp dir; this harness does not.
+        keep = {ast_path.resolve()} if ast_path is not None else set()
+        for child in sorted(outdir.iterdir(), reverse=True):
+            if child.resolve() in keep:
+                continue
+            if child.is_dir():
+                shutil.rmtree(child, ignore_errors=True)
+            else:
+                child.unlink(missing_ok=True)
+        second = subprocess.run(
+            args + ["--pool-sizes", ",".join(wanted), str(case), str(outdir)],
+            capture_output=True, text=True)
+        if second.returncode != 0:
+            err = second.stderr.strip().splitlines()
+            return f"transpile: {err[0] if err else 'oz2c failed'}"
+
+    classes = discover_classes(outdir)
+    if not classes:
+        return "no classes found in oz2c output"
+    # The root is whichever class has no `struct <X> base;` field; in these
+    # corpora that is always OZObject, and assuming it keeps the shim simple.
+    root = "OZObject" if "OZObject" in classes else classes[0]
+    driver = case.with_name(case.stem + "_test.c")
+    write_abi_shim(outdir, classes, root,
+                   driver.read_text() if driver.exists() else "")
+    return None
