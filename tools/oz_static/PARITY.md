@@ -1683,28 +1683,68 @@ older than the cross-build, the RISC-V port, the SMP board and the validator.
 `just test-hardware` builds each sample, flashes it over the DK's on-board
 J-Link and matches its console on the VCOM against its own `sample.yaml`:
 the same oracle twister uses on QEMU, against real flash timing, real
-interrupt latency and a real `k_mem_slab` in real RAM. **6 of 6 pass.**
+interrupt latency and a real `k_mem_slab` in real RAM. **13 of 13 pass** —
+every sample except `smp_shared`, which needs two cores this part does not
+have.
 
-| Sample | Flash | RAM | On device |
-| --- | --- | --- | --- |
-| pool_demo | 20 528 | 4 581 | 9 lines, ends `=== Demo complete ===` |
-| hello_world | 21 068 | 4 573 | 3 lines, ends `Hello, world from object` |
-| mem_demo | 23 604 | 5 061 | 8 lines, ends `=== Demo complete ===` |
-| transpiled_blocks | 24 836 | 5 545 | 11 lines, ends `=== Blocks Demo Complete ===` |
-| transpiled_generics | 25 820 | 5 577 | 12 lines, ends `=== Generics Demo Complete ===` |
-| transpiled_literals | 26 904 | 5 605 | 13 lines, ends `=== Demo complete ===` |
+The first run reached only **6**, because those were the samples pinning no
+`platform_allow`; the other seven were gated to QEMU boards by their own
+`sample.yaml`, written when every board in use was QEMU. Widening those gates
+is what takes it to 13, and it was done as a second step on purpose: with the
+six-sample result already in hand, a failure in the widened set could not be
+confused for the hardware itself being wrong.
 
-Against the nRF52833's 512 KB flash and 128 KB RAM nothing is close to a
-constraint, which is worth recording because it is the first time footprint
-has been measured against a part rather than against another backend.
+| Sample | On device |
+| --- | --- |
+| hello_world | ends `Hello, world from object` |
+| hello_category | ends `All assertions passed` |
+| mem_demo | ends `=== Demo complete ===` |
+| pool_demo | ends `=== Demo complete ===` |
+| transpiled_led | ends `Transpiled LED demo complete` |
+| transpiled_blocks | ends `=== Blocks Demo Complete ===` |
+| transpiled_generics | ends `=== Generics Demo Complete ===` |
+| transpiled_literals | ends `=== Demo complete ===` |
+| arc_demo | ends `Sensor dealloc (value=100)`, ordered ARC expectations |
+| heap_alloc | 19 lines, ends `=== Demo complete ===` |
+| zbus_objc | ends `Producer: Received 10 acknowledgments` |
+| zbus_service | ends `+ [block] Temperature: 95` |
+| gpio_demo | its own hardware scenario — see below |
 
-`transpiled_blocks` passing is the entry worth singling out: it carries the
+Footprint on the six measured first, against the nRF52833's 512 KB flash and
+128 KB RAM: 20 528–26 904 B flash and 4 573–5 605 B RAM, so nothing is close
+to a constraint. Worth recording because it is the first time footprint has
+been measured against a part rather than against another backend.
+
+**`gpio_demo` is the entry that gained a capability rather than a board.** Its
+*input* half had never run anywhere: `mps2/an385`'s GPIO driver has no
+interrupt support, so `gpio_add_callback_dt` returned `-ENOTSUP`,
+`-initWithDTSpec:flags:blockCallback:` returned nil and "Button configured"
+never printed — and `qemu_riscv32` lacks the `led0`/`sw0` aliases entirely
+(#230). The DK has both, so on hardware it prints
+
+```
+LED configured
+OZGPIOInput configured: gpio@50000000 pin 11
+Button configured
+```
+
+which is a hoisted block lowered to a `gpio_callback_handler_t` and registered
+with a real Zephyr driver on a real pin (P0.11, the board's button0). Until
+this board there was nowhere to establish that the registration path *works*
+rather than merely compiles. It has its own scenario for that reason: the
+QEMU one cannot assert "Button configured" and this one must.
+
+Nothing asserts a press toggling the LED. That needs a finger on the button,
+and an expectation no unattended run can meet would fail every time — so the
+callback body is exercised by hand, not by twister.
+
+`transpiled_blocks` is the other entry worth singling out: it carries the
 `OZM(K_TIMER_DEFINE, ...)` timer that replaced OZTimer (gap AB), so a real
 `k_timer` fires a hoisted block on real hardware — the construct #267 retired
 a whole class in favour of, previously demonstrated only under emulation.
 
 **Verified rather than assumed**, since "it passed" is compatible with several
-uninteresting explanations: `CONFIG_OBJZ_BACKEND_STATIC=y` in all 6 configs,
+uninteresting explanations: `CONFIG_OBJZ_BACKEND_STATIC=y` in all 13 configs,
 `oz_static_generated/` present, and **no build log mentions `oz_transpile`** —
 so oz2c produced this. Each `handler.log` carries
 `*** Booting Zephyr OS build v4.4.2 ***` followed by the sample's own lines,
@@ -1721,13 +1761,12 @@ never `--ids`. Same shape as the other false instruments this file
 records — the ARM `-Wpedantic` sweep reporting zero on unclean output
 (gap Y), and `tests/zephyr/` exercising no transpiler.
 
-**What it does not cover, which is most of the samples.** Only the six that
-pin no `platform_allow` select on this board; the other seven are filtered to
-QEMU by their own `sample.yaml`, including `gpio_demo` — the one sample with
-real LEDs and buttons to drive, and the one `qemu_riscv32` had to drop for
-missing `led0`/`sw0` aliases the DK actually has. Widening those gates is a
-follow-up rather than part of this, deliberately: a hardware failure and a
-platform gate changed in the same pass would be hard to tell apart.
+**What it does not cover.** `smp_shared` cannot run here and is the one
+sample still QEMU-only: it contends two cores on one object, and this part has
+one core, so `qemu_cortex_a53/smp` remains the only place `@synchronized`
+faces real contention (gaps W, AC). Four configurations are filtered on this
+board — that sample, `arc_demo`'s two SMP scenarios, and `gpio_demo`'s QEMU
+scenario — and each of those is a correct exclusion rather than a gap.
 
 And this cannot go in CI. There is no board on a GitHub runner, so unlike
 every other gate in this file it holds only where the hardware is — which is
@@ -2235,13 +2274,13 @@ CONFIG_OBJZ_BACKEND_PYTHON=y
 
 What that still does not cover, and why the escape hatch stays:
 
-- **QEMU is not hardware, and real hardware is now run too.** Six samples are
-  flashed to an nRF52833DK and matched against their own `sample.yaml` over
-  its VCOM (`just test-hardware`, gap AD) — so real flash timing, real
-  interrupt latency and a real `k_mem_slab` in real RAM are covered for those
-  six. The other seven still reach QEMU only, because their own `sample.yaml`
-  pins `platform_allow` to QEMU boards; widening that is its own follow-up.
-  Every board in `test-all-boards` remains QEMU.
+- **QEMU is not hardware, and real hardware is now run too.** All thirteen
+  single-core samples are flashed to an nRF52833DK and matched against their
+  own `sample.yaml` over its VCOM (`just test-hardware`, gap AD) — so real
+  flash timing, real interrupt latency and a real `k_mem_slab` in real RAM are
+  covered. `smp_shared` is the exception and always will be on this part: it
+  needs two cores. Every board in `test-all-boards` is still QEMU, and no
+  hardware run happens in CI.
 - **Code size is now measured** against the Python backend, and it is close:
   **+1.3% flash overall**, smaller on five samples and larger on seven. See
   "Code size against the Python backend" below. It was unmeasured when the
@@ -2404,13 +2443,22 @@ nowhere at all, and is now checked on both sides (gap Y).
 run on two boards (gap AC).
 
 **What this section is down to.** Not "nothing", and the remainder is worth
-stating precisely rather than declaring victory: seven of the thirteen samples
-have never been on hardware, because their own `sample.yaml` pins them to QEMU
-boards; no hardware run happens in CI and none can, so this is a
-maintainer-machine check of exactly the kind #269 warned about; and one board
-of one SoC family is not "hardware" in general — nothing here says anything
-about a part with different flash timing, tighter RAM, or an MPU
-configuration these samples do not exercise.
+stating precisely rather than declaring victory:
+
+- **No hardware run happens in CI, and none can** — there is no board on a
+  GitHub runner. So this is a maintainer-machine check of exactly the kind
+  #269 exists to warn about, and the only gate in this file with that
+  property.
+- **One board of one SoC family is not "hardware" in general.** Nothing here
+  speaks to a part with different flash timing, tighter RAM, or an MPU
+  configuration these samples do not exercise.
+- **`smp_shared` has never run on silicon**, this part having one core, so
+  every claim about `@synchronized` under real contention still rests on
+  emulated cores (gaps W, AC).
+- **Nobody has pressed the button.** `gpio_demo`'s callback *registers* on
+  hardware, which is new and asserted; the block running when the pin
+  actually changes is checked by hand, because an unattended run cannot press
+  it.
 
 This entry is the one to distrust on principle. It has been wrong four
 times in the same direction — first claiming no target build existed after the
@@ -2469,7 +2517,7 @@ Filed rather than folded in, each with the reason it was kept separate:
 | #226 | Static, no-heap reflection and `@selector`. Needs its own design pass; oz_static rejects them today with a located error. |
 | #227 | Host-portable samples. Only three samples genuinely need Zephyr (`K_THREAD_DEFINE`, device tree, zbus) — stubbing `printk` alone moved four others to running on host. |
 | #230 | Verify on RISC-V (`qemu_riscv32`). **Done** — 12 of 13 samples build, run under QEMU and pass their own `sample.yaml` checks; generated C byte-identical to ARM across all 304 generated files. `gpio_demo` stays ARM-only, needing device-tree aliases the board lacks. Repeatable as `just test-riscv`. |
-| #231 | Compare code size between backends, and run at least one sample on real hardware. **Done** — size is +1.3% flash overall (see "Code size against the Python backend"), and the hardware half landed on an nRF52833DK: 6 of 13 samples flashed and run against their own `sample.yaml`, 6 of 6 passing, via `just test-hardware`. The seven that did not select are pinned to QEMU boards by their own `sample.yaml`, and widening that is a follow-up. See gap AD, including the `nrfjprog --ids` false positive that reported a board which was not plugged in. |
+| #231 | Compare code size between backends, and run at least one sample on real hardware. **Done** — size is +1.3% flash overall (see "Code size against the Python backend"), and the hardware half landed on an nRF52833DK: **13 of 13 pass** via `just test-hardware`, every sample but `smp_shared`, which needs two cores. It reached 6 first, those being the samples that pinned no `platform_allow`; widening the QEMU-era gates in the other seven took it to 13, as a deliberate second step. `gpio_demo` gained a capability rather than a board — its GPIO *input* half, a hoisted block registered as a `gpio_callback_handler_t`, had never run anywhere. See gap AD, including the `nrfjprog --ids` false positive that reported a board which was not plugged in. |
 | #238 | Objective-C inside a `#define` *body* is emitted verbatim, so the generated C does not compile — the other half of #234, split out because a macro body is one opaque `preproc_arg` token and needs its own approach. Detector prototyped: 0 of 40 real macro bodies flagged. |
 | #254 | `emit()` and `emit_split()` duplicated the top-level walk and had disagreed four times (gap R, #246, #250, #251). The mechanism behind three of this file's gaps, rather than a gap of its own. **Done** — one `emit::walk_top_level`, two assemblers over it, so a node kind is handled in exactly one place; `EmitCtx::new` replaces the six hand-spelled constructions. The refactor left generated output byte-identical across 820 corpus and 342 sample files; gap X, found by that comparison and fixed alongside, then removed a stray `;` from 146 of them and added nothing anywhere. The audit that preceded it (`tests/emitter_agreement.rs`) survives with a smaller claim — it guards the two assemblers, not two walks. |
 | #266 | Nothing checked generated C for *validity*, only for warnings. **Done** — `corpus_parity.rs` compiles with `-std=c17 -pedantic-errors` (the standard Zephyr pins) and it is a gate, the count there being 0 across the corpus; `just test-pedantic` asks the same of the samples on ARM. It reported 26 sites when it landed and is a **gate at 10** since #267 — that change removed 18 by retiring OZTimer, fixed one by dropping a redundant `;`, and put the sweep in CI, which is what a gate needs to mean anything. The count came first, as the issue asked, and it found gap X's fourth producer — an item-pool `;` that was valid on host and a constraint violation on Zephyr, so no host check could see it. It also found that the obvious way to sweep `-Wpedantic` on target reports zero on output that is not clean: CMSIS disables the flag for the rest of every Cortex-M TU. See gap Y. |
