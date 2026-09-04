@@ -2,10 +2,19 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stdint.h>
 
 typedef void *id;
-typedef void *Class;
+typedef uint16_t Class;
 typedef bool BOOL;
+
+/* no class; `class_id` is 10 bits wide, so this can never collide.
+ * Guarded because the SDK header declares the same thing for Clang's
+ * benefit during the AST dump, and a translated header carries it into
+ * the output alongside this one. */
+#ifndef Nil
+#define Nil ((Class)0xFFFF)
+#endif
 
 /* struct tags named by a prototype below but declared in no header this
  * one includes -- forward-declared so the tag is file-scoped rather than
@@ -15,6 +24,23 @@ struct oz_metadata;
 #include "platform/oz_platform.h"
 #include <stdlib.h>
 #include <string.h>
+
+/* the receiver's class, or Nil for a null receiver */
+static inline Class oz_class_of(const void *obj)
+{
+	return obj ? (Class)((const struct oz_metadata *)obj)->class_id : Nil;
+}
+
+/* uniform shape every `perform` wrapper below has, so an
+ * indirect call through a SEL needs no cast */
+struct oz_selector;
+typedef void *(*oz_imp_t)(void *self, void *a0, void *a1);
+struct oz_selector {
+	oz_imp_t perform;         /* NULL if this program never performs */
+	const uint32_t *responds; /* one bit per class_id, NULL if unused */
+	uint8_t arity;            /* object arguments the selector takes */
+};
+typedef const struct oz_selector *SEL;
 
 /* carried over from the source's own #include lines, so a prototype
  * below naming a type one of them declares sees the real definition */
@@ -35,7 +61,6 @@ struct OZObject {
 };
 struct OZObject * OZObject_alloc_cls(void);
 struct OZObject * OZObject_allocWithHeap__cls(void * heap);
-Class OZObject_class_cls(void);
 struct OZObject * OZObject_init(struct OZObject *self);
 void OZObject_dealloc(struct OZObject *self);
 BOOL OZObject_isEqual_(struct OZObject *self, void * anObject);

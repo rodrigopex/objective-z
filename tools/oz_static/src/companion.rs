@@ -875,10 +875,10 @@ fn render_reflection(program: &Program, root: &str) -> (String, String) {
 
     if program.uses_responds_to_selector {
         c.push_str(
-            "/* does class `k` implement the selector this record describes?\n\
- * A null SEL answers NO rather than dereferencing: `SEL` is a plain\n\
- * pointer, so nothing stops a caller passing 0, and the emitted C is\n\
- * held to having no undefined behaviour in it (not from source) */\n\
+            "/* does class `k` implement the selector this record describes?\n \
+* A null SEL answers NO rather than dereferencing: `SEL` is a plain\n \
+* pointer, so nothing stops a caller passing 0, and the emitted C is\n \
+* held to having no undefined behaviour in it (not from source) */\n\
 BOOL oz_responds(SEL sel, Class k)\n{\n\
 \treturn sel != ((void *)0) && k != Nil && sel->responds != ((void *)0) &&\n\
 \t       (sel->responds[k >> 5] & (1u << (k & 31))) != 0;\n}\n\n",
@@ -887,10 +887,10 @@ BOOL oz_responds(SEL sel, Class k)\n{\n\
     }
     if program.uses_perform_selector {
         c.push_str(
-            "/* send `sel` to `obj`, or nothing at all if `obj` is nil --\n\
- * the same answer Objective-C gives. A null SEL, or one whose selector\n\
- * this program never performs, likewise yields nil instead of calling\n\
- * through a null pointer (not from source) */\n\
+            "/* send `sel` to `obj`, or nothing at all if `obj` is nil --\n \
+* the same answer Objective-C gives. A null SEL, or one whose selector\n \
+* this program never performs, likewise yields nil instead of calling\n \
+* through a null pointer (not from source) */\n\
 void *oz_perform(SEL sel, void *obj, void *a0, void *a1)\n{\n\
 \tif (obj == ((void *)0) || sel == ((void *)0) || sel->perform == ((oz_imp_t)0)) {\n\
 \t\treturn ((void *)0);\n\t}\n\
@@ -1053,10 +1053,10 @@ pub fn render(
     // `[nil isKindOfClass:...]` answer NO the way Objective-C does.
     h.push_str(
         "typedef void *id;\ntypedef uint16_t Class;\ntypedef bool BOOL;\n\n\
-/* no class; `class_id` is 10 bits wide, so this can never collide.\n\
- * Guarded because the SDK header declares the same thing for Clang\'s\n\
- * benefit during the AST dump, and a translated header carries it into\n\
- * the output alongside this one. */\n\
+/* no class; `class_id` is 10 bits wide, so this can never collide.\n \
+* Guarded because the SDK header declares the same thing for Clang\'s\n \
+* benefit during the AST dump, and a translated header carries it into\n \
+* the output alongside this one. */\n\
 #ifndef Nil\n\
 #define Nil ((Class)0xFFFF)\n\
 #endif\n\n",
