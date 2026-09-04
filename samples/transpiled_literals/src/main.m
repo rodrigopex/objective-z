@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  *
  * ObjC string, array, and dictionary literals demo.
- * Transpiled to pure C via oz_transpile.
+ * Transpiled to pure C via oz2c.
  */
 
 #import <Foundation/Foundation.h>

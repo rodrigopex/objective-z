@@ -4,13 +4,13 @@
 
 
 def pytest_addoption(parser):
-    # The transpiler under test. Defaults to the Rust backend, which is the
-    # one Zephyr builds select (CONFIG_OBJZ_BACKEND_STATIC) and the only one
-    # these corpora will run on once the Python pipeline is retired; `python`
-    # remains selectable while that backend still exists, so the two can be
-    # compared over the same drivers.
-    parser.addoption("--backend", default="static", choices=["static", "python"],
-                     help="transpiler backend (default: static / oz2c)")
+    # Retained as a single-valued option rather than deleted: the CI jobs and
+    # the `just` recipes pass it explicitly, and a reader of either should be
+    # able to see which transpiler produced the C under test without knowing
+    # the history. There was a `python` choice until that backend was retired
+    # (see the `python-backend-final` tag).
+    parser.addoption("--backend", default="static", choices=["static"],
+                     help="transpiler backend (only 'static' / oz2c)")
     parser.addoption("--opt", default="O0", choices=["O0", "O2"],
                      help="Optimization level for tests")
     parser.addoption("--compiler", default="gcc", choices=["gcc", "clang"],

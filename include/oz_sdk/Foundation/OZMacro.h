@@ -71,11 +71,12 @@
  * as plain C: `samples/zbus_service` writes `ZBUS_OBS_DECLARE(...)` and
  * then an unwrapped `ZBUS_CHAN_ADD_OBS(...)`, which Clang does check.
  *
- * **Under `CONFIG_OBJZ_BACKEND_PYTHON`** the C half is still reached (both
- * backends' output includes the PAL), but that pipeline does not hoist
- * block literals, so an `OZM` carrying an inline block leaves the `^` in
- * its output and fails to compile there. Carrying a plain function name
- * works under either.
+ * There was a second backend (Python, retired -- see the
+ * `python-backend-final` tag) under which an `OZM` carrying an inline block
+ * did not compile: that pipeline never hoisted block literals, so the `^`
+ * survived into its output. Recorded because it is the reason some samples
+ * carry a plain function name where a block would read better; there is no
+ * longer a backend that needs the workaround.
  */
 #pragma once
 

@@ -16,10 +16,9 @@
 │  PAL Tests            │  4 test files — platform abstraction layer
 │  (tests/pal/)         │  just test-pal
 ├───────────────────────┤
-│  Transpiler Unit      │  517+ tests — Python tests for each pass
-│  + Golden Files       │  just test-transpiler
-│  (tools/oz_transpile/ │
-│   tests/)             │
+│  Transpiler Unit      │  288 tests — Rust tests for oz2c
+│  (tools/oz_static/    │  cargo test --manifest-path
+│   tests/)             │    tools/oz_static/Cargo.toml
 └───────────────────────┘
 ```
 
@@ -27,20 +26,22 @@
 
 | Command | What it runs |
 |---------|-------------|
-| `just test-transpiler` | Python unit + golden tests |
-| `just test-behavior` | Compiled behavior tests (host) |
-| `just test-adapted` | Adapted upstream tests |
-| `just test-pal` | PAL function tests |
+| `cargo test --manifest-path tools/oz_static/Cargo.toml` | The transpiler's own suite, 288 tests. The primary gate; it has no `just` recipe |
+| `just test-behavior` | 71-case behavior corpus through `oz2c` (host). Takes `--compiler`, `--opt`, `--sanitize`, `--check-leaks` |
+| `just test-adapted` | 40 adapted upstream tests |
+| `just test-pal` | PAL function tests (pure C, no transpiler) |
 | `just test-regression` | Regression tests only |
-| `just test-all` | Everything above + smoke |
+| `just test-all` | The host suites above + smoke |
 | `just test-ci-local` | Full CI matrix locally |
-| `just test-zephyr` | Zephyr integration (native_sim) |
-| `just smoke` | Host-side PAL smoke test |
+| `just test-zephyr` | Zephyr integration over the committed C in `tests/zephyr/generated/` |
+| `just test-hardware` | Every single-core sample flashed and run on an nRF52833DK |
+| `just smoke` | Transpile-and-compile smoke test |
 
 ## Adding a New Test
 
-- **Transpiler logic bug:** Add test in `tools/oz_transpile/tests/test_*.py`
-- **Generated C doesn't compile:** Add golden test in `tools/oz_transpile/tests/golden/`
+- **Transpiler logic bug:** Add a test under `tools/oz_static/tests/`
+- **Generated C doesn't compile:** Add a `.m` to the corpus — `corpus_parity.rs`
+  compiles every case as `-std=c17 -pedantic-errors` and gates on it
 - **Generated C compiles but wrong behavior:** Add `.m` + `_test.c` in `tests/behavior/cases/<category>/`
 - **Bug regression:** Use `scripts/new_regression_test.sh <issue> "description"`
 - **Upstream behavioral spec:** Add `.m` + `_test.c` in `tests/adapted/<source>/`
@@ -56,7 +57,12 @@ Each behavior test is a `.m` + `_test.c` pair:
 - Optional `/* oz-pool: Class=N */` comment for slab size
 - Optional `/* oz-heap */` marker for heap support
 
-Pipeline: `.m` → Clang AST → `oz_transpile` → `.c` + `.h` → GCC/Clang → run
+Pipeline: `.m` → tree-sitter CST → `oz2c` → `.c` + `.h` → GCC/Clang → run
+
+The drivers were written against the retired Python pipeline's generated ABI
+(`<Class>_ozh.h`, `Class_alloc`, `OZObject_release`) and are kept unmodified;
+`tests/tools/oz_static_build.py` writes a shim bridging those names to
+oz_static's. That backend is readable at the `python-backend-final` tag.
 
 ## Adapted Test Sources
 

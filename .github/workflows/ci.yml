@@ -82,36 +82,6 @@ jobs:
       - name: Run the Rust test suite
         run: cargo test --manifest-path tools/oz_static/Cargo.toml
 
-  # Python tests (transpiler unit + golden tests)
-  python-tests:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install host clang 19
-        run: .github/install-host-clang.sh
-
-      - name: Install dependencies
-        run: pip install pytest pytest-cov jinja2 tree-sitter tree-sitter-objc
-
-      - name: Run transpiler tests with coverage
-        run: >
-          PYTHONPATH=tools
-          python3 -m pytest tools/oz_transpile/tests/ -v
-          --cov=oz_transpile --cov-report=xml
-
-      - name: Upload Python coverage
-        uses: codecov/codecov-action@v4
-        with:
-          files: coverage.xml
-          flags: python
-          fail_ci_if_error: false
-
-  # Behavior tests — compiler × optimization matrix
   behavior-tests:
     runs-on: ubuntu-latest
     strategy:

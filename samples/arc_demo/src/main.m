@@ -142,11 +142,14 @@ int main(void)
 	OZLog("reassign loop");
 	{
 		/*
-		 * Written `= nil` rather than left bare so this sample still
-		 * builds under CONFIG_OBJZ_BACKEND_PYTHON: that backend has no
-		 * emission rule for the implicit nil Clang gives a bare strong
-		 * local (OZ003, ImplicitValueInitExpr). oz_static treats the
-		 * two spellings identically.
+		 * Written `= nil` rather than left bare because the retired
+		 * Python backend had no emission rule for the implicit nil
+		 * Clang gives a bare strong local (OZ003,
+		 * ImplicitValueInitExpr), and this sample had to build under
+		 * both. oz_static treats the two spellings identically, so the
+		 * explicit `nil` is now a free choice rather than a
+		 * requirement -- left as-is because it also says out loud what
+		 * ARC does here.
 		 */
 		Sensor *r = nil;
 		for (int i = 0; i < 3; i++) {

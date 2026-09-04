@@ -9,38 +9,21 @@ menuconfig OBJZ
 
 if OBJZ
 
-choice OBJZ_BACKEND
-	prompt "Transpiler backend"
-	default OBJZ_BACKEND_STATIC
-	help
-	  Selects which .m -> C transpiler generates sources for this
-	  target: the Rust pipeline (oz_static / oz2c) or the older Python
-	  one (oz_transpile). Both support POOL_SIZES, heap allocation
-	  (CONFIG_OBJZ_HEAP), multiple entry files and multiple include
-	  directories.
-
-	  The two are compared case by case against the shared behaviour
-	  corpus by tests/tools/cross_backend.py, which runs each of its 73
-	  cases through both and diffs the results; see
-	  tools/oz_static/PARITY.md for what that measures and what it does
-	  not. Note in particular that the Rust backend's on-target
-	  behaviour is not covered by that harness, which is a host
-	  comparison.
-
+# The transpiler. There used to be a choice here between the Rust pipeline
+# and a Python one (oz_transpile); the Python backend is retired, so
+# CONFIG_OBJZ_BACKEND_STATIC is unconditional and CONFIG_OBJZ_BACKEND_PYTHON
+# no longer exists. A build that still sets it will fail Kconfig's unknown
+# symbol check rather than silently selecting something else.
+#
+# The implementation is readable at the `python-backend-final` tag.
 config OBJZ_BACKEND_STATIC
-	bool "Rust (oz_static)"
+	bool
+	default y
 	help
-	  Rejects anything outside its supported subset with a located
-	  error rather than emitting code that misbehaves. Reflection and
-	  @selector are the notable exclusions -- see issue #226.
-
-config OBJZ_BACKEND_PYTHON
-	bool "Python (oz_transpile)"
-	help
-	  The original pipeline. Reads a Clang AST dump directly and emits
-	  from templates.
-
-endchoice
+	  The transpiler: .m -> tree-sitter CST -> oz2c -> .h + .c. Rejects
+	  anything outside its supported subset with a located error rather
+	  than emitting code that misbehaves. Reflection and @selector are
+	  the notable exclusions -- see issue #226.
 
 config OBJZ_HEAP
 	bool "Enable heap-based allocation (allocWithHeap:)"
