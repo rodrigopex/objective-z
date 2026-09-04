@@ -19,9 +19,23 @@ const REFLECTION_SELECTORS: &[&str] = &[
     "performSelector:withObject:",
     "performSelector:withObject:withObject:",
     "isKindOfClass:",
-    "isMemberOfClass:",
     "conformsToProtocol:",
 ];
+
+/// Selectors the emitter answers itself, at the call site, from facts the
+/// whole-program view already has -- so they never become C functions and
+/// can never be overridden.
+///
+/// `emit::render_message` intercepts each of these before dispatch
+/// resolution, which means an `@implementation` defining one would be
+/// silently ignored: every call site would keep the compile-time answer
+/// and the body would never run. Silently ignoring a method someone wrote
+/// is exactly the degradation this module exists to prevent, so defining
+/// one is a hard, located error instead (see `check_method_body`).
+/// `render_prototype` skips them for the matching reason -- declaring a C
+/// function that is never defined invites a call that fails at link time,
+/// which is the shape of the `[X class]` defect in #226.
+pub const INTRINSIC_SELECTORS: &[&str] = &["class", "isMemberOfClass:"];
 
 const LOOP_KINDS: &[&str] = &["for_statement", "while_statement", "do_statement"];
 
@@ -733,6 +747,17 @@ pub fn check_method_body(
     selector: &str,
 ) -> Vec<Diagnostic> {
     let mut diags = Vec::new();
+    if INTRINSIC_SELECTORS.contains(&selector) {
+        err(
+            &mut diags,
+            src,
+            body,
+            format!(
+                "'{}' is answered at compile time from the whole-program class set and cannot be overridden -- this body would never run",
+                selector
+            ),
+        );
+    }
     if selector == "dealloc" {
         check_dealloc_body(body, src, program, class_info, &mut diags);
     }

@@ -50,6 +50,8 @@ __attribute__((objc_root_class))
 + (instancetype)alloc;
 + (instancetype)allocWithHeap:(id)heap;
 + (Class)class;
+- (Class)class;
+- (BOOL)isMemberOfClass:(Class)aClass;
 - (instancetype)init;
 - (void)dealloc;
 - (BOOL)isEqual:(id)anObject;

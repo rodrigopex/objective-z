@@ -2550,6 +2550,35 @@ fn render_message(node: Node, ctx: &mut EmitCtx) -> (String, String) {
             return (format!("{}_oz_alloc()", cls), format!("struct {} *", cls));
         }
     }
+    // `+class` on a literal class name is a compile-time constant, and
+    // `-class` on a value is the `class_id` bitfield every object already
+    // carries -- so neither needs a class object, and both are free.
+    //
+    // This has to preempt the ordinary class-method path below. `+class`
+    // is declared once on the root class, so `find_defining_class` routes
+    // `[Widget class]` to `OZObject_class_cls()`: the receiver's class is
+    // dropped (making `[Widget class]` and `[Gadget class]` the same
+    // expression) and no such function is ever generated, so the build
+    // failed at link time with an undefined symbol rather than at
+    // transpile time with a located message. Nothing in the corpus writes
+    // `[X class]`, which is why it went unnoticed (#226).
+    if parts.selector == "class" && parts.args.is_empty() {
+        if let Some(cls) = recv_type.strip_prefix("class:") {
+            return (format!("OZ_STATIC_CLASS_{}", cls), "Class".to_string());
+        }
+        return (format!("oz_class_of({})", recv_text), "Class".to_string());
+    }
+    // Exact class equality, so it needs no ancestry walk -- unlike
+    // `-isKindOfClass:`, which `render_introspection` gates behind
+    // `--introspection` because it generates a table. `oz_class_of`
+    // yields `Nil` for a null receiver, which no class ever equals, so a
+    // message to nil answers NO here without a separate guard.
+    if parts.selector == "isMemberOfClass:" && parts.args.len() == 1 {
+        return (
+            format!("(oz_class_of({}) == ({}))", recv_text, arg_texts[0]),
+            "BOOL".to_string(),
+        );
+    }
     // `+allocWithHeap:` is declared once on the root class, but it has to
     // allocate `sizeof(struct {receiver})` and stamp the receiver's own
     // class_id -- so, exactly like `+alloc`, it resolves to the *receiver's*
@@ -3729,6 +3758,14 @@ pub(crate) fn render_prototype(
     m: &crate::model::MethodSig,
     root: Option<&str>,
 ) -> String {
+    // Answered at the call site, never emitted as a function -- so a
+    // prototype here would declare a symbol that is defined nowhere. That
+    // is precisely how `+class` used to fail: declared by `OZObject.h`,
+    // called as `OZObject_class_cls()`, defined by nothing, undefined at
+    // link time (#226).
+    if crate::staticbar::INTRINSIC_SELECTORS.contains(&m.selector.as_str()) {
+        return String::new();
+    }
     let mut params = String::new();
     if !m.is_class_method {
         params.push_str(&format!("struct {} *self", class_name));
