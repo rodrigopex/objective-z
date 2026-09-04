@@ -4454,6 +4454,16 @@ fn walk_top_level(
                 // Everything else here is trivia and passes through
                 // untouched: with no edits, `apply_edits` returns the
                 // original text byte for byte.
+                // A `#define` body is one opaque `preproc_arg` token, so no
+                // arm above descends into it and no edit below can reach it:
+                // Objective-C written there is emitted verbatim and fails in
+                // the C compiler, naming generated code the user never wrote.
+                // Rejected here rather than transpiled -- see
+                // `staticbar::check_macro_body` (#238).
+                if node.kind() == "preproc_function_def" || node.kind() == "preproc_def" {
+                    diags.extend(crate::staticbar::check_macro_body(node, source));
+                }
+
                 let mut edits = if node.kind() == "declaration" {
                     class_tag_edits(node, source, program)
                 } else {
