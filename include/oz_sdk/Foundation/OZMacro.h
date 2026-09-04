@@ -17,7 +17,7 @@
  *
  * and Clang is not optional here. `cmake/oz_static.cmake` dumps one Clang
  * AST per source, and that dump is the only authority on which ivars are
- * objects a class owns (PARITY.md gap N); the outgoing Python backend
+ * objects a class owns (gap N of the retired PARITY.md); the Python backend
  * compiles the same file outright.
  *
  * OZM is the way through, and it works because **a macro is the only

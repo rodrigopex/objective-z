@@ -3,8 +3,8 @@
 // type_constraints.rs - `id<Protocol>` and `Container<Arg, ...>`
 // constraint checking (see src/generics.rs).
 //
-// The oracle's own coverage for this (tools/oz_transpile/tests/test_resolve.py,
-// OZ-057) is hand-built Clang-AST-node fixtures, not real `.m` source --
+// The oracle's own coverage for this (test_resolve.py, OZ-057, in the retired
+// Python pipeline) was hand-built Clang-AST-node fixtures, not real `.m` source --
 // its own comment says so ("Corner case: these tests use handcrafted AST
 // nodes with generics preserved... real Clang-based generic validation is
 // covered by source-level [golden] tests"). There is no real `.m` file to

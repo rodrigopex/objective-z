@@ -14,11 +14,13 @@ Objective-Z is an Objective-C transpiler for Zephyr RTOS, packaged as a Zephyr m
 (`zephyr/module.yml`). Converts `.m` sources to plain C — no ObjC runtime needed. Uses the
 Platform Abstraction Layer (PAL) for zero-cost Zephyr integration.
 
-**The transpiler is `tools/oz_static/` (the `oz2c` binary, Rust).** It is the default
-backend (`CONFIG_OBJZ_BACKEND_STATIC`) and where new work goes. The Python pipeline
-`tools/oz_transpile/` still builds and its suites are still the only independent oracle
-for behavioural equivalence, but it is the outgoing implementation: read it for
-reference, don't extend it.
+**The transpiler is `tools/oz_static/` (the `oz2c` binary, Rust).** It is the only
+backend. A second, Python implementation (`tools/oz_transpile/`, a 3-pass Clang-AST
+pipeline) was retired: it implemented no construct oz_static lacks, had been unable to
+build any sample on target since #267, and its one unique contribution --
+`just test-cross-backend`, an independent behavioural oracle -- is gone with it. The
+implementation is readable at the **`python-backend-final`** tag rather than kept as an
+uncompiled directory; see [docs/STATUS.md](docs/STATUS.md).
 
 ## Project instructions
 
@@ -39,7 +41,7 @@ them splits the record in two — it has happened, and the copies disagreed with
 
 **Reference an issue by its GitHub number (`#226`)** — in commit messages, PR bodies, code
 comments and docs alike. **The `OZ-NNN` id scheme is retired:** don't assign new ones and
-don't rename an issue into that form. Older commits, closed issues and `PARITY.md` entries
+don't rename an issue into that form. Older commits and closed issues
 still carry OZ-NNN ids; leave those as the historical references they are.
 
 ## Build Commands
@@ -91,12 +93,9 @@ Versions CI pins, and so the ones to match locally: **Zephyr v4.4.2**
 | `just test-boards`         | ARM + RISC-V, so neither hides an architecture-specific regression |
 | `just test-all-boards`     | All three, including SMP |
 | `just test-pedantic`       | ISO C constraint violations in generated C, on target. Reports; the host half is a gate in `corpus_parity.rs` |
-| `just test-cross-backend` | Both backends over the same corpus, results diffed |
-| `just test-behavior`      | Behavior corpus, 71 cases, through **oz_static**; `--compiler`/`--opt`/`--sanitize`/`--check-leaks` |
-| `just test-adapted`       | 40 adapted upstream tests, through **oz_static** |
-| `just test-behavior-python` / `test-adapted-python` | The same two corpora through the outgoing Python pipeline |
-| `just test-transpiler`    | Python transpiler pytest suite (retiring with that backend) |
-| `just transpile`          | Run the Python transpiler directly |
+| `just test-behavior`      | Behavior corpus, 71 cases; `--compiler`/`--opt`/`--sanitize`/`--check-leaks` |
+| `just test-adapted`       | 40 adapted upstream tests |
+| `just test-hardware`      | Every single-core sample flashed and run on an nRF52833DK |
 
 The Rust suite has no `just` recipe — run it directly:
 
@@ -117,8 +116,9 @@ Each sample uses `ZEPHYR_EXTRA_MODULES` to register the module and enables it wi
 
 - **`zephyr/module.yml`** — Module definition, points cmake/kconfig to root
 - **`west.yml`** — West manifest for Zephyr CI integration
-- **`CMakeLists.txt`** — Includes `oz_transpile.cmake` when `CONFIG_OBJZ` is enabled; that
-  file dispatches to the backend `CONFIG_OBJZ_BACKEND` selects
+- **`CMakeLists.txt`** — Includes `oz_static.cmake` when `CONFIG_OBJZ` is enabled. It
+  used to include `oz_transpile.cmake`, which dispatched on `CONFIG_OBJZ_BACKEND`
+  between two backends; with one backend there is nothing to dispatch on
 - **`Kconfig`** — `CONFIG_OBJZ` master enable, auto-selects `STATIC_INIT_GNU`
 
 ### OZ Transpiler (`tools/oz_static/`) — the `oz2c` binary
@@ -149,31 +149,50 @@ Two standing design rules, easy to violate with good intentions:
   double-release in synthesized dealloc, no variadic support, item-slot sizing that ignores
   loops); matching them would be a regression dressed as parity.
 
-### Legacy Transpiler (`tools/oz_transpile/`, Python)
+### The retired Python transpiler (`tools/oz_transpile/`)
 
-**Being retired.** Still selectable via `CONFIG_OBJZ_BACKEND_PYTHON`, but the corpora it
-used to own now run through oz_static: `tests/tools/compile_and_run.py` takes
-`--backend {static,python}`, and every CI job exercising the behaviour and adapted
-corpora passes `--backend=static`. What it still uniquely provides is
-`just test-cross-backend`, the independent behavioural oracle, which goes when it does.
+**Deleted, and readable at the `python-backend-final` tag** rather than kept as an
+uncompiled reference directory:
 
-An audit found nothing blocking removal on the construct side: all 71 behaviour cases and
-all 40 adapted cases transpile *and run* through oz_static, and the Python backend
-implements neither `@try` (it is listed in its own `_UNSUPPORTED_AST_KINDS`), reflection
-selectors, `@selector`/`@protocol()` emission, nor variadics. Objective-C in a `#define`
-body crashes it with a `RecursionError`, where oz_static rejects it with a located error
-(#238). It has also been unable to build any sample on target since #267 left a deleted
-`src/OZTimer.m` in its source list, and no gate noticed.
+```sh
+git checkout python-backend-final     # the last commit that still has it
+just test-transpiler                  # its own 539 unit tests, at that tag
+just test-cross-backend               # both backends over one corpus, 71/71 MATCH
+```
 
-- `model.py` / `collect.py` / `resolve.py` / `emit.py` — 3-pass Clang-AST pipeline
-- Tests: `just test-transpiler`
+`src/runtime_legacy/` is the cautionary example of the other choice — kept for
+reference, not compiled, and now just sitting there.
+
+What it was: a 3-pass Clang-AST pipeline (`collect.py` / `resolve.py` / `emit.py`,
+~15,800 lines) that read a Clang JSON AST dump and emitted C from Jinja templates.
+
+Why it went, measured rather than assumed:
+
+- all 71 behaviour and 40 adapted cases transpile **and run** through oz_static, under
+  gcc/clang × -O0/-O2, ASan, UBSan and LeakSanitizer;
+- it implemented no construct oz_static lacks — `@try` was in its own
+  `_UNSUPPORTED_AST_KINDS`, `@selector`/`@protocol()` appeared only in kind lists with
+  no emission rule, reflection selectors were absent entirely, and there was no
+  variadic support anywhere, so `OZLog` could never have gone through it;
+- Objective-C in a `#define` body crashed it with a `RecursionError`, where oz_static
+  rejects it with a located error (#238);
+- it had been unable to build **any** sample on target since #267 left a deleted
+  `src/OZTimer.m` in its source list, and no gate noticed.
+
+What its removal cost, stated rather than absorbed: `just test-cross-backend` was the
+only *independent* implementation to check behaviour against, 71/71 MATCH. Nothing
+replaces that. What replaces its role as a gate is the corpora running through
+oz_static under sanitizers — which is what found two real ARC leaks (#283) that
+cross-backend agreement never caught, since it compared Unity results rather than
+allocation balance.
 
 ### CMake Build Infrastructure (`cmake/`)
 
-- **`oz_transpile.cmake`** — `objz_transpile_sources()`: the entry point every sample calls.
-  Dispatches on `CONFIG_OBJZ_BACKEND` to either backend
-- **`oz_static.cmake`** — the Rust backend: builds `oz2c`, optionally dumps Clang ASTs for
-  ARC facts, and emits generated sources into `oz_static_generated/`
+- **`oz_static.cmake`** — builds `oz2c`, dumps one Clang AST per source for ARC facts,
+  and emits generated sources into `oz_static_generated/`. Defines
+  `objz_transpile_sources()`, the entry point every sample calls — the name is
+  unchanged from when it lived in the deleted `oz_transpile.cmake`, because 13 samples,
+  px-app and any out-of-tree user call it
 - **`ObjcClang.cmake`** — Clang detection (`objz_find_clang()`), target triple mapping, AST analysis flags, compile_commands.json generation for clangd IDE support
 
 ### Platform Abstraction Layer (`include/platform/`)

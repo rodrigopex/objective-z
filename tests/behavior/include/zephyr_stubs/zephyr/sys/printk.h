@@ -1,10 +1,9 @@
 /* Minimal Zephyr printk stub for host-side builds.
  *
- * Added so `src/OZLog.c` -- the one pure-C runtime file both backends link
- * -- can be compiled on host at all. Without it that file could only be
- * built by a real Zephyr cross-compile, which left the static backend's
- * include of the generated dispatch header unchecked (see PARITY.md on
- * OZ_BACKEND_STATIC).
+ * Added so `src/OZLog.c` -- the one pure-C runtime file the generated output
+ * links -- can be compiled on host at all. Without it that file could only
+ * be built by a real Zephyr cross-compile, which left its include of the
+ * generated dispatch header unchecked by any host test.
  *
  * `printk` is a *prototype*, not a macro, and its definition lives in
  * `zephyr_stubs.c` for a caller to link. A macro would collide with

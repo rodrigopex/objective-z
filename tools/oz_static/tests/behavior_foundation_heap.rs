@@ -18,7 +18,7 @@
 // `tests/behavior/cases/memory/heap_alloc.m`, which cannot itself be run
 // through the cross-backend harness: that case's driver asserts on the
 // oracle's root struct layout (`w->base._meta.class_id`) rather than on
-// behavior -- see PARITY.md.
+// behavior -- see docs/STATUS.md.
 
 mod common;
 use common::{

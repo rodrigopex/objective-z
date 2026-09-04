@@ -30,7 +30,8 @@ void printk(const char *fmt, ...);
  * the same object, so this sample carries the *re-entrant* shape on a
  * single-core board. A k_spinlock cannot be re-locked, so a second acquire
  * would be a defect; the lowering avoids it by recording the owning thread
- * and skipping both lock and unlock when it sees itself (PARITY.md gap W).
+ * and skipping both lock and unlock when it sees itself (gap W of the
+ * retired PARITY.md; docs/STATUS.md says how to read it).
  *
  * That guard could only ever be falsified on two cores, where
  * samples/smp_shared's `-bumpNested` drives it -- and `just test-spin-validate`
