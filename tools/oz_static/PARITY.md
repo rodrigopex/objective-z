@@ -76,7 +76,7 @@ the obvious way to measure that on target reports zero regardless.
 | transpiled_literals | yes | yes | yes | `POOL_SIZES` honoured; was: helper unreachable from `main` |
 | mem_demo | yes | yes | yes | was gap B |
 | hello_category | yes | yes | yes | was gap C |
-| pool_demo | yes | yes | yes | uses `@synchronized`, but single-threaded -- it exercises the lowering, not the lock (see gap W) |
+| pool_demo | yes | yes | yes | `@synchronized`, single-threaded -- it exercises the lowering, not contention (gap W); nested across a method boundary since #278, so the re-entrancy guard is checked on one core (gap AC) |
 | transpiled_blocks | yes | yes | yes | carries the two top-level block shapes (gap Z) and the `OZM(K_TIMER_DEFINE, ...)` timer that replaced OZTimer (gap AB) |
 | transpiled_generics | yes | yes | yes | |
 | transpiled_led | yes | yes | yes | was gap L — segfaulted |
@@ -1591,6 +1591,90 @@ Zephyr's own C callbacks do. That is a real ergonomic step back for the
 managed case, and the trade the retirement makes: one less class, one less
 bridge, and the ISO C violation gone rather than relocated.
 
+**AC. Zephyr's own lock-misuse assertions had never run against generated
+C, so `@synchronized`'s re-entrancy guard rested on a doc comment.** Fixed
+(#278). Nothing was broken — both assertions are silent on both boards — and
+the entry is here because *finding that out* was the work, and because the
+green result is worth nothing without the control below.
+
+`CONFIG_SPIN_VALIDATE` populates `struct k_spinlock` with `thread_cpu` and
+makes two assertions live in `include/zephyr/spinlock.h`:
+
+| Where | Fails when |
+| --- | --- |
+| `:132` `z_spin_lock_valid()` | the current CPU already holds this lock — a recursive acquire |
+| `:306`, `:365` `z_spin_unlock_valid()` | the unlocker is not the `(cpu, thread)` pair that took it |
+
+A third exists only under this flag: `z_spin_onexit` (`:379`) asserts a
+`K_SPINLOCK` block was not left by `return`, `break` or `goto`, which really
+does leak the lock with interrupts left masked. Synthesized atomic accessors
+use `OZ_SPINLOCK`, which *is* `K_SPINLOCK`, so they are checked by it —
+`render_synthesized_accessor` reads the ivar into a local inside the block and
+returns after it, which is what keeps them clean. Worth stating because the
+obvious way to write that getter fails here, and there was nothing to tell
+anyone so until now.
+
+**It had never been on, and not by oversight.** `SPIN_VALIDATE` sits inside
+`if ASSERT` in Zephyr's `subsys/debug/Kconfig`, and no sample enables
+`CONFIG_ASSERT`, so no board's default configuration could reach it. The
+samples had therefore never run with *any* kernel assertion enabled. That is
+why this was the last item in "Not verified" that did not need hardware, and
+why it is the one entry there that was accurate rather than lagging.
+
+**The counts.** `just test-spin-validate` runs every sample under the
+validator on both boards that populate the struct differently:
+
+| Board | Result | Which shape of `struct k_spinlock` |
+| --- | --- | --- |
+| `mps2/an385` | **13 of 13 pass** | `thread_cpu` alone — single core |
+| `qemu_cortex_a53/smp` | **9 of 9 pass** | `locked` + `thread_cpu`, under real contention |
+
+Verified rather than assumed, since a silently-ignored overlay would produce
+exactly this result: `CONFIG_SPIN_VALIDATE=y` and `CONFIG_ASSERT=y` are in all
+22 generated `.config`s, `CONFIG_OBJZ_BACKEND_STATIC=y` in all 22, and
+`CONFIG_SMP=y` in the 9.
+
+**The control is the substance of this entry.** A sweep that reports "no
+assertion fired" is indistinguishable from one that cannot see an assertion
+at all — the same failure mode as the ARM `-Wpedantic` sweep reporting zero on
+output that is not clean (gap Y), and as `tests/zephyr/` exercising no
+transpiler. So the owner check in `render_synchronized_statement` was disabled
+(`int held = 1`, always acquire) and the sweep re-run:
+
+```
+ASSERTION FAIL [z_spin_lock_valid(l)] @ WEST_TOPDIR/deps/zephyr/include/zephyr/spinlock.h:132
+	Invalid spinlock 0x40062b60
+ERROR - qemu_cortex_a53/qemu_cortex_a53/smp sample.objz.smp_shared FAILED: Timeout
+```
+
+So gap W's re-entrancy design is now held up by a test that fails without it.
+`samples/smp_shared`'s `-bumpNested` drives the skip-the-acquire path 1000
+times per core per run, and had been driving it, correctly, entirely
+unwitnessed: on host the PAL's `oz_spin_lock` is `(void)lck; return 0;`, and
+on the two boards with a real `k_spin_lock` the validator was off. The lock
+being *taken* correctly was demonstrated by gap W's count; the lock never
+being *re-taken* was not demonstrated by anything.
+
+**No ARM sample re-entered a lock, which would have made the CI gate
+hollow.** `pool_demo` was the only ARM-eligible sample using `@synchronized`
+and its single block does not nest, so the ARM leg — the one CI runs, the SMP
+board needing an `aarch64-zephyr-elf` the SDK install does not carry — would
+have passed with the guard deleted. `Sensor`'s `-setValue:` now synchronizes
+on `self` while `main` already holds `@synchronized(s)` on the same object:
+the re-entrant shape across a method boundary, on one core, with the receiver
+spelled `self` against the holder's `s` so no textual same-receiver check
+could tell they alias. Confirmed by disabling the guard and watching that leg
+go red too, which is the only reason the sentence above is worth writing.
+
+**On instrumenting this at all.** The overlay is a test configuration rather
+than a line in each `prj.conf`, so it costs the shipped samples nothing: the
+validator's ~3k of kernel code and `CONFIG_ASSERT`'s overhead exist only in
+the sweep's builds. The CI job builds *and runs*, unlike `hw-build-check`: an
+`__ASSERT` failure is a runtime fatal error, so a compile-only job would
+report `pass` on every one of them. Which is #269's lesson again, in its
+fourth instance — a check CI does not run is a check that holds nowhere, and
+a check that cannot fail is not a check at all.
+
 ## On target (Zephyr under QEMU: mps2/an385, qemu_riscv32, qemu_cortex_a53/smp)
 
 The check that was missing, and the one that mattered most. Every
@@ -1774,10 +1858,12 @@ only on ARM. `heap_alloc` passes, so the `--heap-support` path and
 
 What RISC-V does **not** add: `struct k_spinlock` is empty on
 `qemu_riscv32` as well, because `CONFIG_SMP` and `CONFIG_SPIN_VALIDATE` are
-both off there as on `mps2/an385`. The other shape of that struct — with
-`locked`/`owner`/`tail` — stays unexercised on both. That needs an SMP board,
-not a second architecture — see the SMP subsection below, which is where that
-gap was closed and where it turned out to be hiding a real defect. Nor is
+both off there as on `mps2/an385` in the configuration the samples ship. The
+`locked`/`owner`/`tail` shape needs an SMP board, not a second architecture —
+see the SMP subsection below, which is where that gap was closed and where it
+turned out to be hiding a real defect. The `thread_cpu` shape needs neither:
+`just test-spin-validate` populates it on single-core ARM (gap AC), which is
+where the two boards above stop being interchangeable for this question. Nor is
 this a code-size comparison: `qemu_riscv32` reports no FLASH region at all,
 being RAM-only, so its figures are not comparable with the ARM sweep's flash
 numbers (#231 covers size, same-architecture).
@@ -1818,9 +1904,11 @@ ordering timeout:
   the above broke `mps2/an385` — and RISC-V filtered correctly, so testing
   only the boards of interest would have shipped it.
 
-What SMP still does not cover: `CONFIG_SPIN_VALIDATE` is off there too, so
-Zephyr's own lock-misuse assertions remain unexercised. And QEMU is not
-hardware — see the caveat under "what this default rests on".
+What SMP still does not cover: QEMU is not hardware — see the caveat under
+"what this default rests on". `CONFIG_SPIN_VALIDATE` was listed here too and
+is no longer: `just test-spin-validate` runs it on this board and on ARM, and
+it is what turned gap W's re-entrancy design from a doc comment into a claim
+with a failing control behind it (gap AC).
 
 ## The Python backend still passes its own suites
 
@@ -2096,9 +2184,12 @@ What that still does not cover, and why the escape hatch stays:
   "Code size against the Python backend" below. It was unmeasured when the
   default was flipped, so this was "unknown" rather than "known-acceptable"
   until now (#231).
-- **`CONFIG_SPIN_VALIDATE` has never been on**, on any board, so Zephyr's own
-  lock-misuse assertions have never run against generated code. SMP covers the
-  populated `struct k_spinlock`; this is the remaining shape of that struct.
+- **`CONFIG_SPIN_VALIDATE` is now run**, on `mps2/an385` and
+  `qemu_cortex_a53/smp`, so Zephyr's own lock-misuse assertions do run against
+  generated code — silently, which is the result, and provably able to speak,
+  which is the part that took work. See gap AC. It had never been on before,
+  and could not be reached by accident: it sits behind `CONFIG_ASSERT`, which
+  no sample enables.
 
 `CONFIG_OBJZ_BACKEND_PYTHON=y` remains the way back for any target this
 breaks.
@@ -2239,10 +2330,12 @@ above. ARM runs 13 of the 14 samples; `qemu_riscv32` runs 12, the one it drops
 excluded by that board's missing device-tree aliases rather than by anything in
 oz_static (#230); `qemu_cortex_a53/smp` runs 9 of 9 selected with two CPUs.
 What is still not covered: **no real board has been used** — all three are
-QEMU — and `CONFIG_SPIN_VALIDATE` has never been enabled anywhere. Code size
-against the Python backend was listed here too and is measured; see that
-section. Validity was listed nowhere at all, and is now checked on both sides
-(gap Y).
+QEMU. Code size against the Python backend was listed here too and is
+measured; see that section. Validity was listed nowhere at all, and is now
+checked on both sides (gap Y). `CONFIG_SPIN_VALIDATE` was the last item here
+that did not need hardware, and is now run on two boards (gap AC) — so a real
+board is all that is left, which makes this section shorter than it has ever
+been and worth reading with more suspicion rather than less.
 
 This entry is the one to distrust on principle. It has now been wrong four
 times in the same direction — first claiming no target build existed after the
@@ -2253,6 +2346,14 @@ claiming no SMP board had been used when the board was in-tree and the
 toolchain already installed. Each time the document understated what was
 already reachable, because the work that falsifies it gets recorded somewhere
 else.
+
+`CONFIG_SPIN_VALIDATE` is the one that was **accurate** and is worth
+separating from those four for that reason. It really had never been on, and
+not through anyone's oversight: it sits inside `if ASSERT` in Zephyr's
+`subsys/debug/Kconfig` and no sample enables asserts, so no board's default
+configuration could have reached it. The lesson is the opposite of the four
+above — the entry was right, and what it cost was that a design decision
+(gap W's owner tracking) went unchecked for as long as the entry stood.
 
 Two of the four are worth a second look for the opposite reason, though: SMP
 and validity were the ones whose absence was concealing a live defect rather
@@ -2300,4 +2401,5 @@ Filed rather than folded in, each with the reason it was kept separate:
 | #269 | CI never ran the Rust suite, and `hw-build-check` could not fail. **Done** — a `rust-tests` job runs all 262 tests plus `RUSTFLAGS=-D warnings`, so `corpus_parity.rs`'s `-pedantic-errors` gate is now enforced on every PR rather than only locally; `continue-on-error: true` is gone from the one job that cross-compiles for a board, verified safe first by reading ten runs' step conclusions. Two things found on the way and fixed in the same change: the AST oracle in CI was clang **18.1** rather than the tested 19, because the SDK was installed without `-l` and `objz_find_clang()` fell through to `PATH` while the job separately installed an unused clang 20 — one shared SDK install with LLVM now feeds cmake, `OZ_CLANG` and a `PATH` symlink alike, and `-DOBJZ_REQUIRE_TESTED_CLANG=ON` makes a repeat fatal; and `west.yml` said `revision: main`, so every CI run built against whatever upstream main was that morning, now pinned to **v4.4.2**. |
 | #267 | Generated C converted a block's function pointer to `void *` (`(void*)(expBlock)`, `src/OZTimer.m`), which ISO C forbids in either direction — 18 of the 26 sites `just test-pedantic` reported, and the reason it was a report rather than a gate. **Done**, and not the way it was scoped. The plan was a `__oz_timer_setup` signature decision, two faces under `#ifdef __OBJC__`; that was built and verified and then not used, because `OZM` (#272) makes the helper unnecessary rather than fixable — `OZM(K_TIMER_DEFINE, my_timer, ^(struct k_timer *t) { ... }, NULL)` calls Zephyr's own macro with an inline block. So **OZTimer is retired**: the class, its header, its place in the `Foundation.h` umbrella, and `__oz_timer_setup` in both copies are gone, taking the 18 sites with them and leaving the sweep a gate at 10. The costs are stated in gap AB rather than absorbed: two corpus cases deleted (71, not 73, and cross-backend with them), a ztest and three Rust tests gone, and a callback needing per-instance context now reaching it through `k_timer_user_data_get` where OZTimer wrapped it in an ARC-managed ivar. Also corrected here: the helper never existed "on both PAL backends" as this row and both allowlists said — it was in the Zephyr PAL and in the behaviour tests' Zephyr stand-in, the host PAL having no timer at all. |
 | #272 | Blocks were lowered to function pointers everywhere except the top level, where a file-scope block variable, its block-literal initializer and a free function's block parameter each reached the C compiler with the `^` intact — text no GCC target can parse, though each shape is valid Objective-C. **Done** — see gap Z. Filed while scoping #267 and taken first because it produces *invalid* C rather than merely non-conforming C. It also delivered what it was filed for: Zephyr's own `ZBUS_LISTENER_DEFINE`/`K_TIMER_DEFINE` cannot take an inline block, because Objective-C refuses block-to-function-pointer conversion in every position and Clang has to parse the same file for the AST oracle — so the same PR adds **`OZM`**, discarded unparsed by Clang and expanding to the target macro in the generated C, where the literal is already a hoisted function name. One name for every target macro, no per-primitive wrapper. Both halves are pure preprocessor since #267, which deleted the emitter rule OZM shipped with (~90 lines) — the transpiler's contribution is the hoist alone. `samples/zbus_service` writes its zbus listener as an inline block on that basis and passes on ARM. |
+| #278 | `CONFIG_SPIN_VALIDATE` had never been enabled on any board, so Zephyr's own lock-misuse assertions had never run against generated C — and `@synchronized`'s re-entrancy guard, the thing they check, rested on a doc comment. **Done** — `samples/overlay-spin-validate.conf` plus `just test-spin-validate` runs every sample under the validator on `mps2/an385` (13/13) and `qemu_cortex_a53/smp` (9/9), and a `spin-validate` CI job gates the ARM leg, building *and running* since an `__ASSERT` failure is a runtime fatal error a compile-only job cannot see. Nothing fires. What makes that worth anything is the control: disabling the `oz_sync_owner` check makes both legs report `ASSERTION FAIL [z_spin_lock_valid(l)] ... Invalid spinlock`. `samples/pool_demo` now nests `@synchronized` across a method boundary for that reason — no ARM-eligible sample re-entered a lock, so the CI leg would otherwise have passed with the guard removed. See gap AC. |
 | #274 | The Clang AST dumps were silently truncated, with two independent causes: `_objz_build_ast_flags` took include directories from the `zephyr_interface` target only, so no sample's own `include/` reached its dump (five samples, losing their own `@implementation`s); and it named no `--target`, so every dump was parsed as the build machine and Zephyr's arch headers exhausted Clang's 20-error limit (**every RISC-V dump**). **Done** -- 0 truncated of 165 dumps on ARM and 0 of 150 on RISC-V, with generated C byte-identical pre- and post-fix across all 13 samples, which is what makes the impact latent rather than active. A truncated dump is now fatal at build time rather than counted as usable. See gap AA. |
