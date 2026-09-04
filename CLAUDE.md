@@ -93,7 +93,7 @@ Versions CI pins, and so the ones to match locally: **Zephyr v4.4.2**
 | `just test-boards`         | ARM + RISC-V, so neither hides an architecture-specific regression |
 | `just test-all-boards`     | All three, including SMP |
 | `just test-pedantic`       | ISO C constraint violations in generated C, on target. Reports; the host half is a gate in `corpus_parity.rs` |
-| `just test-behavior`      | Behavior corpus, 71 cases; `--compiler`/`--opt`/`--sanitize`/`--check-leaks` |
+| `just test-behavior`      | Behavior corpus, 74 cases; `--compiler`/`--opt`/`--sanitize`/`--check-leaks` |
 | `just test-adapted`       | 40 adapted upstream tests |
 | `just test-hardware`      | Every single-core sample flashed and run on an nRF52833DK |
 
@@ -168,12 +168,14 @@ What it was: a 3-pass Clang-AST pipeline (`collect.py` / `resolve.py` / `emit.py
 
 Why it went, measured rather than assumed:
 
-- all 71 behaviour and 40 adapted cases transpile **and run** through oz_static, under
-  gcc/clang × -O0/-O2, ASan, UBSan and LeakSanitizer;
+- all 71 behaviour and 40 adapted cases *as the corpus stood then* transpile **and
+  run** through oz_static, under gcc/clang × -O0/-O2, ASan, UBSan and
+  LeakSanitizer (the behaviour corpus is 74 cases now);
 - it implemented no construct oz_static lacks — `@try` was in its own
   `_UNSUPPORTED_AST_KINDS`, `@selector`/`@protocol()` appeared only in kind lists with
   no emission rule, reflection selectors were absent entirely, and there was no
-  variadic support anywhere, so `OZLog` could never have gone through it;
+  variadic support anywhere, so `OZLog` could never have gone through it —
+  oz_static has since implemented reflection outright (#226), which it never did;
 - Objective-C in a `#define` body crashed it with a `RecursionError`, where oz_static
   rejects it with a located error (#238);
 - it had been unable to build **any** sample on target since #267 left a deleted
