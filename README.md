@@ -42,6 +42,8 @@ Objective-Z inverts this: the transpiler converts `.m` files to plain C at build
 
 Features that require unbounded runtime allocation — KVO, method swizzling, dynamic class creation, associated objects, weak references, message forwarding — are removed. Only the core language features that can be fully resolved at build time remain: classes, protocols, categories, properties, blocks, ARC.
 
+Introspection and reflection are the exception that proves the rule: `-isKindOfClass:`, `-conformsToProtocol:`, `-respondsToSelector:` and `-performSelector:` all work, because the whole class and selector set is known at transpile time and every answer can be baked into a `const` table. What is gone is the part that needs a runtime — registering a class or a selector that did not exist when the program was built.
+
 ### Zephyr-native
 
 Built on Zephyr primitives (`k_mem_slab`, `SYS_INIT`, `k_spinlock_t`, `atomic_t`), not POSIX. No libc `malloc` dependency.
@@ -75,10 +77,22 @@ Built on Zephyr primitives (`k_mem_slab`, `SYS_INIT`, `k_spinlock_t`, `atomic_t`
 - **Subscript syntax** — `array[0]`, `dict[@"key"]`
 - **Lightweight generics** — typed collections
 - **`+initialize`** — auto-called before `main()` via `SYS_INIT` (singleton pattern)
+- **Introspection** — `[Foo class]`, `[obj class]`, `-isMemberOfClass:` cost
+  nothing (`Class` is the class id every object already carries);
+  `-isKindOfClass:` and `-conformsToProtocol:` read `const` tables, behind
+  `CONFIG_OBJZ_INTROSPECTION`
+- **Reflection** — `@selector`, `SEL`, `-respondsToSelector:` and
+  `-performSelector:`, behind `CONFIG_OBJZ_REFLECTION`. A `SEL` is a pointer to
+  a `const` per-selector record; no heap, no runtime registry, no variadic
+  trampoline
 
 ### Tooling
 
-- **Three-pass transpiler** — Clang JSON AST -> collect -> resolve -> emit -> pure C
+- **Transpiler** — `.m` -> tree-sitter CST -> `oz2c` -> pure C, substituting the
+  source in place. A Clang JSON AST dump is read alongside it, as the authority
+  on resolved types and ARC ownership. (The three-pass Clang-AST pipeline this
+  line used to describe was the Python backend, retired at the
+  `python-backend-final` tag.)
 - **Platform Abstraction Layer** — zero-cost `static inline` with Zephyr and host backends
 - **clangd IDE support** — auto-generated `compile_commands.json`
 
@@ -103,7 +117,7 @@ All benchmarks on **nRF52833 DK** (ARM Cortex-M4F @ 64 MHz), DWT cycle counter, 
 | Raw int32_t[] sum (10 elems)      |    81 |    99 | Both raw C arrays, no boxing |
 | String*[10] loop + length()       |   263 |   483 | Fair: both object arrays with method call |
 | String iterator (virtual)         |   211 |   341 | Fair: both virtual dispatch per step |
-| dynamic_cast (hit) / isKindOfClass |    12 |    -- | OZ introspection via C API |
+| dynamic_cast (hit) / isKindOfClass |    12 |    -- | Legacy runtime's C API, not today's `-isKindOfClass:` (#226) |
 
 ### Memory (bytes per object)
 
@@ -422,7 +436,15 @@ objz_transpile_sources(<target> <source1.m> [source2.m ...]
 
 ## Configuration
 
-`CONFIG_OBJZ` is the only Kconfig option. It enables the transpiler pipeline and auto-selects `STATIC_INIT_GNU`.
+`CONFIG_OBJZ` enables the transpiler pipeline and auto-selects `STATIC_INIT_GNU`. Three options sit under it, and the defaults are what a plain `CONFIG_OBJZ=y` gives you:
+
+| Option | Default | Effect |
+|---|---|---|
+| `CONFIG_OBJZ_HEAP` | `n` | `+allocWithHeap:` and the heap-aware free path |
+| `CONFIG_OBJZ_INTROSPECTION` | `y` | `-isKindOfClass:` and `-conformsToProtocol:` |
+| `CONFIG_OBJZ_REFLECTION` | `y` | `@selector`, `SEL`, `-respondsToSelector:`, `-performSelector:` |
+
+The two introspection options generate `const` tables only for the constructs a program actually uses, so leaving them on costs nothing until something introspects. Set either to `n` to forbid its constructs outright: they then become located transpile errors naming the option, never silently unavailable.
 
 Supported architectures:
 
@@ -447,7 +469,7 @@ Requires [just](https://github.com/casey/just). Default board: `mps2/an385`.
 | `just test-smp`        | Two cores (`qemu_cortex_a53/smp`)      |
 | `just test-boards`     | ARM and RISC-V                         |
 | `just test-all-boards` | All three boards, including SMP        |
-| `just test-behavior`   | 71-case behavior corpus through `oz2c` |
+| `just test-behavior`   | 74-case behavior corpus through `oz2c` |
 | `just test-adapted`    | 40 adapted upstream tests              |
 | `just smoke`           | Transpile-and-compile smoke test       |
 | `just smoke`           | Run host-side PAL smoke test           |
@@ -473,8 +495,6 @@ rather than emitting code that misbehaves, so the authoritative list is
 [docs/STATUS.md](docs/STATUS.md) for what is verified and what is not.
 The notable exclusions:
 
-- **No reflection or `@selector`** — `respondsToSelector:`, `performSelector:`,
-  `isKindOfClass:` and friends are rejected, not silently dropped (#226)
 - **No `@try`/`@catch`/`@throw`** — exception handling is not supported
 - **No Objective-C inside a `#define` body** — a macro body is one opaque
   token to the parser, so it is a located error rather than C that will not
@@ -749,7 +769,12 @@ just bench-footprint                       # ELF section size analysis
 | dynamic_cast (miss)                    |           12 |
 | typeid() + name()                      |            7 |
 
-> OZ introspection uses C functions (`oz_isKindOfClass`, `oz_name`) — not yet exposed as ObjC methods.
+> These figures are from the retired legacy runtime, whose introspection was
+> the C functions `oz_isKindOfClass` and `oz_name`. `-isKindOfClass:` and the
+> rest are ordinary Objective-C methods now (#226), answered from `const`
+> tables the transpiler generates rather than by any runtime call — see
+> [docs/STATUS.md](docs/STATUS.md#introspection-and-reflection-226). The
+> numbers here have not been retaken against that.
 
 ### Object Sizes
 

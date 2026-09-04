@@ -51,15 +51,15 @@ hidden a defect.
 
 | Subject | Status |
 | --- | --- |
-| Rust suite (`cargo test`) | **288 tests**, `RUSTFLAGS=-D warnings` clean. The primary gate |
-| Behaviour corpus | **71/71** transpile, compile and run — gcc/clang × `-O0`/`-O2`, plus ASan, UBSan and LeakSanitizer |
+| Rust suite (`cargo test`) | **313 tests**, `RUSTFLAGS=-D warnings` clean. The primary gate |
+| Behaviour corpus | **74/74** transpile, compile and run — gcc/clang × `-O0`/`-O2`, plus ASan, UBSan and LeakSanitizer |
 | Corpus ISO C validity | Gate at **0** under `-std=c17 -pedantic-errors` |
 | Adapted upstream tests | **40/40** (LLVM, GNUstep, Apple, ObjFW, mulle-objc) |
-| Samples on ARM (`mps2/an385`) | **13/13** built and run under twister |
-| Samples on RISC-V (`qemu_riscv32`) | **12/12** — `gpio_demo` needs device-tree aliases the board lacks |
-| Samples on two cores (`qemu_cortex_a53/smp`) | **9/9**, the only place `@synchronized` faces real contention |
-| Samples on real silicon (nRF52833DK) | **13/13** flashed and run; `smp_shared` cannot, needing two cores |
-| Kernel lock validation | `CONFIG_SPIN_VALIDATE` silent on ARM (13/13) and SMP (9/9) |
+| Samples on ARM (`mps2/an385`) | **14/14** built and run under twister |
+| Samples on RISC-V (`qemu_riscv32`) | **13/13** — `gpio_demo` needs device-tree aliases the board lacks |
+| Samples on two cores (`qemu_cortex_a53/smp`) | **10/10**, the only place `@synchronized` faces real contention |
+| Samples on real silicon (nRF52833DK) | **13/13** flashed and run; `smp_shared` cannot, needing two cores. `reflection_demo` builds for it and has not been run there — no board was attached when it landed |
+| Kernel lock validation | `CONFIG_SPIN_VALIDATE` silent on ARM (14/14) and SMP (10/10) |
 | Generated C warnings | `-Wall -Wextra` clean across all samples |
 | Pedantic sweep on target | Gate at **10 sites**, every one inside Zephyr's own macros |
 | Zephyr integration (ztest) | **18 cases in 5 suites** over committed oz_static output |
@@ -81,14 +81,68 @@ Stated precisely rather than as "everything works":
   checked by hand.
 - **No independent implementation.** Behaviour is checked against the sources'
   own expectations, not against a second transpiler.
-- **Reflection and `@selector`** are rejected with a located error, not
-  supported — see #226. Objective-C in a `#define` body likewise (#238).
+- **Objective-C in a `#define` body** is rejected with a located error, not
+  supported (#238).
+
+## Introspection and reflection (#226)
+
+Supported, each half behind its own Kconfig option, both defaulting to `y`.
+Nothing here needs a heap or a runtime registry: every answer is read from a
+`const` table the transpiler generated, so it lives in flash and costs no RAM.
+
+| Construct | Needs | Cost |
+|---|---|---|
+| `[Foo class]`, `[obj class]`, `-isMemberOfClass:` | nothing — always available | none; `Class` is the `class_id` every object already carries, so these are a constant or a bitfield read |
+| `-isKindOfClass:` | `CONFIG_OBJZ_INTROSPECTION` | `oz_superclass_of[]`, 2 bytes per class, plus a 32-byte walker |
+| `-conformsToProtocol:` | `CONFIG_OBJZ_INTROSPECTION` | one 4-byte bitmap per protocol named, plus a 36-byte reader |
+| `@selector`, `SEL`, `-respondsToSelector:`, `-performSelector:` | `CONFIG_OBJZ_REFLECTION` | 12-byte record + 4-byte bitmap + 4–10-byte wrapper per selector named, plus 42–62 bytes of helpers |
+
+Measured on the linked `samples/reflection_demo` image for
+`nrf52833dk/nrf52833` (Cortex-M4, `-Os`): **318 bytes of flash and 0 of RAM**
+for all of it, plus 42 bytes for the two `OZ_PROTOCOL_SEND_*` functions the
+reflected selectors forced into existence. 1.4% of that sample's flash.
+
+Three things about the design are worth knowing before changing it:
+
+- **Tables are gated on use, not on the option.** A program that enables both
+  and introspects nothing emits nothing — no table, no helper. Gating on the
+  option instead would have added 94 bytes to every build that merely left the
+  defaults alone.
+- **A `SEL` is a pointer to a `const` record, not to a function.** A selector
+  has one implementation per class, so it cannot be a method pointer; and while
+  its `OZ_PROTOCOL_SEND_*` dispatcher is a single function, that leaves
+  `-respondsToSelector:` — a predicate, not a call — nothing to read, and
+  dispatchers have per-selector signatures, so calling one through a
+  differently-typed pointer is undefined behaviour the pedantic gate exists to
+  prevent. The record holds a responds bitmap and a wrapper of one uniform
+  shape, so an indirect call needs no cast, no shape tag and no variadics.
+- **Performability is checked at the `@selector(...)`, not at the perform.** A
+  selector reachable by a `-performSelector:` must fit that wrapper: at most two
+  object-typed arguments, returning void or an object. Which selectors those are
+  depends on the program — the literals named at perform sites, or, if any site
+  takes its `SEL` from a value, every reflectively-named selector, since nothing
+  can then prove which one arrives. `samples/reflection_demo` is the second
+  case, and its `-toggle` had to return void because of it.
+
+With either option off, its constructs are hard located errors naming the
+option — never silently unavailable, and never degraded to something weaker.
+
+`Nil` has no Objective-C spelling on purpose. `Class` is a pointer to Clang,
+which rejects the integer cast under ARC, and defining it as `((Class)0)` for
+the AST dump's benefit would make the same comparison mean two different things
+there and in the emitted C. The contract is observable without it: a nil
+receiver's class matches nothing at all, not even the root class.
 
 ## How measurements mislead
 
 The most reusable thing the old document held. Every entry below is something
 that reported success while the thing it named was broken.
 
+- **A substring is not a definition.** A test asserting the generated C
+  "contains `OZ_PROTOCOL_SEND_tick`" passed with the dispatch-generation logic
+  removed, because the wrapper that *calls* that function is in the same file.
+  Only the companion *header* carries the prototype, and only when the function
+  really exists. Assert on the declaration, or on behaviour.
 - **A green check whose subject is not what the reader thinks.**
   `tests/zephyr/` globs pre-generated C rather than transpiling, so for years
   its cases said "this committed C runs on Zephyr" and nothing about the
