@@ -443,7 +443,132 @@ fn message_target(node: Node, src: &str, program: &Program) -> (Option<String>, 
         let (inner_class, _) = message_target(children[0], src, program);
         return (inner_class, selector);
     }
+    // A variable receiver, resolved from its *declaration* rather than
+    // guessed. Left unresolved, an owning instance method called on a
+    // variable hands back +1 that nothing releases: `[a sub:b]` in
+    // `foundation/q31_basic` leaked an OZQ31 on every call, because
+    // `OZQ31 *a` is not a class name and the send therefore looked
+    // borrowed however owning `-sub:` was known to be. Found by running the
+    // corpus under LeakSanitizer through this backend for the first time.
+    //
+    // Both forms below are exact readings of the source, not inferences,
+    // which matters more here than usual: the standing bias is that an
+    // unrecognised shape must *leak* rather than double-free, so widening
+    // what counts as owning is the dangerous direction. `self` is the class
+    // whose `@implementation` encloses the send; a named local or parameter
+    // is whatever its declaration says. Neither can be wrong about the
+    // receiver's static type.
+    if receiver_text == "self" {
+        if let Some(class) = enclosing_impl_class(node, src) {
+            return (Some(class), selector);
+        }
+    }
+    if children[0].kind() == "identifier" {
+        if let Some(class) = declared_class_of(receiver_text, node, src, program) {
+            return (Some(class), selector);
+        }
+    }
     (None, selector)
+}
+
+/// The class whose `@implementation` encloses `node`, for a `self` receiver.
+fn enclosing_impl_class(node: Node, src: &str) -> Option<String> {
+    let mut cur = node.parent();
+    while let Some(n) = cur {
+        if n.kind() == "class_implementation" {
+            let (name, _, _) = crate::collect::class_header(n, src);
+            if !name.is_empty() {
+                return Some(name);
+            }
+            return None;
+        }
+        cur = n.parent();
+    }
+    None
+}
+
+/// The class a named receiver was declared as, searching the enclosing
+/// method or function: its parameter list first, then the body's
+/// declarations. Returns None unless the name is declared exactly once with
+/// a type that is a known class, so an ambiguous or unknown spelling stays
+/// unresolved rather than being assumed.
+fn declared_class_of(
+    name: &str,
+    node: Node,
+    src: &str,
+    program: &Program,
+) -> Option<String> {
+    let mut scope = node.parent();
+    while let Some(n) = scope {
+        if matches!(n.kind(), "method_definition" | "function_definition") {
+            break;
+        }
+        scope = n.parent();
+    }
+    let scope = scope?;
+
+    let mut found: Option<String> = None;
+    let mut count = 0usize;
+    collect_declared_types(scope, name, src, program, &mut found, &mut count);
+    if count == 1 {
+        found
+    } else {
+        None
+    }
+}
+
+/// Walk `node` for declarations and parameters naming `name`, recording the
+/// class each says it has and how many such declarations were seen.
+fn collect_declared_types(
+    node: Node,
+    name: &str,
+    src: &str,
+    program: &Program,
+    found: &mut Option<String>,
+    count: &mut usize,
+) {
+    if matches!(node.kind(), "declaration" | "parameter_declaration") && declares_name(node, name, src)
+    {
+        let (ty, _) = crate::collect::extract_type_and_stars(node, src);
+        let bare = ty.trim().trim_start_matches("struct ").trim();
+        if program.is_class(bare) {
+            *found = Some(bare.to_string());
+        }
+        *count += 1;
+        return;
+    }
+    let mut cursor = node.walk();
+    let children: Vec<Node> = node.children(&mut cursor).collect();
+    for child in children {
+        collect_declared_types(child, name, src, program, found, count);
+    }
+}
+
+/// Does this declaration or parameter introduce `name`?
+fn declares_name(node: Node, name: &str, src: &str) -> bool {
+    fn any_identifier(node: Node, name: &str, src: &str) -> bool {
+        if node.kind() == "identifier" && &src[node.byte_range()] == name {
+            return true;
+        }
+        // A declarator's own name only: do not descend into an initialiser,
+        // where the same identifier may merely be *read*.
+        if node.kind() == "init_declarator" {
+            let mut c = node.walk();
+            let kids: Vec<Node> = node.children(&mut c).collect();
+            return kids.first().is_some_and(|d| any_identifier(*d, name, src));
+        }
+        let mut cursor = node.walk();
+        let children: Vec<Node> = node.children(&mut cursor).collect();
+        children.into_iter().any(|c| any_identifier(c, name, src))
+    }
+    let mut cursor = node.walk();
+    let children: Vec<Node> = node.children(&mut cursor).collect();
+    children.into_iter().any(|c| {
+        matches!(
+            c.kind(),
+            "init_declarator" | "pointer_declarator" | "identifier" | "function_declarator"
+        ) && any_identifier(c, name, src)
+    })
 }
 
 fn selector_of(children: &[Node], src: &str) -> String {
