@@ -827,7 +827,7 @@ fn render_reflection(program: &Program, root: &str) -> (String, String) {
             "((void *)0)".to_string()
         };
 
-        let perform_name = if program.uses_perform_selector {
+        let perform_name = if program.needs_perform_wrapper(selector) {
             let m = sig.expect("a reflected selector with no implementor is refused in emit");
             let arg_names: Vec<String> = m
                 .params
@@ -1053,8 +1053,13 @@ pub fn render(
     // `[nil isKindOfClass:...]` answer NO the way Objective-C does.
     h.push_str(
         "typedef void *id;\ntypedef uint16_t Class;\ntypedef bool BOOL;\n\n\
-/* no class; `class_id` is 10 bits wide, so this can never collide */\n\
-#define Nil ((Class)0xFFFF)\n\n",
+/* no class; `class_id` is 10 bits wide, so this can never collide.\n\
+ * Guarded because the SDK header declares the same thing for Clang\'s\n\
+ * benefit during the AST dump, and a translated header carries it into\n\
+ * the output alongside this one. */\n\
+#ifndef Nil\n\
+#define Nil ((Class)0xFFFF)\n\
+#endif\n\n",
     );
     // Replaced, once the whole header is built, by a forward declaration
     // for every struct tag it mentions but never declares -- see

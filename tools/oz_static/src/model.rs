@@ -149,6 +149,18 @@ pub struct Program {
     /// it never performs, no wrapper is generated and no dispatch function
     /// is forced into existence for a reflected selector.
     pub uses_perform_selector: bool,
+    /// Selectors a `-performSelector:` site names with a literal
+    /// `@selector(...)` at the site itself.
+    pub performed_selectors: std::collections::BTreeSet<String>,
+    /// Does any `-performSelector:` site take its selector from a value
+    /// rather than a literal -- a local, an ivar, a parameter, a cast?
+    ///
+    /// When nothing does, exactly `performed_selectors` can reach a
+    /// perform, so only those need a uniform-shape wrapper and only those
+    /// have to be performable. One site taking a value makes it
+    /// undecidable, and the requirement widens to every reflectively-named
+    /// selector.
+    pub performs_via_value: bool,
     /// Does anything send `-respondsToSelector:`? Gates `oz_responds` and
     /// the per-selector `responds` bitmaps.
     pub uses_responds_to_selector: bool,
@@ -407,7 +419,7 @@ impl Program {
         // `[obj performSelector:@selector(poke)]` against the only class
         // implementing `-poke` would reference a function that was never
         // generated.
-        if self.uses_perform_selector && self.reflected_selectors.contains(selector) {
+        if self.needs_perform_wrapper(selector) {
             return true;
         }
         self.class_order
@@ -560,6 +572,32 @@ impl Program {
             current = info.superclass.clone();
         }
         false
+    }
+
+    /// Does `selector` need a uniform-shape `perform` wrapper, and so a
+    /// dispatch function to call through?
+    ///
+    /// Exactly the selectors that can reach a `-performSelector:`. When
+    /// every perform site names its selector with a literal, that is the
+    /// set of those literals; one site taking a `SEL` from a value makes
+    /// it undecidable and widens the answer to every reflectively-named
+    /// selector.
+    ///
+    /// Narrowing this matters for more than code size. A selector needing
+    /// a wrapper has to *fit* one -- at most two object-typed arguments,
+    /// returning void or an object -- so treating every `@selector(...)`
+    /// as performable-or-error forced signature changes on methods
+    /// nothing ever performed. `samples/reflection_demo` was rejected by
+    /// exactly that: its `-toggle` returns `int` for its protocol's sake
+    /// and is only ever asked about with `-respondsToSelector:`.
+    pub fn needs_perform_wrapper(&self, selector: &str) -> bool {
+        if !self.uses_perform_selector {
+            return false;
+        }
+        if self.performs_via_value {
+            return self.reflected_selectors.contains(selector);
+        }
+        self.performed_selectors.contains(selector)
     }
 
     /// Does any strict subclass of `class_name` implement `selector`?
