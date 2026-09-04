@@ -1205,8 +1205,9 @@ first re-measurement failed the same way:
 
   Worth stating plainly: an ARM `-Wpedantic` sweep written the obvious way
   reports a clean result on output that is not clean. That is the same failure
-  mode as `tests/zephyr/` exercising no transpiler — a green run whose subject
-  is not what the reader thinks.
+  mode as `tests/zephyr/` exercising no transpiler, which it did until its
+  committed C was regenerated through oz2c (gap AH) — a green run whose
+  subject is not what the reader thinks.
 
 **What remains, and why it is now a gate.** 10 sites, each in
 `scripts/objz_pedantic_sweep.py`'s `KNOWN_PEDANTIC` with its reason, and
@@ -1640,7 +1641,7 @@ exactly this result: `CONFIG_SPIN_VALIDATE=y` and `CONFIG_ASSERT=y` are in all
 assertion fired" is indistinguishable from one that cannot see an assertion
 at all — the same failure mode as the ARM `-Wpedantic` sweep reporting zero on
 output that is not clean (gap Y), and as `tests/zephyr/` exercising no
-transpiler. So the owner check in `render_synchronized_statement` was disabled
+transpiler, as it did until gap AH. So the owner check in `render_synchronized_statement` was disabled
 (`int held = 1`, always acquire) and the sweep re-run:
 
 ```
@@ -1761,7 +1762,7 @@ then failed with `-105 Cannot connect to J-Link` and reported `UNKNOWN`, and
 `nrfutil device list` plus the VCOM appearing under `/dev/cu.usbmodem*`,
 never `--ids`. Same shape as the other false instruments this file
 records — the ARM `-Wpedantic` sweep reporting zero on unclean output
-(gap Y), and `tests/zephyr/` exercising no transpiler.
+(gap Y), and `tests/zephyr/` exercising no transpiler until gap AH.
 
 **What it does not cover.** `smp_shared` cannot run here and is the one
 sample still QEMU-only: it contends two cores on one object, and this part has
@@ -2007,6 +2008,53 @@ CI -- the arrangement #269 exists to warn about. A dealloc counter is portable
 and asks the sharper question anyway: not "was the memory reachable at exit"
 but "did the object's teardown run". Each test was confirmed to fail with its
 own fix reverted, and only its own.
+
+**AH. The on-target integration suite ran the *other* backend's output, and
+now runs this one's.** Done, as the second step of retiring the Python
+pipeline.
+
+`tests/zephyr/` is cited three times in this file as the canonical green run
+whose subject is not what the reader thinks: its `CMakeLists.txt` globs C
+committed under `tests/zephyr/generated/` rather than transpiling anything, so
+its cases said "this committed C runs on Zephyr" and nothing about the
+transpiler. What made that worse than it sounds is *whose* C it was --
+`scripts/regen_zephyr_tests.py` drove `oz_transpile`, so the only suite
+running Objective-C-derived code on a Zephyr kernel was running the outgoing
+backend's output, and had been for the life of the Rust backend.
+
+The regen script drives `oz2c` now. What it took, and what it did not:
+
+- **The drivers are unmodified.** The six under `tests/zephyr/src/` were
+  written against the Python pipeline's naming -- `<Class>_ozh.h` headers
+  (16 references), `OZObject_release` (24), `Class_alloc(`, `OZ_CLASS_X` --
+  and oz_static emits one header per origin file with its own spellings. The
+  ABI shim that already bridges exactly this for the behaviour corpus
+  (`oz_static_build::write_abi_shim`, gap AF) is reused, so the shim headers
+  are committed alongside the generated C and nothing hand-written moved.
+- **24 committed files became 47**, oz_static emitting per-origin rather than
+  per-class.
+- **Case sets compared, not just counts.** 18 cases in 5 suites pass through
+  oz2c, and the same 18 names pass through the Python backend on the commit
+  before -- measured by stashing the port and re-running, rather than assumed
+  from both being green.
+
+**A count this corrected on the way past.** `CLAUDE.md` said 21 integration
+tests. It is 18, and was 18 before this change too -- the number was stale
+independently, and the only reason it surfaced is that porting the generator
+made someone count.
+
+**Two holes in the check that protects these files**, both found because this
+change is the first thing to exercise it in anger:
+
+- `generated-freshness` ran `git diff --quiet tests/zephyr/generated/`, which
+  sees modifications to *tracked* files and is blind to new ones. A transpiler
+  change that emitted an extra file would have passed. It is
+  `git status --porcelain` now -- the port added 34 files, which is how the
+  hole came to light.
+- The job had no `cargo build`, so it would have failed with "oz2c not built"
+  exactly as the corpus jobs did in gap AF. Two jobs, the same omission, one
+  PR apart: the Python backend needed no build step, so nothing in this
+  workflow had ever needed one.
 
 ## On target (Zephyr under QEMU: mps2/an385, qemu_riscv32, qemu_cortex_a53/smp)
 
