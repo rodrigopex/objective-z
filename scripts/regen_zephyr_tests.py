@@ -126,7 +126,17 @@ def main() -> int:
         cmd = [str(oz2c),
                "-I", str(STUBS_DIR),
                "-I", str(TEST_INC),
-               "--impl-dir", str(OZ_SRC)]
+               "--impl-dir", str(OZ_SRC),
+               # Mirrors CONFIG_OBJZ_INTROSPECTION and
+               # CONFIG_OBJZ_REFLECTION, both of which default to y, so a
+               # ztest source may use those constructs. Passing them
+               # changes nothing for the current sources -- neither
+               # introspects, and the tables are emitted per construct
+               # used, not per option set -- but without them a future one
+               # would be refused by a script that has no Kconfig to point
+               # anyone at.
+               "--introspection",
+               "--reflection"]
         for f in ast_files:
             cmd += ["--ast", str(f)]
         if pool_sizes:
