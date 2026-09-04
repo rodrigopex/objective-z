@@ -157,11 +157,29 @@ transpile *args:
 test-transpiler:
     python3 -m pytest tools/oz_transpile/tests/ -v
 
-test-behavior:
-    python3 -m pytest tests/behavior/ -v
+# The 71-case behavior corpus through oz_static, the default backend. This
+# harness carries the compiler/-O matrix, the sanitizers, leak detection and
+# gcov, so it is where those reach the *generated* C -- `cargo test`'s
+# corpus_parity only transpiles and compiles each case, never runs it.
+#
+# The 71-case behavior corpus through oz_static (gcc/clang, -O0/-O2, ASan, LSan).
+test-behavior *args:
+    python3 -m pytest tests/behavior/ -v {{args}}
 
-test-adapted:
-    python3 -m pytest tests/adapted/ -v
+# 40 tests adapted from LLVM, GNUstep, Apple, ObjFW and mulle-objc.
+test-adapted *args:
+    python3 -m pytest tests/adapted/ -v {{args}}
+
+# The same two corpora through the outgoing Python pipeline. Kept only while
+# that backend exists: it is what makes the migration checkable against the
+# thing it replaced, rather than replacing its own oracle.
+#
+# The behavior corpus through the outgoing Python pipeline.
+test-behavior-python:
+    python3 -m pytest tests/behavior/ -v --backend=python
+
+test-adapted-python:
+    python3 -m pytest tests/adapted/ -v --backend=python
 
 test-pal:
     python3 -m pytest tests/pal/ -v

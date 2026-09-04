@@ -32,6 +32,10 @@ LLVM_SEARCH_PATHS = [
 ]
 
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import oz_static_build  # noqa: E402  (path set up above)
+
+
 def _find_llvm_clang() -> str:
     """Find LLVM clang for AST dump."""
     env_clang = os.environ.get("OZ_CLANG")
@@ -82,6 +86,7 @@ def _find_test_file(m_path: Path) -> Path | None:
 
 def run_pipeline(m_path: Path, opt: str = "O0", sanitize: str | None = None,
                  compiler: str = "gcc", cflags: str = "",
+                 backend: str = "static",
                  ldflags: str = "",
                  keep_tmp: bool = False,
                  check_leaks: bool = False) -> subprocess.CompletedProcess:
@@ -99,7 +104,7 @@ def run_pipeline(m_path: Path, opt: str = "O0", sanitize: str | None = None,
     try:
         return _run_pipeline_inner(m_path, test_file, tmpdir, opt, sanitize,
                                    compiler, cflags, ldflags,
-                                   check_leaks=check_leaks)
+                                   check_leaks=check_leaks, backend=backend)
     finally:
         if not keep_tmp:
             shutil.rmtree(tmpdir, ignore_errors=True)
@@ -109,7 +114,8 @@ def _run_pipeline_inner(m_path: Path, test_file: Path, tmpdir: Path,
                         opt: str, sanitize: str | None,
                         compiler: str = "gcc", cflags: str = "",
                         ldflags: str = "",
-                        check_leaks: bool = False) -> subprocess.CompletedProcess:
+                        check_leaks: bool = False,
+                        backend: str = "static") -> subprocess.CompletedProcess:
     llvm_clang = _find_llvm_clang()
     ast_json = tmpdir / "input.ast.json"
 
@@ -147,27 +153,42 @@ def _run_pipeline_inner(m_path: Path, test_file: Path, tmpdir: Path,
 
     ast_json.write_text(result.stdout)
 
-    # Step 2: Transpile
+    # Step 2: Transpile -- the one step that differs between backends.
+    #
+    # Everything around it is backend-agnostic, which is why one switch here
+    # gives the whole harness (compiler, -O level, sanitizers, leak
+    # detection, gcov) to either backend rather than needing a second
+    # harness. `oz_static` reuses the AST dump step 1 already made, so both
+    # backends reason about the identical translation unit by construction.
     pool_sizes = _parse_pool_sizes(m_path) or _default_pool_sizes(m_path)
     heap_support = _needs_heap_support(m_path)
-    transpile_cmd = [
-        sys.executable, "-m", "oz_transpile",
-        "--input", str(ast_json),
-        "--outdir", str(tmpdir)]
-    if pool_sizes:
-        transpile_cmd.extend(["--pool-sizes", pool_sizes])
-    if heap_support:
-        transpile_cmd.append("--heap-support")
 
-    result = subprocess.run(
-        transpile_cmd,
-        capture_output=True, text=True,
-        env={**os.environ, "PYTHONPATH": str(REPO_ROOT / "tools")})
-    if result.returncode != 0:
-        return subprocess.CompletedProcess(
-            args=result.args, returncode=1,
-            stdout=result.stdout,
-            stderr=f"Transpile failed:\n{result.stderr}")
+    if backend == "static":
+        err = oz_static_build.transpile(m_path, tmpdir, pool_sizes,
+                                        heap_support, ast_json)
+        if err is not None:
+            return subprocess.CompletedProcess(
+                args=["oz2c", str(m_path)], returncode=1,
+                stdout="", stderr=f"Transpile failed:\n{err}")
+    else:
+        transpile_cmd = [
+            sys.executable, "-m", "oz_transpile",
+            "--input", str(ast_json),
+            "--outdir", str(tmpdir)]
+        if pool_sizes:
+            transpile_cmd.extend(["--pool-sizes", pool_sizes])
+        if heap_support:
+            transpile_cmd.append("--heap-support")
+
+        result = subprocess.run(
+            transpile_cmd,
+            capture_output=True, text=True,
+            env={**os.environ, "PYTHONPATH": str(REPO_ROOT / "tools")})
+        if result.returncode != 0:
+            return subprocess.CompletedProcess(
+                args=result.args, returncode=1,
+                stdout=result.stdout,
+                stderr=f"Transpile failed:\n{result.stderr}")
 
     # Step 3: Generate test_main.c
     test_main = tmpdir / "test_main.c"
@@ -233,6 +254,8 @@ def _run_pipeline_inner(m_path: Path, test_file: Path, tmpdir: Path,
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description="Behavior test: transpile → compile → run")
     p.add_argument("m_file", help="Path to the .m test file")
+    p.add_argument("--backend", default="static", choices=["static", "python"],
+                   help="transpiler backend (default: static / oz2c)")
     p.add_argument("--opt", default="O0", choices=["O0", "O2"],
                    help="Optimization level (default: O0)")
     p.add_argument("--compiler", default="gcc", choices=["gcc", "clang"],
@@ -254,7 +277,7 @@ def main(argv: list[str] | None = None) -> int:
                           sanitize=args.sanitize, compiler=args.compiler,
                           cflags=args.cflags, ldflags=args.ldflags,
                           keep_tmp=args.keep_tmp,
-                          check_leaks=check_leaks)
+                          check_leaks=check_leaks, backend=args.backend)
     if result.stdout:
         print(result.stdout, end="")
     if result.stderr:

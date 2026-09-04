@@ -29,6 +29,7 @@ def discover_adapted_tests(category: str | None = None):
 @pytest.fixture
 def compile_and_run(request):
     """Return a callable that transpiles, compiles, and runs a .m test file."""
+    backend = request.config.getoption("--backend")
     opt = request.config.getoption("--opt")
     compiler = request.config.getoption("--compiler")
     sanitize = request.config.getoption("--sanitize")
@@ -37,6 +38,7 @@ def compile_and_run(request):
 
     def _run(m_path: pathlib.Path) -> subprocess.CompletedProcess:
         cmd = [sys.executable, str(COMPILE_AND_RUN), str(m_path),
+               "--backend", backend,
                "--opt", opt, "--compiler", compiler]
         if sanitize:
             cmd.extend(["--sanitize", sanitize])
