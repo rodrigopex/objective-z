@@ -25,7 +25,9 @@ These words are used precisely and are not interchangeable:
   behaviour, so it is a real oracle and an independent one — it says nothing
   about the Python backend.
 - **matches** — the case was *run* under both backends and they produced
-  identical results. Only the behavior-corpus section below claims this.
+  identical results. Only the behavior-corpus section below claims this, and
+  it is the one word here with an expiry date: it needs two backends, and the
+  Python one is being retired (gap AF).
 - **builds for ARM** — `west build -b mps2/an385` succeeded with the real
   cross-toolchain. Strictly more than compiling on host, and the difference
   is not small: it found five defects in twenty minutes that a full day of
@@ -1856,6 +1858,83 @@ argument case up with the body. Two tests now cover it: one on the value it
 computes, one on the text, because an implementation that expanded `TWICE`
 would still compute the right answer.
 
+**AF. The corpora that verify generated C ran only through the Python
+backend, so oz_static was the less-tested of the two.** Fixed, as the first
+half of retiring that backend.
+
+The shape of the problem was in the CI job list, not in either transpiler:
+**8 of 17 jobs exercised the Python pipeline**, because
+`tests/tools/compile_and_run.py` hardcoded `oz_transpile` with no backend
+switch. Everything those jobs are *for* therefore reached only the outgoing
+implementation:
+
+| Job | What it does, and to which backend before |
+| --- | --- |
+| `behavior-tests` x4 | the 71 cases under gcc/clang x -O0/-O2 -- Python |
+| `sanitizers` | ASan + UBSan over those cases -- Python |
+| `leak-check` | LeakSanitizer over those cases -- Python |
+| `c-coverage` | gcov of the generated C -- Python |
+| `adapted-tests` | 40 tests from LLVM, GNUstep, Apple, ObjFW, mulle-objc -- Python |
+| `python-tests` | its own 539 unit tests -- Python, and retiring with it |
+
+Meanwhile `corpus_parity.rs`, the Rust side's own view of the same 71 cases,
+**transpiles and compiles them but never runs them**. So the default backend
+-- the one every Zephyr build selects -- had no sanitizer, no leak check, no
+coverage and no behavioural run of the corpus outside
+`just test-cross-backend`, which needs both backends and so cannot outlive
+this.
+
+**One switch, because only one step differs.** `compile_and_run.py` drives a
+case in five steps -- AST dump, transpile, generate the Unity main, compile,
+run -- and only *transpile* is backend-specific. `--backend {static,python}`
+therefore hands the whole harness, including the compiler matrix and every
+sanitizer flag, to either backend rather than needing a second harness. The
+static path reuses the AST dump step 1 already made, so both backends reason
+about the identical translation unit by construction rather than by two call
+sites agreeing on flags.
+
+The ABI shim is what makes one unmodified driver work against both: the
+drivers were written against the Python backend's naming (`<Class>_ozh.h`,
+`Class_alloc`, `OZObject_release`, `Class_cls_sel`, an
+`OZ_PROTOCOL_SEND_<sel>` per selector), and `write_abi_shim` bridges exactly
+those. That code already existed, inside `cross_backend.py` -- and was
+**moved** to `tests/tools/oz_static_build.py` rather than imported, because
+`cross_backend.py` is deleted with the Python backend and a shim living in a
+doomed file is a broken migration waiting to happen.
+
+**Measured, both backends, before any CI job was repointed:**
+
+| Configuration | oz_static | Python |
+| --- | --- | --- |
+| behaviour corpus, gcc -O0 | 71/71 | 71/71 |
+| behaviour corpus, gcc -O2 | 71/71 | -- |
+| behaviour corpus, clang -O0 | 71/71 | -- |
+| behaviour corpus, clang -O2 | 71/71 | -- |
+| adapted corpus | 40/40 | 40/40 |
+| ASan + UBSan | 71/71 | -- |
+| gcov (`--coverage`) | 71/71 | -- |
+| `just test-cross-backend` | 71/71 MATCH | same run |
+| Python's own unit suite | -- | 539/539 |
+
+Keeping the Python side green through this is the point: the migration is
+checked against the thing it replaces, rather than replacing its own oracle.
+
+**One leg could not be checked locally and is stated rather than assumed.**
+`-fsanitize=leak` is unsupported on `arm64-apple-darwin`, so
+`--check-leaks` fails on this machine for *both* backends -- confirmed by
+running the Python one and watching it fail identically. LeakSanitizer runs on
+Linux, which is where CI runs it, so that leg is verified there and nowhere
+else.
+
+**What this does not do.** It does not remove anything: `tools/oz_transpile/`,
+`CONFIG_OBJZ_BACKEND_PYTHON`, `cross_backend.py` and `python-tests` are all
+still here, and the `-python` recipes still run the corpora the old way. That
+is deliberate -- with both backends green over the same drivers, a mismatch
+found later still has an oracle. Removal is its own change, and the commit
+before it is tagged `python-backend-final` so the implementation stays
+readable from history rather than as code nobody compiles. `src/runtime_legacy/`
+is the cautionary example of the other choice.
+
 ## On target (Zephyr under QEMU: mps2/an385, qemu_riscv32, qemu_cortex_a53/smp)
 
 The check that was missing, and the one that mattered most. Every
@@ -2112,6 +2191,14 @@ runs, and it is where gap Z's addition to `transpiled_blocks` turned out to
 have broken that sample for this backend -- see "Code size against the
 Python backend". Green here does not cover it.
 
+**Two of those three suites are no longer its own.** `tests/behavior/` and
+`tests/adapted/` are corpora, not backends, and since gap AF they run through
+whichever backend `--backend` names -- oz_static by default, and in every CI
+job. `just test-behavior-python` and `just test-adapted-python` are what run
+them the old way, kept only while that backend exists. `just test-transpiler`
+is the one that is genuinely its own, being unit tests of its
+implementation, and it goes when the implementation does.
+
 ## Behavior corpus (71 cases)
 
 `tests/behavior/cases/*/*.m` is the Python pipeline's own behavior suite,
@@ -2119,6 +2206,12 @@ driven through oz_static by `tools/oz_static/tests/corpus_parity.rs`
 rather than being re-implemented as separate fixtures.
 
 - **71 of 71 transpile.** Enforced with no allowlist.
+- **71 of 71 run, through oz_static, in CI** -- since gap AF. Worth listing
+  separately from the two lines around it, because for most of this file's
+  life the corpus was *run* only through the Python backend: `corpus_parity.rs`
+  transpiles and compiles each case and never executes one. The compiler
+  matrix, ASan, UBSan, LeakSanitizer and gcov all reach oz_static's generated
+  C on that account.
 - **71 of 71 produce compiling C, as ISO C17 with no constraint
   violation** — `-std=c17 -pedantic-errors` since gap Y, which is what
   makes this line mean more than "the host compiler accepted it".

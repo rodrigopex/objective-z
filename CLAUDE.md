@@ -92,9 +92,10 @@ Versions CI pins, and so the ones to match locally: **Zephyr v4.4.2**
 | `just test-all-boards`     | All three, including SMP |
 | `just test-pedantic`       | ISO C constraint violations in generated C, on target. Reports; the host half is a gate in `corpus_parity.rs` |
 | `just test-cross-backend` | Both backends over the same corpus, results diffed |
-| `just test-behavior`      | Behavior corpus (Python backend)    |
-| `just test-adapted`       | Adapted upstream tests (Python backend) |
-| `just test-transpiler`    | Python transpiler pytest suite     |
+| `just test-behavior`      | Behavior corpus, 71 cases, through **oz_static**; `--compiler`/`--opt`/`--sanitize`/`--check-leaks` |
+| `just test-adapted`       | 40 adapted upstream tests, through **oz_static** |
+| `just test-behavior-python` / `test-adapted-python` | The same two corpora through the outgoing Python pipeline |
+| `just test-transpiler`    | Python transpiler pytest suite (retiring with that backend) |
 | `just transpile`          | Run the Python transpiler directly |
 
 The Rust suite has no `just` recipe — run it directly:
@@ -150,9 +151,19 @@ Two standing design rules, easy to violate with good intentions:
 
 ### Legacy Transpiler (`tools/oz_transpile/`, Python)
 
-Outgoing. Still builds, still selectable via `CONFIG_OBJZ_BACKEND_PYTHON`, and its suites
-remain the only independent check that the two backends agree on *behaviour*
-(`just test-cross-backend`) — which is the reason to keep it for now.
+**Being retired.** Still selectable via `CONFIG_OBJZ_BACKEND_PYTHON`, but the corpora it
+used to own now run through oz_static: `tests/tools/compile_and_run.py` takes
+`--backend {static,python}`, and every CI job exercising the behaviour and adapted
+corpora passes `--backend=static`. What it still uniquely provides is
+`just test-cross-backend`, the independent behavioural oracle, which goes when it does.
+
+An audit found nothing blocking removal on the construct side: all 71 behaviour cases and
+all 40 adapted cases transpile *and run* through oz_static, and the Python backend
+implements neither `@try` (it is listed in its own `_UNSUPPORTED_AST_KINDS`), reflection
+selectors, `@selector`/`@protocol()` emission, nor variadics. Objective-C in a `#define`
+body crashes it with a `RecursionError`, where oz_static rejects it with a located error
+(#238). It has also been unable to build any sample on target since #267 left a deleted
+`src/OZTimer.m` in its source list, and no gate noticed.
 
 - `model.py` / `collect.py` / `resolve.py` / `emit.py` — 3-pass Clang-AST pipeline
 - Tests: `just test-transpiler`
