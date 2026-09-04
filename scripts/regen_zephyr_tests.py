@@ -18,6 +18,9 @@ import sys
 import tempfile
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tests" / "tools"))
+import oz_static_build  # noqa: E402  (path set up above)
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CASES_DIR = REPO_ROOT / "tests" / "behavior" / "cases"
 STUBS_DIR = REPO_ROOT / "include" / "oz_sdk"
@@ -113,20 +116,45 @@ def main() -> int:
             _ast_dump(clang, m_path, ast_json)
             ast_files.append(ast_json)
 
-        print("Transpiling all sources together ...")
-        cmd = [sys.executable, "-m", "oz_transpile",
-               "--input"] + [str(f) for f in ast_files] + [
-               "--outdir", str(tmpdir)]
+        print("Transpiling all sources together (oz2c) ...")
+        oz2c = REPO_ROOT / "tools" / "oz_static" / "target" / "debug" / "oz2c"
+        if not oz2c.is_file():
+            print(f"error: oz2c not built at {oz2c}\n"
+                  f"       cargo build --manifest-path tools/oz_static/Cargo.toml",
+                  file=sys.stderr)
+            return 1
+        cmd = [str(oz2c),
+               "-I", str(STUBS_DIR),
+               "-I", str(TEST_INC),
+               "--impl-dir", str(OZ_SRC)]
+        for f in ast_files:
+            cmd += ["--ast", str(f)]
         if pool_sizes:
-            cmd.extend(["--pool-sizes", pool_sizes])
+            cmd += ["--pool-sizes", pool_sizes]
+        cmd += [str(m) for m in m_paths] + [str(tmpdir)]
 
-        result = subprocess.run(
-            cmd, capture_output=True, text=True,
-            env={**os.environ, "PYTHONPATH": str(REPO_ROOT / "tools")})
+        result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:
             print("error: transpile failed:", file=sys.stderr)
             print(result.stderr, file=sys.stderr)
             return 1
+
+        # The ztest drivers under tests/zephyr/src/ were written against the
+        # Python pipeline's generated ABI -- `<Class>_ozh.h` headers,
+        # `Class_alloc`, `OZObject_release`, `OZ_CLASS_X`. oz_static emits one
+        # header per *origin file* and its own spellings, so the same shim the
+        # behaviour corpus uses bridges the difference and the drivers stay
+        # unmodified. See tests/tools/oz_static_build.py.
+        print("Writing the ABI shim the ztest drivers include ...")
+        classes = oz_static_build.discover_classes(tmpdir)
+        if not classes:
+            print("error: no classes found in oz2c output", file=sys.stderr)
+            return 1
+        root = "OZObject" if "OZObject" in classes else classes[0]
+        driver_text = "\n".join(
+            p.read_text() for p in sorted((REPO_ROOT / "tests" / "zephyr" / "src").glob("*.c"))
+        )
+        oz_static_build.write_abi_shim(tmpdir, classes, root, driver_text)
 
         generated: dict[str, str] = {}
         for f in sorted(tmpdir.rglob("*")):
