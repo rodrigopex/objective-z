@@ -72,7 +72,6 @@
 #define __objc_refcount_get(o) oz_static_retain_count((struct OZObject *)(o))
 #define OZObject_cls_alloc OZObject_alloc_cls
 #define OZObject_cls_allocWithHeap_ OZObject_allocWithHeap__cls
-#define OZObject_cls_class OZObject_class_cls
 #define OZQ31_cls_fixedWithBool_ OZQ31_fixedWithBool__cls
 #define OZQ31_cls_fixedWithFloat_ OZQ31_fixedWithFloat__cls
 #define OZQ31_cls_fixedWithInt32_ OZQ31_fixedWithInt32__cls
