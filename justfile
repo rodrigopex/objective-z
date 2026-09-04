@@ -9,6 +9,7 @@ project_dir := "samples/hello_world"
 board := "mps2/an385"
 riscv_board := "qemu_riscv32"
 smp_board := "qemu_cortex_a53/qemu_cortex_a53/smp"
+hw_board := "nrf52833dk/nrf52833"   # real silicon; see test-hardware
 flags := ""
 tty := "/dev/tty.usbmodem0006850372581"
 
@@ -80,6 +81,29 @@ test-spin-validate:
         -x=EXTRA_CONF_FILE={{ justfile_directory() }}/samples/overlay-spin-validate.conf
     west twister -T samples/ -p {{ smp_board }} -O /tmp/twister-out-spinvalidate-smp \
         -x=EXTRA_CONF_FILE={{ justfile_directory() }}/samples/overlay-spin-validate.conf
+
+# Real silicon: nRF52833DK over its on-board J-Link, flashed and run, with
+# each sample's console output matched against its own `sample.yaml` -- the
+# same oracle twister uses on QEMU, on hardware that has real flash timing,
+# real interrupt latency and a real `k_mem_slab` in real RAM.
+#
+# Every board in `test-all-boards` is QEMU, and until this recipe existed
+# PARITY.md's "Not verified" section carried "no real board has been used"
+# as its oldest item. Compiling for a board proves the input was understood;
+# only running proves the output behaves, and QEMU running it proves neither
+# of those about hardware.
+#
+# `hardware-map.yaml` carries the probe id, the jlink runner and the VCOM
+# path, so the board needs no arguments -- but it does need to be plugged
+# into the debug USB (next to the power switch) and switched on. Check with
+# `nrfutil device list`, NOT `nrfjprog --ids`: that lists *remembered* probe
+# ids, so it reports a board that is not there at all.
+#
+# Only the samples that pin no `platform_allow` select here; the rest are
+# filtered to QEMU boards by their own sample.yaml.
+test-hardware:
+    west twister -T samples/ -p {{ hw_board }} -O /tmp/twister-out-hw \
+        --device-testing --hardware-map hardware-map.yaml
 
 # Every board, including SMP. The only recipe that exercises two cores.
 test-all-boards:
