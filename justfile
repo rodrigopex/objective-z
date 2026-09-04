@@ -99,8 +99,10 @@ test-spin-validate:
 # `nrfutil device list`, NOT `nrfjprog --ids`: that lists *remembered* probe
 # ids, so it reports a board that is not there at all.
 #
-# Only the samples that pin no `platform_allow` select here; the rest are
-# filtered to QEMU boards by their own sample.yaml.
+# Every sample but `smp_shared` selects here -- it contends two cores on one
+# object and this part has one. `gpio_demo` runs its own hardware scenario,
+# which asserts the button path QEMU cannot: mps2/an385 has no GPIO interrupt
+# support, so the callback registration returns -ENOTSUP there.
 test-hardware:
     west twister -T samples/ -p {{ hw_board }} -O /tmp/twister-out-hw \
         --device-testing --hardware-map hardware-map.yaml
