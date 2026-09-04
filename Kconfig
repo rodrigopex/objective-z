@@ -43,6 +43,31 @@ config OBJZ_INTROSPECTION
 	  certification discipline. Both selectors then become located
 	  transpile errors naming this option, never silently unavailable.
 
+config OBJZ_REFLECTION
+	bool "Selectors (@selector, SEL, -respondsToSelector:, -performSelector:)"
+	default y
+	help
+	  Make @selector(...) and SEL real values, and answer
+	  -respondsToSelector: and the -performSelector: family from them.
+
+	  A SEL is a pointer to a const record per selector some
+	  @selector(...) names: a responds bitmap keyed by class id, and a
+	  uniform-shape wrapper so an indirect call needs no cast and no
+	  variadics. Costs more than introspection when used -- roughly 16
+	  bytes of flash per selector plus the dispatch function it forces
+	  into existence for a selector that had only one implementor -- and
+	  still nothing at all for a program that names no selector.
+
+	  Because a SEL is a value, there is no way to prove which selector
+	  reaches which -performSelector: call site. So in a program that
+	  performs, every selector named by a @selector(...) must be
+	  performable: at most two arguments, all object-typed, returning
+	  void or an object. One that is not is a located transpile error
+	  rather than a runtime surprise.
+
+	  Set n to forbid selectors outright. All four constructs then
+	  become located transpile errors naming this option.
+
 config OBJZ_HEAP
 	bool "Enable heap-based allocation (allocWithHeap:)"
 	depends on HEAP_MEM_POOL_SIZE > 0

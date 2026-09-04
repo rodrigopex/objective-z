@@ -52,6 +52,12 @@ __attribute__((objc_root_class))
 + (Class)class;
 - (Class)class;
 - (BOOL)isMemberOfClass:(Class)aClass;
+- (BOOL)isKindOfClass:(Class)aClass;
+- (BOOL)conformsToProtocol:(Protocol *)aProtocol;
+- (BOOL)respondsToSelector:(SEL)aSelector;
+- (id)performSelector:(SEL)aSelector;
+- (id)performSelector:(SEL)aSelector withObject:(id)object;
+- (id)performSelector:(SEL)aSelector withObject:(id)object withObject:(id)otherObject;
 - (instancetype)init;
 - (void)dealloc;
 - (BOOL)isEqual:(id)anObject;

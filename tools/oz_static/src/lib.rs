@@ -65,6 +65,14 @@ pub struct Options {
     /// gated here -- a class identity is a constant or a bitfield read
     /// and generates no table, so there is nothing to switch off.
     pub introspection: bool,
+    /// Enable `@selector`, `SEL`, `-respondsToSelector:` and the
+    /// `-performSelector:` family, which `CONFIG_OBJZ_REFLECTION` passes
+    /// as `--reflection`.
+    ///
+    /// Off by default like the others, so the flag's absence is what the
+    /// Kconfig option's `n` means. With it off every one of those
+    /// constructs stays a hard located error naming the option.
+    pub reflection: bool,
     /// Slots for the shared collection element pool instead of the count
     /// taken from the source, as `--item-pool-size N` supplies. `None`
     /// leaves the counted size (or an `oz-item-pool:` directive) in force.
@@ -115,6 +123,7 @@ pub fn transpile_with_options(
     program.owning_methods = arc::analyze(source, &program);
     program.heap_support = options.heap_support;
     program.introspection = options.introspection;
+    program.reflection = options.reflection;
     let overrides = &options.pool_sizes;
     diagnostics.extend(generics::check_program(source, &program));
     if !diagnostics.is_empty() {
@@ -183,6 +192,7 @@ pub fn transpile_split_with_options(
     program.owning_methods = arc::analyze(source, &program);
     program.heap_support = options.heap_support;
     program.introspection = options.introspection;
+    program.reflection = options.reflection;
     let overrides = &options.pool_sizes;
     diagnostics.extend(generics::check_program(source, &program));
     if !diagnostics.is_empty() {

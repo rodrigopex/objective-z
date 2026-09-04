@@ -106,6 +106,14 @@ function(objz_transpile_sources_static target)
     if(CONFIG_OBJZ_INTROSPECTION)
         list(APPEND _oz2c_flags --introspection)
     endif()
+    # CONFIG_OBJZ_REFLECTION enables @selector, SEL, -respondsToSelector:
+    # and the -performSelector: family. Like --introspection this needs
+    # nothing on the C side: the selector records, their wrappers and the
+    # two helpers are emitted into the companion source, and only for the
+    # selectors a @selector(...) actually named.
+    if(CONFIG_OBJZ_REFLECTION)
+        list(APPEND _oz2c_flags --reflection)
+    endif()
     foreach(_dir ${_src_dirs})
         list(APPEND _oz2c_flags --impl-dir ${_dir})
     endforeach()

@@ -126,6 +126,32 @@ pub struct Program {
     /// `-isKindOfClass:` and `-conformsToProtocol:` are available. An
     /// option, not a fact about the source.
     pub introspection: bool,
+    /// `--reflection` (`CONFIG_OBJZ_REFLECTION`): whether `@selector`,
+    /// `SEL`, `-respondsToSelector:` and the `-performSelector:` family
+    /// are available. An option, not a fact about the source.
+    pub reflection: bool,
+    /// Selectors named by a `@selector(...)` anywhere in the source.
+    ///
+    /// Unlike the introspection facts -- which `emit` accumulates as it
+    /// writes (`emit::IntrospectionUse`) -- this has to be known *before*
+    /// the dispatch tables are generated, because it decides which
+    /// selectors get an `OZ_PROTOCOL_SEND_*` function at all (see
+    /// `is_dynamically_dispatched`). So it is prescanned from the CST in
+    /// `collect` instead.
+    pub reflected_selectors: std::collections::BTreeSet<String>,
+    /// Does anything in the source send a `-performSelector:` variant?
+    ///
+    /// A `SEL` is a first-class value here, so there is no way to prove
+    /// which selector reaches which `-performSelector:` call site. That
+    /// makes performability a whole-program property: if the program
+    /// performs at all, every reflectively-named selector needs a uniform-
+    /// shape wrapper, and one that cannot have it is a located error. If
+    /// it never performs, no wrapper is generated and no dispatch function
+    /// is forced into existence for a reflected selector.
+    pub uses_perform_selector: bool,
+    /// Does anything send `-respondsToSelector:`? Gates `oz_responds` and
+    /// the per-selector `responds` bitmaps.
+    pub uses_responds_to_selector: bool,
     /// Does the program use `@synchronized` anywhere? When it does, the root
     /// struct gains an `oz_sync_lock` so `@synchronized(obj)` can lock
     /// storage owned by `obj` rather than a fresh lock on the caller's own
@@ -372,6 +398,16 @@ impl Program {
             return true;
         }
         if ALWAYS_DYNAMIC.contains(&selector) {
+            return true;
+        }
+        // A selector named by a `@selector(...)` in a program that also
+        // performs needs a dispatch function even with a single
+        // implementor: `oz_perform` calls through the uniform-shape
+        // wrapper, and the wrapper calls this. Without it a
+        // `[obj performSelector:@selector(poke)]` against the only class
+        // implementing `-poke` would reference a function that was never
+        // generated.
+        if self.uses_perform_selector && self.reflected_selectors.contains(selector) {
             return true;
         }
         self.class_order

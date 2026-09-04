@@ -40,8 +40,14 @@ fn try_catch_in_a_c_function_rejected() {
     assert!(diags.contains("@try/@catch"), "diagnostics: {}", diags);
 }
 
-/// Reflection in a free function. `@selector` has no static lowering -- there
-/// is no selector registry to look a name up in.
+/// Reflection in a free function.
+///
+/// `@selector` is supported now (#226) -- it resolves to a generated
+/// selector record -- so this no longer asserts that it has no lowering.
+/// What it still asserts is the thing this file exists for: that the scan
+/// reaches a free function's body at all. With `CONFIG_OBJZ_REFLECTION`
+/// off the construct is refused, and the diagnostic naming the option has
+/// to come from `main()` just as it would from a method.
 #[test]
 fn selector_expression_in_a_c_function_rejected() {
     let src = format!(
@@ -49,12 +55,19 @@ fn selector_expression_in_a_c_function_rejected() {
         PREAMBLE()
     );
     let diags = expect_reject(&src);
-    assert!(diags.contains("selector_expression"), "diagnostics: {}", diags);
+    assert!(diags.contains("CONFIG_OBJZ_REFLECTION"), "diagnostics: {}", diags);
 }
 
 /// `@protocol(...)` parses as a generic `at_expression` in
 /// tree-sitter-objc 3.0.2, so it reaches a different arm than `@selector`
 /// and is worth its own case in this position too.
+///
+/// Still rejected after #226, but now for a different reason: a protocol
+/// has no value representation, so `@protocol(...)` resolves to a
+/// conformance bitmap and is accepted only as `-conformsToProtocol:`'s
+/// argument. Assigning one to an `id`, as here, is out of position
+/// wherever it appears -- which is why this case survives unchanged while
+/// its `@selector` sibling above had to be rewritten.
 #[test]
 fn protocol_expression_in_a_c_function_rejected() {
     let src = format!(

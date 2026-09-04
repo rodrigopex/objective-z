@@ -755,6 +755,156 @@ fn class_label(program: &Program, name: &str, id: usize) -> String {
 /// `Program::is_descendant_of` walks over `ClassInfo::superclass`, moved
 /// to run time because `-isKindOfClass:` asks about the receiver's
 /// *actual* class, which a declared type is only an upper bound on.
+/// The per-selector records `@selector(...)` resolves to, their
+/// uniform-shape wrappers, and the two helpers that read them.
+///
+/// Emitted for exactly the selectors some `@selector(...)` named
+/// (`Program::reflected_selectors`), so a program that never writes one
+/// pays nothing even with `CONFIG_OBJZ_REFLECTION=y`. Within that, the
+/// `responds` bitmap appears only if the program asks about responding and
+/// the `perform` wrapper only if it performs -- the two halves are
+/// independent, and either alone is a real pattern.
+///
+/// A bit in `responds` is set for a class whose lookup for this selector
+/// both resolves (`find_defining_method`, the same single-inheritance walk
+/// the dispatch tables use) and lands on something that will exist
+/// (`Program::method_is_defined`). The second half matters: a selector
+/// declared in an `@interface` and never given a body is not callable, so
+/// reporting YES for it would promise a call that fails at link time.
+fn render_reflection(program: &Program, root: &str) -> (String, String) {
+    let mut h = String::new();
+    let mut c = String::new();
+    // Not keyed on `reflected_selectors` alone: a `SEL` is a value, so a
+    // program can send `-respondsToSelector:` or `-performSelector:` with
+    // one that came from a parameter, an ivar or a cast and never write a
+    // `@selector(...)` at all. Returning early on an empty record set left
+    // the helpers those sends call undeclared, which surfaced as an
+    // implicit-declaration error rather than anything located.
+    if program.reflected_selectors.is_empty()
+        && !program.uses_responds_to_selector
+        && !program.uses_perform_selector
+    {
+        return (h, c);
+    }
+    let words = program.class_order.len().div_ceil(32).max(1);
+
+    for selector in &program.reflected_selectors {
+        let selc = crate::emit::selector_to_c(selector);
+        let sig = program.class_order.iter().find_map(|name| {
+            program.classes[name]
+                .methods
+                .iter()
+                .find(|m| &m.selector == selector && !m.is_class_method)
+        });
+
+        let responds_name = if program.uses_responds_to_selector {
+            let mut bits = vec![0u32; words];
+            let mut implementors: Vec<&str> = Vec::new();
+            for name in &program.class_order {
+                let resolves = find_defining_method(program, name, selector, false)
+                    .is_some_and(|defining| {
+                        program.method_is_defined(&defining, selector, false)
+                    });
+                if resolves {
+                    if let Some(id) = program.class_id(name) {
+                        bits[id / 32] |= 1u32 << (id % 32);
+                    }
+                    implementors.push(name.as_str());
+                }
+            }
+            let words_text =
+                bits.iter().map(|w| format!("0x{:08x}u", w)).collect::<Vec<_>>().join(", ");
+            c.push_str(&format!(
+                "/* classes responding to '{}', one bit per class_id: {} */\nstatic const uint32_t oz_responds_{}[{}] = {{ {} }};\n\n",
+                selector,
+                if implementors.is_empty() { "none".to_string() } else { implementors.join(", ") },
+                selc,
+                words,
+                words_text
+            ));
+            format!("oz_responds_{}", selc)
+        } else {
+            "((void *)0)".to_string()
+        };
+
+        let perform_name = if program.uses_perform_selector {
+            let m = sig.expect("a reflected selector with no implementor is refused in emit");
+            let arg_names: Vec<String> = m
+                .params
+                .iter()
+                .enumerate()
+                .map(|(i, _)| format!("a{}", i))
+                .collect();
+            let mut call_args = vec![format!("(struct {} *)self", root)];
+            call_args.extend(arg_names.iter().cloned());
+            let call = format!(
+                "OZ_PROTOCOL_SEND_{}({})",
+                selc,
+                call_args.join(", ")
+            );
+            // `void` methods have nothing to hand back, and real
+            // Objective-C hands back a garbage `id` for them. NULL is the
+            // honest answer, and the wrapper is where it belongs -- the
+            // call itself stays properly typed.
+            let body = if m.return_type == "void" {
+                format!("\t{};\n\treturn ((void *)0);\n", call)
+            } else {
+                format!("\treturn (void *)({});\n", call)
+            };
+            let unused: String = ["a0", "a1"]
+                .iter()
+                .filter(|a| !arg_names.iter().any(|n| n == *a))
+                .map(|a| format!("\t(void){};\n", a))
+                .collect();
+            c.push_str(&format!(
+                "/* uniform-shape wrapper for '{}', so a SEL can be called\n * without a cast (not from source) */\nstatic void *oz_perform_{}(void *self, void *a0, void *a1)\n{{\n{}{}}}\n\n",
+                selector, selc, unused, body
+            ));
+            format!("oz_perform_{}", selc)
+        } else {
+            "((oz_imp_t)0)".to_string()
+        };
+
+        let arity = sig.map(|m| m.params.len()).unwrap_or(0);
+        c.push_str(&format!(
+            "/* the selector '{}' -- what `@selector({})` resolves to */\nconst struct oz_selector oz_sel_{} = {{ {}, {}, {} }};\n\n",
+            selector, selector, selc, perform_name, responds_name, arity
+        ));
+        h.push_str(&format!("extern const struct oz_selector oz_sel_{};\n", selc));
+    }
+
+    if program.uses_responds_to_selector {
+        c.push_str(
+            "/* does class `k` implement the selector this record describes?\n\
+ * A null SEL answers NO rather than dereferencing: `SEL` is a plain\n\
+ * pointer, so nothing stops a caller passing 0, and the emitted C is\n\
+ * held to having no undefined behaviour in it (not from source) */\n\
+BOOL oz_responds(SEL sel, Class k)\n{\n\
+\treturn sel != ((void *)0) && k != Nil && sel->responds != ((void *)0) &&\n\
+\t       (sel->responds[k >> 5] & (1u << (k & 31))) != 0;\n}\n\n",
+        );
+        h.push_str("BOOL oz_responds(SEL sel, Class k);\n");
+    }
+    if program.uses_perform_selector {
+        c.push_str(
+            "/* send `sel` to `obj`, or nothing at all if `obj` is nil --\n\
+ * the same answer Objective-C gives. A null SEL, or one whose selector\n\
+ * this program never performs, likewise yields nil instead of calling\n\
+ * through a null pointer (not from source) */\n\
+void *oz_perform(SEL sel, void *obj, void *a0, void *a1)\n{\n\
+\tif (obj == ((void *)0) || sel == ((void *)0) || sel->perform == ((oz_imp_t)0)) {\n\
+\t\treturn ((void *)0);\n\t}\n\
+\treturn sel->perform(obj, a0, a1);\n}\n\n",
+        );
+        h.push_str("void *oz_perform(SEL sel, void *obj, void *a0, void *a1);\n");
+    }
+    if !h.is_empty() {
+        h.insert_str(0, "/* reflection support -- see `companion::render_reflection` */\n");
+        h.push('\n');
+    }
+    (h, c)
+}
+
 fn render_introspection(
     program: &Program,
     used: &crate::emit::IntrospectionUse,
@@ -926,6 +1076,37 @@ static inline Class oz_class_of(const void *obj)\n\
 {\n\
 \treturn obj ? (Class)((const struct oz_metadata *)obj)->class_id : Nil;\n\
 }\n\n",
+    );
+    // `SEL` is a pointer to a `const` record per reflectively-named
+    // selector, not a pointer straight at a method or at its dispatch
+    // function. Two reasons, both structural.
+    //
+    // A selector has one implementation per class, so it cannot *be* a
+    // method pointer; the nearest single function is the selector's
+    // `OZ_PROTOCOL_SEND_*` dispatcher, which already switches on
+    // `class_id`. But `-respondsToSelector:` is a predicate, not a call,
+    // and given only a function pointer there is no way to ask "does class
+    // 7 implement this" -- the record gives that bitmap somewhere to live.
+    //
+    // And dispatch functions have per-selector signatures, so calling one
+    // through a differently-typed pointer is undefined behaviour, which
+    // the generated C is held to (`just test-pedantic`). `perform` instead
+    // has one uniform shape for every selector, and a generated wrapper
+    // adapts the real call to it -- dropping unused arguments, returning
+    // NULL for a `void` method. So the indirect call needs no cast, no
+    // shape tag and no variadics, unlike the retired legacy runtime's
+    // per-architecture assembly trampoline (`src/runtime_legacy/`).
+    h.push_str(
+        "/* uniform shape every `perform` wrapper below has, so an\n \
+* indirect call through a SEL needs no cast */\n\
+struct oz_selector;\n\
+typedef void *(*oz_imp_t)(void *self, void *a0, void *a1);\n\
+struct oz_selector {\n\
+\toz_imp_t perform;         /* NULL if this program never performs */\n\
+\tconst uint32_t *responds; /* one bit per class_id, NULL if unused */\n\
+\tuint8_t arity;            /* object arguments the selector takes */\n\
+};\n\
+typedef const struct oz_selector *SEL;\n\n",
     );
     // Ahead of every prototype below, because a prototype may name a type
     // only one of these headers declares -- see
@@ -1231,6 +1412,12 @@ vtable\") -- never mutated at runtime. */\n",
     let (intro_h, intro_c) = render_introspection(program, introspection_used);
     h.push_str(&intro_h);
     c.push_str(&intro_c);
+
+    if let Some(root) = &root {
+        let (refl_h, refl_c) = render_reflection(program, root);
+        h.push_str(&refl_h);
+        c.push_str(&refl_c);
+    }
 
     // Last, so it sees every prototype this header ended up with.
     let h = forward_declare_unknown_struct_tags(&h);

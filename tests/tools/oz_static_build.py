@@ -186,6 +186,8 @@ def transpile(case: Path, outdir: Path, pool_sizes: str, heap_support: bool,
     # for a case that introspects nothing: the tables are emitted per
     # construct used, not per option set.
     args.append("--introspection")
+    # Likewise CONFIG_OBJZ_REFLECTION's default (y).
+    args.append("--reflection")
     # Clang resolves types and states ARC ownership; tree-sitter does
     # neither. The dump is the one `compile_and_run` already made for step 1,
     # so both backends reason about the identical translation unit by
