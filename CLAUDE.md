@@ -213,7 +213,11 @@ Retained as reference for transpiler development. Not compiled — the runtime c
 
 - **`tests/behavior/`** — 72 compiled behavior tests across 16 categories (Unity framework, host-side)
 - **`tests/adapted/`** — 40 adapted upstream tests across 6 sources (LLVM, GNUstep, Apple, Bucket B, ObjFW, mulle-objc)
-- **`tests/zephyr/`** — 21 Zephyr integration tests (`native_sim` + `ztest` + `twister`)
+- **`tests/zephyr/`** — 18 Zephyr integration cases in 5 ztest suites (`native_sim` +
+  `ztest` + `twister`), over C committed under `tests/zephyr/generated/`. That C is
+  **oz_static's output** since the port, so a green run says something about the
+  default backend; `scripts/regen_zephyr_tests.py` regenerates it and the
+  `generated-freshness` CI job fails if the tree is stale
 - **`tests/objc-reference/`** — Legacy runtime tests (reference only, not compiled)
 
 ## Coding Conventions
