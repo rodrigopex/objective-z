@@ -660,10 +660,10 @@ one, but the moment between its release and its next allocation leaves the slot
 free, and pinning the pool to exactly 1 would make the sample depend on never
 interleaving with the Sensor that `arc_demo_extra_thread_entry`'s Driver holds.
 
-Objective-C inside a `#define` *body* is the other half of #234 and is not
-addressed: a macro body is one opaque `preproc_arg` token, so it is emitted
-verbatim and the generated C then fails to compile. Filed as #238 with a
-prototyped detector (0 false positives over the repo's 40 macro bodies).
+Objective-C inside a `#define` *body* was the other half of #234 and is
+addressed since #238: a macro body is one opaque `preproc_arg` token, so it
+cannot be transpiled by a walk that never descends into it, and it is now a
+located hard error instead of C that does not compile. See gap AE.
 
 **R. Three checks skipped a declaration written without an initializer.** Fixed
 (#240), and found by auditing #234 for claims it had made stale rather than by
@@ -1773,6 +1773,89 @@ every other gate in this file it holds only where the hardware is — which is
 the arrangement #269 exists to warn about, stated here rather than left for a
 reader to notice.
 
+**AE. Objective-C in a `#define` body reached the C compiler unchanged, and
+no diagnostic pointed at the `#define`.** Fixed (#238), by rejecting it.
+
+tree-sitter-objc parses a replacement list as a single opaque `preproc_arg`
+token with no structure inside it:
+
+```
+preproc_function_def :: "#define GREET_VIA_BODY(obj) [obj greet]\n"
+  identifier     :: "GREET_VIA_BODY"
+  preproc_params :: "(obj)"
+  preproc_arg    :: "[obj greet]"      <- one token, never descended into
+```
+
+So no arm of the walk could reach it and no edit could rewrite it. `oz2c`
+exited 0, the `#define` landed in the generated header verbatim, and the C
+compiler then failed on the *invocation* — naming generated code the user
+never wrote, with the real cause one `note:` line away and no oz_static
+diagnostic at all. Loud rather than silent, so nothing was ever miscompiled;
+what was missing was the located error the standing "never silently degrade"
+rule asks for.
+
+**Rejection rather than support, and that is not a stopgap.** A macro body
+need not be a complete expression, and a macro parameter has no type — so a
+send to one cannot resolve a receiver class even in principle. Transpiling
+macro bodies is a different and much less certain job than doing it for code.
+
+**Detection is a probe re-parse, not a regex.** The `preproc_arg` text is
+wrapped in a function body, parsed with the same grammar, and searched for
+`message_expression`, `at_expression`, `array_literal`, `dictionary_literal`,
+`selector_expression`, `block_literal`, or a `string_literal` that
+`emit::is_boxed_string_literal` calls boxed. Letting the grammar decide is the
+whole point: `arr[i] + arr[j]` and `[obj greet]` are not tellable apart by
+shape, and a bracket-counting heuristic would reject every C macro that
+subscripts an array.
+
+A body that does **not** parse cleanly is not flagged, and that guard is
+load-bearing rather than defensive. tree-sitter is error-tolerant, so token
+soup still yields a tree — one that can contain a `message_expression` the
+grammar guessed at from a stray `[`. Without the guard, `#define OPEN_BRACE {`
+would be rejected for containing Objective-C it does not contain.
+
+**Two ways the prototype under-detected, both fixed and both measured.** #238
+carried a detector prototyped while working #234, which wrapped the body as an
+*expression* and did not touch line continuations. Switching to a statement
+wrapper and stripping `\`-newlines first is not a refinement, it is two whole
+shapes:
+
+| Shape | Prototype | Now |
+| --- | --- | --- |
+| `#define B(o) do { [o bump]; } while (0)` | accepted silently — an expression wrapper cannot parse it, so the "does not parse" guard swallowed it | rejected |
+| a multi-line body with `\` continuations | accepted silently — `preproc_arg` keeps the backslashes, which the probe grammar cannot read | rejected |
+
+Both were *confirmed* by re-running the suite against the prototype's own
+wrapper: exactly those two tests fail and the other ten pass either way. The
+second matters most in this repository, where every macro of any size is
+multi-line — `OZ_SLAB_DEFINE`, `OZ_MEM_BLOCKS_DEFINE`, `oz_assert_msg`,
+`OZ_AUTO_INIT`. A detector blind to precisely the longest bodies would have
+been worth very little, and nothing would have said so.
+
+**No false positives, measured rather than hoped.** The rejection's blast
+radius is the thing to be afraid of: `include/oz_sdk` and the samples are full
+of C macros, and one wrong flag fails every sample at once. All 284 Rust tests
+pass, including the 71-case corpus; all 13 samples still build and run on ARM
+and 12 on RISC-V; and a probe file mixing nine C macro bodies with one
+Objective-C body flags exactly the one.
+
+**The other half was already right, and is now pinned.** Objective-C in a
+macro *argument* is transpiled where it stands, with the invocation preserved:
+
+```c
+int _oz_sync_ret_L168_C2_1 = TWICE(Counter_value((struct Counter *)(c)));
+```
+
+That falls out of the tree-sitter frontend — an argument is a real
+`message_expression` inside a `call_expression`, so the ordinary expression
+renderer reaches it — and it is the deliberate advantage of parsing source
+rather than a Clang AST, which would have expanded the macro before oz_static
+ever saw it. It had no test, so nothing would have caught a future change to
+the walk that started expanding macros, or this rejection sweeping the
+argument case up with the body. Two tests now cover it: one on the value it
+computes, one on the text, because an implementation that expanded `TWICE`
+would still compute the right answer.
+
 ## On target (Zephyr under QEMU: mps2/an385, qemu_riscv32, qemu_cortex_a53/smp)
 
 The check that was missing, and the one that mattered most. Every
@@ -2518,7 +2601,7 @@ Filed rather than folded in, each with the reason it was kept separate:
 | #227 | Host-portable samples. Only three samples genuinely need Zephyr (`K_THREAD_DEFINE`, device tree, zbus) — stubbing `printk` alone moved four others to running on host. |
 | #230 | Verify on RISC-V (`qemu_riscv32`). **Done** — 12 of 13 samples build, run under QEMU and pass their own `sample.yaml` checks; generated C byte-identical to ARM across all 304 generated files. `gpio_demo` stays ARM-only, needing device-tree aliases the board lacks. Repeatable as `just test-riscv`. |
 | #231 | Compare code size between backends, and run at least one sample on real hardware. **Done** — size is +1.3% flash overall (see "Code size against the Python backend"), and the hardware half landed on an nRF52833DK: **13 of 13 pass** via `just test-hardware`, every sample but `smp_shared`, which needs two cores. It reached 6 first, those being the samples that pinned no `platform_allow`; widening the QEMU-era gates in the other seven took it to 13, as a deliberate second step. `gpio_demo` gained a capability rather than a board — its GPIO *input* half, a hoisted block registered as a `gpio_callback_handler_t`, had never run anywhere. See gap AD, including the `nrfjprog --ids` false positive that reported a board which was not plugged in. |
-| #238 | Objective-C inside a `#define` *body* is emitted verbatim, so the generated C does not compile — the other half of #234, split out because a macro body is one opaque `preproc_arg` token and needs its own approach. Detector prototyped: 0 of 40 real macro bodies flagged. |
+| #238 | Objective-C inside a `#define` *body* was emitted verbatim, so the generated C did not compile — the other half of #234, split out because a macro body is one opaque `preproc_arg` token and needs its own approach. **Done** — rejected with a located diagnostic naming the `#define`, per the never-silently-degrade rule; transpiling macro bodies stays out of scope, a macro parameter having no type for a send's receiver to resolve against. Detection is a probe re-parse with the real grammar, so a C subscript and a message send are told apart by the parser rather than by shape. The detector this issue carried under-detected in two ways, both found by control runs and both fixed: a statement-shaped body (`do { [o bump]; } while (0)`) and any multi-line body were silently accepted. See gap AE. |
 | #254 | `emit()` and `emit_split()` duplicated the top-level walk and had disagreed four times (gap R, #246, #250, #251). The mechanism behind three of this file's gaps, rather than a gap of its own. **Done** — one `emit::walk_top_level`, two assemblers over it, so a node kind is handled in exactly one place; `EmitCtx::new` replaces the six hand-spelled constructions. The refactor left generated output byte-identical across 820 corpus and 342 sample files; gap X, found by that comparison and fixed alongside, then removed a stray `;` from 146 of them and added nothing anywhere. The audit that preceded it (`tests/emitter_agreement.rs`) survives with a smaller claim — it guards the two assemblers, not two walks. |
 | #266 | Nothing checked generated C for *validity*, only for warnings. **Done** — `corpus_parity.rs` compiles with `-std=c17 -pedantic-errors` (the standard Zephyr pins) and it is a gate, the count there being 0 across the corpus; `just test-pedantic` asks the same of the samples on ARM. It reported 26 sites when it landed and is a **gate at 10** since #267 — that change removed 18 by retiring OZTimer, fixed one by dropping a redundant `;`, and put the sweep in CI, which is what a gate needs to mean anything. The count came first, as the issue asked, and it found gap X's fourth producer — an item-pool `;` that was valid on host and a constraint violation on Zephyr, so no host check could see it. It also found that the obvious way to sweep `-Wpedantic` on target reports zero on output that is not clean: CMSIS disables the flag for the rest of every Cortex-M TU. See gap Y. |
 | #269 | CI never ran the Rust suite, and `hw-build-check` could not fail. **Done** — a `rust-tests` job runs all 262 tests plus `RUSTFLAGS=-D warnings`, so `corpus_parity.rs`'s `-pedantic-errors` gate is now enforced on every PR rather than only locally; `continue-on-error: true` is gone from the one job that cross-compiles for a board, verified safe first by reading ten runs' step conclusions. Two things found on the way and fixed in the same change: the AST oracle in CI was clang **18.1** rather than the tested 19, because the SDK was installed without `-l` and `objz_find_clang()` fell through to `PATH` while the job separately installed an unused clang 20 — one shared SDK install with LLVM now feeds cmake, `OZ_CLANG` and a `PATH` symlink alike, and `-DOBJZ_REQUIRE_TESTED_CLANG=ON` makes a repeat fatal; and `west.yml` said `revision: main`, so every CI run built against whatever upstream main was that morning, now pinned to **v4.4.2**. |
