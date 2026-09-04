@@ -58,6 +58,29 @@ test-boards:
 test-pedantic *args:
     python3 scripts/objz_pedantic_sweep.py --board {{ board }} {{args}}
 
+# CONFIG_SPIN_VALIDATE had never been on, on any board, so every green
+# `@synchronized` result came from a configuration where the checks are
+# compiled out. It is not reachable by accident either: it sits inside
+# `if ASSERT` in Zephyr's subsys/debug/Kconfig and no sample enables
+# asserts, so the overlay turns both on.
+#
+# Both boards, because they populate `struct k_spinlock` differently:
+# `thread_cpu` alone on single-core ARM, `locked` + `thread_cpu` with two
+# cores, where the assertions face real contention.
+#
+# This is a gate: an __ASSERT failure is a runtime fatal error, so twister
+# reports it as a failing configuration. Confirmed to be able to see one --
+# disabling the oz_sync_owner check in emit.rs makes both legs report
+# `ASSERTION FAIL [z_spin_lock_valid(l)]`, which is what a green run here
+# is worth anything against.
+#
+# Zephyr's own spinlock assertions against generated C, on both boards (#278).
+test-spin-validate:
+    west twister -T samples/ -p {{ board }} -O /tmp/twister-out-spinvalidate \
+        -x=EXTRA_CONF_FILE={{ justfile_directory() }}/samples/overlay-spin-validate.conf
+    west twister -T samples/ -p {{ smp_board }} -O /tmp/twister-out-spinvalidate-smp \
+        -x=EXTRA_CONF_FILE={{ justfile_directory() }}/samples/overlay-spin-validate.conf
+
 # Every board, including SMP. The only recipe that exercises two cores.
 test-all-boards:
     just test

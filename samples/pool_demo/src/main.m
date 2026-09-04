@@ -26,9 +26,26 @@ void printk(const char *fmt, ...);
 
 @implementation Sensor
 
+/* `@synchronized(self)` here while main already holds `@synchronized(s)` on
+ * the same object, so this sample carries the *re-entrant* shape on a
+ * single-core board. A k_spinlock cannot be re-locked, so a second acquire
+ * would be a defect; the lowering avoids it by recording the owning thread
+ * and skipping both lock and unlock when it sees itself (PARITY.md gap W).
+ *
+ * That guard could only ever be falsified on two cores, where
+ * samples/smp_shared's `-bumpNested` drives it -- and `just test-spin-validate`
+ * is the reason it is written here too: with CONFIG_SPIN_VALIDATE on, a broken
+ * guard fails `z_spin_lock_valid()` on the acquire, so a single-core ARM run
+ * catches it as well. Confirmed by disabling the guard and watching this
+ * sample fail (#278). Receiver and holder are also spelled differently, `self`
+ * against `s`, so no textual check for an identical receiver could tell they
+ * alias.
+ */
 - (void)setValue:(int)v
 {
-	_value = v;
+	@synchronized(self) {
+		_value = v;
+	}
 }
 
 - (int)value

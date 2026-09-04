@@ -2169,6 +2169,13 @@ fn send_to_resolved_class(
 /// may alias, as `[n runNested:n]` does -- would deadlock on hardware while
 /// passing on host, where `oz_spin_lock` is a no-op.
 ///
+/// That is checked rather than reasoned about since #278:
+/// `just test-spin-validate` enables `CONFIG_SPIN_VALIDATE`, under which a
+/// second acquire fails Zephyr's own `z_spin_lock_valid()`. Removing the
+/// owner check makes `samples/smp_shared` (two cores) and
+/// `samples/pool_demo` (one core, nesting across a method boundary) both
+/// report `ASSERTION FAIL [z_spin_lock_valid(l)] ... Invalid spinlock`.
+///
 /// The unlock is emitted as plain statements rather than through the
 /// scoped `OZ_SPINLOCK` macro because that macro is a `for` loop, so a
 /// `break` inside it would skip the unlock. Jumps out of the body are
