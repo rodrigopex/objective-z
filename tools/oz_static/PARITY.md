@@ -1935,6 +1935,79 @@ before it is tagged `python-backend-final` so the implementation stays
 readable from history rather than as code nobody compiles. `src/runtime_legacy/`
 is the cautionary example of the other choice.
 
+**AG. Two ARC leaks, found the first time the corpus met LeakSanitizer
+through this backend.** Fixed (#283), in the same change that made them
+visible (gap AF).
+
+Neither was reachable by anything that existed. The cases **pass their own
+assertions**, a Unity driver checking return values being blind to a leak;
+`just test-cross-backend` reports 71/71 MATCH, comparing Unity results rather
+than allocation balance; `corpus_parity.rs` transpiles and compiles every case
+and runs none; and `leak-check` in CI ran the *Python* backend, whose output
+does not leak these. Four instruments, none of them pointed at the question.
+
+The conservative-ARC rule is why they were silent rather than loud:
+"anything unrecognised is treated as borrowed, so an unknown shape leaks
+rather than double-frees". Leaking is the *designed* failure mode, so a
+missing release produces nothing observable until something counts bytes.
+
+**1. An early `return` from a scope nested inside a loop.**
+`emit::needs_translation` listed `break_statement` and `continue_statement`
+-- deliberately, per its own comment, "so ARC can prepend the releases a jump
+out of a loop owes" -- and not `return_statement`. So a `return` inside an
+otherwise pure-C subtree was never visited and `render_return_statement`
+never ran:
+
+```c
+while (i < 3) {
+	struct Inner *obj = Inner_oz_alloc();
+	if (i == 1) {
+		return 42;                                  /* jumps past... */
+	}
+	i = i + 1;
+	oz_static_release((struct OZObject *)(obj));    /* ...this */
+}
+```
+
+The `if` contains no Objective-C at all, which is precisely what kept it
+unvisited -- the fast path that keeps output byte-identical also skipped the
+jump that needed cleanup. Adding `return_statement` costs no churn for the
+same reason the other two do not: `render_return_statement` hands back the
+original text when there is nothing to release.
+
+**2. An owning instance method invoked on a variable receiver.**
+`arc::message_target` resolved a class-name receiver and nothing else, so
+`[a sub:b]` came back unresolved and was read as borrowed however owning
+`-sub:` was known to be -- `OZQ31 *a` is not a class name. Reduced away from
+Q31 to be sure of the cause: a `+make` factory's result *is* released at
+`[Node make]` and *is not* at `[seed derive]` or `[self derive]`, with
+`-derive` returning `[Node make]`. So the fixed point was right and the call
+site could not use it.
+
+**Why this fix is exact and not a heuristic.** Widening what counts as owning
+is the dangerous direction: a leak is a bug, a double free is memory
+corruption, and this file records that asymmetry as deliberate in three
+places. So `self` resolves through the enclosing `@implementation`, a named
+receiver through its own declaration, and a name declared more than once or
+with a type that is not a known class stays unresolved. Neither form can be
+wrong about the receiver's *static* type, which is all the lookup needs.
+Pinned by `arc_leak_regressions::unknown_receiver_type_stays_borrowed`, whose
+job is to keep failing closed.
+
+**Verified against a double free rather than only against the leak**, since
+that is what a wrong widening would produce: ASan + UBSan over all 71 cases,
+71/71; the corpus and the 40 adapted cases, 111/111; `test-cross-backend`
+71/71 MATCH, so behaviour is unchanged where it was already correct; and the
+samples on ARM and RISC-V.
+
+**The tests count deallocs rather than using a sanitizer**, deliberately.
+`-fsanitize=leak` is unsupported on `arm64-apple-darwin`, so a leak test
+written with it would be unrunnable on a maintainer's machine and hold only in
+CI -- the arrangement #269 exists to warn about. A dealloc counter is portable
+and asks the sharper question anyway: not "was the memory reachable at exit"
+but "did the object's teardown run". Each test was confirmed to fail with its
+own fix reverted, and only its own.
+
 ## On target (Zephyr under QEMU: mps2/an385, qemu_riscv32, qemu_cortex_a53/smp)
 
 The check that was missing, and the one that mattered most. Every
