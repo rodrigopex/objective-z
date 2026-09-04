@@ -1351,20 +1351,26 @@ fn render_selector_literal(node: Node, ctx: &mut EmitCtx) -> (String, String) {
         );
         return (node_text(node, ctx.src).to_string(), "SEL".to_string());
     }
-    // Performability is a whole-program property, because a `SEL` is a
-    // value: there is no way to prove which selector reaches which
-    // `-performSelector:` call site, so if the program performs at all
-    // then every reflectively-named selector needs a wrapper of the
-    // uniform shape. One that cannot have a wrapper is refused here
-    // rather than given a null `perform` that would fail -- or worse,
-    // quietly answer nil -- at run time.
-    if ctx.program.uses_perform_selector {
+    // A selector that can reach a `-performSelector:` needs a wrapper of
+    // the uniform shape, and so has to fit one. Which selectors those are
+    // is `Program::needs_perform_wrapper`: the literals named at perform
+    // sites, or -- if any site takes its `SEL` from a value, making it
+    // undecidable -- every reflectively-named selector. One that cannot
+    // have a wrapper is refused here rather than given a null `perform`
+    // that would fail, or worse quietly answer nil, at run time.
+    if ctx.program.needs_perform_wrapper(&name) {
         if let Some(why) = unperformable_reason(ctx.program, &name) {
             ctx.err(
                 node,
                 format!(
-                    "'@selector({})' cannot be performed: {}. This program uses '-performSelector:', and a SEL is a value, so every selector named by a '@selector(...)' has to be performable",
-                    name, why
+                    "'@selector({})' cannot be performed: {}{}",
+                    name,
+                    why,
+                    if ctx.program.performs_via_value {
+                        ". Some '-performSelector:' in this program takes its selector from a value rather than a literal, so nothing can tell which selector reaches it and every selector named by a '@selector(...)' has to be performable"
+                    } else {
+                        ", and a '-performSelector:' names it"
+                    }
                 ),
             );
             return (node_text(node, ctx.src).to_string(), "SEL".to_string());

@@ -831,7 +831,7 @@ pub fn collect(source: &str) -> (Program, Vec<crate::model::Diagnostic>) {
 
     reject_inline_anonymous_aggregates(root, source, &mut diagnostics);
 
-    let (reflected, performs, responds) = prescan_reflection(root, source);
+    let reflection = prescan_reflection(root, source);
 
     (
         Program {
@@ -843,9 +843,11 @@ pub fn collect(source: &str) -> (Program, Vec<crate::model::Diagnostic>) {
             heap_support: false,
             introspection: false,
             reflection: false,
-            reflected_selectors: reflected,
-            uses_perform_selector: performs,
-            uses_responds_to_selector: responds,
+            reflected_selectors: reflection.selectors,
+            performed_selectors: reflection.performed,
+            performs_via_value: reflection.performs_via_value,
+            uses_perform_selector: reflection.performs,
+            uses_responds_to_selector: reflection.responds,
             uses_synchronized: contains_kind(root, "synchronized_statement"),
         },
         diagnostics,
@@ -866,32 +868,44 @@ pub fn collect(source: &str) -> (Program, Vec<crate::model::Diagnostic>) {
 /// This reads the syntax, not the option: with `CONFIG_OBJZ_REFLECTION`
 /// off these constructs are refused, and refusing them is `emit`'s and the
 /// static bar's job, not this scan's.
-fn prescan_reflection(
-    root: Node,
-    source: &str,
-) -> (std::collections::BTreeSet<String>, bool, bool) {
+fn prescan_reflection(root: Node, source: &str) -> ReflectionFacts {
     const PERFORM_SELECTORS: &[&str] = &[
         "performSelector:",
         "performSelector:withObject:",
         "performSelector:withObject:withObject:",
     ];
-    let mut selectors = std::collections::BTreeSet::new();
-    let mut performs = false;
-    let mut responds = false;
+    let mut facts = ReflectionFacts::default();
     let mut stack = vec![root];
     while let Some(node) = stack.pop() {
         match node.kind() {
             "selector_expression" => {
                 if let Some(name) = selector_literal_name(node, source) {
-                    selectors.insert(name);
+                    facts.selectors.insert(name);
                 }
             }
             "message_expression" => {
                 let selector = crate::staticbar::message_selector(node, source);
                 if PERFORM_SELECTORS.contains(&selector.as_str()) {
-                    performs = true;
+                    facts.performs = true;
+                    // Which selector this site performs, when the answer
+                    // is written at the site. `@selector(...)` is a direct
+                    // child of the message, immediately after the first
+                    // `:`, so the first argument is exactly identifiable.
+                    match first_argument(node) {
+                        Some(arg) if arg.kind() == "selector_expression" => {
+                            if let Some(name) = selector_literal_name(arg, source) {
+                                facts.performed.insert(name);
+                            }
+                        }
+                        // A `SEL` held in a local, an ivar, a parameter or
+                        // a cast. Nothing can say which selector arrives
+                        // here, so performability stops being a per-
+                        // selector question and becomes a whole-program
+                        // one.
+                        _ => facts.performs_via_value = true,
+                    }
                 } else if selector == "respondsToSelector:" {
-                    responds = true;
+                    facts.responds = true;
                 }
             }
             _ => {}
@@ -899,7 +913,26 @@ fn prescan_reflection(
         let mut cursor = node.walk();
         stack.extend(node.children(&mut cursor));
     }
-    (selectors, performs, responds)
+    facts
+}
+
+/// What `prescan_reflection` found.
+#[derive(Default)]
+struct ReflectionFacts {
+    selectors: std::collections::BTreeSet<String>,
+    performed: std::collections::BTreeSet<String>,
+    performs: bool,
+    performs_via_value: bool,
+    responds: bool,
+}
+
+/// The first argument of a message expression: the child immediately
+/// following its first `:`.
+fn first_argument(node: Node) -> Option<Node> {
+    let mut cursor = node.walk();
+    let children: Vec<Node> = node.children(&mut cursor).collect();
+    let colon = children.iter().position(|c| c.kind() == ":")?;
+    children.get(colon + 1).copied()
 }
 
 /// The selector `@selector(name)` names, as its Objective-C spelling
