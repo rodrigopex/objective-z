@@ -22,8 +22,26 @@ config OBJZ_BACKEND_STATIC
 	help
 	  The transpiler: .m -> tree-sitter CST -> oz2c -> .h + .c. Rejects
 	  anything outside its supported subset with a located error rather
-	  than emitting code that misbehaves. Reflection and @selector are
-	  the notable exclusions -- see issue #226.
+	  than emitting code that misbehaves.
+
+config OBJZ_INTROSPECTION
+	bool "Type introspection (-isKindOfClass:, -conformsToProtocol:)"
+	default y
+	help
+	  Answer -isKindOfClass: and -conformsToProtocol: from tables
+	  generated at transpile time -- a superclass chain indexed by
+	  class id, and one conformance bitmap per protocol. Both are
+	  const, so they cost flash and no RAM, and neither is emitted
+	  unless some call site actually uses it: a program that does not
+	  introspect pays nothing for leaving this on.
+
+	  Class identity is not covered here and is always available:
+	  [Foo class] is a compile-time constant, and [obj class] and
+	  -isMemberOfClass: read the class id every object already carries.
+
+	  Set n to forbid type introspection outright -- for code-size or
+	  certification discipline. Both selectors then become located
+	  transpile errors naming this option, never silently unavailable.
 
 config OBJZ_HEAP
 	bool "Enable heap-based allocation (allocWithHeap:)"

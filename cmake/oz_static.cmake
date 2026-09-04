@@ -96,6 +96,16 @@ function(objz_transpile_sources_static target)
     if(CONFIG_OBJZ_HEAP)
         list(APPEND _oz2c_flags --heap-support)
     endif()
+    # CONFIG_OBJZ_INTROSPECTION enables -isKindOfClass: and
+    # -conformsToProtocol:, the two introspection selectors that generate a
+    # table. Unlike --heap-support this needs nothing defined on the C side:
+    # the tables and their helpers are emitted into the companion source
+    # itself, and only for the constructs a call site actually used. Class
+    # identity ([Foo class], [obj class], -isMemberOfClass:) is always
+    # available and unaffected.
+    if(CONFIG_OBJZ_INTROSPECTION)
+        list(APPEND _oz2c_flags --introspection)
+    endif()
     foreach(_dir ${_src_dirs})
         list(APPEND _oz2c_flags --impl-dir ${_dir})
     endforeach()

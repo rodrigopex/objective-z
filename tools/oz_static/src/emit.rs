@@ -817,6 +817,8 @@ struct EmitCtx<'a> {
     /// neither, which is why `staticbar` had to reject the loop above
     /// rather than emit it.
     arc_managed_locals: std::collections::HashSet<String>,
+    /// See `IntrospectionUse`.
+    introspection_used: IntrospectionUse,
 }
 
 /// One block's worth of owned object locals.
@@ -863,12 +865,43 @@ impl<'a> EmitCtx<'a> {
             pools,
             arc_scopes: Vec::new(),
             arc_managed_locals: HashSet::new(),
+            introspection_used: IntrospectionUse::default(),
         }
     }
 
     fn err(&mut self, node: Node, message: impl Into<String>) {
         let (line, col) = line_col(self.src, node.start_byte());
         self.diags.push(Diagnostic::new(message, line, col));
+    }
+}
+
+/// Which introspection support the emitted code actually referenced.
+///
+/// Gated on *use*, not on `--introspection` being set, so a program that
+/// enables the option and never introspects anything pays nothing: the
+/// superclass chain and each protocol's conformance bitmap are emitted
+/// only if some call site named them. That is why this is threaded back
+/// out of the walk instead of being derived from the `Program` -- the
+/// emitter is the only thing that knows what it wrote.
+#[derive(Default, Debug)]
+pub struct IntrospectionUse {
+    /// `-isKindOfClass:` appeared, so the ancestry walk and its table are
+    /// needed.
+    pub kind_of: bool,
+    /// Protocols named by a `@protocol(...)` reaching
+    /// `-conformsToProtocol:`; one conformance bitmap each. Ordered so the
+    /// generated text is deterministic.
+    pub protocols: std::collections::BTreeSet<String>,
+}
+
+impl IntrospectionUse {
+    fn merge(&mut self, other: IntrospectionUse) {
+        self.kind_of |= other.kind_of;
+        self.protocols.extend(other.protocols);
+    }
+
+    pub fn is_empty(&self) -> bool {
+        !self.kind_of && self.protocols.is_empty()
     }
 }
 
@@ -968,6 +1001,28 @@ pub(crate) fn is_numeric_boxed_shape(node: Node, src: &str) -> bool {
 /// to give this one specific `at_expression` shape a clearer rejection
 /// message in `staticbar.rs`; it's still caught by the general
 /// "not a numeric/boolean boxed literal" rejection either way.
+/// The protocol named by a `@protocol(Name)` expression, or `None` if
+/// `node` is not one.
+///
+/// A protocol has no runtime representation of its own here: the name is
+/// resolved to a generated conformance bitmap
+/// (`companion::render_introspection`), so `@protocol(...)` is legal only
+/// where that bitmap is what is wanted -- as the argument of
+/// `-conformsToProtocol:`. The static bar enforces the position; this only
+/// reads the name.
+pub(crate) fn protocol_literal_name(node: Node, src: &str) -> Option<String> {
+    if !is_protocol_literal_shape(node, src) {
+        return None;
+    }
+    let mut cursor = node.walk();
+    let inner = node.children(&mut cursor).find(|c| c.kind() != "@")?;
+    let mut c2 = inner.walk();
+    let args = inner.children(&mut c2).find(|c| c.kind() == "argument_list")?;
+    let mut c3 = args.walk();
+    let name = args.children(&mut c3).find(|c| c.kind() == "identifier")?;
+    Some(node_text(name, src).to_string())
+}
+
 pub(crate) fn is_protocol_literal_shape(node: Node, src: &str) -> bool {
     let mut cursor = node.walk();
     let Some(inner) = node.children(&mut cursor).find(|c| c.kind() != "@") else {
@@ -1104,6 +1159,9 @@ fn render_expr(node: Node, ctx: &mut EmitCtx) -> (String, String) {
                 None => text,
             };
             (initialized, "id".to_string())
+        }
+        "at_expression" if is_protocol_literal_shape(node, ctx.src) => {
+            render_protocol_literal(node, ctx)
         }
         "at_expression" => render_boxed_at_expression(node, ctx),
         "string_literal" => render_boxed_string_literal(node, ctx),
@@ -1251,6 +1309,32 @@ fn synthetic_class_call(
 /// `.` (or an `f`/`F` suffix) is float-shaped; everything else -- a plain
 /// integer literal, `YES`/`NO`, or any non-literal expression like
 /// `x + 3` -- defaults to int32.
+/// `@protocol(Name)` -> the name of that protocol's generated conformance
+/// bitmap.
+///
+/// Recording the use here rather than at the `-conformsToProtocol:` call
+/// site is what keeps the footprint honest: exactly the protocols some
+/// call site actually named get a bitmap, so enabling
+/// `CONFIG_OBJZ_INTROSPECTION` and introspecting nothing costs nothing.
+fn render_protocol_literal(node: Node, ctx: &mut EmitCtx) -> (String, String) {
+    let Some(name) = protocol_literal_name(node, ctx.src) else {
+        ctx.err(node, "'@protocol(...)' needs a single protocol name");
+        return (node_text(node, ctx.src).to_string(), "id".to_string());
+    };
+    if !ctx.program.protocols.contains_key(&name) {
+        ctx.err(
+            node,
+            format!(
+                "'@protocol({})' names no protocol declared in this program",
+                name
+            ),
+        );
+        return (node_text(node, ctx.src).to_string(), "id".to_string());
+    }
+    ctx.introspection_used.protocols.insert(name.clone());
+    (format!("oz_proto_{}", name), "const uint32_t *".to_string())
+}
+
 fn render_boxed_at_expression(node: Node, ctx: &mut EmitCtx) -> (String, String) {
     let (line, col) = line_col(ctx.src, node.start_byte());
     let mut cursor = node.walk();
@@ -2576,6 +2660,43 @@ fn render_message(node: Node, ctx: &mut EmitCtx) -> (String, String) {
     if parts.selector == "isMemberOfClass:" && parts.args.len() == 1 {
         return (
             format!("(oz_class_of({}) == ({}))", recv_text, arg_texts[0]),
+            "BOOL".to_string(),
+        );
+    }
+    // The two introspection selectors that need a generated table: an
+    // ancestry walk over the superclass chain, and a per-protocol
+    // conformance bitmap. Both are gated on `--introspection`
+    // (`CONFIG_OBJZ_INTROSPECTION`) -- and when it is off they stay hard
+    // located errors naming the option, so a build never quietly loses
+    // them. Class *identity* above needs no table and so no gate.
+    if parts.selector == "isKindOfClass:" && parts.args.len() == 1 {
+        if !ctx.program.introspection {
+            ctx.err(
+                node,
+                "'-isKindOfClass:' needs introspection, which is off -- set CONFIG_OBJZ_INTROSPECTION=y (oz2c --introspection). '-isMemberOfClass:' is always available if exact class equality will do",
+            );
+            return (node_text(node, ctx.src).to_string(), "BOOL".to_string());
+        }
+        ctx.introspection_used.kind_of = true;
+        return (
+            format!("oz_is_kind_of(oz_class_of({}), ({}))", recv_text, arg_texts[0]),
+            "BOOL".to_string(),
+        );
+    }
+    if parts.selector == "conformsToProtocol:" && parts.args.len() == 1 {
+        if !ctx.program.introspection {
+            ctx.err(
+                node,
+                "'-conformsToProtocol:' needs introspection, which is off -- set CONFIG_OBJZ_INTROSPECTION=y (oz2c --introspection)",
+            );
+            return (node_text(node, ctx.src).to_string(), "BOOL".to_string());
+        }
+        // `render_protocol_literal` has already resolved the argument to
+        // the bitmap's name and recorded the use; a non-literal argument
+        // is refused by the static bar, since a protocol has no value
+        // representation to pass.
+        return (
+            format!("oz_conforms(oz_class_of({}), {})", recv_text, arg_texts[0]),
             "BOOL".to_string(),
         );
     }
@@ -4088,6 +4209,7 @@ pub fn emit(source: &str, program: &Program, pools: &crate::pools::PoolSizes) ->
         &walked.hoisted_c_structs,
         pools,
         &crate::imports::collect_system_includes(source),
+        &walked.introspection_used,
     );
 
     EmitOutput { source_c: out, companion_h, companion_c, diagnostics: walked.diags }
@@ -4136,6 +4258,8 @@ struct TopLevel {
     hoisted_c_structs: Vec<String>,
     /// Which origin owns each class's declaration.
     class_to_stem: HashMap<String, String>,
+    /// See `IntrospectionUse`.
+    introspection_used: IntrospectionUse,
     diags: Vec<Diagnostic>,
 }
 
@@ -4203,6 +4327,7 @@ fn walk_top_level(
     }
 
     let mut diags: Vec<Diagnostic> = Vec::new();
+    let mut introspection_used = IntrospectionUse::default();
     let mut hoisted_structs: Vec<(String, String)> = Vec::new();
     let mut hoisted_enums: Vec<String> = Vec::new();
     let mut hoisted_forward_decls: Vec<String> = Vec::new();
@@ -4261,6 +4386,7 @@ fn walk_top_level(
                 let mut ctx = EmitCtx::new(source, program, name.clone(), scope, pools);
                 let (header_part, alloc_free_part) = render_interface(node, &mut ctx, program);
                 diags.extend(ctx.diags);
+                introspection_used.merge(ctx.introspection_used);
                 hoisted_structs.extend(ctx.hoisted_structs);
                 headers.entry(stem.clone()).or_default().push(header_part);
                 if !alloc_free_part.is_empty() {
@@ -4339,6 +4465,7 @@ fn walk_top_level(
                 }
                 out.push_str(&banner_rule(&format!("end implementation: {}", name), '-'));
                 diags.extend(ctx.diags);
+                introspection_used.merge(ctx.introspection_used);
                 hoisted_structs.extend(ctx.hoisted_structs);
                 hoisted_blocks_by_stem.entry(stem.clone()).or_default().extend(ctx.hoisted_blocks);
                 hoisted_strings_by_stem.entry(stem.clone()).or_default().extend(ctx.hoisted_string_literals);
@@ -4449,6 +4576,7 @@ fn walk_top_level(
                     }
                 }
                 diags.extend(ctx.diags);
+                introspection_used.merge(ctx.introspection_used);
                 hoisted_structs.extend(ctx.hoisted_structs);
                 hoisted_blocks_by_stem.entry(stem.clone()).or_default().extend(ctx.hoisted_blocks);
                 hoisted_strings_by_stem.entry(stem.clone()).or_default().extend(ctx.hoisted_string_literals);
@@ -4528,6 +4656,7 @@ fn walk_top_level(
                         EmitCtx::new(source, program, String::new(), file_vars.clone(), pools);
                     edits.extend(top_level_block_edits(node, &mut ctx, program));
                     diags.extend(ctx.diags);
+                    introspection_used.merge(ctx.introspection_used);
                     hoisted_structs.extend(ctx.hoisted_structs);
                     hoisted_blocks_by_stem
                         .entry(stem.clone())
@@ -4607,6 +4736,7 @@ fn walk_top_level(
         hoisted_forward_decls,
         hoisted_c_structs,
         class_to_stem,
+        introspection_used,
         diags,
     }
 }
@@ -4639,6 +4769,7 @@ pub fn emit_split(
         hoisted_forward_decls,
         hoisted_c_structs,
         class_to_stem,
+        introspection_used,
         diags,
     } = walk_top_level(source, program, pools, origins, header_ranges);
 
@@ -4838,6 +4969,7 @@ pub fn emit_split(
             &hoisted_c_structs,
             pools,
             &crate::imports::collect_system_includes(source),
+            &introspection_used,
         );
 
     EmitSplitOutput { files, companion_h, companion_c, diagnostics: diags }

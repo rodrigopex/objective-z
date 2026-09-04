@@ -839,6 +839,7 @@ pub fn collect(source: &str) -> (Program, Vec<crate::model::Diagnostic>) {
             owning_methods: Default::default(),
             ast: None,
             heap_support: false,
+            introspection: false,
             uses_synchronized: contains_kind(root, "synchronized_statement"),
         },
         diagnostics,

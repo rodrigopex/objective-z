@@ -18,8 +18,6 @@ const REFLECTION_SELECTORS: &[&str] = &[
     "performSelector:",
     "performSelector:withObject:",
     "performSelector:withObject:withObject:",
-    "isKindOfClass:",
-    "conformsToProtocol:",
 ];
 
 /// Selectors the emitter answers itself, at the call site, from facts the
@@ -35,9 +33,21 @@ const REFLECTION_SELECTORS: &[&str] = &[
 /// `render_prototype` skips them for the matching reason -- declaring a C
 /// function that is never defined invites a call that fails at link time,
 /// which is the shape of the `[X class]` defect in #226.
-pub const INTRINSIC_SELECTORS: &[&str] = &["class", "isMemberOfClass:"];
+pub const INTRINSIC_SELECTORS: &[&str] =
+    &["class", "isMemberOfClass:", "isKindOfClass:", "conformsToProtocol:"];
 
 const LOOP_KINDS: &[&str] = &["for_statement", "while_statement", "do_statement"];
+
+/// Is this `@protocol(...)` the direct argument of a
+/// `-conformsToProtocol:` message?
+///
+/// The only position where a protocol name resolves to something --
+/// `emit::render_protocol_literal` turns it into that protocol's
+/// conformance bitmap, which `oz_conforms` reads.
+fn is_conforms_to_protocol_argument(node: Node, src: &str) -> bool {
+    let Some(parent) = node.parent() else { return false };
+    parent.kind() == "message_expression" && message_selector(parent, src) == "conformsToProtocol:"
+}
 
 fn node_text<'a>(node: Node, src: &'a str) -> &'a str {
     &src[node.start_byte()..node.end_byte()]
@@ -333,13 +343,22 @@ fn walk_for_reject(
         // desugaring and must still be rejected here, or the emitter's
         // catch-all would pass the raw `@(...)` text straight through as
         // bogus C.
+        // A protocol has no value representation here: `@protocol(Name)`
+        // resolves to that protocol's generated conformance bitmap, which
+        // is only meaningful as the thing `-conformsToProtocol:` tests
+        // against. Anywhere else -- assigned to a variable, passed to
+        // something else, returned -- there is nothing sensible to hand
+        // over, so it stays a hard error rather than leaking a
+        // `const uint32_t *` into source that thinks it holds a protocol.
         "at_expression" if crate::emit::is_protocol_literal_shape(node, src) => {
-            err(
-                diags,
-                src,
-                node,
-                "'@protocol(...)' is not in the static subset's accepted construct set",
-            );
+            if !is_conforms_to_protocol_argument(node, src) {
+                err(
+                    diags,
+                    src,
+                    node,
+                    "'@protocol(...)' is accepted only as the argument of '-conformsToProtocol:' -- a protocol has no runtime value in the static subset",
+                );
+            }
             return;
         }
         "at_expression" if !crate::emit::is_numeric_boxed_shape(node, src) => {
