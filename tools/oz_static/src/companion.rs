@@ -735,6 +735,111 @@ fn class_label(program: &Program, name: &str, id: usize) -> String {
     }
 }
 
+/// The introspection tables and the helpers that read them, for exactly
+/// the constructs the emitted code referenced (`emit::IntrospectionUse`).
+///
+/// Everything here is `const`, so it lands in flash and costs no RAM at
+/// all, and nothing is emitted for a construct no call site used -- a
+/// program that never introspects pays nothing even with
+/// `CONFIG_OBJZ_INTROSPECTION=y`.
+///
+/// The helpers are deliberately *not* `static inline`. Measured on
+/// Cortex-M3 at `-Os`, inlining `oz_is_kind_of` costs 40 bytes at every
+/// call site against 20 for a call to one 32-byte copy, so inlining is
+/// only cheaper for the first two or three sites and grows without bound
+/// after that. `oz_class_of` stays inline in the preamble because it is a
+/// single bitfield read.
+///
+/// `oz_superclass_of` is indexed by `class_id` and holds each class's
+/// superclass id, `Nil` terminating the chain -- the same relation
+/// `Program::is_descendant_of` walks over `ClassInfo::superclass`, moved
+/// to run time because `-isKindOfClass:` asks about the receiver's
+/// *actual* class, which a declared type is only an upper bound on.
+fn render_introspection(
+    program: &Program,
+    used: &crate::emit::IntrospectionUse,
+) -> (String, String) {
+    let mut h = String::new();
+    let mut c = String::new();
+    if used.is_empty() {
+        return (h, c);
+    }
+
+    let n_classes = program.class_order.len();
+    let words = n_classes.div_ceil(32).max(1);
+
+    if used.kind_of {
+        let mut ids: Vec<(usize, String)> = program
+            .class_order
+            .iter()
+            .filter_map(|name| program.class_id(name).map(|id| (id, name.clone())))
+            .collect();
+        ids.sort_by_key(|(id, _)| *id);
+        let mut rows = String::new();
+        for (id, name) in &ids {
+            let sup = program.classes[name]
+                .superclass
+                .as_ref()
+                .and_then(|s| program.class_id(s))
+                .map(|i| i.to_string())
+                .unwrap_or_else(|| "Nil".to_string());
+            rows.push_str(&format!("\t{}, /* {} ({}) */\n", sup, name, id));
+        }
+        c.push_str(&format!(
+            "/* each class's superclass id, indexed by class_id; Nil ends the chain */\nstatic const Class oz_superclass_of[{}] = {{\n{}}};\n\n/* is `k`, or any class up its chain, `ancestor`? (not from source) */\nBOOL oz_is_kind_of(Class k, Class ancestor)\n{{\n\twhile (k != Nil) {{\n\t\tif (k == ancestor) {{\n\t\t\treturn true;\n\t\t}}\n\t\tk = oz_superclass_of[k];\n\t}}\n\treturn false;\n}}\n\n",
+            ids.len().max(1),
+            rows
+        ));
+        h.push_str("BOOL oz_is_kind_of(Class k, Class ancestor);\n");
+    }
+
+    if !used.protocols.is_empty() {
+        for proto in &used.protocols {
+            let mut bits = vec![0u32; words];
+            for name in &program.class_order {
+                if program.class_conforms_to(name, proto) {
+                    if let Some(id) = program.class_id(name) {
+                        bits[id / 32] |= 1u32 << (id % 32);
+                    }
+                }
+            }
+            let conformers: Vec<&str> = program
+                .class_order
+                .iter()
+                .filter(|n| program.class_conforms_to(n, proto))
+                .map(|n| n.as_str())
+                .collect();
+            let words_text = bits
+                .iter()
+                .map(|w| format!("0x{:08x}u", w))
+                .collect::<Vec<_>>()
+                .join(", ");
+            c.push_str(&format!(
+                "/* classes conforming to '{}', one bit per class_id: {} */\nconst uint32_t oz_proto_{}[{}] = {{ {} }};\n\n",
+                proto,
+                if conformers.is_empty() {
+                    "none".to_string()
+                } else {
+                    conformers.join(", ")
+                },
+                proto,
+                words,
+                words_text
+            ));
+            h.push_str(&format!("extern const uint32_t oz_proto_{}[{}];\n", proto, words));
+        }
+        c.push_str(
+            "/* does class `k` conform to the protocol this bitmap describes?\n * (not from source) */\nBOOL oz_conforms(Class k, const uint32_t *proto)\n{\n\treturn k != Nil && (proto[k >> 5] & (1u << (k & 31))) != 0;\n}\n\n",
+        );
+        h.push_str("BOOL oz_conforms(Class k, const uint32_t *proto);\n");
+    }
+    if !h.is_empty() {
+        h.insert_str(0, "/* introspection support -- see `companion::render_introspection` */\n");
+        h.push('\n');
+    }
+    (h, c)
+}
+
 pub fn render(
     program: &Program,
     hoisted_structs: &[(String, String)],
@@ -743,6 +848,7 @@ pub fn render(
     hoisted_c_structs: &[String],
     pools: &crate::pools::PoolSizes,
     system_includes: &[String],
+    introspection_used: &crate::emit::IntrospectionUse,
 ) -> (String, String) {
     let root = program.root_class().map(|s| s.to_string());
     // The root class always terminates the [super dealloc] chain. If the
@@ -1121,6 +1227,10 @@ vtable\") -- never mutated at runtime. */\n",
         h.push_str(&proto_h);
         c.push_str(&proto_c);
     }
+
+    let (intro_h, intro_c) = render_introspection(program, introspection_used);
+    h.push_str(&intro_h);
+    c.push_str(&intro_c);
 
     // Last, so it sees every prototype this header ended up with.
     let h = forward_declare_unknown_struct_tags(&h);

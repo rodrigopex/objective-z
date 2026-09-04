@@ -122,6 +122,10 @@ pub struct Program {
     /// has in hand, and threading a second parameter through each of them
     /// would say nothing extra.
     pub heap_support: bool,
+    /// `--introspection` (`CONFIG_OBJZ_INTROSPECTION`): whether
+    /// `-isKindOfClass:` and `-conformsToProtocol:` are available. An
+    /// option, not a fact about the source.
+    pub introspection: bool,
     /// Does the program use `@synchronized` anywhere? When it does, the root
     /// struct gains an `oz_sync_lock` so `@synchronized(obj)` can lock
     /// storage owned by `obj` rather than a fresh lock on the caller's own

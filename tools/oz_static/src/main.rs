@@ -30,6 +30,7 @@ fn main() -> ExitCode {
     let mut pool_overrides = oz_static::PoolOverrides::new();
     let mut ast_paths: Vec<PathBuf> = Vec::new();
     let mut heap_support = false;
+    let mut introspection = false;
     let mut item_pool_size: Option<usize> = None;
     let mut positional: Vec<String> = Vec::new();
 
@@ -62,6 +63,17 @@ fn main() -> ExitCode {
             // which is what makes the PAL expose the heap it needs.
             "--heap-support" => {
                 heap_support = true;
+                i += 1;
+            }
+            // `CONFIG_OBJZ_INTROSPECTION`. Enables `-isKindOfClass:` and
+            // `-conformsToProtocol:`, the two introspection selectors that
+            // generate a table (a superclass chain and a per-protocol
+            // conformance bitmap). Without it both are located errors that
+            // name the option. Class identity -- `[Foo class]`,
+            // `[obj class]`, `-isMemberOfClass:` -- is always available and
+            // unaffected: it costs no table.
+            "--introspection" => {
+                introspection = true;
                 i += 1;
             }
             // Clang resolves types; tree-sitter does not. Supplying the AST
@@ -205,6 +217,7 @@ fn main() -> ExitCode {
             pool_sizes: pool_overrides,
             ast_json,
             heap_support,
+            introspection,
             item_pool_size,
             header_ranges: resolved.header_ranges.clone(),
         },

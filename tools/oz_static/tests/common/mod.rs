@@ -84,6 +84,37 @@ pub fn compile_and_run_with_heap(source: &str, stem: &str) -> String {
     )
 }
 
+/// `compile_and_run` with `--introspection`, i.e. the configuration
+/// `CONFIG_OBJZ_INTROSPECTION`'s own default (`y`) produces.
+///
+/// Needed by any case using `-isKindOfClass:` or `-conformsToProtocol:`,
+/// the two selectors that generate a table. Class identity --
+/// `[Foo class]`, `[obj class]`, `-isMemberOfClass:` -- needs no table and
+/// so needs no flag; plain `compile_and_run` handles those.
+pub fn compile_and_run_with_introspection(source: &str, stem: &str) -> String {
+    compile_and_run_inner(
+        source,
+        stem,
+        &[],
+        &oz_static::Options { introspection: true, ..Default::default() },
+    )
+}
+
+/// Transpile `source` with `--introspection`, expecting rejection.
+/// Returns the joined diagnostics.
+///
+/// Distinct from `expect_reject`, which leaves the option off: a case that
+/// must be refused *for some other reason* while introspection is
+/// available would otherwise be refused by the option instead, and the
+/// assertion would pass for the wrong reason.
+pub fn expect_reject_with_introspection(source: &str) -> String {
+    let options = oz_static::Options { introspection: true, ..Default::default() };
+    match oz_static::transpile_with_options(source, &options) {
+        Ok(_) => panic!("expected transpile to be rejected by the static bar, but it succeeded"),
+        Err(diags) => diags.iter().map(|d| d.to_string()).collect::<Vec<_>>().join("\n"),
+    }
+}
+
 fn compile_and_run_with_flags(source: &str, stem: &str, extra_cc_flags: &[&str]) -> String {
     compile_and_run_inner(source, stem, extra_cc_flags, &oz_static::Options::default())
 }

@@ -52,6 +52,19 @@ pub struct Options {
     /// and the branch it adds to every free are only worth paying for if
     /// something actually allocates from a heap.
     pub heap_support: bool,
+    /// Enable `-isKindOfClass:` and `-conformsToProtocol:`, which
+    /// `CONFIG_OBJZ_INTROSPECTION` passes as `--introspection`.
+    ///
+    /// Off by default, exactly like `heap_support`: the flag's absence is
+    /// what the Kconfig option's `n` means, and the Kconfig default (`y`)
+    /// is what supplies it. With it off the two selectors stay hard
+    /// located errors naming the option, so a build never quietly loses
+    /// them.
+    ///
+    /// `+class`, `-class` and `-isMemberOfClass:` are deliberately *not*
+    /// gated here -- a class identity is a constant or a bitfield read
+    /// and generates no table, so there is nothing to switch off.
+    pub introspection: bool,
     /// Slots for the shared collection element pool instead of the count
     /// taken from the source, as `--item-pool-size N` supplies. `None`
     /// leaves the counted size (or an `oz-item-pool:` directive) in force.
@@ -101,6 +114,7 @@ pub fn transpile_with_options(
     }
     program.owning_methods = arc::analyze(source, &program);
     program.heap_support = options.heap_support;
+    program.introspection = options.introspection;
     let overrides = &options.pool_sizes;
     diagnostics.extend(generics::check_program(source, &program));
     if !diagnostics.is_empty() {
@@ -168,6 +182,7 @@ pub fn transpile_split_with_options(
     }
     program.owning_methods = arc::analyze(source, &program);
     program.heap_support = options.heap_support;
+    program.introspection = options.introspection;
     let overrides = &options.pool_sizes;
     diagnostics.extend(generics::check_program(source, &program));
     if !diagnostics.is_empty() {
