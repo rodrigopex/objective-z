@@ -910,6 +910,22 @@ fn needs_translation(node: Node) -> bool {
             // keyword is returned unchanged, so this costs no output churn.
             | "break_statement"
             | "continue_statement"
+            // `return` for the same reason, and it was missing: a return
+            // inside an otherwise pure-C subtree was never visited, so
+            // `render_return_statement` never ran and the scopes it unwinds
+            // past kept their releases at the end of the block, where the
+            // jump had already skipped them. `arc/return_in_nested_scope`
+            // leaked its loop-body local on exactly that path -- an early
+            // `return` from an `if` inside a `while`, with no Objective-C
+            // anywhere in the `if` to force a visit. Found by running the
+            // corpus under LeakSanitizer through this backend for the first
+            // time; the case passed its own assertions throughout, since a
+            // leak is invisible to a test that only checks return values.
+            //
+            // Costs no churn for the same reason the two above do not:
+            // `render_return_statement` returns the original text when
+            // there is nothing to release.
+            | "return_statement"
     ) {
         return true;
     }
