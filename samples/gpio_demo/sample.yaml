@@ -3,27 +3,60 @@ sample:
   name: ObjZ GPIO Demo
 common:
   tags: objz gpio
-  platform_allow:
-    - mps2/an385
-  integration_platforms:
-    - mps2/an385
   harness: console
-  harness_config:
-    type: multi_line
-    ordered: true
-    # The LED path only. mps2/an385's GPIO driver has no interrupt support,
-    # so `gpio_add_callback_dt` returns -ENOTSUP and "Button configured"
-    # never prints on this board -- the board's limitation, not the sample's.
-    # Asserting the failure instead would be worse: it would hold only while
-    # GPIO interrupts stay unsupported, and would mask the button path
-    # regressing on a board that does support them.
-    regex:
-      - "=== GPIO Demo ==="
-      - "LED configured"
-      - "LED on"
-      - "LED off"
-      - "LED toggled"
-      - "=== GPIO Demo complete ==="
+# Expectations differ by board, so `platform_allow` and `integration_platforms`
+# are per scenario rather than in `common:` -- a platform named in a shared
+# `integration_platforms` but absent from a scenario's own `platform_allow` is a
+# hard twister error, not a filter. That is the mistake `arc_demo` records
+# making when its SMP scenarios were added.
 tests:
+  # QEMU. mps2/an385's GPIO driver has no interrupt support, so
+  # `gpio_add_callback_dt` returns -ENOTSUP, `-initWithDTSpec:flags:blockCallback:`
+  # returns nil and "Button configured" never prints -- the board's limitation,
+  # not the sample's. Asserting the failure instead would be worse: it would
+  # hold only while GPIO interrupts stay unsupported, and would mask the button
+  # path regressing on a board that does support them.
   sample.objz.gpio_demo:
     tags: objz gpio
+    platform_allow:
+      - mps2/an385
+    integration_platforms:
+      - mps2/an385
+    harness_config:
+      type: multi_line
+      ordered: true
+      regex:
+        - "=== GPIO Demo ==="
+        - "LED configured"
+        - "LED on"
+        - "LED off"
+        - "LED toggled"
+        - "=== GPIO Demo complete ==="
+
+  # Real hardware, and the only board where the *input* half runs at all.
+  # nrf52833dk supports GPIO interrupts, so `gpio_add_callback_dt` succeeds and
+  # "Button configured" prints -- which is the assertion this scenario exists
+  # for. It is the one place a hoisted block reaches a Zephyr driver callback:
+  # the `blockCallback:` argument is lowered to a `gpio_callback_handler_t`
+  # function pointer, and until this board there was nowhere to check that the
+  # registration path works rather than merely compiles.
+  #
+  # LED0 and the button are physically wired here, so this scenario also drives
+  # real GPIO pins. A press toggles the LED via the block, but nothing asserts
+  # that: it needs a finger on the button, and an expectation no unattended run
+  # can meet would fail every time.
+  sample.objz.gpio_demo.hw:
+    tags: objz gpio hardware
+    platform_allow:
+      - nrf52833dk/nrf52833
+    harness_config:
+      type: multi_line
+      ordered: true
+      regex:
+        - "=== GPIO Demo ==="
+        - "LED configured"
+        - "Button configured"
+        - "LED on"
+        - "LED off"
+        - "LED toggled"
+        - "=== GPIO Demo complete ==="

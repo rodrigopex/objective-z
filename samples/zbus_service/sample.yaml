@@ -6,6 +6,7 @@ common:
   platform_allow:
     - mps2/an385
     - qemu_riscv32
+    - nrf52833dk/nrf52833
   integration_platforms:
     - mps2/an385
   harness: console
