@@ -1160,6 +1160,7 @@ fn render_expr(node: Node, ctx: &mut EmitCtx) -> (String, String) {
             };
             (initialized, "id".to_string())
         }
+        "selector_expression" => render_selector_literal(node, ctx),
         "at_expression" if is_protocol_literal_shape(node, ctx.src) => {
             render_protocol_literal(node, ctx)
         }
@@ -1309,6 +1310,107 @@ fn synthetic_class_call(
 /// `.` (or an `f`/`F` suffix) is float-shaped; everything else -- a plain
 /// integer literal, `YES`/`NO`, or any non-literal expression like
 /// `x + 3` -- defaults to int32.
+/// `@selector(name)` -> the address of that selector's generated record.
+///
+/// The record is `const`, so a `SEL` is a pointer into flash and copying
+/// one costs a register. Which selectors get a record is decided in
+/// `collect`'s prescan rather than here, because
+/// `Program::is_dynamically_dispatched` needs the answer before the
+/// dispatch tables are generated -- this only has to refuse the cases
+/// that have no record to point at.
+fn render_selector_literal(node: Node, ctx: &mut EmitCtx) -> (String, String) {
+    if !ctx.program.reflection {
+        ctx.err(
+            node,
+            "'@selector(...)' needs reflection, which is off -- set CONFIG_OBJZ_REFLECTION=y (oz2c --reflection)",
+        );
+        return (node_text(node, ctx.src).to_string(), "SEL".to_string());
+    }
+    let Some(name) = crate::collect::selector_literal_name(node, ctx.src) else {
+        ctx.err(node, "'@selector(...)' needs a selector name");
+        return (node_text(node, ctx.src).to_string(), "SEL".to_string());
+    };
+    // Every implementation is found through `find_defining_method` from
+    // some class, so a selector nothing implements has no record and no
+    // dispatch function. Passing it on would emit a reference to a symbol
+    // that is never generated -- the same link-time failure `[X class]`
+    // used to produce (#226).
+    let implemented = ctx.program.class_order.iter().any(|c| {
+        ctx.program.classes[c]
+            .methods
+            .iter()
+            .any(|m| m.selector == name && !m.is_class_method)
+    });
+    if !implemented {
+        ctx.err(
+            node,
+            format!(
+                "'@selector({})' names no instance method declared by any class in this program",
+                name
+            ),
+        );
+        return (node_text(node, ctx.src).to_string(), "SEL".to_string());
+    }
+    // Performability is a whole-program property, because a `SEL` is a
+    // value: there is no way to prove which selector reaches which
+    // `-performSelector:` call site, so if the program performs at all
+    // then every reflectively-named selector needs a wrapper of the
+    // uniform shape. One that cannot have a wrapper is refused here
+    // rather than given a null `perform` that would fail -- or worse,
+    // quietly answer nil -- at run time.
+    if ctx.program.uses_perform_selector {
+        if let Some(why) = unperformable_reason(ctx.program, &name) {
+            ctx.err(
+                node,
+                format!(
+                    "'@selector({})' cannot be performed: {}. This program uses '-performSelector:', and a SEL is a value, so every selector named by a '@selector(...)' has to be performable",
+                    name, why
+                ),
+            );
+            return (node_text(node, ctx.src).to_string(), "SEL".to_string());
+        }
+    }
+    (format!("(&oz_sel_{})", selector_to_c(&name)), "SEL".to_string())
+}
+
+/// Why `selector` cannot be given a uniform-shape `perform` wrapper, or
+/// `None` if it can.
+///
+/// The wrapper is `void *(*)(void *self, void *a0, void *a1)`, so the
+/// selector's own arguments have to survive being passed as `void *` and
+/// its result has to survive being handed back as one. Object and other
+/// pointer types do; an `int` does not, and neither does a struct by
+/// value. Real Objective-C's `-performSelector:` has the same restriction
+/// -- it is typed `id (*)(id, SEL, ...)` -- but answers a signature
+/// mismatch with garbage rather than a diagnostic.
+fn unperformable_reason(program: &Program, selector: &str) -> Option<String> {
+    let m = program.class_order.iter().find_map(|c| {
+        program.classes[c].methods.iter().find(|m| m.selector == selector && !m.is_class_method)
+    })?;
+    if m.params.len() > 2 {
+        return Some(format!(
+            "it takes {} arguments, and '-performSelector:' passes at most two",
+            m.params.len()
+        ));
+    }
+    for (pname, ptype) in &m.params {
+        let rendered = render_param(ptype, pname, program.root_class());
+        if !rendered.contains('*') {
+            return Some(format!(
+                "its '{}' argument is '{}', which is not an object type",
+                pname, ptype
+            ));
+        }
+    }
+    if m.return_type != "void" && !m.return_type.contains('*') && !m.returns_instancetype {
+        return Some(format!(
+            "it returns '{}', which is neither void nor an object type",
+            m.return_type
+        ));
+    }
+    None
+}
+
 /// `@protocol(Name)` -> the name of that protocol's generated conformance
 /// bitmap.
 ///
@@ -2601,6 +2703,15 @@ fn render_forin_statement(node: Node, ctx: &mut EmitCtx) -> (String, String) {
     )
 }
 
+/// The `-performSelector:` variants, in the order of the arguments they
+/// pass. Must agree with `collect::prescan_reflection`'s own list, which
+/// is what decides whether wrappers get generated at all.
+const PERFORM_SELECTORS: &[&str] = &[
+    "performSelector:",
+    "performSelector:withObject:",
+    "performSelector:withObject:withObject:",
+];
+
 fn render_message(node: Node, ctx: &mut EmitCtx) -> (String, String) {
     let parts = parse_message(node, ctx.src);
     let (recv_text, recv_type) = render_expr(parts.receiver, ctx);
@@ -2681,6 +2792,52 @@ fn render_message(node: Node, ctx: &mut EmitCtx) -> (String, String) {
         return (
             format!("oz_is_kind_of(oz_class_of({}), ({}))", recv_text, arg_texts[0]),
             "BOOL".to_string(),
+        );
+    }
+    // `-respondsToSelector:` and the `-performSelector:` family, behind
+    // `--reflection` (`CONFIG_OBJZ_REFLECTION`). The argument is an
+    // ordinary `SEL` expression -- a `@selector(...)` literal or anything
+    // holding one -- so there is nothing to restrict here: C's own type
+    // checking covers a non-SEL argument, which is the payoff for `SEL`
+    // being a real type rather than a compile-time-only spelling.
+    if parts.selector == "respondsToSelector:" && parts.args.len() == 1 {
+        if !ctx.program.reflection {
+            ctx.err(
+                node,
+                "'-respondsToSelector:' needs reflection, which is off -- set CONFIG_OBJZ_REFLECTION=y (oz2c --reflection)",
+            );
+            return (node_text(node, ctx.src).to_string(), "BOOL".to_string());
+        }
+        return (
+            format!("oz_responds({}, oz_class_of({}))", arg_texts[0], recv_text),
+            "BOOL".to_string(),
+        );
+    }
+    if PERFORM_SELECTORS.contains(&parts.selector.as_str())
+        && parts.args.len() == parts.selector.matches(':').count()
+    {
+        if !ctx.program.reflection {
+            ctx.err(
+                node,
+                format!(
+                    "'-{}' needs reflection, which is off -- set CONFIG_OBJZ_REFLECTION=y (oz2c --reflection)",
+                    parts.selector
+                ),
+            );
+            return (node_text(node, ctx.src).to_string(), "id".to_string());
+        }
+        // Absent arguments are nil, which is what Objective-C passes when
+        // a selector takes more than the `-performSelector:` variant
+        // supplies. The wrapper drops the ones its selector does not want.
+        let nil = "((void *)0)".to_string();
+        let a0 = arg_texts.get(1).cloned().unwrap_or_else(|| nil.clone());
+        let a1 = arg_texts.get(2).cloned().unwrap_or(nil);
+        return (
+            format!(
+                "oz_perform({}, (struct {} *)({}), (void *)({}), (void *)({}))",
+                arg_texts[0], root, recv_text, a0, a1
+            ),
+            "id".to_string(),
         );
     }
     if parts.selector == "conformsToProtocol:" && parts.args.len() == 1 {

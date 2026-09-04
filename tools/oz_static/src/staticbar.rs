@@ -13,13 +13,6 @@ use tree_sitter::Node;
 use crate::model::{ClassInfo, Diagnostic, Program};
 use crate::parse::line_col;
 
-const REFLECTION_SELECTORS: &[&str] = &[
-    "respondsToSelector:",
-    "performSelector:",
-    "performSelector:withObject:",
-    "performSelector:withObject:withObject:",
-];
-
 /// Selectors the emitter answers itself, at the call site, from facts the
 /// whole-program view already has -- so they never become C functions and
 /// can never be overridden.
@@ -33,8 +26,16 @@ const REFLECTION_SELECTORS: &[&str] = &[
 /// `render_prototype` skips them for the matching reason -- declaring a C
 /// function that is never defined invites a call that fails at link time,
 /// which is the shape of the `[X class]` defect in #226.
-pub const INTRINSIC_SELECTORS: &[&str] =
-    &["class", "isMemberOfClass:", "isKindOfClass:", "conformsToProtocol:"];
+pub const INTRINSIC_SELECTORS: &[&str] = &[
+    "class",
+    "isMemberOfClass:",
+    "isKindOfClass:",
+    "conformsToProtocol:",
+    "respondsToSelector:",
+    "performSelector:",
+    "performSelector:withObject:",
+    "performSelector:withObject:withObject:",
+];
 
 const LOOP_KINDS: &[&str] = &["for_statement", "while_statement", "do_statement"];
 
@@ -58,7 +59,7 @@ fn err(diags: &mut Vec<Diagnostic>, src: &str, node: Node, message: impl Into<St
     diags.push(Diagnostic::new(message, line, col));
 }
 
-fn message_selector(node: Node, src: &str) -> String {
+pub(crate) fn message_selector(node: Node, src: &str) -> String {
     // message_expression: [ receiver piece1 : arg1 piece2 : arg2 ... ]
     // Selector pieces are `identifier` children immediately followed by a
     // `:` sibling; the very first identifier is the receiver, so skip it.
@@ -252,17 +253,6 @@ fn walk_for_reject(
         }
         "message_expression" => {
             let selector = message_selector(node, src);
-            if REFLECTION_SELECTORS.contains(&selector.as_str()) {
-                err(
-                    diags,
-                    src,
-                    node,
-                    format!(
-                        "'{}' is reflection, which the static subset rejects (no runtime type/selector registry is generated)",
-                        selector
-                    ),
-                );
-            }
             if selector == "alloc"
                 && in_loop
                 && !fresh_decl
@@ -322,13 +312,17 @@ fn walk_for_reject(
         // match arm never fired for it; a dedicated `at_expression`
         // sub-case now gives `@protocol(...)` its own clear message
         // instead of relying on the generic boxed-literal one.
+        // `@selector(...)` resolves to that selector's generated record
+        // (`companion::render_reflection`), so unlike `@protocol(...)` it
+        // is a value with a type -- `SEL` -- and needs no position
+        // restriction: it can be stored in a local, held in an ivar or
+        // passed as an argument, and C's own type checking covers misuse.
+        // What it still cannot be is a selector nothing implements, or one
+        // whose signature has no uniform-shape wrapper in a program that
+        // performs; both are refused with a located message in
+        // `emit::render_selector_literal`, which is where the whole-
+        // program facts needed to tell are available.
         "selector_expression" => {
-            err(
-                diags,
-                src,
-                node,
-                "'selector_expression' is not in the static subset's accepted construct set",
-            );
             return;
         }
         // tree-sitter-objc 3.0.2 parses every `@`-prefixed boxed literal --

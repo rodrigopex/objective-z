@@ -831,6 +831,8 @@ pub fn collect(source: &str) -> (Program, Vec<crate::model::Diagnostic>) {
 
     reject_inline_anonymous_aggregates(root, source, &mut diagnostics);
 
+    let (reflected, performs, responds) = prescan_reflection(root, source);
+
     (
         Program {
             classes,
@@ -840,10 +842,105 @@ pub fn collect(source: &str) -> (Program, Vec<crate::model::Diagnostic>) {
             ast: None,
             heap_support: false,
             introspection: false,
+            reflection: false,
+            reflected_selectors: reflected,
+            uses_perform_selector: performs,
+            uses_responds_to_selector: responds,
             uses_synchronized: contains_kind(root, "synchronized_statement"),
         },
         diagnostics,
     )
+}
+
+/// The reflection facts the dispatch tables have to know before they are
+/// generated: which selectors a `@selector(...)` names, and whether the
+/// source performs or asks about responding.
+///
+/// A prescan rather than something `emit` accumulates, because
+/// `Program::is_dynamically_dispatched` consults it to decide which
+/// selectors get an `OZ_PROTOCOL_SEND_*` function -- a question already
+/// answered by the time `emit` runs. The introspection facts have no such
+/// ordering constraint and are tracked during emission instead (see
+/// `emit::IntrospectionUse`).
+///
+/// This reads the syntax, not the option: with `CONFIG_OBJZ_REFLECTION`
+/// off these constructs are refused, and refusing them is `emit`'s and the
+/// static bar's job, not this scan's.
+fn prescan_reflection(
+    root: Node,
+    source: &str,
+) -> (std::collections::BTreeSet<String>, bool, bool) {
+    const PERFORM_SELECTORS: &[&str] = &[
+        "performSelector:",
+        "performSelector:withObject:",
+        "performSelector:withObject:withObject:",
+    ];
+    let mut selectors = std::collections::BTreeSet::new();
+    let mut performs = false;
+    let mut responds = false;
+    let mut stack = vec![root];
+    while let Some(node) = stack.pop() {
+        match node.kind() {
+            "selector_expression" => {
+                if let Some(name) = selector_literal_name(node, source) {
+                    selectors.insert(name);
+                }
+            }
+            "message_expression" => {
+                let selector = crate::staticbar::message_selector(node, source);
+                if PERFORM_SELECTORS.contains(&selector.as_str()) {
+                    performs = true;
+                } else if selector == "respondsToSelector:" {
+                    responds = true;
+                }
+            }
+            _ => {}
+        }
+        let mut cursor = node.walk();
+        stack.extend(node.children(&mut cursor));
+    }
+    (selectors, performs, responds)
+}
+
+/// The selector `@selector(name)` names, as its Objective-C spelling
+/// (`setValue:` keeps its colon).
+///
+/// Read from the node's own text rather than from its children, because
+/// tree-sitter-objc 3.0.2 exposes no children at all inside a *keyword*
+/// selector: `@selector(poke)` yields an `identifier`, while
+/// `@selector(wrap:)` and `@selector(a:b:)` yield only the `@selector`,
+/// `(` and `)` tokens -- the name is simply absent from the tree. Walking
+/// children therefore found nothing for every selector that takes an
+/// argument, which is most of them. The node's text is unambiguous, so
+/// slicing between the parentheses is both simpler and complete.
+///
+/// Returns `None` for anything that is not a well-formed selector, so a
+/// malformed `@selector( )` is refused rather than mangled into a bogus C
+/// identifier.
+pub(crate) fn selector_literal_name(node: Node, src: &str) -> Option<String> {
+    let text = &src[node.start_byte()..node.end_byte()];
+    let open = text.find('(')?;
+    let close = text.rfind(')')?;
+    if close <= open {
+        return None;
+    }
+    let name = text[open + 1..close].trim();
+    if name.is_empty() {
+        return None;
+    }
+    // A selector is identifier pieces separated by colons. Nothing else
+    // belongs, and a stray character would otherwise reach
+    // `emit::selector_to_c` and come out as an identifier that no
+    // generated record matches.
+    let valid = name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == ':')
+        && !name.starts_with(':')
+        && !name.starts_with(|c: char| c.is_ascii_digit());
+    if !valid {
+        return None;
+    }
+    Some(name.to_string())
 }
 
 /// Is there a node of `kind` anywhere under `node`?

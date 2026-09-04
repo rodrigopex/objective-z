@@ -54,8 +54,17 @@ fn weak_ivar_rejected() {
     assert!(diags.contains("unsafe_unretained"), "diagnostics: {}", diags);
 }
 
+/// Reflection and introspection are supported since #226, each behind its
+/// own Kconfig option, so these two no longer assert that the construct
+/// has no lowering -- they assert the *option being off* is what refuses
+/// it, and that the refusal names the option so the message is actionable.
+///
+/// Both are kept here rather than folded into `tests/reflection.rs` and
+/// `tests/introspection.rs` because this file's subject is the bar's
+/// reach: the diagnostic has to come from inside an `@implementation`
+/// method body, which is the path these exercise.
 #[test]
-fn reflection_selector_rejected() {
+fn reflection_selector_rejected_when_the_option_is_off() {
     let src = format!(
         "{}\n@interface Foo : OZObject\n- (void)test;\n@end\n@implementation Foo\n\
          - (void)test {{\n    if ([self respondsToSelector:0]) {{\n    }}\n}}\n@end\n",
@@ -63,11 +72,11 @@ fn reflection_selector_rejected() {
     );
     let diags = expect_reject(&src);
     assert!(diags.contains("respondsToSelector:"), "diagnostics: {}", diags);
-    assert!(diags.contains("reflection"), "diagnostics: {}", diags);
+    assert!(diags.contains("CONFIG_OBJZ_REFLECTION"), "diagnostics: {}", diags);
 }
 
 #[test]
-fn is_kind_of_class_rejected() {
+fn is_kind_of_class_rejected_when_the_option_is_off() {
     let src = format!(
         "{}\n@interface Foo : OZObject\n- (void)test;\n@end\n@implementation Foo\n\
          - (void)test {{\n    if ([self isKindOfClass:0]) {{\n    }}\n}}\n@end\n",
@@ -75,6 +84,7 @@ fn is_kind_of_class_rejected() {
     );
     let diags = expect_reject(&src);
     assert!(diags.contains("isKindOfClass:"), "diagnostics: {}", diags);
+    assert!(diags.contains("CONFIG_OBJZ_INTROSPECTION"), "diagnostics: {}", diags);
 }
 
 #[test]
@@ -194,17 +204,20 @@ fn protocol_conformance_satisfied_accepted() {
 }
 
 #[test]
-fn selector_expression_rejected() {
+fn selector_expression_rejected_when_the_option_is_off() {
     // '@selector(...)' is a real `selector_expression` node kind in
-    // tree-sitter-objc 3.0.2 (confirmed against its node-types.json) --
-    // rejected directly via that node kind.
+    // tree-sitter-objc 3.0.2 (confirmed against its node-types.json).
+    // Since #226 that node is accepted and resolved to the selector's
+    // generated record, so what is asserted here is the option-off
+    // refusal reaching a method body -- see
+    // `tests/reflection.rs` for the supported behaviour.
     let src = format!(
         "{}\n@interface Foo : OZObject\n- (void)run;\n@end\n@implementation Foo\n\
          - (void)run {{\n\tSEL s = @selector(run);\n}}\n@end\n",
         PREAMBLE()
     );
     let diags = expect_reject(&src);
-    assert!(diags.contains("selector_expression"), "diagnostics: {}", diags);
+    assert!(diags.contains("CONFIG_OBJZ_REFLECTION"), "diagnostics: {}", diags);
 }
 
 #[test]

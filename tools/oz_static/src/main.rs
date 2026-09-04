@@ -31,6 +31,7 @@ fn main() -> ExitCode {
     let mut ast_paths: Vec<PathBuf> = Vec::new();
     let mut heap_support = false;
     let mut introspection = false;
+    let mut reflection = false;
     let mut item_pool_size: Option<usize> = None;
     let mut positional: Vec<String> = Vec::new();
 
@@ -74,6 +75,17 @@ fn main() -> ExitCode {
             // unaffected: it costs no table.
             "--introspection" => {
                 introspection = true;
+                i += 1;
+            }
+            // `CONFIG_OBJZ_REFLECTION`. Enables `@selector`, `SEL`,
+            // `-respondsToSelector:` and the `-performSelector:` family.
+            // Costs more than introspection when used: a const record per
+            // reflectively-named selector, a uniform-shape wrapper for
+            // each, and an `OZ_PROTOCOL_SEND_*` forced into existence for
+            // any that had only one implementor. All of it flash, none of
+            // it emitted for a selector no `@selector(...)` names.
+            "--reflection" => {
+                reflection = true;
                 i += 1;
             }
             // Clang resolves types; tree-sitter does not. Supplying the AST
@@ -218,6 +230,7 @@ fn main() -> ExitCode {
             ast_json,
             heap_support,
             introspection,
+            reflection,
             item_pool_size,
             header_ranges: resolved.header_ranges.clone(),
         },

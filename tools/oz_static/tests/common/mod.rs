@@ -100,6 +100,31 @@ pub fn compile_and_run_with_introspection(source: &str, stem: &str) -> String {
     )
 }
 
+/// `compile_and_run` with `--reflection`, i.e. what
+/// `CONFIG_OBJZ_REFLECTION`'s own default (`y`) produces.
+pub fn compile_and_run_with_reflection(source: &str, stem: &str) -> String {
+    compile_and_run_inner(
+        source,
+        stem,
+        &[],
+        &oz_static::Options { reflection: true, ..Default::default() },
+    )
+}
+
+/// Transpile `source` with `--reflection`, expecting rejection.
+///
+/// Distinct from `expect_reject` for the same reason as its introspection
+/// sibling: with the option off every selector construct is refused by the
+/// option, so an assertion about *why* something else was refused would
+/// pass for the wrong reason.
+pub fn expect_reject_with_reflection(source: &str) -> String {
+    let options = oz_static::Options { reflection: true, ..Default::default() };
+    match oz_static::transpile_with_options(source, &options) {
+        Ok(_) => panic!("expected transpile to be rejected by the static bar, but it succeeded"),
+        Err(diags) => diags.iter().map(|d| d.to_string()).collect::<Vec<_>>().join("\n"),
+    }
+}
+
 /// Transpile `source` with `--introspection`, expecting rejection.
 /// Returns the joined diagnostics.
 ///
