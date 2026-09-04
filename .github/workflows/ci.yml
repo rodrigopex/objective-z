@@ -140,6 +140,7 @@ jobs:
         run: >
           PYTHONPATH=tools
           python3 -m pytest tests/behavior/ -v
+          --backend=static
           --compiler=${{ matrix.compiler }}
           --opt=${{ matrix.opt }}
 
@@ -163,6 +164,7 @@ jobs:
         run: >
           PYTHONPATH=tools
           python3 -m pytest tests/behavior/ -v
+          --backend=static
           --compiler=gcc
           --opt=O0
           --sanitize=address,undefined
@@ -192,6 +194,7 @@ jobs:
         run: >
           PYTHONPATH=tools
           python3 -m pytest tests/behavior/ -v
+          --backend=static
           --compiler=gcc
           --opt=O0
           --cflags=--coverage
@@ -224,7 +227,7 @@ jobs:
         run: pip install pytest jinja2 tree-sitter tree-sitter-objc
 
       - name: Run adapted upstream tests
-        run: PYTHONPATH=tools python3 -m pytest tests/adapted/ -v
+        run: PYTHONPATH=tools python3 -m pytest tests/adapted/ -v --backend=static
 
   # PAL (Platform Abstraction Layer) tests
   pal-tests:
@@ -262,6 +265,7 @@ jobs:
         run: >
           PYTHONPATH=tools
           python3 -m pytest tests/behavior/ -v
+          --backend=static
           --compiler=gcc
           --opt=O0
           --check-leaks
