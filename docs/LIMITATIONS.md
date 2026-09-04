@@ -1,8 +1,23 @@
 # Objective-Z Transpiler Limitations
 
-The OZ transpiler (`oz_transpile`) converts Objective-C `.m` files to plain C via
-Clang JSON AST. The following limitations apply to source files targeting the
-transpiler pipeline.
+> **This document describes the retired Python pipeline and has not been
+> audited against `oz2c`.** It was last substantively updated before the Rust
+> backend existed, and at least two of its claims are already known false for
+> the current transpiler: enums declared in `.h` files *are* collected (see
+> PARITY.md gap C, and the passing corpus case `enum/enum_from_header`), and
+> file-scope object variables *are* type-tracked whether or not they are
+> `static` (gap D). Treat every entry below as unverified.
+>
+> For what `oz2c` actually rejects, the authoritative sources are
+> `tools/oz_static/src/staticbar.rs` — which fails with a located error rather
+> than degrading — `tools/oz_static/PARITY.md`, and issue #226 for reflection
+> and `@selector`. The Python pipeline itself is readable at the
+> `python-backend-final` tag.
+
+The following limitations were written for a pipeline that converted `.m`
+files to C via a Clang JSON AST. `oz2c` parses source with tree-sitter and
+reads a Clang AST only as an optional ownership oracle, so even the mechanism
+these entries assume no longer holds.
 
 ## Blocks
 

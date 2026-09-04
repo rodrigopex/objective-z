@@ -8,7 +8,7 @@
  * @brief Transpiled generics demo for Objective-Z.
  *
  * Demonstrates typed collections, subscript access, for-in loops,
- * blocks, and covariance — all transpiled to pure C via oz_transpile.
+ * blocks, and covariance — all transpiled to pure C via oz2c.
  */
 #import <Foundation/Foundation.h>
 #include <zephyr/kernel.h>

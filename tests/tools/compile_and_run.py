@@ -153,42 +153,29 @@ def _run_pipeline_inner(m_path: Path, test_file: Path, tmpdir: Path,
 
     ast_json.write_text(result.stdout)
 
-    # Step 2: Transpile -- the one step that differs between backends.
+    # Step 2: Transpile. This was the one step that differed between the two
+    # backends, which is why a single switch here handed the whole harness --
+    # compiler, -O level, sanitizers, leak detection, gcov -- to either one.
+    # The Python pipeline is retired, so there is one arm; the shape is kept
+    # because everything around it is still backend-agnostic and a future
+    # second producer would slot in here and nowhere else.
     #
-    # Everything around it is backend-agnostic, which is why one switch here
-    # gives the whole harness (compiler, -O level, sanitizers, leak
-    # detection, gcov) to either backend rather than needing a second
-    # harness. `oz_static` reuses the AST dump step 1 already made, so both
-    # backends reason about the identical translation unit by construction.
+    # oz2c reads the AST dump step 1 already made rather than making its own,
+    # so the dump and the transpile cannot disagree about flags.
     pool_sizes = _parse_pool_sizes(m_path) or _default_pool_sizes(m_path)
     heap_support = _needs_heap_support(m_path)
 
-    if backend == "static":
-        err = oz_static_build.transpile(m_path, tmpdir, pool_sizes,
-                                        heap_support, ast_json)
-        if err is not None:
-            return subprocess.CompletedProcess(
-                args=["oz2c", str(m_path)], returncode=1,
-                stdout="", stderr=f"Transpile failed:\n{err}")
-    else:
-        transpile_cmd = [
-            sys.executable, "-m", "oz_transpile",
-            "--input", str(ast_json),
-            "--outdir", str(tmpdir)]
-        if pool_sizes:
-            transpile_cmd.extend(["--pool-sizes", pool_sizes])
-        if heap_support:
-            transpile_cmd.append("--heap-support")
-
-        result = subprocess.run(
-            transpile_cmd,
-            capture_output=True, text=True,
-            env={**os.environ, "PYTHONPATH": str(REPO_ROOT / "tools")})
-        if result.returncode != 0:
-            return subprocess.CompletedProcess(
-                args=result.args, returncode=1,
-                stdout=result.stdout,
-                stderr=f"Transpile failed:\n{result.stderr}")
+    if backend != "static":
+        return subprocess.CompletedProcess(
+            args=["oz2c", str(m_path)], returncode=1, stdout="",
+            stderr=f"unknown backend {backend!r}: the Python pipeline was "
+                   f"retired (see the `python-backend-final` tag)")
+    err = oz_static_build.transpile(m_path, tmpdir, pool_sizes,
+                                    heap_support, ast_json)
+    if err is not None:
+        return subprocess.CompletedProcess(
+            args=["oz2c", str(m_path)], returncode=1,
+            stdout="", stderr=f"Transpile failed:\n{err}")
 
     # Step 3: Generate test_main.c
     test_main = tmpdir / "test_main.c"
@@ -254,8 +241,8 @@ def _run_pipeline_inner(m_path: Path, test_file: Path, tmpdir: Path,
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description="Behavior test: transpile → compile → run")
     p.add_argument("m_file", help="Path to the .m test file")
-    p.add_argument("--backend", default="static", choices=["static", "python"],
-                   help="transpiler backend (default: static / oz2c)")
+    p.add_argument("--backend", default="static", choices=["static"],
+                   help="transpiler backend (only 'static' / oz2c)")
     p.add_argument("--opt", default="O0", choices=["O0", "O2"],
                    help="Optimization level (default: O0)")
     p.add_argument("--compiler", default="gcc", choices=["gcc", "clang"],

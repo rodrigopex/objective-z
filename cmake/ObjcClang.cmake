@@ -244,7 +244,7 @@ endfunction()
 
 # ─── Build Clang flags from zephyr_interface ─────────────────────────
 #
-# Used by oz_transpile.cmake for clangd compile_commands.json generation.
+# Used by oz_static.cmake for clangd compile_commands.json generation.
 #
 function(_objz_build_clang_flags result_var)
     set(_flags "")

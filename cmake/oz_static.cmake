@@ -1,7 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
 #
-# oz_static.cmake — Transpile Objective-C (.m) to plain C via the OZ-091
-# Rust spike (`oz2c`) instead of the Python AST-based pipeline.
+# oz_static.cmake — Transpile Objective-C (.m) to plain C via `oz2c`.
+#
+# The entry point every consumer calls is `objz_transpile_sources()`, defined
+# at the bottom of this file. It used to live in `oz_transpile.cmake` and
+# dispatch on CONFIG_OBJZ_BACKEND between two backends; with the Python one
+# retired there is nothing to dispatch on, so that file is gone and this one
+# is included directly from the module's CMakeLists.txt. The public name is
+# unchanged because 13 samples, px-app and any out-of-tree user call it.
 #
 # Supported: any number of entry `.m` files (all merged into one
 # translation unit, with further `.m`s pulled in automatically via
@@ -17,6 +23,11 @@
 #
 
 include_guard(GLOBAL)
+
+# objz_find_clang() and _objz_build_ast_flags(), for the AST dumps oz2c reads
+# as an ownership oracle. `oz_transpile.cmake` used to include this before
+# handing over; now that it is gone, this file needs it itself.
+include(${ZEPHYR_OBJZ_MODULE_DIR}/cmake/ObjcClang.cmake)
 
 # ─── Public API ───────────────────────────────────────────────────────
 #
@@ -385,4 +396,16 @@ function(objz_transpile_sources_static target)
     target_sources(${target} PRIVATE ${_mod}/src/OZLog.c)
 
     set_target_properties(${target} PROPERTIES LINKER_LANGUAGE C)
+endfunction()
+
+
+# ─── Public entry point ───────────────────────────────────────────────
+#
+# `objz_transpile_sources()` is what samples, px-app and out-of-tree users
+# call. It was a dispatcher over CONFIG_OBJZ_BACKEND until the Python
+# pipeline was retired; there is one backend now, so it forwards. Kept as a
+# separate name rather than renaming the implementation so that every
+# existing call site keeps working.
+function(objz_transpile_sources target)
+    objz_transpile_sources_static(${target} ${ARGN})
 endfunction()

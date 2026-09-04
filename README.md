@@ -239,25 +239,31 @@ The transpiler converts this to plain C: `MyFirstObject_greet(self)` for instanc
 ```mermaid
 graph LR
     A[".m sources"] --> B["Clang JSON AST"]
-    B --> C["oz_transpile (Python)"]
+    B --> C["oz2c (Rust)"]
     C --> D[".h + .c"]
     D --> E["GCC"]
     E --> F["binary"]
 
-    subgraph "Three-pass transpiler"
-        C1["collect"] --> C2["resolve"] --> C3["emit"]
+    subgraph "oz_static"
+        C1["collect"] --> C2["emit"]
     end
     C --- C1
-    C3 --- D
+    C2 --- D
 ```
 
 ### Transpiler Pipeline
 
-Three-pass architecture in `tools/oz_transpile/`:
+`tools/oz_static/` (the `oz2c` binary, Rust):
 
-1. **Collect** (`collect.py`) — Walks Clang JSON AST nodes, builds `OZModule` with classes, methods, ivars, protocols, categories
-2. **Resolve** (`resolve.py`) — Validates hierarchy, assigns topological class IDs, computes `base_depth`, classifies dispatch (STATIC vs PROTOCOL)
-3. **Emit** (`emit.py`) — Generates per-class `.h`/`.c` files + `oz_dispatch.h`/`.c` (`const` vtable arrays, compile-time dispatch macros, slab definitions)
+1. **Collect** (`collect.rs`) — tree-sitter CST to a `Program`: classes, ivars, methods, types, protocols
+2. **Emit** (`emit.rs`) — in-place substitution producing C, one `.h`/`.c` pair per origin file plus a shared companion. The source text is patched rather than regenerated from a tree, which is why unexpanded macros survive into the output
+3. Supporting passes: `arc.rs` (scope-based ARC), `pools.rs` (slab sizing from allocation sites), `staticbar.rs` (accept/reject for the static subset — a hard, located error rather than a degraded output), `imports.rs`, `generics.rs`
+
+A Clang JSON AST can be supplied with `--ast` as an *optional* oracle for ivar
+ownership and method definedness; tree-sitter is the primary frontend. There
+was a second, Python implementation reading a Clang AST directly
+(`tools/oz_transpile/`, three passes); it is retired and readable at the
+`python-backend-final` tag.
 
 ### Platform Abstraction Layer
 
@@ -441,9 +447,9 @@ Requires [just](https://github.com/casey/just). Default board: `mps2/an385`.
 | `just test-smp`        | Two cores (`qemu_cortex_a53/smp`)      |
 | `just test-boards`     | ARM and RISC-V                         |
 | `just test-all-boards` | All three boards, including SMP        |
-| `just test-transpiler` | Run transpiler pytest suite            |
-| `just test-behavior`   | Run compiled behavior tests            |
-| `just test-adapted`    | Run adapted upstream tests             |
+| `just test-behavior`   | 71-case behavior corpus through `oz2c` |
+| `just test-adapted`    | 40 adapted upstream tests              |
+| `just smoke`           | Transpile-and-compile smoke test       |
 | `just smoke`           | Run host-side PAL smoke test           |
 | `just bench`           | Run ObjC benchmark (build + flash)     |
 | `just bench-cpp`       | Run C++ comparison benchmark           |

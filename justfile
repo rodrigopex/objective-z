@@ -151,12 +151,6 @@ bench-all:
 ast-dump file *includes:
     clang -Xclang -ast-dump=json -fsyntax-only {{includes}} {{file}} 2>/dev/null
 
-transpile *args:
-    PYTHONPATH=tools python3 -m oz_transpile {{args}}
-
-test-transpiler:
-    python3 -m pytest tools/oz_transpile/tests/ -v
-
 # The 71-case behavior corpus through oz_static, the default backend. This
 # harness carries the compiler/-O matrix, the sanitizers, leak detection and
 # gcov, so it is where those reach the *generated* C -- `cargo test`'s
@@ -170,36 +164,17 @@ test-behavior *args:
 test-adapted *args:
     python3 -m pytest tests/adapted/ -v {{args}}
 
-# The same two corpora through the outgoing Python pipeline. Kept only while
-# that backend exists: it is what makes the migration checkable against the
-# thing it replaced, rather than replacing its own oracle.
-#
-# The behavior corpus through the outgoing Python pipeline.
-test-behavior-python:
-    python3 -m pytest tests/behavior/ -v --backend=python
-
-test-adapted-python:
-    python3 -m pytest tests/adapted/ -v --backend=python
 
 test-pal:
     python3 -m pytest tests/pal/ -v
 
-# Run the behavior corpus through BOTH backends and diff the Unity results.
-# Proves the two agree on what the code *does*, not just that both compile.
-# Set OZ_CLANG to the Zephyr SDK's clang (see CLAUDE.md) for the version the
-# project is tested against; otherwise whatever clang is on PATH is used.
-test-cross-backend *args:
-    cargo build --manifest-path tools/oz_static/Cargo.toml
-    python3 tests/tools/cross_backend.py --all {{args}}
 
-test-all-transpiler:
-    just test-transpiler
-    just test-behavior
-    just test-adapted
-    just test-pal
-
+# Everything that runs on the host: both corpora through oz2c, the PAL's own
+# C tests, and the transpile-and-compile smoke test. `test-all-transpiler` is
+# gone with the Python backend -- it existed to run that pipeline's own unit
+# suite alongside the corpora, and there is no second implementation to have
+# a suite of its own now.
 test-all:
-    just test-transpiler
     just test-behavior
     just test-adapted
     just test-pal
@@ -216,6 +191,3 @@ test-regression:
 
 smoke:
     python3 tests/smoke/run.py
-
-update-golden:
-    PYTHONPATH=tools python3 tools/oz_transpile/tests/golden/update.py

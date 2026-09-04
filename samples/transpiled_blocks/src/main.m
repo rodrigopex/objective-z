@@ -2,7 +2,7 @@
  * Copyright (c) 2025 Rodrigo Peixoto <rodrigopex@gmail.com>
  * SPDX-License-Identifier: Apache-2.0
  *
- * Blocks demo — transpiled to pure C via oz_transpile.
+ * Blocks demo — transpiled to pure C via oz2c.
  * __block variables become file-scope statics.
  * for-in replaced by index-based for loops.
  */
