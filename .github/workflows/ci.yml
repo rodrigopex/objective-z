@@ -506,11 +506,12 @@ jobs:
 
   # Zephyr integration tests (native_sim)
   #
-  # Note what this does and does not prove: tests/zephyr/CMakeLists.txt
-  # globs the *pre-generated* C committed under tests/zephyr/generated/,
-  # so a green run says that committed C runs on Zephyr and nothing about
-  # oz_static. `generated-freshness` below is what ties those files back
-  # to the transpiler.
+  # What this proves changed with the port to oz2c: the C committed under
+  # tests/zephyr/generated/ is oz_static's output now, not the Python
+  # pipeline's, so a green run finally says something about the default
+  # backend running on Zephyr. It says it about *committed* C --
+  # CMakeLists.txt globs the directory rather than transpiling -- which is
+  # what `generated-freshness` below exists to tie back to the transpiler.
   zephyr-integration:
     runs-on: ubuntu-latest
     steps:
@@ -567,15 +568,27 @@ jobs:
       - name: Install Python dependencies
         run: pip install jinja2 tree-sitter tree-sitter-objc
 
-      - name: Regenerate Zephyr test sources
-        run: PYTHONPATH=tools python scripts/regen_zephyr_tests.py
+      # The regen script drives oz2c now, so this job needs the binary --
+      # the same dependency the corpus jobs gained, and the same way it
+      # fails without one: "oz2c not built".
+      - name: Build oz2c
+        run: cargo build --manifest-path tools/oz_static/Cargo.toml
 
+      - name: Regenerate Zephyr test sources
+        run: python scripts/regen_zephyr_tests.py
+
+      # `git status --porcelain`, not `git diff`: diff sees modifications to
+      # tracked files and is blind to *new* ones, so a change that made the
+      # transpiler emit an extra file would have passed this check. The port
+      # to oz2c added 34 files, which is how the hole came to light.
       - name: Check for uncommitted changes
         run: |
-          if ! git diff --quiet tests/zephyr/generated/; then
+          if [ -n "$(git status --porcelain tests/zephyr/generated/)" ]; then
             echo "FAIL: Transpiled test sources are stale. Run:"
-            echo "  PYTHONPATH=tools python scripts/regen_zephyr_tests.py"
+            echo "  cargo build --manifest-path tools/oz_static/Cargo.toml"
+            echo "  python scripts/regen_zephyr_tests.py"
             echo "and commit the updated files."
+            git status --porcelain tests/zephyr/generated/
             git diff tests/zephyr/generated/
             exit 1
           fi
