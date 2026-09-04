@@ -766,7 +766,7 @@ pub fn render(
     // only four lines in, and the build fails with `unknown type name
     // 'Class'`. They depend on nothing but `bool`, so hoisting them above
     // every include is both safe and sufficient.
-    h.push_str("#include <stdbool.h>\n\n");
+    h.push_str("#include <stdbool.h>\n#include <stdint.h>\n\n");
     // `id`/`Class`/`BOOL` are real Objective-C built-in types with no
     // plain-C equivalent, so left undefined they'd be invalid C tokens
     // wherever this spike can't translate them (ivar declarations, the
@@ -775,17 +775,52 @@ pub fn render(
     // separately resolves a method's own `id` parameter/return type to
     // `void *`, but that doesn't reach those other spots. Defining all
     // three here, included by both the primary source and this companion,
-    // covers every spot at once. `Class` has no runtime representation in
-    // this design either (no class-object introspection) -- `void *` is
-    // just a placeholder so a declared-but-uncalled `+ (Class)class`-style
-    // method still compiles.
-    h.push_str("typedef void *id;\ntypedef void *Class;\ntypedef bool BOOL;\n\n");
+    // covers every spot at once.
+    //
+    // `Class` is the `class_id` every object already carries in its
+    // `_meta` bitfield (`include/platform/oz_platform_types.h`), not a
+    // pointer to a class object: the whole class set is known at
+    // transpile time, so `[Foo class]` is the constant
+    // `OZ_STATIC_CLASS_Foo` and `[obj class]` is a bitfield read. That
+    // makes a `Class` a real value -- storable, comparable, passable --
+    // for no flash and no RAM at all, where a class-object pointer would
+    // need a `const` record per class. It used to be `void *`, purely as
+    // a placeholder on the assumption that `+ (Class)class` was declared
+    // but never called; calling it in fact emitted
+    // `OZObject_class_cls()`, which drops the receiver class and is
+    // defined nowhere, so it failed at *link* time with an undefined
+    // symbol (#226).
+    //
+    // `class_id` is a 10-bit field, so 0xFFFF can never be a real class
+    // and serves as `Nil`. Every reflection helper returns or rejects it
+    // rather than dereferencing a null receiver, which is what makes
+    // `[nil isKindOfClass:...]` answer NO the way Objective-C does.
+    h.push_str(
+        "typedef void *id;\ntypedef uint16_t Class;\ntypedef bool BOOL;\n\n\
+/* no class; `class_id` is 10 bits wide, so this can never collide */\n\
+#define Nil ((Class)0xFFFF)\n\n",
+    );
     // Replaced, once the whole header is built, by a forward declaration
     // for every struct tag it mentions but never declares -- see
     // `forward_declare_unknown_struct_tags`.
     h.push_str(FORWARD_DECL_MARKER);
 
     h.push_str("#include \"platform/oz_platform.h\"\n#include <stdlib.h>\n#include <string.h>\n\n");
+    // After the PAL include, which is what declares `struct oz_metadata`.
+    // Reads the class id through the *metadata* type rather than through
+    // the root class's struct, so it needs no class declared yet: `_meta`
+    // is the first member of the root struct and every object is a root-
+    // struct prefix, so a pointer to any object, suitably converted,
+    // points to its initial member (C11 6.7.2.1p15). Left inline because
+    // it is one bitfield read -- the helpers that walk a table are
+    // emitted out of line instead (see `render_introspection`).
+    h.push_str(
+        "/* the receiver's class, or Nil for a null receiver */\n\
+static inline Class oz_class_of(const void *obj)\n\
+{\n\
+\treturn obj ? (Class)((const struct oz_metadata *)obj)->class_id : Nil;\n\
+}\n\n",
+    );
     // Ahead of every prototype below, because a prototype may name a type
     // only one of these headers declares -- see
     // `imports::collect_system_includes` for the whole reasoning and for
