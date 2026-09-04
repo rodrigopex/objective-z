@@ -6,9 +6,12 @@
  * Every other sample either has no threads or gives each thread its own
  * objects, so `@synchronized` and the refcount atomics have never faced
  * actual contention -- only the code paths that implement them. On
- * mps2/an385 and qemu_riscv32 `struct k_spinlock` has no members at all
- * (CONFIG_SMP and CONFIG_SPIN_VALIDATE are both off), so even the lock's
- * own state was unexercised.
+ * mps2/an385 and qemu_riscv32 `struct k_spinlock` has no members at all in
+ * the configuration those samples ship (CONFIG_SMP off, and
+ * CONFIG_SPIN_VALIDATE off because it sits behind CONFIG_ASSERT), so even
+ * the lock's own state was unexercised. `just test-spin-validate` turns the
+ * validator on and populates that struct on both boards (#278); the default
+ * builds are still the empty-struct shape.
  *
  * This sample runs `main` and one worker thread on separate cores, both
  * hammering the *same* Counter:
@@ -109,10 +112,17 @@ void printk(const char *fmt, ...);
 }
 
 /* Re-entrant on purpose. A spinlock cannot be re-locked, so this is the
- * shape that would hang if the owner check were wrong -- and it can only be
- * proved here, on two cores with a real spinlock. On host the PAL's
+ * shape that would hang if the owner check were wrong. On host the PAL's
  * oz_spin_lock is a no-op, so a deadlock is unobservable there, which is
- * exactly how the hazard stayed theoretical. */
+ * exactly how the hazard stayed theoretical -- for a while this sample was
+ * the only place it could be falsified at all.
+ *
+ * It is now checked rather than merely survived: under
+ * `just test-spin-validate` a second acquire fails Zephyr's own
+ * z_spin_lock_valid() with `Invalid spinlock`, so the guard is confirmed by
+ * a control that fails without it rather than by the run completing (#278).
+ * samples/pool_demo carries the same shape across a method boundary, which
+ * is what gets it checked on a single core too. */
 - (void)bumpNested
 {
 	@synchronized(self) {

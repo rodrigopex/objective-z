@@ -99,8 +99,10 @@ typedef k_spinlock_key_t oz_spinlock_key_t;
  * CONFIG_SPIN_VALIDATE is on, so `= {0}` is "excess elements in struct
  * initializer" -- an error under Zephyr's -Werror, which is how
  * samples/pool_demo failed under twister while an ordinary west build of it
- * passed. memset covers both shapes: nothing to do when the struct is
- * empty, a proper zero of `locked`/`owner`/`tail` when SMP makes it real.
+ * passed. memset covers every shape of it: nothing to do when the struct is
+ * empty, a proper zero of `locked`/`owner`/`tail` when SMP makes it real,
+ * and of `thread_cpu` when CONFIG_SPIN_VALIDATE does -- which
+ * `just test-spin-validate` turns on, on both boards (#278).
  */
 static inline void oz_spin_init(oz_spinlock_t *lck)
 {
@@ -123,9 +125,10 @@ static inline void oz_spin_unlock(oz_spinlock_t *lck, oz_spinlock_key_t key)
  * `oz_spinlock_key_t` is `k_spinlock_key_t` here, which is a *struct*, so
  * `oz_spinlock_key_t k = 0;` is "invalid initializer" -- the same trap as
  * `oz_spinlock_t lock = {0}`, which fails because `struct k_spinlock` has no
- * members unless CONFIG_SMP is on. Generated code needs a key declared
- * outside the branch that acquires the lock (a re-entrant `@synchronized`
- * skips the acquire), so it needs a portable way to spell "no key yet".
+ * members unless CONFIG_SMP or CONFIG_SPIN_VALIDATE is on. Generated code
+ * needs a key declared outside the branch that acquires the lock (a
+ * re-entrant `@synchronized` skips the acquire), so it needs a portable way
+ * to spell "no key yet".
  */
 static inline oz_spinlock_key_t oz_spin_key_none(void)
 {

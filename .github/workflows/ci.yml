@@ -392,6 +392,74 @@ jobs:
           OZ_CLANG=$ZEPHYR_SDK_INSTALL_DIR/llvm/bin/clang
           python3 scripts/objz_pedantic_sweep.py --board mps2/an385
 
+  # Zephyr's own spinlock validation, against generated C (#278).
+  #
+  # CONFIG_SPIN_VALIDATE had never been enabled on any board, so every
+  # green `@synchronized` result to date came from a configuration where
+  # the kernel's lock-misuse assertions are compiled out. It is not
+  # reachable by accident: it sits inside `if ASSERT` in Zephyr's
+  # subsys/debug/Kconfig and no sample enables asserts, so
+  # samples/overlay-spin-validate.conf turns both on.
+  #
+  # It builds *and runs*, unlike hw-build-check: an __ASSERT failure is a
+  # runtime fatal error, so a compile-only job cannot see one at all. The
+  # SDK's host tools (-h) ship qemu-system-arm, so twister can execute.
+  #
+  # ARM only. The two-core leg needs aarch64-zephyr-elf, which
+  # install-zephyr-sdk.sh does not install, and stays `just
+  # test-spin-validate` locally. What that costs is small but real, and
+  # is the reason samples/pool_demo now nests `@synchronized` across a
+  # method boundary: without it no ARM-eligible sample re-enters a lock,
+  # and this job would pass with the oz_sync_owner guard removed. With
+  # it, disabling that guard fails here too -- checked, not assumed.
+  spin-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build gperf device-tree-compiler gcc-multilib g++-multilib
+
+      - name: Install west
+        run: pip install west
+
+      - name: Cache Zephyr SDK
+        uses: actions/cache@v4
+        with:
+          path: /home/runner/zephyr-sdk-1.0.1
+          key: zephyr-sdk-1.0.1-arm-riscv-llvm
+
+      - name: Install Zephyr SDK (with LLVM)
+        run: .github/install-zephyr-sdk.sh
+
+      - name: Initialize workspace
+        run: |
+          west init -l .
+          west update --fetch-opt=--depth=1
+
+      - name: Install Zephyr deps
+        run: |
+          pip install -r ../zephyr/scripts/requirements-base.txt \
+                      -r ../zephyr/scripts/requirements-build-test.txt \
+                      natsort tabulate
+          pip install jinja2 tree-sitter tree-sitter-objc
+
+      # OZ_CLANG so the AST dumps use the SDK's tested clang 19 rather
+      # than whatever is on PATH -- the substitution #269 found running
+      # unnoticed for the life of this workflow.
+      - name: Samples under CONFIG_SPIN_VALIDATE (mps2/an385)
+        run: >
+          PYTHONPATH=tools
+          OZ_CLANG=$ZEPHYR_SDK_INSTALL_DIR/llvm/bin/clang
+          west twister -T samples/ -p mps2/an385 --inline-logs
+          -x=EXTRA_CONF_FILE=$GITHUB_WORKSPACE/samples/overlay-spin-validate.conf
+
   # Zephyr integration tests (native_sim)
   #
   # Note what this does and does not prove: tests/zephyr/CMakeLists.txt
