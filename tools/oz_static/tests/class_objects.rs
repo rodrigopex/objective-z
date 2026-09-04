@@ -135,13 +135,20 @@ int main(void) {
     assert_eq!(out, "ww=1 gw=0 gg=1\n", "unexpected: {}", out);
 }
 
-/// A message to nil answers the way Objective-C does -- `Nil` and `NO` --
-/// rather than dereferencing a null receiver.
+/// A message to nil answers the way Objective-C does -- no class, and NO
+/// -- rather than dereferencing a null receiver.
 ///
 /// `oz_class_of` carries the guard, so every construct built on it
-/// inherits the behaviour instead of each needing its own check. `Nil` is
-/// 0xFFFF, which a 10-bit `class_id` can never hold, so it collides with
-/// no real class.
+/// inherits the behaviour instead of each needing its own check. The
+/// sentinel it returns is 0xFFFF, which a 10-bit `class_id` can never
+/// hold, so it collides with no real class.
+///
+/// Asserted through its consequence rather than by naming `Nil`, which
+/// deliberately has no Objective-C spelling: `Class` is a pointer to
+/// Clang, which rejects the cast under ARC, so a test written against
+/// `[w class] == Nil` would pass here -- this harness runs oz_static
+/// alone -- while the same source failed the real build's AST dump. See
+/// the comment in `include/oz_sdk/Foundation/OZObject.h`.
 #[test]
 fn a_nil_receiver_has_no_class_and_is_a_member_of_nothing() {
     let src = format!(
@@ -152,13 +159,15 @@ fn a_nil_receiver_has_no_class_and_is_a_member_of_nothing() {
 #include <stdio.h>
 int main(void) {
 	Widget *w = nil;
-	printf(\"nil_class=%d member=%d\\n\", [w class] == Nil, [w isMemberOfClass:[Widget class]]);
+	printf(\"matches_nothing=%d member=%d\\n\",
+	       [w class] != [Widget class] && [w class] != [Gadget class],
+	       [w isMemberOfClass:[Widget class]]);
 	return 0;
 }
 "
     );
     let out = compile_and_run(&src, "nil_receiver_class");
-    assert_eq!(out, "nil_class=1 member=0\n", "unexpected: {}", out);
+    assert_eq!(out, "matches_nothing=1 member=0\n", "unexpected: {}", out);
 }
 
 /// Defining `-class` or `-isMemberOfClass:` is a located error, not a

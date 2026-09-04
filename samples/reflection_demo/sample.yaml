@@ -1,0 +1,86 @@
+sample:
+  description: Introspection and reflection demo (#226)
+  name: ObjZ Reflection Demo
+common:
+  tags: objz
+  harness: console
+# `integration_platforms` is set per scenario rather than in `common`: a
+# platform named there but absent from that scenario's own `platform_allow`
+# is a hard twister error, so a shared entry breaks the SMP scenario.
+tests:
+  # Everything this sample asserts is single-threaded and computed from
+  # const tables, so one ordered list serves every board -- there is no
+  # scheduling in it to differ. The values are the whole point: each
+  # negative answer is a case a wrong implementation would get right by
+  # accident, so `no` lines matter as much as `yes` ones.
+  sample.objz.reflection_demo:
+    tags: objz reflection introspection
+    platform_allow:
+      - mps2/an385
+      - qemu_riscv32
+      - nrf52833dk/nrf52833
+    integration_platforms:
+      - mps2/an385
+    harness_config:
+      type: multi_line
+      ordered: true
+      regex:
+        - "=== Reflection Demo ==="
+        # Class identity: no table, no Kconfig option.
+        - "classes-differ=yes"
+        - "own-class=yes"
+        # -isMemberOfClass: is exact, so a DimmableLight is *not* a member
+        # of Light. An implementation that walked the chain here would
+        # print yes.
+        - "member-own=yes"
+        - "member-super=no"
+        # -isKindOfClass: does walk it, two steps to the root.
+        - "kind-own=yes"
+        - "kind-super=yes"
+        - "kind-root=yes"
+        - "kind-unrelated=no"
+        # DimmableLight never declares Switchable; it conforms through
+        # Light. Checking only declared protocols would print no.
+        - "conforms-inherited=yes"
+        - "conforms-unrelated=no"
+        - "responds=yes"
+        - "responds-not=no"
+        # tree-sitter exposes no node for a keyword selector's name, so
+        # this line is what catches a regression in
+        # `collect::selector_literal_name`.
+        - "responds-keyword=yes"
+        # Performed through a SEL held in a local, so the value path is
+        # covered and not only a literal at the call site.
+        - "performed-void on=1"
+        - "Light describing itself to a peer"
+        - "performed-arg=yes"
+        # A message to nil answers rather than faulting -- including
+        # against the root class, which holds only because a nil
+        # receiver's class matches nothing at all.
+        - "nil-member=no"
+        - "nil-kind-root=no"
+        - "nil-responds=no"
+        - "nil-performs-nil=yes"
+        - "=== Reflection Demo complete ==="
+
+  # Two cores. Nothing here is concurrent, so the assertions are the same
+  # ones; what this adds is that the const tables and the selector records
+  # are read correctly from a second core, and on a 64-bit target where a
+  # `void *` is wider than the `Class` and `SEL` values threaded through
+  # the generated helpers.
+  sample.objz.reflection_demo.smp:
+    tags: objz reflection introspection smp
+    platform_allow:
+      - qemu_cortex_a53/qemu_cortex_a53/smp
+    harness_config:
+      type: multi_line
+      ordered: true
+      regex:
+        - "=== Reflection Demo ==="
+        - "member-super=no"
+        - "kind-root=yes"
+        - "conforms-inherited=yes"
+        - "responds-keyword=yes"
+        - "performed-arg=yes"
+        - "nil-performs-nil=yes"
+        - "=== Reflection Demo complete ==="

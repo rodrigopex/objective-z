@@ -125,6 +125,14 @@ fn transpile_case(case: &Path, outdir: &Path) -> Result<(), String> {
         .arg(root.join("tests/behavior/include"))
         .arg("--impl-dir")
         .arg(root.join("src"))
+        // The same pair `tests/tools/oz_static_build.py` passes, which is
+        // in turn what `CONFIG_OBJZ_INTROSPECTION` and
+        // `CONFIG_OBJZ_REFLECTION` default to. Without them a case using
+        // either feature is refused here while passing under the harness
+        // that actually runs the corpus -- two configurations disagreeing
+        // about the same file.
+        .arg("--introspection")
+        .arg("--reflection")
         .arg(case)
         .arg(outdir)
         .output()
