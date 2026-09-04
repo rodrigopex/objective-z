@@ -136,6 +136,14 @@ jobs:
       # writes makes both of them 19; before it, this leg compiled with
       # Ubuntu's preinstalled 18.1 while dumping ASTs with 20 -- two
       # clangs in one job, neither of them chosen.
+      # The corpora run through oz_static now, so this job needs the
+      # binary. The Python backend needed no build step, which is
+      # exactly why repointing failed here first and nowhere locally:
+      # `oz_static_build` looks for target/debug/oz2c, and every
+      # machine it was tried on already had one.
+      - name: Build oz2c
+        run: cargo build --manifest-path tools/oz_static/Cargo.toml
+
       - name: Run behavior tests
         run: >
           PYTHONPATH=tools
@@ -159,6 +167,14 @@ jobs:
 
       - name: Install Python dependencies
         run: pip install pytest jinja2 tree-sitter tree-sitter-objc
+
+      # The corpora run through oz_static now, so this job needs the
+      # binary. The Python backend needed no build step, which is
+      # exactly why repointing failed here first and nowhere locally:
+      # `oz_static_build` looks for target/debug/oz2c, and every
+      # machine it was tried on already had one.
+      - name: Build oz2c
+        run: cargo build --manifest-path tools/oz_static/Cargo.toml
 
       - name: Run with AddressSanitizer + UBSan
         run: >
@@ -189,6 +205,14 @@ jobs:
 
       - name: Install Python dependencies
         run: pip install pytest jinja2 tree-sitter tree-sitter-objc
+
+      # The corpora run through oz_static now, so this job needs the
+      # binary. The Python backend needed no build step, which is
+      # exactly why repointing failed here first and nowhere locally:
+      # `oz_static_build` looks for target/debug/oz2c, and every
+      # machine it was tried on already had one.
+      - name: Build oz2c
+        run: cargo build --manifest-path tools/oz_static/Cargo.toml
 
       - name: Run behavior tests with coverage
         run: >
@@ -226,6 +250,14 @@ jobs:
       - name: Install Python dependencies
         run: pip install pytest jinja2 tree-sitter tree-sitter-objc
 
+      # The corpora run through oz_static now, so this job needs the
+      # binary. The Python backend needed no build step, which is
+      # exactly why repointing failed here first and nowhere locally:
+      # `oz_static_build` looks for target/debug/oz2c, and every
+      # machine it was tried on already had one.
+      - name: Build oz2c
+        run: cargo build --manifest-path tools/oz_static/Cargo.toml
+
       - name: Run adapted upstream tests
         run: PYTHONPATH=tools python3 -m pytest tests/adapted/ -v --backend=static
 
@@ -260,6 +292,14 @@ jobs:
 
       - name: Install Python dependencies
         run: pip install pytest jinja2 tree-sitter tree-sitter-objc
+
+      # The corpora run through oz_static now, so this job needs the
+      # binary. The Python backend needed no build step, which is
+      # exactly why repointing failed here first and nowhere locally:
+      # `oz_static_build` looks for target/debug/oz2c, and every
+      # machine it was tried on already had one.
+      - name: Build oz2c
+        run: cargo build --manifest-path tools/oz_static/Cargo.toml
 
       - name: Run behavior tests with LeakSanitizer
         run: >
