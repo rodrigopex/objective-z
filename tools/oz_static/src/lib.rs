@@ -13,6 +13,7 @@ pub mod imports;
 pub mod model;
 pub mod parse;
 pub mod pools;
+pub mod progress;
 pub mod staticbar;
 
 pub use model::{Diagnostic, Program};
@@ -136,28 +137,41 @@ struct FrontEnd {
 /// oz_static has no soft-diagnostic mode, so a returned `Err` is always
 /// final and later passes would only report consequences of the first
 /// failure.
-fn front_end(source: &str, options: &Options) -> Result<FrontEnd, Vec<Diagnostic>> {
+fn front_end(
+    source: &str,
+    options: &Options,
+    obs: &mut dyn progress::Observer,
+) -> Result<FrontEnd, Vec<Diagnostic>> {
     /* Every later pass -- collect, arc, generics, pools, emit -- reads this
      * text by byte offset, so the repair has to happen before any of them
      * and has to preserve length. See
      * `parse::repair_bare_macro_statements` (#288, #289). */
+    obs.enter(progress::Phase::Repair);
     let (repaired, repaired_semicolons) = parse::repair_bare_macro_statements(source);
     let text: &str = &repaired;
+    obs.enter(progress::Phase::Collect);
     let (mut program, mut diagnostics) = collect::collect(text);
     if !diagnostics.is_empty() {
         return Err(diagnostics);
     }
-    if let Err(why) = attach_ast(&mut program, options) {
+    /* Entered unconditionally, even with no dumps supplied, so the phase
+     * sequence is the same shape whether or not `--ast` was given -- a test
+     * can then compare it against one literal list. */
+    obs.enter(progress::Phase::AstIngest);
+    if let Err(why) = attach_ast(&mut program, options, obs) {
         return Err(vec![Diagnostic::new(why, 1, 1)]);
     }
+    obs.enter(progress::Phase::Arc);
     program.owning_methods = arc::analyze(text, &program);
     program.heap_support = options.heap_support;
     program.introspection = options.introspection;
     program.reflection = options.reflection;
+    obs.enter(progress::Phase::Generics);
     diagnostics.extend(generics::check_program(text, &program));
     if !diagnostics.is_empty() {
         return Err(diagnostics);
     }
+    obs.enter(progress::Phase::Pools);
     let pools = resolve_pools(
         text,
         &program,
@@ -176,7 +190,21 @@ pub fn transpile_with_options(
     source: &str,
     options: &Options,
 ) -> Result<TranspileOutput, Vec<Diagnostic>> {
-    let fe = front_end(source, options)?;
+    transpile_observed(source, options, &mut progress::Silent)
+}
+
+/// `transpile_with_options`, reporting each pass boundary to `obs`.
+///
+/// The observer is a separate argument rather than an `Options` field: a
+/// `&mut dyn` field would force a lifetime parameter onto `Options`, which
+/// derives `Default` and which nearly every test constructs literally.
+pub fn transpile_observed(
+    source: &str,
+    options: &Options,
+    obs: &mut dyn progress::Observer,
+) -> Result<TranspileOutput, Vec<Diagnostic>> {
+    let fe = front_end(source, options, obs)?;
+    obs.enter(progress::Phase::Emit);
     let result = emit::emit(&fe.repaired, &fe.program, &fe.pools, &fe.repaired_semicolons);
     if !result.diagnostics.is_empty() {
         return Err(result.diagnostics);
@@ -226,7 +254,20 @@ pub fn transpile_split_with_options(
     origins: &[(String, std::ops::Range<usize>)],
     options: &Options,
 ) -> Result<emit::EmitSplitOutput, Vec<Diagnostic>> {
-    let fe = front_end(source, options)?;
+    transpile_split_observed(source, origins, options, &mut progress::Silent)
+}
+
+/// `transpile_split_with_options`, reporting each pass boundary to `obs`.
+/// This is the one the CLI drives, and so the one a build's progress output
+/// comes from.
+pub fn transpile_split_observed(
+    source: &str,
+    origins: &[(String, std::ops::Range<usize>)],
+    options: &Options,
+    obs: &mut dyn progress::Observer,
+) -> Result<emit::EmitSplitOutput, Vec<Diagnostic>> {
+    let fe = front_end(source, options, obs)?;
+    obs.enter(progress::Phase::Emit);
     let mut result = emit::emit_split(
         &fe.repaired,
         &fe.program,
@@ -248,13 +289,23 @@ pub fn transpile_split_with_options(
 /// narrower built-in rule: the caller asked for Clang's answer, and quietly
 /// substituting a guess would change which ivars get released with no
 /// indication why.
-fn attach_ast(program: &mut Program, options: &Options) -> Result<(), String> {
+fn attach_ast(
+    program: &mut Program,
+    options: &Options,
+    obs: &mut dyn progress::Observer,
+) -> Result<(), String> {
     if options.ast_json.is_empty() {
         return Ok(());
     }
     let mut facts = astinfo::AstFacts::default();
-    for text in &options.ast_json {
+    for (index, text) in options.ast_json.iter().enumerate() {
         facts.merge(astinfo::AstFacts::from_json(text)?);
+        /* Reported after the merge, not before it: a complete line about
+         * work that has finished is worth more than an announcement of work
+         * in flight, and at ~0.6s per dump it still reads as live progress.
+         * `index` is the caller's own position in `ast_json`, which is how
+         * a report names the file without the library knowing any paths. */
+        obs.ast_dump(index, text.len());
     }
     if facts.is_empty() {
         return Err(
