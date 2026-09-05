@@ -348,30 +348,24 @@ function(objz_transpile_sources_static target)
             "exit 1\n")
     endif()
 
-    message(STATUS "oz_static: dumping ${_n_ast} Clang ASTs")
-    execute_process(COMMAND sh ${_ast_script})
-
-    # Only non-empty dumps are handed over: oz2c rejects one it cannot parse,
-    # and an empty file is not a fact about anything. Note this test is *not*
-    # what catches a truncated dump -- that is the `.err` check above, and
-    # conflating the two is what let #274 stand.
-    set(_oz2c_ast "")
-    foreach(_src ${_src_abs_list} ${_sdk_impls})
-        get_filename_component(_name ${_src} NAME)
-        string(MAKE_C_IDENTIFIER "${_name}" _safe)
-        set(_ast "${_ast_dir}/${_safe}.ast.json")
-        if(EXISTS ${_ast})
-            file(SIZE ${_ast} _ast_size)
-            if(_ast_size GREATER 0)
-                list(APPEND _oz2c_ast --ast ${_ast})
-            endif()
-        endif()
-    endforeach()
-    if(NOT _oz2c_ast)
-        message(WARNING
-            "objz_transpile_sources_static: no usable Clang AST dump -- ARC will "
-            "skip every id-typed ivar rather than risk releasing a non-object")
-    endif()
+    # The dumps are no longer produced at configure time. They were, and
+    # only so that the configure-time transpile below could be handed
+    # `--ast` -- but that run exists to discover a *file list*, which no ARC
+    # fact affects. So it produced ~742 MB of JSON on px-keyboard, parsed
+    # all of it, and threw the result away, once per configure (#299).
+    #
+    # `--ast` for the build-time run is taken from `_ast_args`, accumulated
+    # unconditionally in the foreach above. It used to be rebuilt here by
+    # size-testing each dump *as it existed at configure time*, and that
+    # list was then used verbatim in the build-time command. Any dump that
+    # was 0 bytes at configure time -- Clang dies before
+    # `HandleTranslationUnit` and writes nothing, verified -- was therefore
+    # dropped from the build-time command line too, even though the
+    # build-time dump would have been complete. That silently weakened the
+    # ownership oracle with no diagnostic, and it cannot happen now: the
+    # list is the full set by construction, and a dump that is missing or
+    # truncated is `${_ast_check}`'s job, at build time, as a hard error.
+    set(_oz2c_ast ${_ast_args})
 
     # src/OZLog.c (linked in below, shared verbatim with the Python
     # backend) `#include`s "oz_dispatch.h" and "OZObject_ozh.h" -- the
@@ -389,10 +383,18 @@ function(objz_transpile_sources_static target)
     # CMake has to know the generated file list before it can declare it as
     # `OUTPUT` below, and the only thing that knows the list is oz2c. The
     # run's generated C is thrown away and rewritten at build time.
+    # `--manifest-only`: the file list, and nothing else. No `--ast`, no
+    # generated files -- 0.11s where the full run it replaced took 11.05s
+    # on px-keyboard and wrote output the build-time run immediately
+    # overwrote.
+    #
+    # It runs the same code path as a real transpile with only the writes
+    # skipped, so the list cannot drift from the real one. The
+    # `compare_files` below turns "cannot" into "does not".
     message(STATUS
-        "oz_static: configure-time transpile (discovers the generated file list)")
+        "oz_static: reading the generated file list (--manifest-only)")
     execute_process(
-        COMMAND ${_oz2c} ${_oz2c_flags} ${_oz2c_ast} ${_src_abs_list} ${_outdir}
+        COMMAND ${_oz2c} ${_oz2c_flags} --manifest-only ${_src_abs_list} ${_outdir}
                 --manifest ${_manifest}
         RESULT_VARIABLE _rc
     )
@@ -400,6 +402,12 @@ function(objz_transpile_sources_static target)
         message(FATAL_ERROR "objz_transpile_sources_static: oz2c failed at configure time")
     endif()
     file(STRINGS ${_manifest} _gen_files)
+    # Keep the predicted list so the build-time run can be checked against
+    # it. If they ever diverge, CMake has declared OUTPUTs that nothing
+    # writes (or writes files nothing compiles), and the failure would
+    # otherwise surface as a confusing missing-symbol or stale-object error
+    # far from here.
+    configure_file(${_manifest} ${_manifest}.predicted COPYONLY)
 
     # ── Build-time: re-run when the source changes ─────────────────────
     add_custom_command(
@@ -418,6 +426,9 @@ function(objz_transpile_sources_static target)
         COMMAND sh ${_ast_check}
         COMMAND ${_oz2c} ${_oz2c_flags} ${_oz2c_ast} ${_src_abs_list} ${_outdir}
                 --manifest ${_manifest}
+        # Named failure if the file list the configure-time `--manifest-only`
+        # run predicted is not the one a full run actually produced.
+        COMMAND ${CMAKE_COMMAND} -E compare_files ${_manifest}.predicted ${_manifest}
         # The transpiler's own sources, not just the .m inputs: without them
         # ninja considers the generated C up to date after oz2c itself
         # changes, so a rebuilt transpiler silently produces nothing new.
