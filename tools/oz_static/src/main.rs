@@ -6,6 +6,8 @@
 // Run directly for manual experimentation:
 //   cargo run --manifest-path tools/oz_static/Cargo.toml -- <input.m> <outdir>
 
+mod report;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -15,7 +17,7 @@ fn usage() -> ExitCode {
         "usage: oz2c [-I <dir>]... [--impl-dir <dir>]... [--manifest <path>] \
          [--root-class <name>] [--pool-sizes <Class=N,...>] \
          [--item-pool-size <N>] [--ast <ast.json>]... \
-         [--heap-support] [--dump-cst] \
+         [--heap-support] [--timings] [--quiet] [--dump-cst] \
          <input.m>... <outdir>\n\
          \x20      oz2c --dump-ast-facts [--ast <ast.json>]..."
     );
@@ -72,6 +74,8 @@ fn main() -> ExitCode {
     let mut item_pool_size: Option<usize> = None;
     let mut dump_cst = false;
     let mut dump_ast_facts = false;
+    let mut timings = false;
+    let mut quiet = false;
     let mut positional: Vec<String> = Vec::new();
 
     let mut i = 0;
@@ -186,6 +190,20 @@ fn main() -> ExitCode {
             // that shows a construct absorbed into its neighbour, which is
             // the failure this exists for; the full tree over a resolved
             // source runs to tens of thousands of nodes and buries it.
+            // Add the per-phase table to the progress output. Off by
+            // default because most of what it explains is one number --
+            // the AST ingest -- which the default output already names.
+            "--timings" => {
+                timings = true;
+                i += 1;
+            }
+            // Print nothing on stdout, and the summary on stderr exactly
+            // as oz2c did before there was any progress output. For
+            // anything that parses what we print.
+            "--quiet" => {
+                quiet = true;
+                i += 1;
+            }
             "--dump-cst" => {
                 dump_cst = true;
                 i += 1;
@@ -218,6 +236,20 @@ fn main() -> ExitCode {
     if dump_ast_facts {
         return dump_merged_ast_facts(&ast_paths);
     }
+
+    /* `quiet` is checked after `timings` so the two are not
+     * order-dependent on the command line, and `--dump-cst` forces quiet:
+     * it prints a dump on stdout and returns before the pipeline, so a
+     * progress header above it would be noise in front of the thing the
+     * flag exists to show. */
+    let level = if quiet || dump_cst {
+        report::Level::Quiet
+    } else if timings {
+        report::Level::Timings
+    } else {
+        report::Level::Normal
+    };
+    let mut rep = report::Reporter::new(level);
     // Every positional but the last is an entry `.m`; the last is the
     // output directory. A build system lists every `.m` a target owns
     // (see `cmake/oz_static.cmake`), and all of them become one
@@ -251,6 +283,7 @@ fn main() -> ExitCode {
     include_dirs.extend(extra_include_dirs);
     let mut impl_dirs = vec![repo_root.join("src")];
     impl_dirs.extend(extra_impl_dirs);
+    oz_static::progress::Observer::enter(&mut rep, oz_static::progress::Phase::ImportResolve);
     let resolved =
         match oz_static::imports::resolve_entry_files(&entry_paths, &include_dirs, &impl_dirs) {
             Ok(r) => r,
@@ -272,6 +305,7 @@ fn main() -> ExitCode {
     // would otherwise produce a working-but-differently-rooted program.
     // Only paid for when the flag is passed, since it needs its own
     // `collect` pass.
+    oz_static::progress::Observer::enter(&mut rep, oz_static::progress::Phase::RootClassCheck);
     if let Some(expected) = &expected_root {
         let (program, _) = oz_static::collect::collect(&resolved.text);
         match program.root_class() {
@@ -295,18 +329,29 @@ fn main() -> ExitCode {
         }
     }
 
+    oz_static::progress::Observer::enter(&mut rep, oz_static::progress::Phase::AstRead);
     let mut ast_json: Vec<String> = Vec::new();
+    let mut ast_sizes: Vec<usize> = Vec::new();
     for path in &ast_paths {
         match fs::read_to_string(path) {
-            Ok(text) => ast_json.push(text),
+            Ok(text) => {
+                ast_sizes.push(text.len());
+                ast_json.push(text);
+            }
             Err(e) => {
                 eprintln!("oz_static: error: cannot read --ast '{}': {}", path.display(), e);
                 return ExitCode::FAILURE;
             }
         }
     }
+    /* Both known only here: the labels come from the paths this loop just
+     * read, and the resolved size from `#import` resolution above. So this
+     * is the earliest point the header can state the scale, and it has to
+     * precede the ingest it is describing. */
+    rep.note_ast_inputs(&ast_paths, &ast_sizes);
+    rep.header(entry_paths.len(), resolved.origins.len(), resolved.text.len());
 
-    match oz_static::transpile_split_with_options(
+    match oz_static::transpile_split_observed(
         &resolved.text,
         &resolved.origins,
         &oz_static::Options {
@@ -318,8 +363,13 @@ fn main() -> ExitCode {
             item_pool_size,
             header_ranges: resolved.header_ranges.clone(),
         },
+        &mut rep,
     ) {
         Ok(out) => {
+            oz_static::progress::Observer::enter(
+                &mut rep,
+                oz_static::progress::Phase::Write,
+            );
             // Foundation/SDK-origin files land in their own subdirectory,
             // matching the Python pipeline's own `outdir/Foundation/`
             // layout -- the caller's own project-local files stay at
@@ -372,7 +422,7 @@ fn main() -> ExitCode {
                     return ExitCode::FAILURE;
                 }
             }
-            eprintln!("oz_static: {} files generated in {}", written.len(), outdir.display());
+            rep.finish(written.len(), outdir);
             ExitCode::SUCCESS
         }
         Err(diags) => {
