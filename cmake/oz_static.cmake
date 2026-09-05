@@ -64,6 +64,13 @@ function(objz_transpile_sources_static target)
     # cross-compiler) into ENV, which cc-rs (tree-sitter-objc's C parser
     # build script) would otherwise inherit -- unset them so cargo builds
     # oz2c, a host tool, with the host's own native compiler.
+    # Configure-time output streams straight to the terminal, unlike
+    # build-time output, which ninja buffers until its edge finishes. So
+    # this half of the work is the easiest to make visible and was the
+    # least visible: three `execute_process` calls that between them ran
+    # cargo, wrote hundreds of megabytes of AST and transpiled the whole
+    # program, announced by nothing (#299).
+    message(STATUS "oz_static: building oz2c (cargo)")
     execute_process(
         COMMAND ${CMAKE_COMMAND} -E env --unset=CC --unset=CXX --unset=CFLAGS --unset=CXXFLAGS
                 --unset=LDFLAGS --unset=AR --unset=RANLIB --unset=NM
@@ -113,6 +120,14 @@ function(objz_transpile_sources_static target)
     # selectors a @selector(...) actually named.
     if(CONFIG_OBJZ_REFLECTION)
         list(APPEND _oz2c_flags --reflection)
+    endif()
+    # Ask oz2c for its per-phase table. Off by default because the default
+    # output already names the one number that matters (the AST ingest);
+    # turn it on with -DOBJZ_OZ2C_TIMINGS=ON when that number needs
+    # breaking down. Follows OBJZ_ALLOW_PARTIAL_AST /
+    # OBJZ_REQUIRE_TESTED_CLANG in being a plain cache variable.
+    if(OBJZ_OZ2C_TIMINGS)
+        list(APPEND _oz2c_flags --timings)
     endif()
     foreach(_dir ${_src_dirs})
         list(APPEND _oz2c_flags --impl-dir ${_dir})
@@ -200,10 +215,19 @@ function(objz_transpile_sources_static target)
     set(_ast_script "${_ast_dir}/oz_static_ast.sh")
     set(_ast_lines "#!/bin/sh\n")
     set(_ast_args "")
+    # How many dumps, so each `echo` below can say `k/N` -- the counter is
+    # what turns a silent stretch into a visible rate. This phase writes
+    # hundreds of megabytes and took 2.9s on px-keyboard while printing
+    # nothing at all (#299).
+    list(LENGTH _src_abs_list _n_entry)
+    list(LENGTH _sdk_impls _n_sdk)
+    math(EXPR _n_ast "${_n_entry} + ${_n_sdk}")
+    set(_ast_k 0)
     foreach(_src ${_src_abs_list} ${_sdk_impls})
         get_filename_component(_name ${_src} NAME)
         string(MAKE_C_IDENTIFIER "${_name}" _safe)
         set(_ast "${_ast_dir}/${_safe}.ast.json")
+        math(EXPR _ast_k "${_ast_k} + 1")
         string(JOIN " " _one ${OBJZ_CLANG_COMPILER} ${_ast_flags}
                -fsyntax-only -Xclang -ast-dump=json ${_src})
         # Keep each dump's diagnostics next to it, but only the ones that
@@ -226,7 +250,11 @@ function(objz_transpile_sources_static target)
         # reads. A `fatal error` is different in kind: Clang stops, and
         # every declaration after it is simply absent from a file that still
         # looks complete.
+        # The `> ${_ast}` redirection is confined to the clang command, so
+        # a bare `echo` reaches the script's own stdout and lands in the
+        # build log alongside oz2c's own progress.
         string(APPEND _ast_lines
+            "echo \"oz_static: clang ast ${_ast_k}/${_n_ast} ${_name}\"\n"
             "${_one} > ${_ast} 2> ${_ast}.err\n"
             "grep -q 'fatal error:' ${_ast}.err || rm -f ${_ast}.err\n")
         list(APPEND _ast_args --ast ${_ast})
@@ -293,6 +321,7 @@ function(objz_transpile_sources_static target)
             "exit 1\n")
     endif()
 
+    message(STATUS "oz_static: dumping ${_n_ast} Clang ASTs")
     execute_process(COMMAND sh ${_ast_script})
 
     # Only non-empty dumps are handed over: oz2c rejects one it cannot parse,
@@ -328,6 +357,13 @@ function(objz_transpile_sources_static target)
         "/* shim: src/OZLog.c expects this name under either backend */\n#include \"OZObject.h\"\n")
 
     # ── Configure-time: run once to discover output files ─────────────
+    # Says *why* there are two full runs, because with progress output on
+    # (#299) the duplicate is now visible and reads as a bug otherwise:
+    # CMake has to know the generated file list before it can declare it as
+    # `OUTPUT` below, and the only thing that knows the list is oz2c. The
+    # run's generated C is thrown away and rewritten at build time.
+    message(STATUS
+        "oz_static: configure-time transpile (discovers the generated file list)")
     execute_process(
         COMMAND ${_oz2c} ${_oz2c_flags} ${_oz2c_ast} ${_src_abs_list} ${_outdir}
                 --manifest ${_manifest}
@@ -357,7 +393,27 @@ function(objz_transpile_sources_static target)
         # That cost real debugging time -- a fix would land, the sample would
         # be rebuilt, and the old generated C would still be compiled.
         DEPENDS ${_src_abs_list} ${_oz2c_srcs}
-        COMMENT "oz_static: generating C from ObjC (oz2c)"
+        # The only line ninja prints *before* the edge runs, so it carries
+        # the scale rather than just the verb.
+        COMMENT "oz_static: ${_n_entry} source(s) -> C via oz2c (${_n_ast} Clang AST dumps)"
+        # Ninja buffers a command's output and prints it when the edge
+        # finishes. This edge takes ~15s on px-keyboard and is 85% of that
+        # build's wall clock, so buffered progress would all arrive after
+        # the wait it is meant to explain -- which is worse than no progress
+        # at all. USES_TERMINAL puts the edge in ninja's `console` pool,
+        # which streams unbuffered, and also surfaces cargo's own progress.
+        #
+        # The cost is that the console pool has depth 1, so this edge no
+        # longer overlaps other console jobs. That is acceptable here
+        # precisely because it is already the critical path: every generated
+        # .c depends on it, so nothing else was overlapping it anyway.
+        # Under `make` there are no pools and this is simply ignored;
+        # Zephyr defaults to ninja.
+        #
+        # No argument: it is a valueless flag, and `USES_TERMINAL TRUE`
+        # makes CMake attribute the stray `TRUE` to the preceding COMMENT
+        # ("COMMENT requires exactly one argument", CMP0175).
+        USES_TERMINAL
     )
 
     add_custom_target(oz_static_transpile_gen DEPENDS ${_gen_files})
