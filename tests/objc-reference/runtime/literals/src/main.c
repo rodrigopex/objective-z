@@ -35,8 +35,8 @@ extern id test_lit_array_empty(void);
 extern id test_lit_array_two(void);
 extern id test_lit_array_strings(void);
 extern unsigned int test_lit_array_count(id arr);
-extern id test_lit_array_object_at(id arr, unsigned int idx);
-extern id test_lit_array_subscript(id arr, unsigned int idx);
+extern id test_lit_array_object_at(id arr, size_t idx);
+extern id test_lit_array_subscript(id arr, size_t idx);
 
 /* ── OZDictionary helpers ──────────────────────────────────────── */
 

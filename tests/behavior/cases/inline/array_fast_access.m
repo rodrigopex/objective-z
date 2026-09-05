@@ -2,11 +2,11 @@
 #import "OZFoundationBase.h"
 
 @interface ArrayAccessTest : OZObject {
-	unsigned int _count;
+	size_t _count;
 	int _firstVal;
 }
 - (void)run;
-- (unsigned int)count;
+- (size_t)count;
 - (int)firstVal;
 @end
 
@@ -17,7 +17,7 @@
 	OZQ31 *first = [arr objectAtIndex:0];
 	_firstVal = [first intValue];
 }
-- (unsigned int)count {
+- (size_t)count {
 	return _count;
 }
 - (int)firstVal {

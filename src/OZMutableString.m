@@ -14,7 +14,7 @@
 {
 	self = [super init];
 	if (str == NULL) {
-		unsigned int cap = 16;
+		size_t cap = 16;
 		char *buf = (char *)malloc(cap);
 		if (buf == NULL) {
 			return nil;
@@ -24,8 +24,8 @@
 		_length = 0;
 		_capacity = cap;
 	} else {
-		unsigned int len = (unsigned int)strlen(str);
-		unsigned int cap = len < 16 ? 16 : len * 2;
+		size_t len = strlen(str);
+		size_t cap = len < 16 ? 16 : len * 2;
 		char *buf = (char *)malloc(cap);
 		if (buf == NULL) {
 			return nil;
@@ -46,10 +46,10 @@
 	return [self initWithCString:[aString cString]];
 }
 
-- (id)initWithCapacity:(unsigned int)capacity
+- (id)initWithCapacity:(size_t)capacity
 {
 	self = [super init];
-	unsigned int cap = capacity < 16 ? 16 : capacity;
+	size_t cap = capacity < 16 ? 16 : capacity;
 	char *buf = (char *)malloc(cap);
 	if (buf == NULL) {
 		return nil;
@@ -66,13 +66,13 @@
 	if (str == NULL) {
 		return;
 	}
-	unsigned int addLen = (unsigned int)strlen(str);
+	size_t addLen = strlen(str);
 	if (addLen == 0) {
 		return;
 	}
-	unsigned int newLen = _length + addLen;
+	size_t newLen = _length + addLen;
 	if (newLen + 1 > _capacity) {
-		unsigned int newCap = _capacity;
+		size_t newCap = _capacity;
 		while (newCap < newLen + 1) {
 			newCap = newCap * 2;
 		}
@@ -105,9 +105,9 @@
 		return;
 	}
 	const char *src = [aString cString];
-	unsigned int len = [aString length];
+	size_t len = [aString length];
 	if (len + 1 > _capacity) {
-		unsigned int newCap = _capacity;
+		size_t newCap = _capacity;
 		while (newCap < len + 1) {
 			newCap = newCap * 2;
 		}

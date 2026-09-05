@@ -531,7 +531,7 @@ pub fn ozdictionary_src() -> String {
     let mut header = include_str!("../../../../include/oz_sdk/Foundation/OZDictionary.h").to_string();
     header = header.replace("__unsafe_unretained id *_keys;", "id *_keys;");
     header = header.replace("__unsafe_unretained id *_values;", "id *_values;");
-    header = remove_line_range(&header, "dictionaryWithObjects:", "count:(unsigned int)count;");
+    header = remove_line_range(&header, "dictionaryWithObjects:", "count:(size_t)count;");
     header = remove_line_containing(&header, "struct NSFastEnumerationState;");
     header = remove_line_range(&header, "countByEnumeratingWithState:", "count:(unsigned long)len;");
 

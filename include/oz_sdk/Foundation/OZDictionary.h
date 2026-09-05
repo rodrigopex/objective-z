@@ -14,7 +14,7 @@ struct NSFastEnumerationState;
 @interface OZDictionary<__covariant KeyType, __covariant ObjectType> : OZObject <IteratorProtocol> {
 	__unsafe_unretained id *_keys;
 	__unsafe_unretained id *_values;
-	unsigned int _count;
+	size_t _count;
 	uint16_t _iterIdx;
 }
 
@@ -22,14 +22,14 @@ struct NSFastEnumerationState;
 
 + (id)dictionaryWithObjects:(const id *)objects
 		    forKeys:(const id *)keys
-		      count:(unsigned int)count;
-- (unsigned int)count;
+		      count:(size_t)count;
+- (size_t)count;
 - (id)objectForKey:(id)key;
 - (id)objectForKeyedSubscript:(id)key;
 - (unsigned long)countByEnumeratingWithState:(struct NSFastEnumerationState *)state
 				     objects:(__unsafe_unretained id *)stackbuf
 				       count:(unsigned long)len;
-- (int)cDescription:(char *)buf maxLength:(int)maxLen;
+- (int)cDescription:(char *)buf maxLength:(size_t)maxLen;
 - (instancetype)iter;
 - (id)next;
 @end

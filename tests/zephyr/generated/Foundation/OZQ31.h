@@ -90,8 +90,8 @@ struct OZQ31 * OZQ31_sub_(struct OZQ31 *self, struct OZQ31 * other);
 struct OZQ31 * OZQ31_mul_(struct OZQ31 *self, struct OZQ31 * other);
 /* - (instancetype)div:(OZQ31 *)other; */
 struct OZQ31 * OZQ31_div_(struct OZQ31 *self, struct OZQ31 * other);
-/* - (int)cDescription:(char *)buf maxLength:(int)maxLen; */
-int OZQ31_cDescription_maxLength_(struct OZQ31 *self, char* buf, int maxLen);
+/* - (int)cDescription:(char *)buf maxLength:(size_t)maxLen; */
+int OZQ31_cDescription_maxLength_(struct OZQ31 *self, char* buf, size_t maxLen);
 /* - (BOOL)isEqual:(id)anObject; */
 BOOL OZQ31_isEqual_(struct OZQ31 *self, void * anObject);
 void OZQ31_dealloc(struct OZQ31 *self);
@@ -181,10 +181,13 @@ static inline void _oz_align_shift(int32_t *raw_a, uint8_t shift_a,
  * No stdio, no float — pure integer math. Trailing zero removal.
  * precision: number of fractional digits (clamped to 0..14).
  */
-static inline int _oz_q31_to_str(int32_t raw, uint8_t shift, char *buf, int maxLen,
-				 int precision)
+static inline int _oz_q31_to_str(int32_t raw, uint8_t shift, char *buf, size_t maxLen,
+				     int precision)
 {
-	if (maxLen <= 0) {
+	/* Was `maxLen <= 0` while this took an `int`. Unsigned now, so the
+	 * only unusable capacity is zero -- and a caller that would once have
+	 * passed a negative length can no longer express one. */
+	if (maxLen == 0) {
 		return 0;
 	}
 
@@ -195,13 +198,15 @@ static inline int _oz_q31_to_str(int32_t raw, uint8_t shift, char *buf, int maxL
 		precision = 14;
 	}
 
-	int pos = 0;
+	/* Unsigned alongside `maxLen`: every write below is guarded by
+	 * `pos < maxLen`, and nothing here subtracts `pos`. */
+	size_t pos = 0;
 
 	if (raw == 0) {
 		if (pos < maxLen) {
 			buf[pos++] = '0';
 		}
-		return pos;
+		return (int)pos;
 	}
 
 	int neg = (raw < 0);
@@ -284,7 +289,7 @@ static inline int _oz_q31_to_str(int32_t raw, uint8_t shift, char *buf, int maxL
 		}
 	}
 
-	return pos;
+	return (int)pos;
 }
 
 /*

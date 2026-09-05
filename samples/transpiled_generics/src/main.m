@@ -41,7 +41,7 @@ int main(void)
 
 		/* Typed block param in enumerateObjectsUsingBlock: */
 		__block int sum = 0;
-		[numbers enumerateObjectsUsingBlock:^(id obj, unsigned int idx, BOOL *stop) {
+		[numbers enumerateObjectsUsingBlock:^(id obj, size_t idx, BOOL *stop) {
 		  sum += [(OZQ31 *)obj intValue];
 		  *stop = NO;
 		}];

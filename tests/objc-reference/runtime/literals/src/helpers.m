@@ -104,12 +104,12 @@ unsigned int test_lit_array_count(id arr)
 	return [(OZArray *)arr count];
 }
 
-id test_lit_array_object_at(id arr, unsigned int idx)
+id test_lit_array_object_at(id arr, size_t idx)
 {
 	return [(OZArray *)arr objectAtIndex:idx];
 }
 
-id test_lit_array_subscript(id arr, unsigned int idx)
+id test_lit_array_subscript(id arr, size_t idx)
 {
 	return ((OZArray *)arr)[idx];
 }

@@ -58,7 +58,7 @@
 - (instancetype)div:(OZQ31 *)other;
 
 /* OZObject overrides */
-- (int)cDescription:(char *)buf maxLength:(int)maxLen;
+- (int)cDescription:(char *)buf maxLength:(size_t)maxLen;
 - (BOOL)isEqual:(id)anObject;
 @end
 

@@ -344,8 +344,8 @@ struct OZQ31 * OZQ31_div_(struct OZQ31 *self, struct OZQ31 * other)
 	return OZQ31_fixedWithRaw_shift__cls(r_raw, r_shift);
 }
 
-/* - (int)cDescription:(char *)buf maxLength:(int)maxLen */
-int OZQ31_cDescription_maxLength_(struct OZQ31 *self, char* buf, int maxLen)
+/* - (int)cDescription:(char *)buf maxLength:(size_t)maxLen */
+int OZQ31_cDescription_maxLength_(struct OZQ31 *self, char* buf, size_t maxLen)
 {
 	int prec = _oz_get_log_precision();
 	if (prec < 0) {

@@ -35,7 +35,7 @@ fn array_basic_literal_count_first_element_and_out_of_bounds() {
 @implementation ArrayTest
 - (unsigned int)literalCount {{
 	OZArray *arr = @[@(1), @(2), @(3)];
-	unsigned int c = [arr count];
+	size_t c = [arr count];
 	return c;
 }}
 - (int)firstElement {{
@@ -54,7 +54,7 @@ fn array_basic_literal_count_first_element_and_out_of_bounds() {
 #include <stdio.h>
 int main(void) {{
 	ArrayTest *t = [ArrayTest alloc];
-	printf(\"count=%u\\n\", [t literalCount]);
+	printf(\"count=%zu\\n\", [t literalCount]);
 	printf(\"first=%d\\n\", [t firstElement]);
 	printf(\"oob=%d\\n\", [t outOfBoundsNil]);
 	return 0;
@@ -75,11 +75,11 @@ fn array_fast_access_count_and_first_val() {
     let src = format!(
         "{}{}{}\n\
 @interface ArrayAccessTest : OZObject {{
-	unsigned int _count;
+	size_t _count;
 	int _firstVal;
 }}
 - (void)run;
-- (unsigned int)count;
+- (size_t)count;
 - (int)firstVal;
 @end
 
@@ -90,7 +90,7 @@ fn array_fast_access_count_and_first_val() {
 	OZQ31 *first = [arr objectAtIndex:0];
 	_firstVal = [first intValue];
 }}
-- (unsigned int)count {{
+- (size_t)count {{
 	return _count;
 }}
 - (int)firstVal {{
@@ -102,7 +102,7 @@ fn array_fast_access_count_and_first_val() {
 int main(void) {{
 	ArrayAccessTest *t = [ArrayAccessTest alloc];
 	[t run];
-	printf(\"count=%u\\n\", [t count]);
+	printf(\"count=%zu\\n\", [t count]);
 	printf(\"first=%d\\n\", [t firstVal]);
 	return 0;
 }}
@@ -164,7 +164,7 @@ static int g_calls = 0;
 #include <stdio.h>
 int main(void) {
 	OZArray *nums = @[ @10, @20, @30 ];
-	[nums enumerateObjectsUsingBlock:^(id obj, unsigned int idx, BOOL *stop) {
+	[nums enumerateObjectsUsingBlock:^(id obj, size_t idx, BOOL *stop) {
 		g_calls = g_calls + 1;
 		g_sum = g_sum + [((OZQ31 *)obj) int32Value];
 	}];
@@ -172,7 +172,7 @@ int main(void) {
 	printf(\"sum=%d\\n\", g_sum);
 
 	g_calls = 0;
-	[nums enumerateObjectsUsingBlock:^(id obj, unsigned int idx, BOOL *stop) {
+	[nums enumerateObjectsUsingBlock:^(id obj, size_t idx, BOOL *stop) {
 		g_calls = g_calls + 1;
 		if (idx == 1) {
 			*stop = 1;

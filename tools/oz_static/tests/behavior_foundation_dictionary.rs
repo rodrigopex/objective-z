@@ -35,7 +35,7 @@ fn dictionary_basic_literal_count_value_for_key_and_missing_key() {
 @implementation DictTest
 - (unsigned int)literalCount {{
 	OZDictionary *d = @{{@\"a\": @(1), @\"b\": @(2)}};
-	unsigned int c = [d count];
+	size_t c = [d count];
 	return c;
 }}
 - (int)valueForKey {{
@@ -54,7 +54,7 @@ fn dictionary_basic_literal_count_value_for_key_and_missing_key() {
 #include <stdio.h>
 int main(void) {{
 	DictTest *t = [DictTest alloc];
-	printf(\"count=%u\\n\", [t literalCount]);
+	printf(\"count=%zu\\n\", [t literalCount]);
 	printf(\"value=%d\\n\", [t valueForKey]);
 	printf(\"missing=%d\\n\", [t missingKeyNil]);
 	return 0;

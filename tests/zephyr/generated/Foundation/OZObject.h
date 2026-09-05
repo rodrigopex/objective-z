@@ -75,7 +75,7 @@ struct OZObject * OZObject_init(struct OZObject *self);
 void OZObject_dealloc(struct OZObject *self);
 /* - (BOOL)isEqual:(id)anObject; */
 BOOL OZObject_isEqual_(struct OZObject *self, void * anObject);
-/* - (int)cDescription:(char *)buf maxLength:(int)maxLen; */
-int OZObject_cDescription_maxLength_(struct OZObject *self, char* buf, int maxLen);
+/* - (int)cDescription:(char *)buf maxLength:(size_t)maxLen; */
+int OZObject_cDescription_maxLength_(struct OZObject *self, char* buf, size_t maxLen);
 /*========================= end interface: OZObject ==========================*/
 

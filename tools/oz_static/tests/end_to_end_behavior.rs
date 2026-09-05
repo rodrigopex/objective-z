@@ -109,7 +109,7 @@ fn inherited_ivar_access_through_base_chain() {
         ozobject_src(),
         "\
 @interface Base : OZObject {
-	int _count;
+	size_t _count;
 }
 @end
 @implementation Base
@@ -122,13 +122,13 @@ fn inherited_ivar_access_through_base_chain() {
 
 @interface Leaf : Mid
 - (void)bumpCount;
-- (int)count;
+- (size_t)count;
 @end
 @implementation Leaf
 - (void)bumpCount {
 	_count = _count + 1;
 }
-- (int)count {
+- (size_t)count {
 	return _count;
 }
 @end

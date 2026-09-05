@@ -40,7 +40,7 @@
 	return gpio_is_ready_dt(_spec);
 }
 
-- (int)cDescription:(char *)buf maxLength:(int)maxLen
+- (int)cDescription:(char *)buf maxLength:(size_t)maxLen
 {
 	return snprintk(buf, maxLen, "<%s: %s pin %u>", "GPIOPin", _spec->port->name, _spec->pin);
 }

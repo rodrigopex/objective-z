@@ -121,8 +121,8 @@ int main(void)
 
 	/* Second pass — index-based access */
 	OZArray *samples = [sensor samples];
-	unsigned int count = [samples count];
-	for (unsigned int idx = 0; idx < count; idx++) {
+	size_t count = [samples count];
+	for (size_t idx = 0; idx < count; idx++) {
 		id sample = [samples objectAtIndex:idx];
 		sum += [(OZQ31 *)sample intValue];
 	}

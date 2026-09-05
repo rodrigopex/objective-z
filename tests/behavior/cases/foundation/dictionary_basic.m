@@ -10,7 +10,7 @@
 @implementation DictTest
 - (unsigned int)literalCount {
 	OZDictionary *d = @{@"a": @(1), @"b": @(2)};
-	unsigned int c = [d count];
+	size_t c = [d count];
 	return c;
 }
 - (int)valueForKey {

@@ -10,12 +10,12 @@
 @interface DictTest : OZObject {
 	int _storedVal;
 	BOOL _missingNil;
-	unsigned int _count;
+	size_t _count;
 }
 - (void)run;
 - (int)storedVal;
 - (BOOL)missingNil;
-- (unsigned int)count;
+- (size_t)count;
 @end
 
 @implementation DictTest
@@ -29,5 +29,5 @@
 }
 - (int)storedVal { return _storedVal; }
 - (BOOL)missingNil { return _missingNil; }
-- (unsigned int)count { return _count; }
+- (size_t)count { return _count; }
 @end

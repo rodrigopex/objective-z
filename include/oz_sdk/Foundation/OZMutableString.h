@@ -9,11 +9,11 @@
 #import "OZString.h"
 
 @interface OZMutableString : OZString {
-	unsigned int _capacity;
+	size_t _capacity;
 }
 - (id)initWithCString:(const char *)str;
 - (id)initWithString:(OZString *)aString;
-- (id)initWithCapacity:(unsigned int)capacity;
+- (id)initWithCapacity:(size_t)capacity;
 - (void)appendString:(OZString *)aString;
 - (void)appendCString:(const char *)str;
 - (void)setString:(OZString *)aString;

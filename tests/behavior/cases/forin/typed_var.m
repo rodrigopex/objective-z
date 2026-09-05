@@ -2,10 +2,10 @@
 #import "OZFoundationBase.h"
 
 @interface TypedIterTest : OZObject {
-	int _count;
+	size_t _count;
 }
 - (void)countStrings;
-- (int)count;
+- (size_t)count;
 @end
 
 @implementation TypedIterTest
@@ -18,7 +18,7 @@
 		}
 	}
 }
-- (int)count {
+- (size_t)count {
 	return _count;
 }
 @end

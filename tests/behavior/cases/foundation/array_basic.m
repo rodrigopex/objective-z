@@ -10,7 +10,7 @@
 @implementation ArrayTest
 - (unsigned int)literalCount {
 	OZArray *arr = @[@(1), @(2), @(3)];
-	unsigned int c = [arr count];
+	size_t c = [arr count];
 	return c;
 }
 - (int)firstElement {

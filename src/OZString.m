@@ -16,16 +16,18 @@
 	return _data;
 }
 
-- (unsigned int)length
+- (size_t)length
 {
 	return _length;
 }
 
-- (int)cDescription:(char *)buf maxLength:(int)maxLen
+- (int)cDescription:(char *)buf maxLength:(size_t)maxLen
 {
-	int len = (_length < (unsigned int)maxLen) ? (int)_length : maxLen;
+	/* Both operands unsigned now, so the cast the signed comparison
+	 * needed is gone with it. */
+	size_t len = (_length < maxLen) ? _length : maxLen;
 	memcpy(buf, _data, len);
-	return len;
+	return (int)len;
 }
 
 - (BOOL)isEqual:(id)anObject
