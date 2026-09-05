@@ -244,7 +244,9 @@ pub fn check_program(source: &str, program: &Program) -> Vec<Diagnostic> {
 ///
 /// The error is located on the *second* declaration, which is the one that
 /// introduced the disagreement, and it names both types so the reader does
-/// not have to go looking for the first.
+/// not have to go looking for the first. That declaration is a method
+/// (`locate_method`) or a `@property` (`locate_property_accessor`) -- both,
+/// because the collision this was filed for is property-declared.
 fn check_dispatch_signature_agreement(
     root: Node,
     src: &str,
@@ -296,7 +298,8 @@ fn check_dispatch_signature_agreement(
         .into_iter()
         .map(|(selector, first_class, first_sig, second_class, second_sig)| {
             let (line, col) = locate_method(root, src, &second_class, &selector)
-                .unwrap_or_else(|| (1, 1));
+                .or_else(|| locate_property_accessor(program, &second_class, &selector))
+                .unwrap_or((1, 1));
             Diagnostic::new(
                 format!(
                     "'{selector}' is dispatched dynamically, so one shared \
@@ -343,8 +346,23 @@ fn returns_are_incompatible(a: &str, b: &str) -> bool {
     a.trim() != b.trim()
 }
 
-/// `(line, col)` of `class`'s declaration or definition of `selector`, for a
-/// diagnostic that points at the code rather than at the top of the file.
+/// `(line, col)` of `class`'s `method_declaration` or `method_definition`
+/// of `selector`, for a diagnostic that points at the code rather than at
+/// the top of the file.
+///
+/// Methods only -- a selector a `@property` declares has neither node, and
+/// `locate_property_accessor` answers for those.
+///
+/// A category counts as a declaration site. It did not, and a selector
+/// declared only in `@interface Beta (Extra)` was located at `1:1` for the
+/// same reason a property-declared one was (#297) -- `collect` pushes a
+/// category's methods onto the class, so such a selector really does take
+/// part in a collision and really does have a position. The primary
+/// interface still wins when both declare it, because the walk takes the
+/// first match in document order and a category cannot precede the class it
+/// extends. (The `category.is_none()` guard belongs in
+/// `walk_for_owned_array_ivars`, where a category genuinely cannot
+/// contribute, and reached here by resemblance.)
 fn locate_method(
     root: Node,
     src: &str,
@@ -353,8 +371,8 @@ fn locate_method(
 ) -> Option<(usize, usize)> {
     fn walk(node: Node, src: &str, class: &str, selector: &str) -> Option<usize> {
         if node.kind() == "class_interface" || node.kind() == "class_implementation" {
-            let (name, _, category) = crate::collect::class_header(node, src);
-            if category.is_none() && name == class {
+            let (name, _, _category) = crate::collect::class_header(node, src);
+            if name == class {
                 if let Some(byte) = find_selector_byte(node, src, selector) {
                     return Some(byte);
                 }
@@ -377,6 +395,57 @@ fn locate_method(
         children.into_iter().find_map(|c| find_selector_byte(c, src, selector))
     }
     walk(root, src, class, selector).map(|byte| crate::parse::line_col(src, byte))
+}
+
+/// `(line, col)` of the `@property` on `class` whose accessor is `selector`.
+///
+/// `locate_method` finds nothing for a property-declared selector: a
+/// `@property` declares its accessors without writing a
+/// `method_declaration` or `method_definition`, so the CST walk has no node
+/// whose selector matches and the diagnostic fell back to `1:1` -- for
+/// exactly the shape that motivated the check, since the colliding `spec`
+/// of #290 is property-declared (#297).
+///
+/// Matching on the property's spelling alone would be wrong:
+/// `@property(getter=ackCount) int count;` declares the selector
+/// `ackCount`, which is what `collect::extract_property` records and what
+/// the shim is keyed on. The setter is resolved the same way. Its own
+/// return type is `void`, so a setter can only collide with a hand-written
+/// method of that name -- rarer than the getter case, and located here for
+/// the same reason.
+///
+/// The two accessors are matched exactly as `collect::resolve_properties`
+/// derives them, `readonly` included: a `readonly` property synthesizes no
+/// setter, so it must not answer for one. `Program::method_is_defined` is
+/// laxer on both counts on purpose -- it is asking whether *something*
+/// defines the selector, where over-matching costs nothing -- but here a
+/// loose match would point the reader at the wrong declaration.
+///
+/// The position comes from `PropertyInfo`, which recorded it at collection
+/// time over the same `source` this pass parses, rather than from a second
+/// CST walk that would have to re-derive the `getter=` resolution and could
+/// disagree with it.
+fn locate_property_accessor(
+    program: &Program,
+    class: &str,
+    selector: &str,
+) -> Option<(usize, usize)> {
+    let info = program.classes.get(class)?;
+    info.properties
+        .iter()
+        .find(|prop| {
+            if prop.getter_sel.as_deref().unwrap_or(prop.name.as_str()) == selector {
+                return true;
+            }
+            if prop.is_readonly {
+                return false;
+            }
+            match &prop.setter_sel {
+                Some(setter) => setter == selector,
+                None => crate::collect::default_setter_sel(&prop.name) == selector,
+            }
+        })
+        .map(|prop| (prop.decl_line, prop.decl_col))
 }
 
 /// Reject an owned array of objects with more than one dimension.
