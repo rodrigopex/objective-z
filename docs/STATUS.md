@@ -51,7 +51,7 @@ hidden a defect.
 
 | Subject | Status |
 | --- | --- |
-| Rust suite (`cargo test`) | **313 tests**, `RUSTFLAGS=-D warnings` clean. The primary gate |
+| Rust suite (`cargo test`) | **318 tests**, `RUSTFLAGS=-D warnings` clean. The primary gate |
 | Behaviour corpus | **74/74** transpile, compile and run — gcc/clang × `-O0`/`-O2`, plus ASan, UBSan and LeakSanitizer |
 | Corpus ISO C validity | Gate at **0** under `-std=c17 -pedantic-errors` |
 | Adapted upstream tests | **40/40** (LLVM, GNUstep, Apple, ObjFW, mulle-objc) |
@@ -83,6 +83,16 @@ Stated precisely rather than as "everything works":
   own expectations, not against a second transpiler.
 - **Objective-C in a `#define` body** is rejected with a located error, not
   supported (#238).
+- **A top-level macro invocation with no trailing `;` is repaired, not
+  parsed.** `ZBUS_OBS_DECLARE(x)` terminates its own expansion, so it is
+  written without a semicolon, and tree-sitter then reads it as a *type* and
+  absorbs the next construct into one node. `parse::repair_bare_macro_statements`
+  writes a `;` over one whitespace byte before any pass reads the text, and
+  `walk_top_level` writes the space back on the way out (#288, #289). What is
+  *not* verified is the case with no whitespace after the `)` to overwrite:
+  the repair is length-preserving because every offset in the file is a span
+  into that text, so there is nowhere to put the semicolon, and the
+  absorption stands. No sample or test writes that shape.
 
 ## Introspection and reflection (#226)
 
@@ -132,6 +142,40 @@ which rejects the integer cast under ARC, and defining it as `((Class)0)` for
 the AST dump's benefit would make the same comparison mean two different things
 there and in the emitted C. The contract is observable without it: a nil
 receiver's class matches nothing at all, not even the root class.
+
+## What one cause can look like
+
+Worth keeping because it cost two wrong diagnoses before the right one.
+#288, #289 and OZ-004 (#37) were filed as three bugs and were one: a
+semicolon-less top-level macro invocation absorbing whatever followed it.
+The symptom is decided entirely by what the victim was, and by which emit
+arm it needed:
+
+| Victim | Arm it needed | Symptom |
+| --- | --- | --- |
+| `@implementation` | `class_implementation` | Objective-C copied through verbatim, "stray '@' in program" |
+| a second `OZM(...)` | passthrough's block hoist | the block literal survives at its call site, `^` reaches GCC |
+| `static Foo *p;` | passthrough's `class_tag_edits` | the class name is not tagged, so `Foo *` is not a C type |
+| a plain C function | `function_definition` | **nothing** — that arm renders a body correctly anyway |
+
+That last row is why `samples/zbus_service` built and ran for as long as it
+did with its own `main()` absorbed: the victim happened to be the one kind
+of node whose proper arm and whose absorbing arm do the same thing.
+
+Two lessons, both paid for:
+
+- **Diagnose on the import-resolved tree, not the file.** `#import` splices
+  every header and sibling implementation inline, so grouping and offsets
+  differ from the `.m`. A raw-file dump showed a clean `class_implementation`
+  and sent the investigation after a protocol-qualified `id` ivar, which
+  turned out to be irrelevant. `--dump-cst` prints the resolved tree for
+  exactly this reason.
+- **A regression test for this class of bug is easy to write vacuously.**
+  The absorption needs the *next* line to be call-shaped with three or more
+  arguments ending in a number -- `ZBUS_CHAN_ADD_OBS(chan, obs, prio);`.
+  With two arguments, or with no second line, tree-sitter recovers on its
+  own and the test passes with the fix removed. Both weaker shapes were
+  written first and did exactly that.
 
 ## How measurements mislead
 
