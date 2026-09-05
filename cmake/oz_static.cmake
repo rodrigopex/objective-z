@@ -215,6 +215,7 @@ function(objz_transpile_sources_static target)
     set(_ast_script "${_ast_dir}/oz_static_ast.sh")
     set(_ast_lines "#!/bin/sh\n")
     set(_ast_args "")
+    set(_ast_outputs "")
     # How many dumps, so each `echo` below can say `k/N` -- the counter is
     # what turns a silent stretch into a visible rate. This phase writes
     # hundreds of megabytes and took 2.9s on px-keyboard while printing
@@ -258,6 +259,32 @@ function(objz_transpile_sources_static target)
             "${_one} > ${_ast} 2> ${_ast}.err\n"
             "grep -q 'fatal error:' ${_ast}.err || rm -f ${_ast}.err\n")
         list(APPEND _ast_args --ast ${_ast})
+
+        # The same dump as its own build-time edge, so ninja can track what
+        # it really depends on and rebuild only what changed.
+        #
+        # `-MD -MF` makes Clang record the header closure it actually read,
+        # and `-MT ${_ast}` names the dump as the depfile's target so it
+        # matches this command's OUTPUT (without it Clang writes
+        # `<stem>.o:`, which ninja rejects). `DEPENDS` alone cannot express
+        # this: the closure is only known after preprocessing, which is why
+        # editing a spliced header regenerated nothing before (#299).
+        #
+        # One script per source rather than `sh -c`, because the flag list
+        # runs to kilobytes and the `> ${_ast}` redirection needs a shell.
+        set(_one_script "${_ast_dir}/${_safe}.sh")
+        file(WRITE ${_one_script}
+            "#!/bin/sh\n"
+            "${_one} -MD -MF ${_ast}.d -MT ${_ast} > ${_ast} 2> ${_ast}.err\n"
+            "grep -q 'fatal error:' ${_ast}.err || rm -f ${_ast}.err\n")
+        add_custom_command(
+            OUTPUT  ${_ast}
+            COMMAND sh ${_one_script}
+            DEPENDS ${_src}
+            DEPFILE ${_ast}.d
+            COMMENT "oz_static: clang ast ${_ast_k}/${_n_ast} ${_name}"
+        )
+        list(APPEND _ast_outputs ${_ast})
     endforeach()
     file(WRITE ${_ast_script} "${_ast_lines}")
 
@@ -380,10 +407,14 @@ function(objz_transpile_sources_static target)
         COMMAND ${CMAKE_COMMAND} -E env --unset=CC --unset=CXX --unset=CFLAGS --unset=CXXFLAGS
                 --unset=LDFLAGS --unset=AR --unset=RANLIB --unset=NM
                 cargo build --manifest-path ${_oz_static_dir}/Cargo.toml
-        COMMAND sh ${_ast_script}
-        # Ordered between the dumps and oz2c deliberately: this is the run
-        # whose facts reach the shipped C, and a truncated dump must stop the
-        # build here rather than quietly weaken ARC (#274).
+        # The dumps are their own edges now (above), so ninja produces
+        # them -- in parallel, and only the ones whose source or headers
+        # changed -- and this command consumes them. It no longer re-runs
+        # all N unconditionally.
+        #
+        # Still ordered before oz2c: this is the run whose facts reach the
+        # shipped C, and a truncated dump must stop the build here rather
+        # than quietly weaken ARC (#274).
         COMMAND sh ${_ast_check}
         COMMAND ${_oz2c} ${_oz2c_flags} ${_oz2c_ast} ${_src_abs_list} ${_outdir}
                 --manifest ${_manifest}
@@ -392,7 +423,13 @@ function(objz_transpile_sources_static target)
         # changes, so a rebuilt transpiler silently produces nothing new.
         # That cost real debugging time -- a fix would land, the sample would
         # be rebuilt, and the old generated C would still be compiled.
-        DEPENDS ${_src_abs_list} ${_oz2c_srcs}
+        #
+        # `${_ast_outputs}` is what makes a header edit reach the generated
+        # C: Clang's depfile regenerates the affected dump, and this edge
+        # then re-runs because one of its inputs changed. `${_sdk_impls}`
+        # is listed because the module's own `src/*.m` are spliced into the
+        # translation unit and were missing from this list entirely.
+        DEPENDS ${_src_abs_list} ${_oz2c_srcs} ${_ast_outputs} ${_sdk_impls}
         # The only line ninja prints *before* the edge runs, so it carries
         # the scale rather than just the verb.
         COMMENT "oz_static: ${_n_entry} source(s) -> C via oz2c (${_n_ast} Clang AST dumps)"
