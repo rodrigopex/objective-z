@@ -74,7 +74,7 @@ __attribute__((objc_root_class))
 - (instancetype)init;
 - (void)dealloc;
 - (BOOL)isEqual:(id)anObject;
-- (int)cDescription:(char *)buf maxLength:(int)maxLen;
+- (int)cDescription:(char *)buf maxLength:(size_t)maxLen;
 @end
 
 #ifdef __clang__

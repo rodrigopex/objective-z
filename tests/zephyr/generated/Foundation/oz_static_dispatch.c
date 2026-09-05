@@ -206,7 +206,7 @@ BOOL OZ_PROTOCOL_SEND_isEqual_(struct OZObject *self, void * anObject)
 
 /* protocol dispatch: routes 'cDescription:maxLength:' to whichever class implements it
  * (not from source) */
-int OZ_PROTOCOL_SEND_cDescription_maxLength_(struct OZObject *self, char* buf, int maxLen)
+int OZ_PROTOCOL_SEND_cDescription_maxLength_(struct OZObject *self, char* buf, size_t maxLen)
 {
 	switch (self->_meta.class_id) {
 	case OZ_STATIC_CLASS_OZObject: return OZObject_cDescription_maxLength_((struct OZObject *)self, buf, maxLen);

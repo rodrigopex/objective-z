@@ -178,7 +178,7 @@ fn typed_var_iterates_ozstring() {
 	int _count;
 }}
 - (void)countStrings;
-- (int)count;
+- (size_t)count;
 @end
 
 @implementation TypedIterTest
@@ -191,7 +191,7 @@ fn typed_var_iterates_ozstring() {
 		}}
 	}}
 }}
-- (int)count {{
+- (size_t)count {{
 	return _count;
 }}
 @end

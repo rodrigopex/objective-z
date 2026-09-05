@@ -18,7 +18,7 @@
 {
 	return self == anObject;
 }
-- (int)cDescription:(char *)buf maxLength:(int)maxLen
+- (int)cDescription:(char *)buf maxLength:(size_t)maxLen
 {
 	return 0;
 }

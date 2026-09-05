@@ -18,5 +18,5 @@ typedef bool BOOL;
 @protocol ObjectProtocol
 @required
 - (BOOL)isEqual:(id)anObject;
-- (int)cDescription:(char *)buf maxLength:(int)maxLen;
+- (int)cDescription:(char *)buf maxLength:(size_t)maxLen;
 @end

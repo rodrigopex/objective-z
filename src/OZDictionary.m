@@ -22,14 +22,14 @@
 	return ret;
 }
 
-- (unsigned int)count
+- (size_t)count
 {
 	return _count;
 }
 
 - (id)objectForKey:(id)key
 {
-	for (unsigned int i = 0; i < _count; i++) {
+	for (size_t i = 0; i < _count; i++) {
 		id k = _keys[i];
 		if ([k isEqual:key]) {
 			return _values[i];
@@ -43,31 +43,40 @@
 	return [self objectForKey:key];
 }
 
-- (int)cDescription:(char *)buf maxLength:(int)maxLen
+- (int)cDescription:(char *)buf maxLength:(size_t)maxLen
 {
-	int pos = 0;
+	/* Unsigned alongside `maxLen`. `pos` can reach `maxLen` but never
+	 * pass it -- every multi-byte write is guarded by `pos + n < maxLen`
+	 * -- so the `maxLen - pos` below is zero at worst, never wrapped. */
+	size_t pos = 0;
 	if (pos < maxLen) {
 		buf[pos++] = '{';
 	}
-	for (unsigned int i = 0; i < _count && pos < maxLen; i++) {
+	for (size_t i = 0; i < _count && pos < maxLen; i++) {
 		if (i > 0 && pos + 1 < maxLen) {
 			buf[pos++] = ';';
 			buf[pos++] = ' ';
 		}
 		id k = _keys[i];
-		pos += [k cDescription:buf + pos maxLength:maxLen - pos];
+		int written_k = [k cDescription:buf + pos maxLength:maxLen - pos];
+		if (written_k > 0) {
+			pos += (size_t)written_k;
+		}
 		if (pos + 2 < maxLen) {
 			buf[pos++] = ' ';
 			buf[pos++] = '=';
 			buf[pos++] = ' ';
 		}
 		id v = _values[i];
-		pos += [v cDescription:buf + pos maxLength:maxLen - pos];
+		int written_v = [v cDescription:buf + pos maxLength:maxLen - pos];
+		if (written_v > 0) {
+			pos += (size_t)written_v;
+		}
 	}
 	if (pos < maxLen) {
 		buf[pos++] = '}';
 	}
-	return pos;
+	return (int)pos;
 }
 
 @end

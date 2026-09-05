@@ -99,7 +99,7 @@ fn releasing_dictionary_literal_with_string_keys_does_not_abort() {
 #include <stdio.h>
 int main(void) {
 	OZDictionary *scores = @{ @\"alpha\" : @100, @\"beta\" : @200 };
-	printf(\"count=%u\\n\", [scores count]);
+	printf(\"count=%zu\\n\", [scores count]);
 	[scores release];
 	printf(\"released_ok\\n\");
 	return 0;
@@ -123,7 +123,7 @@ fn releasing_array_of_string_literals_does_not_abort() {
 #include <stdio.h>
 int main(void) {
 	OZArray *names = @[ @\"zephyr\", @\"objective-z\" ];
-	printf(\"count=%u\\n\", [names count]);
+	printf(\"count=%zu\\n\", [names count]);
 	[names release];
 	printf(\"released_ok\\n\");
 	return 0;
@@ -146,10 +146,10 @@ fn literal_survives_release_to_zero() {
 #include <stdio.h>
 int main(void) {
 	OZString *s = @\"hello\";
-	printf(\"len_before=%u\\n\", [s length]);
+	printf(\"len_before=%zu\\n\", [s length]);
 	[s release];
 	printf(\"cstr_after=%s\\n\", [s cString]);
-	printf(\"len_after=%u\\n\", [s length]);
+	printf(\"len_after=%zu\\n\", [s length]);
 	return 0;
 }
 "

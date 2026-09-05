@@ -2,10 +2,10 @@
 #import "OZTestBase.h"
 
 @interface SyncCounter : OZObject {
-	int _count;
+	size_t _count;
 }
 - (void)increment;
-- (int)count;
+- (size_t)count;
 @end
 
 @implementation SyncCounter
@@ -14,7 +14,7 @@
 		_count = _count + 1;
 	}
 }
-- (int)count {
+- (size_t)count {
 	return _count;
 }
 @end

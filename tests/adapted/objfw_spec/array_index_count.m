@@ -8,13 +8,13 @@
 #import "OZFoundationBase.h"
 
 @interface ArrIdxTest : OZObject {
-	unsigned int _count;
+	size_t _count;
 	int _first;
 	int _last;
 	BOOL _oobNil;
 }
 - (void)run;
-- (unsigned int)count;
+- (size_t)count;
 - (int)first;
 - (int)last;
 - (BOOL)oobNil;
@@ -31,7 +31,7 @@
 	id oob = [arr objectAtIndex:99];
 	_oobNil = (oob == nil);
 }
-- (unsigned int)count { return _count; }
+- (size_t)count { return _count; }
 - (int)first { return _first; }
 - (int)last { return _last; }
 - (BOOL)oobNil { return _oobNil; }

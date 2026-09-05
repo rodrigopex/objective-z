@@ -16,7 +16,7 @@ void test_string_length(void)
 {
 	struct StringTest *t = StringTest_alloc();
 	OZ_PROTOCOL_SEND_init((struct OZObject *)t);
-	unsigned int len = StringTest_helloLength(t);
+	size_t len = StringTest_helloLength(t);
 	TEST_ASSERT_EQUAL_UINT(5, len);
 	OZObject_release((struct OZObject *)t);
 }

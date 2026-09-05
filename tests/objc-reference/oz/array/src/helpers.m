@@ -58,7 +58,7 @@ unsigned int test_arr_count(id arr)
 	return [(OZArray *)arr count];
 }
 
-id test_arr_object_at(id arr, unsigned int idx)
+id test_arr_object_at(id arr, size_t idx)
 {
 	return [(OZArray *)arr objectAtIndex:idx];
 }
@@ -73,7 +73,7 @@ const char *test_arr_description_cstr(id arr)
 
 /* ── Retain count of element ──────────────────────────────────────── */
 
-unsigned int test_arr_element_retain_count(id arr, unsigned int idx)
+unsigned int test_arr_element_retain_count(id arr, size_t idx)
 {
 	__unsafe_unretained id obj = [(OZArray *)arr objectAtIndex:idx];
 	return __objc_refcount_get(obj);

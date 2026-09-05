@@ -76,10 +76,10 @@ fn counter_increments_under_lock() {
         ozobject_src(),
         "\
 @interface SyncCounter : OZObject {
-	int _count;
+	size_t _count;
 }
 - (void)increment;
-- (int)count;
+- (size_t)count;
 @end
 @implementation SyncCounter
 - (void)increment {
@@ -87,7 +87,7 @@ fn counter_increments_under_lock() {
 		_count = _count + 1;
 	}
 }
-- (int)count {
+- (size_t)count {
 	return _count;
 }
 @end

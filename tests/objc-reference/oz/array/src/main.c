@@ -23,9 +23,9 @@ extern id test_arr_multi(void);
 extern id test_arr_strings(void);
 
 extern unsigned int test_arr_count(id arr);
-extern id test_arr_object_at(id arr, unsigned int idx);
+extern id test_arr_object_at(id arr, size_t idx);
 extern const char *test_arr_description_cstr(id arr);
-extern unsigned int test_arr_element_retain_count(id arr, unsigned int idx);
+extern unsigned int test_arr_element_retain_count(id arr, size_t idx);
 extern int test_arr_int_value(id n);
 extern const char *test_arr_string_cstr(id s);
 
@@ -148,7 +148,7 @@ ZTEST(arr_fast_enum, test_fast_enum_empty)
 	void *pool = test_arr_pool_push();
 
 	id arr = test_arr_empty();
-	unsigned int n = test_arr_fast_enum_count(arr);
+	size_t n = test_arr_fast_enum_count(arr);
 	zassert_equal(n, 0, "for...in on empty array should iterate 0 times");
 
 	test_arr_pool_pop(pool);

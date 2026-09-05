@@ -64,7 +64,7 @@ struct OZObject * OZObject_allocWithHeap__cls(void * heap);
 struct OZObject * OZObject_init(struct OZObject *self);
 void OZObject_dealloc(struct OZObject *self);
 BOOL OZObject_isEqual_(struct OZObject *self, void * anObject);
-int OZObject_cDescription_maxLength_(struct OZObject *self, char* buf, int maxLen);
+int OZObject_cDescription_maxLength_(struct OZObject *self, char* buf, size_t maxLen);
 struct OZObject *OZObject_oz_alloc(void);
 void OZObject_oz_free(struct OZObject *obj);
 struct OZObject *oz_static_retain(struct OZObject *self);
@@ -184,7 +184,7 @@ struct OZQ31 * OZQ31_add_(struct OZQ31 *self, struct OZQ31 * other);
 struct OZQ31 * OZQ31_sub_(struct OZQ31 *self, struct OZQ31 * other);
 struct OZQ31 * OZQ31_mul_(struct OZQ31 *self, struct OZQ31 * other);
 struct OZQ31 * OZQ31_div_(struct OZQ31 *self, struct OZQ31 * other);
-int OZQ31_cDescription_maxLength_(struct OZQ31 *self, char* buf, int maxLen);
+int OZQ31_cDescription_maxLength_(struct OZQ31 *self, char* buf, size_t maxLen);
 BOOL OZQ31_isEqual_(struct OZQ31 *self, void * anObject);
 void OZQ31_dealloc(struct OZQ31 *self);
 struct OZQ31 *OZQ31_oz_alloc(void);
@@ -210,7 +210,7 @@ void OZ_PROTOCOL_SEND_dealloc(struct OZObject *self);
 /* protocol dispatch: routes 'isEqual:' to whichever class implements it */
 BOOL OZ_PROTOCOL_SEND_isEqual_(struct OZObject *self, void * anObject);
 /* protocol dispatch: routes 'cDescription:maxLength:' to whichever class implements it */
-int OZ_PROTOCOL_SEND_cDescription_maxLength_(struct OZObject *self, char* buf, int maxLen);
+int OZ_PROTOCOL_SEND_cDescription_maxLength_(struct OZObject *self, char* buf, size_t maxLen);
 /* protocol dispatch: routes 'toggle' to whichever class implements it */
 int OZ_PROTOCOL_SEND_toggle(struct OZObject *self);
 /* protocol dispatch: routes 'depth' to whichever class implements it */

@@ -316,7 +316,7 @@ fn a_selector_nothing_implements_is_rejected() {
 fn an_unperformable_selector_is_rejected_where_the_program_performs() {
     let cases = [
         ("- (void)setCount:(int)n {\n}\n", "setCount:", "not an object type"),
-        ("- (int)count {\n\treturn 0;\n}\n", "count", "neither void nor an object type"),
+        ("- (size_t)count {\n\treturn 0;\n}\n", "count", "neither void nor an object type"),
         (
             "- (void)a:(id)x b:(id)y c:(id)z {\n}\n",
             "a:b:c:",
@@ -354,10 +354,10 @@ fn an_unperformable_selector_is_fine_when_nothing_performs() {
     let src = format!(
         "{}{}\
 @interface Odd : OZObject
-- (int)count;
+- (size_t)count;
 @end
 @implementation Odd
-- (int)count {{
+- (size_t)count {{
 	return 7;
 }}
 @end

@@ -208,18 +208,18 @@ fn boxed_array_literal_helper_prototype_is_visible_across_files() {
     fs::write(
         dir.join("OZArray.h"),
         "#pragma once\n#import <Foundation/OZObject.h>\n\n\
-         @interface OZArray : OZObject {\n\tid *_items;\n\tunsigned int _count;\n}\n- (unsigned int)count;\n@end\n",
+         @interface OZArray : OZObject {\n\tid *_items;\n\tsize_t _count;\n}\n- (size_t)count;\n@end\n",
     )
     .unwrap();
     fs::write(
         dir.join("OZArray.m"),
-        "#import \"OZArray.h\"\n\n@implementation OZArray\n- (unsigned int)count {\n\treturn _count;\n}\n@end\n",
+        "#import \"OZArray.h\"\n\n@implementation OZArray\n- (size_t)count {\n\treturn _count;\n}\n@end\n",
     )
     .unwrap();
     fs::write(
         dir.join("main.m"),
         "#import <Foundation/OZObject.h>\n#import \"OZQ31.h\"\n#import \"OZArray.h\"\n\n\
-         #include <stdio.h>\nint main(void) {\n\tOZArray *arr = @[@(1), @(2), @(3)];\n\tprintf(\"count=%u\\n\", [arr count]);\n\treturn 0;\n}\n",
+         #include <stdio.h>\nint main(void) {\n\tOZArray *arr = @[@(1), @(2), @(3)];\n\tprintf(\"count=%zu\\n\", [arr count]);\n\treturn 0;\n}\n",
     )
     .unwrap();
 

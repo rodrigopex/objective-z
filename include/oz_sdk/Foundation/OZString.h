@@ -9,17 +9,17 @@
 #import "OZObject.h"
 
 @interface OZString : OZObject {
-	unsigned int _length;
+	size_t _length;
 	unsigned int _hash;
 	const char *_data;
 }
 - (const char *)cString;
-- (unsigned int)length;
+- (size_t)length;
 - (BOOL)isEqual:(id)anObject;
 - (BOOL)isEqualToString:(OZString *)aString;
 - (BOOL)hasPrefix:(OZString *)prefix;
 - (BOOL)hasSuffix:(OZString *)suffix;
-- (int)cDescription:(char *)buf maxLength:(int)maxLen;
+- (int)cDescription:(char *)buf maxLength:(size_t)maxLen;
 @end
 
 #ifdef __clang__

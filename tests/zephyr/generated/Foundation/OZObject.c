@@ -36,8 +36,8 @@ BOOL OZObject_isEqual_(struct OZObject *self, void * anObject)
 	return self == anObject;
 }
 
-/* - (int)cDescription:(char *)buf maxLength:(int)maxLen */
-int OZObject_cDescription_maxLength_(struct OZObject *self, char* buf, int maxLen)
+/* - (int)cDescription:(char *)buf maxLength:(size_t)maxLen */
+int OZObject_cDescription_maxLength_(struct OZObject *self, char* buf, size_t maxLen)
 {
 	(void)self;
 	(void)buf;
