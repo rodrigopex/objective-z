@@ -113,6 +113,12 @@ pub fn transpile_with_options(
     source: &str,
     options: &Options,
 ) -> Result<TranspileOutput, Vec<Diagnostic>> {
+    /* Every later pass -- collect, arc, generics, pools, emit -- reads this
+     * text by byte offset, so the repair has to happen before any of them
+     * and has to preserve length. See
+     * `parse::repair_bare_macro_statements` (#288, #289). */
+    let (repaired, repaired_semicolons) = parse::repair_bare_macro_statements(source);
+    let source: &str = &repaired;
     let (mut program, mut diagnostics) = collect::collect(source);
     if !diagnostics.is_empty() {
         return Err(diagnostics);
@@ -133,7 +139,7 @@ pub fn transpile_with_options(
     if !diagnostics.is_empty() {
         return Err(diagnostics);
     }
-    let result = emit::emit(source, &program, &pools);
+    let result = emit::emit(source, &program, &pools, &repaired_semicolons);
     if !result.diagnostics.is_empty() {
         return Err(result.diagnostics);
     }
@@ -182,6 +188,12 @@ pub fn transpile_split_with_options(
     origins: &[(String, std::ops::Range<usize>)],
     options: &Options,
 ) -> Result<emit::EmitSplitOutput, Vec<Diagnostic>> {
+    /* Every later pass -- collect, arc, generics, pools, emit -- reads this
+     * text by byte offset, so the repair has to happen before any of them
+     * and has to preserve length. See
+     * `parse::repair_bare_macro_statements` (#288, #289). */
+    let (repaired, repaired_semicolons) = parse::repair_bare_macro_statements(source);
+    let source: &str = &repaired;
     let (mut program, mut diagnostics) = collect::collect(source);
     if !diagnostics.is_empty() {
         return Err(diagnostics);
@@ -203,7 +215,14 @@ pub fn transpile_split_with_options(
         return Err(diagnostics);
     }
     let mut result =
-        emit::emit_split(source, &program, origins, &pools, &options.header_ranges);
+        emit::emit_split(
+            source,
+            &program,
+            origins,
+            &pools,
+            &options.header_ranges,
+            &repaired_semicolons,
+        );
     diagnostics.extend(std::mem::take(&mut result.diagnostics));
     if !diagnostics.is_empty() {
         return Err(diagnostics);
