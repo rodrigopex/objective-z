@@ -15,7 +15,7 @@ fn usage() -> ExitCode {
         "usage: oz2c [-I <dir>]... [--impl-dir <dir>]... [--manifest <path>] \
          [--root-class <name>] [--pool-sizes <Class=N,...>] \
          [--item-pool-size <N>] [--ast <ast.json>]... \
-         [--heap-support] \
+         [--heap-support] [--dump-cst] \
          <input.m>... <outdir>"
     );
     ExitCode::FAILURE
@@ -33,6 +33,7 @@ fn main() -> ExitCode {
     let mut introspection = false;
     let mut reflection = false;
     let mut item_pool_size: Option<usize> = None;
+    let mut dump_cst = false;
     let mut positional: Vec<String> = Vec::new();
 
     let mut i = 0;
@@ -133,6 +134,24 @@ fn main() -> ExitCode {
                 }
                 i += 2;
             }
+            // Print the top-level shape of the *import-resolved* tree and
+            // stop. The resolved text is what every later pass sees, and it
+            // is not the file the user wrote: `#import` splices each header
+            // and its sibling implementation inline, so a construct's
+            // grouping -- and its byte offsets, which the whole emitter is
+            // keyed on -- can differ from the raw `.m`. Reaching for the
+            // raw file instead is a real way to misdiagnose: it is how
+            // #288's cause was first missed.
+            //
+            // Only the translation unit's own children are printed, with
+            // their origin and any ERROR/MISSING marker. That is the view
+            // that shows a construct absorbed into its neighbour, which is
+            // the failure this exists for; the full tree over a resolved
+            // source runs to tens of thousands of nodes and buries it.
+            "--dump-cst" => {
+                dump_cst = true;
+                i += 1;
+            }
             arg => {
                 positional.push(arg.to_string());
                 i += 1;
@@ -180,6 +199,11 @@ fn main() -> ExitCode {
                 return ExitCode::FAILURE;
             }
         };
+
+    if dump_cst {
+        dump_resolved_cst(&resolved);
+        return ExitCode::SUCCESS;
+    }
 
     // oz_static infers the root class (the one class with no superclass)
     // rather than being told it, so `--root-class` is a cross-check on the
@@ -298,4 +322,85 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// Print the translation unit's own children, for `--dump-cst`.
+///
+/// One line per top-level node: kind, byte range, 1-based line in the
+/// resolved text, originating stem, and the node's first line of text.
+/// A node tree-sitter could not parse is marked, and so is one whose span
+/// reaches past its own construct into the next -- which is what a
+/// semicolon-less function-like macro invocation does to its neighbour
+/// (#288, #289).
+fn dump_resolved_cst(resolved: &oz_static::imports::ResolvedSource) {
+    let src = &resolved.text;
+    let tree = oz_static::parse::parse(src);
+    let root = tree.root_node();
+
+    println!("resolved text: {} bytes, {} top-level nodes", src.len(), root.child_count());
+    println!(
+        "{:<28} {:>18}  {:>6}  {:<16}  {}",
+        "kind", "bytes", "line", "origin", "first line"
+    );
+
+    let mut cursor = root.walk();
+    for node in root.children(&mut cursor) {
+        let (line, _) = oz_static::parse::line_col(src, node.start_byte());
+        let origin = resolved
+            .origins
+            .iter()
+            .find(|(_, r)| r.contains(&node.start_byte()))
+            .map(|(s, _)| s.as_str())
+            .unwrap_or("main");
+        let text = &src[node.byte_range()];
+        let first = text.lines().next().unwrap_or("").trim();
+        let first: String = first.chars().take(64).collect();
+
+        let mut marks = String::new();
+        if node.is_error() {
+            marks.push_str(" <ERROR>");
+        }
+        if node.is_missing() {
+            marks.push_str(" <MISSING>");
+        }
+        /* A construct absorbed into this one still shows up as a nested
+         * node of its own kind, which is the tell worth flagging. */
+        if let Some(kind) = absorbed_construct(node) {
+            marks.push_str(&format!(" <ABSORBED {}>", kind));
+        }
+
+        println!(
+            "{:<28} {:>8}..{:<8}  {:>6}  {:<16}  {}{}",
+            node.kind(),
+            node.start_byte(),
+            node.end_byte(),
+            line,
+            origin,
+            first,
+            marks
+        );
+    }
+}
+
+/// The kind of a top-level construct nested inside `node` that should have
+/// been a sibling of it, if there is one.
+fn absorbed_construct(node: tree_sitter::Node) -> Option<&'static str> {
+    const TOP_LEVEL: &[&str] = &[
+        "class_interface",
+        "class_implementation",
+        "category_interface",
+        "category_implementation",
+        "protocol_declaration",
+    ];
+    fn walk(node: tree_sitter::Node, depth: usize) -> Option<&'static str> {
+        if depth > 0 {
+            if let Some(found) = TOP_LEVEL.iter().find(|k| **k == node.kind()) {
+                return Some(found);
+            }
+        }
+        let mut cursor = node.walk();
+        let children: Vec<tree_sitter::Node> = node.children(&mut cursor).collect();
+        children.into_iter().find_map(|c| walk(c, depth + 1))
+    }
+    walk(node, 0)
 }
