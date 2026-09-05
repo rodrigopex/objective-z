@@ -1,6 +1,6 @@
 [package]
 name = "oz_static"
-version = "0.47.0"
+version = "0.47.1"
 edition = "2021"
 description = "OZ-091 Track B spike: static-subset Objective-C to C transpiler using in-place textual substitution"
 publish = false
@@ -20,3 +20,34 @@ tree-sitter-objc = "3.0.2"
 # cannot see for itself (see src/astinfo.rs). A host build-tool dependency
 # only -- nothing here reaches the embedded target.
 serde_json = "1"
+
+# oz2c is a build tool that reads far more JSON than Objective-C: a
+# px-keyboard build hands it 742 MB of Clang AST dumps against 40 KB of
+# source, and ingesting them was 95% of its wall clock (#299). At
+# `opt-level = 0` that took 11.05s; with this, 1.98s.
+#
+# Optimising the *dependencies* is what does it -- the hot path is
+# `serde_json`'s parser, and `package."*"` also covers tree-sitter-objc's
+# generated parser.c, which cc-rs was building unoptimised. The local crate
+# stays at 1 so editing oz_static is still quick to rebuild, which is what
+# `cmake/oz_static.cmake`'s "configure-time compile speed matters here"
+# comment was protecting.
+#
+# Deliberately `profile.dev` rather than a release build:
+#
+#   - `debug-assertions` and `overflow-checks` stay on, so this is the same
+#     binary `cargo test` exercises. A `--release` oz2c would drop every
+#     `debug_assert!` and wrap on overflow -- an artifact the primary gate
+#     never runs, which is the trap `cmake/ObjcClang.cmake` documents for
+#     clang 18-vs-19.
+#   - `target/debug/oz2c` is hardcoded in three places
+#     (`cmake/oz_static.cmake`, `tests/tools/oz_static_build.py`,
+#     `scripts/regen_zephyr_tests.py`) plus the CI workflow, so no path
+#     anywhere has to change.
+#
+# One-time cost: the dependencies recompile at -O3, then cache.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
