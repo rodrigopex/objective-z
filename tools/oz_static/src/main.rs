@@ -16,9 +16,46 @@ fn usage() -> ExitCode {
          [--root-class <name>] [--pool-sizes <Class=N,...>] \
          [--item-pool-size <N>] [--ast <ast.json>]... \
          [--heap-support] [--dump-cst] \
-         <input.m>... <outdir>"
+         <input.m>... <outdir>\n\
+         \x20      oz2c --dump-ast-facts [--ast <ast.json>]..."
     );
     ExitCode::FAILURE
+}
+
+/// Print every fact the `--ast` dumps carry, sorted, one per line.
+///
+/// The whole point is that two runs over the same dumps produce identical
+/// bytes, so `diff` is a proof rather than an impression -- see
+/// `astinfo::AstFacts::dump_lines`. Goes to **stdout**, because stderr is
+/// where diagnostics live and `tests/tools/oz_static_build.py` reports its
+/// first line as the reason a transpile failed.
+///
+/// Unlike the transpile path this does not reject dumps that describe no
+/// ivars: "these dumps say nothing" is a legitimate answer to ask for, and
+/// making it an error would mean the oracle could not record the
+/// no-AST baseline it is most often diffed against.
+fn dump_merged_ast_facts(ast_paths: &[PathBuf]) -> ExitCode {
+    let mut facts = oz_static::astinfo::AstFacts::default();
+    for path in ast_paths {
+        let text = match fs::read_to_string(path) {
+            Ok(text) => text,
+            Err(e) => {
+                eprintln!("oz_static: error: cannot read --ast '{}': {}", path.display(), e);
+                return ExitCode::FAILURE;
+            }
+        };
+        match oz_static::astinfo::AstFacts::from_json(&text) {
+            Ok(one) => facts.merge(one),
+            Err(e) => {
+                eprintln!("oz_static: error: --ast '{}': {}", path.display(), e);
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+    for line in facts.dump_lines() {
+        println!("{}", line);
+    }
+    ExitCode::SUCCESS
 }
 
 fn main() -> ExitCode {
@@ -34,6 +71,7 @@ fn main() -> ExitCode {
     let mut reflection = false;
     let mut item_pool_size: Option<usize> = None;
     let mut dump_cst = false;
+    let mut dump_ast_facts = false;
     let mut positional: Vec<String> = Vec::new();
 
     let mut i = 0;
@@ -152,11 +190,33 @@ fn main() -> ExitCode {
                 dump_cst = true;
                 i += 1;
             }
+            // Print the merged `--ast` facts and exit -- the equivalence
+            // oracle for any change to the AST path.
+            //
+            // Ingesting these dumps is 97.5% of oz2c's wall clock on
+            // px-keyboard (11.05s of 11.32s), so that is where the
+            // optimisation pressure is, and a mistake there does not fail
+            // the build: it makes the oracle answer one question fewer,
+            // which silently leaks an ivar. Diffing generated C only
+            // catches facts one program happens to use today, so this
+            // dumps the fact set itself (#299).
+            //
+            // Takes no source and no outdir -- the facts are a property of
+            // the dumps alone, and requiring an unrelated `.m` would make
+            // the baseline harder to capture than the thing it guards.
+            "--dump-ast-facts" => {
+                dump_ast_facts = true;
+                i += 1;
+            }
             arg => {
                 positional.push(arg.to_string());
                 i += 1;
             }
         }
+    }
+
+    if dump_ast_facts {
+        return dump_merged_ast_facts(&ast_paths);
     }
     // Every positional but the last is an entry `.m`; the last is the
     // output directory. A build system lists every `.m` a target owns

@@ -129,3 +129,73 @@ fn ast_describing_no_ivars_is_rejected() {
     let joined = err.iter().map(|d| d.to_string()).collect::<Vec<_>>().join("\n");
     assert!(joined.contains("describe no ivars"), "diagnostics: {}", joined);
 }
+
+/// `--dump-ast-facts` prints every fact the dumps carry, and prints it the
+/// same way every time.
+///
+/// This is the equivalence oracle for changing how the dumps are ingested
+/// (#299). Ingest is 97.5% of oz2c's wall clock on px-keyboard, so it is
+/// where the optimisation pressure is, and a mistake there does not fail a
+/// build -- it makes the oracle answer one question fewer, which silently
+/// leaks an ivar. So the property under test is not the wording of a line
+/// but that the whole set is complete and byte-stable: `diff` over two runs
+/// has to be a proof.
+#[test]
+fn dumped_facts_cover_every_set_and_are_sorted() {
+    let facts = oz_static::astinfo::AstFacts::from_json(ast_json())
+        .expect("the fixture is a faithful excerpt of a real dump");
+    let lines = facts.dump_lines();
+
+    assert_eq!(
+        lines,
+        vec![
+            "class Holder".to_string(),
+            "ivar Holder _backref unowned".to_string(),
+            "ivar Holder _count unowned".to_string(),
+            "ivar Holder _thing owned".to_string(),
+        ],
+        "every ivar, and the class itself, must appear -- a set dropped by a \
+         refactor would be invisible in generated C until something read it \
+         again"
+    );
+
+    let mut sorted = lines.clone();
+    sorted.sort();
+    assert_eq!(lines, sorted, "the output has to be sorted to be diffable");
+}
+
+/// The same facts reached through two dumps rather than one produce the
+/// same lines.
+///
+/// `merge` unions each set (`astinfo::AstFacts::merge`), and that is what
+/// makes the per-file dumps a partial view rather than a contradiction --
+/// so the dump of a merged set must not depend on how many files it came
+/// from, nor on the order they were merged in.
+#[test]
+fn dumped_facts_do_not_depend_on_how_the_dumps_were_split() {
+    let one = r#"{"kind": "TranslationUnitDecl", "inner": [
+        {"kind": "ObjCImplementationDecl", "name": "Holder", "inner": [
+          {"kind": "ObjCIvarDecl", "name": "_thing", "type": {"qualType": "__strong id"}}
+        ]}
+      ]}"#;
+    let two = r#"{"kind": "TranslationUnitDecl", "inner": [
+        {"kind": "ObjCInterfaceDecl", "name": "Other", "inner": [
+          {"kind": "ObjCMethodDecl", "name": "run", "inner": [{"kind": "CompoundStmt"}]}
+        ]}
+      ]}"#;
+
+    let merge = |a: &str, b: &str| {
+        let mut facts = oz_static::astinfo::AstFacts::from_json(a).expect("a");
+        facts.merge(oz_static::astinfo::AstFacts::from_json(b).expect("b"));
+        facts.dump_lines()
+    };
+
+    assert_eq!(
+        merge(one, two),
+        merge(two, one),
+        "merge unions its sets, so the dump must not record the order"
+    );
+    let lines = merge(one, two);
+    assert!(lines.contains(&"impl Holder".to_string()), "got:\n{:#?}", lines);
+    assert!(lines.contains(&"method Other run".to_string()), "got:\n{:#?}", lines);
+}
