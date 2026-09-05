@@ -699,8 +699,37 @@ pub(crate) fn method_fn_name(class_name: &str, selector: &str, is_class_method: 
 /// the name is a *class*. Every plain C struct type is spelled `struct Foo`
 /// too, so a caller about to treat the result as a class must ask
 /// `Program::is_class` as well.
+/// Suffix marking a scope entry as an *array of* its element type rather
+/// than one of it.
+///
+/// The scope maps a name to a C type string, and C spells an array's extent
+/// after the name, so there is nowhere in the type to say "array" -- yet
+/// every decision about a subscript, a send, and a store needs to know.
+/// The extent itself is not carried here (it is in
+/// `ClassInfo::array_extents`, and only a declaration ever needs it); this
+/// only has to answer the yes/no.
+const ARRAY_MARK: &str = "[]";
+
+/// `struct Leaf *[]` -> `struct Leaf *`: the element type of an array scope
+/// entry, or the type unchanged when it is not one.
+fn element_type(t: &str) -> &str {
+    t.strip_suffix(ARRAY_MARK).map(str::trim_end).unwrap_or(t)
+}
+
+/// Is this scope entry an array?
+fn is_array_type(t: &str) -> bool {
+    t.trim_end().ends_with(ARRAY_MARK)
+}
+
 fn class_name_from_type(t: &str) -> Option<String> {
     let t = t.trim();
+    /* An *array of* a class is not a class: `struct Leaf *[]` indexes with
+     * ordinary C, and answering `Leaf` here is what made `_leaves[0]` a
+     * subscript send and then a hard error, since no class implements
+     * `objectAtIndexedSubscript:` for it (#287). See `ARRAY_MARK`. */
+    if t.ends_with(ARRAY_MARK) {
+        return None;
+    }
     let rest = t.strip_prefix("struct ")?;
     let name = rest.trim_end_matches('*').trim();
     if name.is_empty() {
@@ -1819,6 +1848,15 @@ fn render_subscript_expression(node: Node, ctx: &mut EmitCtx) -> (String, String
     };
 
     let (recv_text, recv_type) = render_expr(recv_node, ctx);
+    // An array of objects indexes as ordinary C, and the result is one
+    // element -- so the type has to come back as the element type, not as
+    // `id` the way `pass_through` reports an unrecognised receiver. Getting
+    // that wrong would leave `[_leaves[0] doThing]` dispatching through
+    // `id` instead of statically (#287).
+    if is_array_type(&recv_type) {
+        let (index_text, _) = render_expr(index_node, ctx);
+        return (format!("{}[{}]", recv_text, index_text), element_type(&recv_type).to_string());
+    }
     // Indexing a C array of plain structs is ordinary C, and its element
     // type is spelled `struct Foo` just like a class's -- so the name has
     // to be checked against the program, or `points[0]` on a
@@ -2156,6 +2194,140 @@ fn render_strong_local_assign(
     Some((expr, ty))
 }
 
+/// `_leaves[i] = value;` where `_leaves` is an owned array of objects:
+/// release what the slot held, then store, so the array owns its elements
+/// the way a strong ivar owns its one (#287).
+///
+/// Without this the store is plain C and the slot's previous value is
+/// simply dropped -- a leak on every overwrite, and one that
+/// `{Class}_oz_release_ivars` cannot make up for, since by `-dealloc` the
+/// overwritten references are already unreachable.
+///
+/// Ordering and the comma expression are `render_strong_local_assign`'s,
+/// for its reasons: releasing *before* a `+1` right-hand side lets one slab
+/// slot serve a whole loop, and naming the target twice is only safe
+/// because both the index and the value are checked to be side-effect free
+/// first. No temporary, deliberately -- `ctx.pre_stmts` is drained by the
+/// enclosing *top-level* statement, so a temporary written for a store
+/// inside a loop is hoisted above it and reads the slot once, before the
+/// loop, which is exactly the bug that comment records.
+///
+/// Three shapes are accepted, and anything else is a located error rather
+/// than a silent plain-C store:
+///
+///   - a `+1` value (`[[Leaf alloc] init]`) -- release the slot, then store
+///   - a plain identifier -- retain, release the slot, then store
+///   - `nil` -- release the slot and clear it
+fn render_strong_array_element_assign(
+    node: Node,
+    left: Node,
+    right: Node,
+    ctx: &mut EmitCtx,
+) -> Option<(String, String)> {
+    if left.kind() != "subscript_expression" {
+        return None;
+    }
+    let mut cursor = left.walk();
+    let parts: Vec<Node> = left.children(&mut cursor).collect();
+    let open = parts.iter().position(|c| c.kind() == "[")?;
+    let close = parts.iter().position(|c| c.kind() == "]")?;
+    let recv_node = parts.first().copied().filter(|_| open > 0)?;
+    let index_node = parts.get(open + 1).copied().filter(|_| open + 1 < close)?;
+
+    /* Only an *ivar* array is owned. A local array of objects has no
+     * scope-exit release to pair with, and a parameter's storage belongs to
+     * the caller. */
+    let ivar = if recv_node.kind() == "identifier" {
+        node_text(recv_node, ctx.src).to_string()
+    } else {
+        return None;
+    };
+    let recv_type = ctx.scope.get(&ivar)?.clone();
+    if !is_array_type(&recv_type) {
+        return None;
+    }
+    let elem = element_type(&recv_type).to_string();
+    /* An array of ints owns nothing. */
+    if class_name_from_type(&elem).is_none() && elem.trim() != "void *" {
+        return None;
+    }
+    if ctx.program.array_extent_of(&ctx.class_name, &ivar).is_none() {
+        return None;
+    }
+    if !ctx.program.owned_object_ivar_names(&ctx.class_name).iter().any(|n| *n == ivar) {
+        /* `__unsafe_unretained`, or a type Clang did not call an owned
+         * object: the slot is a borrow, and releasing a borrow is the
+         * double free the qualifier exists to prevent. */
+        return None;
+    }
+
+    let root = ctx.program.root_class()?.to_string();
+
+    /* The target is named twice by the comma expression, so the index is
+     * evaluated twice. Only a literal or a plain identifier is provably the
+     * same both times -- the same rule, and the same reason, as the
+     * compound-assignment restriction on a dot-syntax receiver. */
+    let index_ok = matches!(index_node.kind(), "number_literal" | "identifier");
+    if !index_ok {
+        ctx.err(
+            node,
+            format!(
+                "the index of an owned array element store is evaluated twice \
+                 (to release the old element and then assign), so it must be a \
+                 literal or a plain variable -- '{}' is neither. Read it into a \
+                 local first",
+                one_line(node_text(index_node, ctx.src))
+            ),
+        );
+        return Some((node_text(node, ctx.src).to_string(), elem));
+    }
+    let (index_text, _) = render_expr(index_node, ctx);
+    let path = ctx.program.ivar_access_path(&ctx.class_name, &ivar)?;
+    let target = format!("self->{}[{}]", path, index_text);
+
+    if is_null_initializer(right, ctx.src) {
+        let expr = format!(
+            "(oz_static_release((struct {root} *)({target})), {target} = ((void *)0))",
+            root = root,
+            target = target
+        );
+        return Some((expr, elem));
+    }
+
+    let kind = classify_store(&ivar, right, ctx.src, ctx.program);
+    if kind == LocalStore::Unsupported {
+        ctx.err(
+            node,
+            format!(
+                "'{}' stores into an owned array element from an expression this \
+                 backend cannot balance: it is neither a `+1` value, a plain \
+                 variable, nor nil. Assign it to a local first, then store the local",
+                one_line(node_text(node, ctx.src))
+            ),
+        );
+        return Some((node_text(node, ctx.src).to_string(), elem));
+    }
+    let (value, _) = render_expr(right, ctx);
+
+    let expr = match kind {
+        LocalStore::Owning => format!(
+            "(oz_static_release((struct {root} *)({target})), {target} = {value})",
+            root = root,
+            target = target,
+            value = value
+        ),
+        LocalStore::BorrowedIdent => format!(
+            "(oz_static_retain((struct {root} *)({value})), \
+             oz_static_release((struct {root} *)({target})), {target} = {value})",
+            root = root,
+            target = target,
+            value = value
+        ),
+        LocalStore::Unsupported => unreachable!("returned above"),
+    };
+    Some((expr, elem))
+}
+
 /// Assignment, handled here for three reasons: a property dot-syntax *target*
 /// has to become the setter call rather than an assignment to a function
 /// call, a strong object ivar has to take ownership of what it is given
@@ -2195,6 +2367,9 @@ fn render_assignment_expression(node: Node, ctx: &mut EmitCtx) -> (String, Strin
             return rendered;
         }
         if let Some(rendered) = render_strong_local_assign(left, right, ctx) {
+            return rendered;
+        }
+        if let Some(rendered) = render_strong_array_element_assign(node, left, right, ctx) {
             return rendered;
         }
     }
@@ -3931,9 +4106,16 @@ fn render_interface(node: Node, ctx: &mut EmitCtx, program: &Program) -> (String
         if ivar.starts_with("oz_") {
             continue;
         }
+        // C spells an array's extent after the name, so it cannot ride in
+        // the type -- it comes from `array_extents`, or the field silently
+        // becomes a scalar while every use of it keeps its subscript
+        // (#287). An ivar declared in the `@interface` never reaches here:
+        // `lower_ivar_decl` copies that declaration through verbatim,
+        // extent included, which is why only this path was ever wrong.
+        let extent = info.array_extents.get(ivar).map(String::as_str).unwrap_or("");
         ivars_text.push_str(&format!(
-            "\t{} {}; /* from the @implementation block */\n",
-            c_type, ivar
+            "\t{} {}{}; /* from the @implementation block */\n",
+            c_type, ivar, extent
         ));
         emitted.insert(ivar.clone());
     }
@@ -5409,7 +5591,22 @@ fn child_by_kind_local<'a>(node: Node<'a>, kind: &str) -> Option<Node<'a>> {
 }
 
 fn base_scope(class_name: &str, program: &Program) -> HashMap<String, String> {
-    program.all_ivars(class_name).into_iter().collect()
+    program
+        .all_ivars(class_name)
+        .into_iter()
+        .map(|(name, ty)| {
+            /* Marked here rather than in `all_ivars` because the scope is
+             * the only consumer that has to distinguish them: a struct
+             * field declaration wants the plain type plus the extent, and
+             * gets both from `array_extents`. */
+            if program.array_extent_of(class_name, &name).is_some() {
+                let ty = format!("{}{}", ty, ARRAY_MARK);
+                (name, ty)
+            } else {
+                (name, ty)
+            }
+        })
+        .collect()
 }
 
 /// File-scope object variables, as `name -> C type`.

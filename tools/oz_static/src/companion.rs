@@ -205,7 +205,7 @@ fn render_slab_define(name: &str, slots: usize) -> String {
 /// Lives in the owning class's own file because the companion header only
 /// forward-declares non-root structs and so cannot reach an ivar through
 /// one.
-fn render_release_ivars(name: &str, root: &str, owned: &[String]) -> String {
+fn render_release_ivars(name: &str, root: &str, owned: &[(String, Option<String>)]) -> String {
     if owned.is_empty() {
         return String::new();
     }
@@ -218,12 +218,33 @@ fn render_release_ivars(name: &str, root: &str, owned: &[String]) -> String {
         "void {name}_oz_release_ivars(struct {name} *self)\n{{\n",
         name = name
     ));
-    for path in owned {
-        c.push_str(&format!(
-            "\toz_static_release((struct {root} *)self->{path});\n",
-            root = root,
-            path = path
-        ));
+    for (path, extent) in owned {
+        match extent {
+            // An array of owned objects releases element by element. The
+            // count comes from `sizeof`, not from the recorded extent text:
+            // `_leaves[SLOTS]` is as valid as `_leaves[2]` and nothing here
+            // can evaluate the former, while the C compiler evaluates both.
+            //
+            // Casting the array itself -- which is what this did before
+            // #287 -- releases the storage as though the first element's
+            // pointer were an object header, so the refcount is read out of
+            // a pointer value. That is corruption, not a leak, and it
+            // compiled silently.
+            Some(_) => c.push_str(&format!(
+                "\tfor (unsigned int i = 0;\n\
+                 \t     i < sizeof(self->{path}) / sizeof(self->{path}[0]);\n\
+                 \t     i++) {{\n\
+                 \t\toz_static_release((struct {root} *)self->{path}[i]);\n\
+                 \t}}\n",
+                root = root,
+                path = path
+            )),
+            None => c.push_str(&format!(
+                "\toz_static_release((struct {root} *)self->{path});\n",
+                root = root,
+                path = path
+            )),
+        }
     }
     c.push_str("}\n\n");
     c
@@ -343,7 +364,7 @@ pub(crate) fn render_alloc_free(
     name: &str,
     root: &str,
     slots: usize,
-    owned_ivars: &[String],
+    owned_ivars: &[(String, Option<String>)],
     heap_support: bool,
     immortal: bool,
 ) -> String {
@@ -403,7 +424,7 @@ pub(crate) fn render_array_support(
     name: &str,
     root: &str,
     slots: usize,
-    owned_ivars: &[String],
+    owned_ivars: &[(String, Option<String>)],
     heap_support: bool,
     item_slots: usize,
 ) -> String {
@@ -553,7 +574,7 @@ pub(crate) fn render_dict_support(
     name: &str,
     root: &str,
     slots: usize,
-    owned_ivars: &[String],
+    owned_ivars: &[(String, Option<String>)],
     heap_support: bool,
     item_slots: usize,
 ) -> String {
