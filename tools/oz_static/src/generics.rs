@@ -221,7 +221,166 @@ pub fn check_program(source: &str, program: &Program) -> Vec<Diagnostic> {
     let mut diags = Vec::new();
     walk_for_method_bodies(tree.root_node(), source, program, &mut diags);
     walk_for_owned_array_ivars(tree.root_node(), source, program, &mut diags);
+    diags.extend(check_dispatch_signature_agreement(tree.root_node(), source, program));
     diags
+}
+
+/// Reject two classes implementing one dynamically-dispatched selector with
+/// signatures that disagree.
+///
+/// `companion::render_protocol_dispatch` emits one `OZ_PROTOCOL_SEND_<sel>`
+/// per selector *name* and takes its signature from whichever implementor was
+/// declared first -- its own doc states the assumption, that "every
+/// implementor of a given selector is expected to match it", and nothing
+/// checked it. Two classes sharing a name but not a return type produced a
+/// shim whose `case` arms disagreed with its own return type, and the only
+/// complaint came from GCC, about generated code the author never wrote
+/// (#290).
+///
+/// `instancetype` is exempt, and has to be: every implementor's
+/// `return_type` is its own class, and the shim already collapses them to
+/// `void *` for exactly that reason. Comparing the resolved types there
+/// would reject `-init`.
+///
+/// The error is located on the *second* declaration, which is the one that
+/// introduced the disagreement, and it names both types so the reader does
+/// not have to go looking for the first.
+fn check_dispatch_signature_agreement(
+    root: Node,
+    src: &str,
+    program: &Program,
+) -> Vec<Diagnostic> {
+    use std::collections::HashMap;
+
+    /* First declaration wins, matching what the shim actually takes its
+     * signature from -- so the diagnostic describes the emitted code. */
+    let mut first: HashMap<(String, bool), (String, String)> = HashMap::new();
+    let mut conflicts: Vec<(String, String, String, String, String)> = Vec::new();
+
+    for class_name in &program.class_order {
+        let Some(info) = program.classes.get(class_name) else {
+            continue;
+        };
+        for m in &info.methods {
+            if !program.is_dynamically_dispatched(&m.selector, m.is_class_method) {
+                continue;
+            }
+            if !program.method_is_defined(class_name, &m.selector, m.is_class_method) {
+                continue;
+            }
+            /* Covariant by design; the shim returns `void *`. */
+            if m.returns_instancetype {
+                continue;
+            }
+            let key = (m.selector.clone(), m.is_class_method);
+            let signature = m.return_type.trim().to_string();
+            match first.get(&key) {
+                None => {
+                    first.insert(key, (class_name.clone(), signature));
+                }
+                Some((first_class, first_sig)) if returns_are_incompatible(first_sig, &signature) => {
+                    conflicts.push((
+                        m.selector.clone(),
+                        first_class.clone(),
+                        first_sig.clone(),
+                        class_name.clone(),
+                        signature,
+                    ));
+                }
+                Some(_) => {}
+            }
+        }
+    }
+
+    conflicts
+        .into_iter()
+        .map(|(selector, first_class, first_sig, second_class, second_sig)| {
+            let (line, col) = locate_method(root, src, &second_class, &selector)
+                .unwrap_or_else(|| (1, 1));
+            Diagnostic::new(
+                format!(
+                    "'{selector}' is dispatched dynamically, so one shared \
+                     'OZ_PROTOCOL_SEND_{selc}' routes every implementor -- but \
+                     {first_class} returns '{first_sig}' and {second_class} returns \
+                     '{second_sig}'. Dispatch is keyed on the selector name alone, so \
+                     the two cannot share one. Rename one of them, or give them the \
+                     same return type.",
+                    selector = selector,
+                    selc = crate::emit::selector_to_c(&selector),
+                    first_class = first_class,
+                    first_sig = first_sig,
+                    second_class = second_class,
+                    second_sig = second_sig
+                ),
+                line,
+                col,
+            )
+        })
+        .collect()
+}
+
+/// Would routing both return types through one shared shim be a C error?
+///
+/// Only a *pointer* or by-value *aggregate* mismatch is. Two differing
+/// arithmetic types are not: the shim declares one of them and returns the
+/// other, and C's usual conversions apply -- `OZArray` returns
+/// `unsigned int` for `-count` where a test class returns `int`, which has
+/// always worked and is not what #290 was about. Rejecting it here would
+/// break working code to no purpose, so the narrower rule is deliberate
+/// rather than an oversight: the shim is imprecise there, and the
+/// imprecision is harmless.
+///
+/// What is not harmless is `const struct alpha_spec *` against
+/// `const struct beta_spec *` -- GCC's `-Wincompatible-pointer-types`, and
+/// the shape the issue was filed for.
+fn returns_are_incompatible(a: &str, b: &str) -> bool {
+    let (a, b) = (a.trim(), b.trim());
+    if a == b {
+        return false;
+    }
+    let pointer = |t: &str| t.contains('*');
+    if pointer(a) || pointer(b) {
+        return true;
+    }
+    /* An aggregate returned by value has no conversion to another. */
+    let aggregate = |t: &str| t.contains("struct ") || t.contains("union ");
+    aggregate(a) || aggregate(b)
+}
+
+/// `(line, col)` of `class`'s declaration or definition of `selector`, for a
+/// diagnostic that points at the code rather than at the top of the file.
+fn locate_method(
+    root: Node,
+    src: &str,
+    class: &str,
+    selector: &str,
+) -> Option<(usize, usize)> {
+    fn walk(node: Node, src: &str, class: &str, selector: &str) -> Option<usize> {
+        if node.kind() == "class_interface" || node.kind() == "class_implementation" {
+            let (name, _, category) = crate::collect::class_header(node, src);
+            if category.is_none() && name == class {
+                if let Some(byte) = find_selector_byte(node, src, selector) {
+                    return Some(byte);
+                }
+            }
+        }
+        let mut cursor = node.walk();
+        let children: Vec<Node> = node.children(&mut cursor).collect();
+        children.into_iter().find_map(|c| walk(c, src, class, selector))
+    }
+    fn find_selector_byte(node: Node, src: &str, selector: &str) -> Option<usize> {
+        if node.kind() == "method_declaration" || node.kind() == "method_definition" {
+            let known = std::collections::HashSet::new();
+            let sig = crate::collect::extract_method_sig(node, src, "", &known);
+            if sig.selector == selector {
+                return Some(node.start_byte());
+            }
+        }
+        let mut cursor = node.walk();
+        let children: Vec<Node> = node.children(&mut cursor).collect();
+        children.into_iter().find_map(|c| find_selector_byte(c, src, selector))
+    }
+    walk(root, src, class, selector).map(|byte| crate::parse::line_col(src, byte))
 }
 
 /// Reject an owned array of objects with more than one dimension.
