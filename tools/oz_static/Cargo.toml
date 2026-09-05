@@ -1,6 +1,6 @@
 [package]
 name = "oz_static"
-version = "0.48.0"
+version = "0.49.0"
 edition = "2021"
 description = "OZ-091 Track B spike: static-subset Objective-C to C transpiler using in-place textual substitution"
 publish = false
@@ -20,6 +20,12 @@ tree-sitter-objc = "3.0.2"
 # cannot see for itself (see src/astinfo.rs). A host build-tool dependency
 # only -- nothing here reaches the embedded target.
 serde_json = "1"
+# Derive only, for the borrowed node struct `astinfo` deserializes into
+# instead of a `serde_json::Value` tree. Adds no crate to the build: serde,
+# serde_core and serde_derive were already in Cargo.lock as serde_json's own
+# dependencies -- this makes one of them direct and turns on a feature whose
+# code was already being compiled.
+serde = { version = "1", features = ["derive"] }
 
 # oz2c is a build tool that reads far more JSON than Objective-C: a
 # px-keyboard build hands it 742 MB of Clang AST dumps against 40 KB of

@@ -19,9 +19,44 @@
 // falls back to its own conservative rule (see
 // `model::Program::owned_object_ivars`).
 
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 
-use serde_json::Value;
+/// The handful of fields the oracle reads out of a Clang AST node.
+///
+/// Deserializing into this rather than `serde_json::Value` is what keeps
+/// these dumps affordable. A `Value` tree allocates a `Map<String, Value>`
+/// per node and a `String` per key -- `id`, `loc`, `range`, `mangledName`,
+/// `valueCategory` and the rest -- all of which the walk immediately
+/// discards. On px-keyboard that was 742 MB of JSON becoming a peak of
+/// 1.30 GB resident (#299). Everything not named here is skipped by serde
+/// without being materialised, and the two string fields borrow out of the
+/// file text.
+///
+/// `Cow` rather than `&str`: a borrowed `&str` cannot represent a JSON
+/// string that needs unescaping, and serde fails rather than allocating.
+/// Neither a C identifier nor a type spelling should ever contain an
+/// escape, but failing to parse a dump over a hypothetical one would be a
+/// hard error in the ownership oracle, and that is not a trade worth
+/// making to save an allocation that almost never happens.
+#[derive(serde::Deserialize)]
+struct Node<'a> {
+    #[serde(borrow, default)]
+    kind: Option<Cow<'a, str>>,
+    #[serde(borrow, default)]
+    name: Option<Cow<'a, str>>,
+    #[serde(rename = "type", borrow, default)]
+    ty: Option<TypeRef<'a>>,
+    #[serde(borrow, default)]
+    inner: Vec<Node<'a>>,
+}
+
+#[derive(serde::Deserialize)]
+struct TypeRef<'a> {
+    #[serde(rename = "qualType", borrow, default)]
+    qual_type: Option<Cow<'a, str>>,
+}
 
 /// Per-class ivar ownership, keyed `(class, ivar)`.
 #[derive(Debug, Default)]
@@ -56,29 +91,55 @@ pub struct AstFacts {
 impl AstFacts {
     /// Parse a `clang -Xclang -ast-dump=json` dump.
     ///
-    /// Only `ObjCIvarDecl` nodes are of interest, so the whole tree is
-    /// walked but nothing else is retained -- these dumps run to megabytes
-    /// (6.8 MB for one Foundation-importing case) and almost none of it is
-    /// about ownership.
+    /// Only a few node kinds are of interest, so the whole tree is walked
+    /// but nothing else is retained -- and almost none of it is about
+    /// ownership. The dumps are far larger than "megabytes": one
+    /// `#include <zephyr/kernel.h>` in a 485-line file produces **117 MB**,
+    /// because Clang serialises the entire header closure (#299).
     pub fn from_json(text: &str) -> Result<Self, String> {
-        let root: Value =
-            serde_json::from_str(text).map_err(|e| format!("not valid Clang AST JSON: {}", e))?;
         let mut facts = AstFacts::default();
-        facts.walk(&root, None);
+        /* A stream rather than one document, because `-ast-dump-filter`
+         * emits one top-level object per matching declaration, concatenated
+         * -- `serde_json::from_str` rejects that as "trailing characters".
+         * A single document is a stream of one, so this is a strict
+         * superset of what was accepted before. */
+        let mut stream = serde_json::Deserializer::from_str(text).into_iter::<Node>();
+        let mut saw_any = false;
+        for doc in &mut stream {
+            let node = doc.map_err(|e| format!("not valid Clang AST JSON: {}", e))?;
+            facts.walk(&node, None);
+            saw_any = true;
+        }
+        if !saw_any {
+            return Err("not valid Clang AST JSON: no top-level declaration".to_string());
+        }
         Ok(facts)
     }
 
-    fn walk(&mut self, node: &Value, owner: Option<&str>) {
-        let kind = node.get("kind").and_then(Value::as_str).unwrap_or("");
+    /// `from_json` for a dump on disk, reading and dropping it here.
+    ///
+    /// The caller used to read every dump into a `Vec<String>` and hold all
+    /// of them while each was parsed in turn, so peak memory was the whole
+    /// set at once -- 742 MB of text plus the tree built over it. Reading
+    /// one, parsing it, and letting both go keeps the peak at a single
+    /// dump.
+    pub fn from_path(path: &Path) -> Result<Self, String> {
+        let text = std::fs::read_to_string(path)
+            .map_err(|e| format!("cannot read '{}': {}", path.display(), e))?;
+        Self::from_json(&text)
+    }
+
+    fn walk(&mut self, node: &Node, owner: Option<&str>) {
+        let kind = node.kind.as_deref().unwrap_or("");
         // An @implementation re-declares its class's ivars, so both node
         // kinds establish the same owner; taking either is correct.
         let owner = if matches!(kind, "ObjCInterfaceDecl" | "ObjCImplementationDecl") {
-            node.get("name").and_then(Value::as_str).or(owner)
+            node.name.as_deref().or(owner)
         } else {
             owner
         };
         if kind == "ObjCImplementationDecl" {
-            if let Some(name) = node.get("name").and_then(Value::as_str) {
+            if let Some(name) = node.name.as_deref() {
                 self.implemented_classes.insert(name.to_string());
             }
         }
@@ -88,17 +149,11 @@ impl AstFacts {
             // also has none, which is why callers must ask
             // `Program::method_is_defined` rather than reading this directly
             // -- oz_static generates those itself.
-            if let (Some(class), Some(selector)) =
-                (owner, node.get("name").and_then(Value::as_str))
-            {
+            if let (Some(class), Some(selector)) = (owner, node.name.as_deref()) {
                 let has_body = node
-                    .get("inner")
-                    .and_then(Value::as_array)
-                    .is_some_and(|children| {
-                        children.iter().any(|c| {
-                            c.get("kind").and_then(Value::as_str) == Some("CompoundStmt")
-                        })
-                    });
+                    .inner
+                    .iter()
+                    .any(|c| c.kind.as_deref() == Some("CompoundStmt"));
                 if has_body {
                     self.defined_methods.insert((class.to_string(), selector.to_string()));
                 }
@@ -106,21 +161,19 @@ impl AstFacts {
             }
         }
         if kind == "ObjCIvarDecl" {
-            if let (Some(class), Some(ivar)) = (owner, node.get("name").and_then(Value::as_str)) {
+            if let (Some(class), Some(ivar)) = (owner, node.name.as_deref()) {
                 let qual = node
-                    .get("type")
-                    .and_then(|t| t.get("qualType"))
-                    .and_then(Value::as_str)
+                    .ty
+                    .as_ref()
+                    .and_then(|t| t.qual_type.as_deref())
                     .unwrap_or("");
                 self.classes.insert(class.to_string());
                 self.owned_object
                     .insert((class.to_string(), ivar.to_string()), is_owned_object(qual));
             }
         }
-        if let Some(children) = node.get("inner").and_then(Value::as_array) {
-            for child in children {
-                self.walk(child, owner);
-            }
+        for child in &node.inner {
+            self.walk(child, owner);
         }
     }
 

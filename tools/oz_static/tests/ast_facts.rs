@@ -199,3 +199,111 @@ fn dumped_facts_do_not_depend_on_how_the_dumps_were_split() {
     assert!(lines.contains(&"impl Holder".to_string()), "got:\n{:#?}", lines);
     assert!(lines.contains(&"method Other run".to_string()), "got:\n{:#?}", lines);
 }
+
+/// Concatenated top-level objects parse to the union of their facts.
+///
+/// `clang -Xclang -ast-dump-filter=NAME` emits one JSON object per matching
+/// declaration, back to back, which is not a single document --
+/// `serde_json::from_str` rejects it as "trailing characters". Reading the
+/// input as a stream accepts both shapes, and a single document is a stream
+/// of one, so this is a strict superset of what was accepted before (#299).
+///
+/// That matters because filtering is how these dumps stop being enormous:
+/// on px-keyboard the filtered set is 29 MB against 742 MB unfiltered, for
+/// a byte-identical fact set. Without this the filter cannot be used at
+/// all.
+#[test]
+fn concatenated_top_level_objects_are_read_as_a_stream() {
+    let concatenated = r#"{
+      "kind": "ObjCInterfaceDecl", "name": "First",
+      "inner": [
+        {"kind": "ObjCIvarDecl", "name": "_a", "type": {"qualType": "__strong id"}}
+      ]
+    }
+    {
+      "kind": "ObjCImplementationDecl", "name": "Second",
+      "inner": [
+        {"kind": "ObjCIvarDecl", "name": "_b",
+         "type": {"qualType": "__unsafe_unretained id"}}
+      ]
+    }"#;
+
+    let facts = oz_static::astinfo::AstFacts::from_json(concatenated)
+        .expect("concatenated dumps are what -ast-dump-filter produces");
+    assert_eq!(
+        facts.dump_lines(),
+        vec![
+            "class First".to_string(),
+            "class Second".to_string(),
+            "impl Second".to_string(),
+            "ivar First _a owned".to_string(),
+            "ivar Second _b unowned".to_string(),
+        ]
+    );
+}
+
+/// The fields Clang writes and the oracle ignores are skipped, not
+/// mis-parsed.
+///
+/// A real dump carries `id`, `loc`, `range`, `mangledName`, `valueCategory`
+/// and more on nearly every node. Deserializing into a narrow struct means
+/// serde walks past them without allocating -- which is the whole point,
+/// since materialising them as a `serde_json::Value` tree cost 1.30 GB
+/// resident on px-keyboard. This pins that ignoring them does not change
+/// what is read.
+#[test]
+fn unrelated_clang_fields_are_ignored() {
+    let noisy = r#"{
+      "id": "0x7f8b1", "kind": "TranslationUnitDecl",
+      "loc": {"offset": 12, "file": "x.m", "line": 3, "col": 1},
+      "range": {"begin": {"offset": 0}, "end": {"offset": 99}},
+      "inner": [
+        {"id": "0x7f8b2", "kind": "ObjCImplementationDecl", "name": "Noisy",
+         "mangledName": "_OBJC_CLASS_Noisy", "valueCategory": "prvalue",
+         "inner": [
+           {"id": "0x7f8b3", "kind": "ObjCIvarDecl", "name": "_held",
+            "loc": {"line": 4}, "isReferenced": true,
+            "type": {"desugaredQualType": "id", "qualType": "__strong id",
+                     "typeAliasDeclId": "0x7f8b9"},
+            "access": "private", "bitwidth": 0}
+         ]}
+      ]
+    }"#;
+
+    let facts = oz_static::astinfo::AstFacts::from_json(noisy).expect("a realistic dump shape");
+    assert_eq!(
+        facts.dump_lines(),
+        vec![
+            "class Noisy".to_string(),
+            "impl Noisy".to_string(),
+            "ivar Noisy _held owned".to_string(),
+        ],
+        "the ignored fields must not change the facts -- note `qualType` is \
+         read and the `desugaredQualType` beside it is not"
+    );
+}
+
+/// An input with no top-level declaration is an error, not silently empty
+/// facts.
+///
+/// Reading a stream makes this case reachable in a way one-document parsing
+/// never was: an empty file is a valid stream of zero documents. Accepting
+/// it would behave exactly as if no `--ast` had been passed, which is the
+/// failure mode `--ast` exists to remove -- and it is precisely what a
+/// truncated dump looks like, since Clang writes nothing at all when it
+/// dies before `HandleTranslationUnit`.
+#[test]
+fn an_empty_dump_is_rejected() {
+    assert!(oz_static::astinfo::AstFacts::from_json("").is_err());
+    assert!(oz_static::astinfo::AstFacts::from_json("   \n\t ").is_err());
+}
+
+/// Trailing garbage after a valid document is still an error.
+///
+/// Reading a stream must not become a licence to accept anything: the
+/// second item has to parse as a declaration too.
+#[test]
+fn trailing_garbage_after_a_document_is_still_rejected() {
+    let bad = r#"{"kind": "ObjCInterfaceDecl", "name": "A"} this is not json"#;
+    assert!(oz_static::astinfo::AstFacts::from_json(bad).is_err());
+}
