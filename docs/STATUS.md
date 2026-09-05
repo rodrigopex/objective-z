@@ -51,7 +51,7 @@ hidden a defect.
 
 | Subject | Status |
 | --- | --- |
-| Rust suite (`cargo test`) | **318 tests**, `RUSTFLAGS=-D warnings` clean. The primary gate |
+| Rust suite (`cargo test`) | **327 tests**, `RUSTFLAGS=-D warnings` clean. The primary gate |
 | Behaviour corpus | **74/74** transpile, compile and run — gcc/clang × `-O0`/`-O2`, plus ASan, UBSan and LeakSanitizer |
 | Corpus ISO C validity | Gate at **0** under `-std=c17 -pedantic-errors` |
 | Adapted upstream tests | **40/40** (LLVM, GNUstep, Apple, ObjFW, mulle-objc) |
@@ -83,6 +83,18 @@ Stated precisely rather than as "everything works":
   own expectations, not against a second transpiler.
 - **Objective-C in a `#define` body** is rejected with a located error, not
   supported (#238).
+- **An array of objects is owned one dimension deep, and only in the three
+  store shapes ARC can balance.** A store must be a `+1` value, a plain
+  variable, or nil, and its index a literal or a plain variable -- the store
+  names its target twice, so the index is evaluated twice. Anything else is
+  a located error rather than a plain-C store that silently drops the
+  element it overwrote. An owned object array with **two or more dimensions
+  is rejected**: the release walks elements, and `a[i]` is then a sub-array,
+  so releasing it would cast array storage to an object pointer. Flattening
+  with a cast to `Element **` works on every real target and is still
+  refused, because reaching across a multi-dimensional array through a
+  pointer to its first element is not defined by ISO C (#287). Scalar arrays
+  are unaffected at any dimensionality.
 - **A top-level macro invocation with no trailing `;` is repaired, not
   parsed.** `ZBUS_OBS_DECLARE(x)` terminates its own expansion, so it is
   written without a semicolon, and tree-sitter then reads it as a *type* and
@@ -176,6 +188,32 @@ Two lessons, both paid for:
   With two arguments, or with no second line, tree-sitter recovers on its
   own and the test passes with the fix removed. Both weaker shapes were
   written first and did exactly that.
+
+## Where the same fix twice was the tell
+
+#287 was filed as "an array ivar loses its dimension", and it was that --
+but only on one of the two paths an ivar can take. An ivar declared in the
+`@interface` was always correct, because `emit::lower_ivar_decl` copies that
+declaration through verbatim; only the path that *rebuilds* the field from
+`own_ivars` had nowhere to put the extent. That asymmetry is why the bug
+looked arbitrary from the outside, and it is the same shape as gap C's
+seventh cause and #246: two walks over the same thing, one of them complete.
+
+Fixing it uncovered a second defect that had been sitting behind it. An
+owned array of objects was released with
+
+    oz_static_release((struct OZObject *)self->_leaves);
+
+-- the array cast to an object pointer, so the refcount is read out of the
+first element's pointer value. That is corruption rather than a leak, and
+nothing failed to compile. It was reachable only because the extent was
+missing: with no extent there was no way to know an array was an array, so
+the ivar looked like a single object everywhere.
+
+Worth keeping for the general point: a fix that supplies missing information
+can expose every decision that was made without it. The release path, the
+subscript lowering and the store path were all wrong in the same direction,
+and all three only became *visible* once the extent existed.
 
 ## How measurements mislead
 
