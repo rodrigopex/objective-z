@@ -138,7 +138,12 @@ from an AST, which is why unexpanded macros survive into the output.
 - **`imports.rs`** — `#import` resolution and per-origin provenance
 - **`generics.rs`** — generic and protocol constraint checking
 - **`model.rs`** — `Program`, `ClassInfo`, `Diagnostic`
-- CLI: `--pool-sizes`, `--item-pool-size`, `--heap-support`, `--root-class`, `--ast`, `-I`
+- **`progress.rs`** — pass boundaries the pipeline reports; no printing, no clock
+  (`report.rs` is the binary-side half that formats and times)
+- CLI: `--pool-sizes`, `--item-pool-size`, `--heap-support`, `--root-class`, `--ast`, `-I`,
+  `--timings`, `--quiet`, `--manifest-only`, `--dump-cst`, `--dump-ast-facts`
+- Progress goes to **stdout**; stderr is diagnostics only, because
+  `tests/tools/oz_static_build.py` reports its first line as the reason a transpile failed
 - Tests: `cargo test --manifest-path tools/oz_static/Cargo.toml`
 
 Two standing design rules, easy to violate with good intentions:
