@@ -51,7 +51,7 @@ hidden a defect.
 
 | Subject | Status |
 | --- | --- |
-| Rust suite (`cargo test`) | **327 tests**, `RUSTFLAGS=-D warnings` clean. The primary gate |
+| Rust suite (`cargo test`) | **331 tests**, `RUSTFLAGS=-D warnings` clean. The primary gate |
 | Behaviour corpus | **74/74** transpile, compile and run — gcc/clang × `-O0`/`-O2`, plus ASan, UBSan and LeakSanitizer |
 | Corpus ISO C validity | Gate at **0** under `-std=c17 -pedantic-errors` |
 | Adapted upstream tests | **40/40** (LLVM, GNUstep, Apple, ObjFW, mulle-objc) |
@@ -83,6 +83,17 @@ Stated precisely rather than as "everything works":
   own expectations, not against a second transpiler.
 - **Objective-C in a `#define` body** is rejected with a located error, not
   supported (#238).
+- **One dynamically-dispatched selector cannot be shared by two classes
+  returning incompatible types.** `OZ_PROTOCOL_SEND_<sel>` is emitted per
+  selector *name*, so a pointer or by-value aggregate mismatch between
+  implementors is a located error (#290). Differing *arithmetic* returns are
+  accepted, and the shim then declares whichever implementor came first
+  rather than the common type C's own conversions would give -- `OZArray`
+  returns `unsigned int` for `-count` where another class may return `int`.
+  That imprecision is knowingly permitted: C converts correctly, and the
+  alternative would move the emitted signature for every such selector.
+  `instancetype` is exempt, since the shim already collapses those to
+  `void *`.
 - **An array of objects is owned one dimension deep, and only in the three
   store shapes ARC can balance.** A store must be a `+1` value, a plain
   variable, or nil, and its index a literal or a plain variable -- the store
