@@ -4287,9 +4287,14 @@ pub struct EmitOutput {
 /// and the two buckets become an ordering rather than two files --
 /// declarations first, bodies after, which is what C requires of a single
 /// translation unit anyway.
-pub fn emit(source: &str, program: &Program, pools: &crate::pools::PoolSizes) -> EmitOutput {
+pub fn emit(
+    source: &str,
+    program: &Program,
+    pools: &crate::pools::PoolSizes,
+    repaired_semicolons: &[usize],
+) -> EmitOutput {
     let origins = [("main".to_string(), 0..source.len())];
-    let walked = walk_top_level(source, program, pools, &origins, &[]);
+    let walked = walk_top_level(source, program, pools, &origins, &[], repaired_semicolons);
 
     // One stem in practice, but driven off `stem_order` rather than the
     // maps' own iteration order, which a `HashMap` does not promise.
@@ -4454,6 +4459,7 @@ fn walk_top_level(
     pools: &crate::pools::PoolSizes,
     origins: &[(String, Range<usize>)],
     header_ranges: &[Range<usize>],
+    repaired_semicolons: &[usize],
 ) -> TopLevel {
     let tree = crate::parse::parse(source);
     let root = tree.root_node();
@@ -4813,6 +4819,17 @@ fn walk_top_level(
                 } else {
                     Vec::new()
                 };
+                // The `;` `parse::repair_bare_macro_statements` wrote over a
+                // whitespace byte was for tree-sitter's benefit only. Put
+                // the space back, or a macro that terminates its own
+                // expansion -- `ZBUS_OBS_DECLARE` -- gets a second `;` and
+                // a stray empty declaration at file scope (#288).
+                edits.extend(
+                    repaired_semicolons
+                        .iter()
+                        .filter(|o| (node.start_byte()..node.end_byte()).contains(o))
+                        .map(|o| (*o..*o + 1, " ".to_string())),
+                );
                 edits.extend(block_pointer_edits(node, source));
                 if contains_block_literal(node) {
                     let mut ctx =
@@ -4918,6 +4935,7 @@ pub fn emit_split(
     origins: &[(String, Range<usize>)],
     pools: &crate::pools::PoolSizes,
     header_ranges: &[Range<usize>],
+    repaired_semicolons: &[usize],
 ) -> EmitSplitOutput {
     let TopLevel {
         stem_order,
@@ -4934,7 +4952,7 @@ pub fn emit_split(
         class_to_stem,
         introspection_used,
         diags,
-    } = walk_top_level(source, program, pools, origins, header_ranges);
+    } = walk_top_level(source, program, pools, origins, header_ranges, repaired_semicolons);
 
     // The root class's own header may carry file-scope macros (e.g.
     // `OZObject.h`'s `#define nil ((id)0)`) that every class implicitly
