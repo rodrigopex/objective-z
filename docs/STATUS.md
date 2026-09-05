@@ -88,7 +88,11 @@ Stated precisely rather than as "everything works":
   per selector *name* and declares one return type, so any disagreement is
   wrong for at least one implementor -- a located error (#290).
   `instancetype` is exempt, since the shim already collapses those to
-  `void *`.
+  `void *`. *Located* covers both declaration forms: the error points at the
+  second `@property` as readily as at the second method, which it did not
+  until #297 -- the helper walked for a method node, found none for a
+  property, and fell back to `1:1` for precisely the shape #290 was filed
+  for.
 
   Two unrelated classes therefore have to agree on a selector's return type
   merely because they share its name: a `-count` meaning "tally" must match
