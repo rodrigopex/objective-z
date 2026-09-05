@@ -84,16 +84,38 @@ Stated precisely rather than as "everything works":
 - **Objective-C in a `#define` body** is rejected with a located error, not
   supported (#238).
 - **One dynamically-dispatched selector cannot be shared by two classes
-  returning incompatible types.** `OZ_PROTOCOL_SEND_<sel>` is emitted per
-  selector *name*, so a pointer or by-value aggregate mismatch between
-  implementors is a located error (#290). Differing *arithmetic* returns are
-  accepted, and the shim then declares whichever implementor came first
-  rather than the common type C's own conversions would give -- `OZArray`
-  returns `unsigned int` for `-count` where another class may return `int`.
-  That imprecision is knowingly permitted: C converts correctly, and the
-  alternative would move the emitted signature for every such selector.
+  whose return types disagree at all.** `OZ_PROTOCOL_SEND_<sel>` is emitted
+  per selector *name* and declares one return type, so any disagreement is
+  wrong for at least one implementor -- a located error (#290).
   `instancetype` is exempt, since the shim already collapses those to
   `void *`.
+
+  Two unrelated classes therefore have to agree on a selector's return type
+  merely because they share its name: a `-count` meaning "tally" must match
+  a `-count` meaning "container size". That is what dispatch keyed on the
+  name alone costs, and it is why the SDK's own size APIs are uniformly
+  `size_t`.
+
+  Having the shim declare the type C's usual arithmetic conversions would
+  give, rather than refusing, is **not implementable from the spelling**:
+  whether `size_t` is wider than `unsigned int` is target-dependent, so
+  ranking them textually would be a guess.
+- **`-cDescription:maxLength:` is `int (char *, size_t)`** -- `snprintf`'s
+  own shape, which is the function it imitates. The capacity is a `size_t`
+  because it cannot be negative; the result stays `int` because the
+  alternatives were worse. `ssize_t` is unusable: the Clang AST dump that
+  decides ivar ownership runs `--target=x86_64-unknown-linux-gnu` with no
+  Linux sysroot, so only *compiler-provided* headers resolve there --
+  `<stddef.h>` is Clang's own, `<sys/types.h>` is libc's, and including it
+  broke all 74 behaviour cases at the dump step. `ptrdiff_t` compiles but
+  means "difference between two pointers", which is not what the method
+  returns; an Objective-C interface saying so reads wrong. Anything these
+  headers include has to survive the dump path, which is the constraint
+  worth remembering.
+
+  The recursive implementations now guard the accumulation --
+  `if (written > 0) { pos += written; }`. A negative result was previously
+  added straight into a signed `pos` and then used to index `buf`.
 - **An array of objects is owned one dimension deep, and only in the three
   store shapes ARC can balance.** A store must be a `+1` value, a plain
   variable, or nil, and its index a literal or a plain variable -- the store
