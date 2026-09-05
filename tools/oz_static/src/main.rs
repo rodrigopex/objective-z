@@ -17,7 +17,8 @@ fn usage() -> ExitCode {
         "usage: oz2c [-I <dir>]... [--impl-dir <dir>]... [--manifest <path>] \
          [--root-class <name>] [--pool-sizes <Class=N,...>] \
          [--item-pool-size <N>] [--ast <ast.json>]... \
-         [--heap-support] [--timings] [--quiet] [--dump-cst] \
+         [--heap-support] [--timings] [--quiet] \
+         [--manifest-only] [--dump-cst] \
          <input.m>... <outdir>\n\
          \x20      oz2c --dump-ast-facts [--ast <ast.json>]..."
     );
@@ -76,6 +77,7 @@ fn main() -> ExitCode {
     let mut dump_ast_facts = false;
     let mut timings = false;
     let mut quiet = false;
+    let mut manifest_only = false;
     let mut positional: Vec<String> = Vec::new();
 
     let mut i = 0;
@@ -193,6 +195,26 @@ fn main() -> ExitCode {
             // Add the per-phase table to the progress output. Off by
             // default because most of what it explains is one number --
             // the AST ingest -- which the default output already names.
+            // Write only the manifest -- the list of files a full run
+            // would generate -- and none of the files themselves.
+            //
+            // `cmake/oz_static.cmake` has to know that list before it can
+            // declare it as an `add_custom_command` OUTPUT, and the only
+            // thing that knows it is oz2c. That is why a second, full
+            // transpile ran at configure time, dumping and parsing every
+            // Clang AST to produce output it then threw away.
+            //
+            // No AST is needed for it: the file *names* come from
+            // `stem_order`, which is built from top-level node origins, so
+            // the AST changes what is in a file and never which files
+            // exist. Deliberately the same code path as a real run, with
+            // only the `fs::write` calls skipped -- so the list cannot
+            // drift from the real one by construction, which reimplementing
+            // the layout rules in CMake would not guarantee (#299).
+            "--manifest-only" => {
+                manifest_only = true;
+                i += 1;
+            }
             "--timings" => {
                 timings = true;
                 i += 1;
@@ -378,9 +400,15 @@ fn main() -> ExitCode {
             // compiles this needs both `outdir` and `outdir/Foundation`
             // on its include search path -- see cmake/oz_static.cmake.
             let foundation_dir = outdir.join("Foundation");
-            if let Err(e) = fs::create_dir_all(&foundation_dir) {
-                eprintln!("oz_static: error: cannot create '{}': {}", foundation_dir.display(), e);
-                return ExitCode::FAILURE;
+            if !manifest_only {
+                if let Err(e) = fs::create_dir_all(&foundation_dir) {
+                    eprintln!(
+                        "oz_static: error: cannot create '{}': {}",
+                        foundation_dir.display(),
+                        e
+                    );
+                    return ExitCode::FAILURE;
+                }
             }
             let mut written: Vec<PathBuf> = Vec::new();
             for (file_stem, header_h, source_c) in &out.files {
@@ -403,15 +431,19 @@ fn main() -> ExitCode {
                     if resolved.foundation_stems.contains(file_stem) { &foundation_dir } else { outdir };
                 let h_path = target_dir.join(format!("{}.h", file_stem));
                 let c_path = target_dir.join(format!("{}.c", file_stem));
-                let _ = fs::write(&h_path, header_h);
-                let _ = fs::write(&c_path, source_c);
+                if !manifest_only {
+                    let _ = fs::write(&h_path, header_h);
+                    let _ = fs::write(&c_path, source_c);
+                }
                 written.push(h_path);
                 written.push(c_path);
             }
             let dispatch_h = foundation_dir.join("oz_static_dispatch.h");
             let dispatch_c = foundation_dir.join("oz_static_dispatch.c");
-            let _ = fs::write(&dispatch_h, out.companion_h);
-            let _ = fs::write(&dispatch_c, out.companion_c);
+            if !manifest_only {
+                let _ = fs::write(&dispatch_h, out.companion_h);
+                let _ = fs::write(&dispatch_c, out.companion_c);
+            }
             written.push(dispatch_h);
             written.push(dispatch_c);
             if let Some(path) = &manifest_path {
@@ -422,7 +454,7 @@ fn main() -> ExitCode {
                     return ExitCode::FAILURE;
                 }
             }
-            rep.finish(written.len(), outdir);
+            rep.finish(written.len(), outdir, manifest_only);
             ExitCode::SUCCESS
         }
         Err(diags) => {

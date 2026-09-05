@@ -123,14 +123,24 @@ impl Reporter {
 
     /// Close the running span and print the summary, plus the table under
     /// `--timings`.
-    pub fn finish(&mut self, written: usize, outdir: &Path) {
+    ///
+    /// `listed_only` distinguishes a `--manifest-only` run, which computes
+    /// the file list without writing any of it. Saying "generated" there
+    /// would be a plain lie about what is on disk, and the configure-time
+    /// build step is exactly where someone reads this line while wondering
+    /// why the transpiler appears to run twice.
+    pub fn finish(&mut self, written: usize, outdir: &Path, listed_only: bool) {
         self.close_span();
         let elapsed = self.started.elapsed();
 
         /* Quiet reproduces the pre-#299 line, on stderr, byte for byte --
          * that is the contract anything scraping our output relies on. */
         if self.quiet() {
-            eprintln!("oz_static: {} files generated in {}", written, outdir.display());
+            if listed_only {
+                eprintln!("oz_static: {} files listed for {}", written, outdir.display());
+            } else {
+                eprintln!("oz_static: {} files generated in {}", written, outdir.display());
+            }
             return;
         }
 
@@ -138,8 +148,9 @@ impl Reporter {
         let mut out = out.lock();
         let _ = writeln!(
             out,
-            "oz_static: {} files generated in {} ({:.2}s)",
+            "oz_static: {} files {} {} ({:.2}s)",
             written,
+            if listed_only { "listed for" } else { "generated in" },
             outdir.display(),
             elapsed.as_secs_f64()
         );
