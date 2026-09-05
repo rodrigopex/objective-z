@@ -252,6 +252,54 @@ can expose every decision that was made without it. The release path, the
 subscript lowering and the store path were all wrong in the same direction,
 and all three only became *visible* once the extent existed.
 
+## What the Clang AST oracle costs (#299)
+
+Measured on px-keyboard (8 app sources plus the 10 SDK `src/*.m`), because the
+numbers are not the ones anyone guesses and they decide where optimisation is
+worth spending.
+
+The oracle is enormously out of proportion to what it answers. Clang serialises
+the *entire header closure* to JSON, so one `#include <zephyr/kernel.h>` in a
+485-line file produces **117 MB**, and the 18 dumps together are **742 MB** —
+against ~40 KB of Objective-C. All 10 SDK dumps together are 6.9 MB, 0.8% of
+it; every byte of the problem is the app sources.
+
+What it buys is narrow and load-bearing: **4 of 46 generated files change** when
+`--ast` is withheld. It supplies ivar ownership where tree-sitter cannot resolve
+the type as an object — `id<PXToggleable> _indicator`, `id _obj` — and without
+it those classes lose their synthesized `_oz_release_ivars` and their assignment
+retain/release, which leaks. Its live surface is two call sites,
+`model.rs`'s `is_owned_object_ivar` and `has_method_body`.
+
+Where it went, and where it is now:
+
+| | before | after |
+|---|---|---|
+| `oz2c`, 18 dumps | 11.05 s | **0.83 s** |
+| of which AST ingest | 95% | — |
+| peak resident | 1.30 GB | **317 MB** |
+| configure-time transpile | 11.05 s + 2.9 s of dumps | **0.11 s**, no dumps |
+| AST written per configure | 742 MB | **none** |
+| the ninja transpile edge | 14.9 s, 85% of the build | **2.4 s, 11%** |
+
+Three things did that, in order of effect: optimising the *dependencies* in
+`profile.dev` (the hot path was `serde_json`, and oz2c had never been built with
+any optimisation at all); dropping the configure-time transpile, which existed
+only to discover a file list that no ARC fact affects (`--manifest-only`); and
+deserializing into a narrow borrowed struct instead of a `serde_json::Value`
+tree, reading one dump at a time.
+
+**`-Xclang -ast-dump-filter` is the remaining lever and is deliberately not
+taken.** Filtering each dump to the class its file implements gives 742 MB →
+**29 MB** with a *byte-identical* fact set, verified with `--dump-ast-facts`
+rather than inferred. But the flag takes one name and cannot be repeated
+(verified: the last wins), and **38 live `.m` files implement more than one
+class** — 3 samples, 16 behaviour cases, 19 adapted, though none in the SDK or
+px-keyboard. Filtering by a single name would silently drop the 2nd..Nth
+class's ownership facts, which is the exact silent degradation this project
+forbids. It needs a coverage assertion first: require `knows_class` for every
+class parsed with ivars, and hard-error naming the class and the `.m` to add.
+
 ## How measurements mislead
 
 The most reusable thing the old document held. Every entry below is something
@@ -267,6 +315,14 @@ that reported success while the thing it named was broken.
   its cases said "this committed C runs on Zephyr" and nothing about the
   transpiler — and the C was the *other* backend's output. Ask what a passing
   test actually exercises.
+- **A dependency edge that does not exist reports "no work to do".**
+  Editing `include/oz_sdk/Foundation/OZSpinLock.h` — the very `id _obj`
+  declaration the ownership oracle reads — regenerated nothing, because
+  `DEPENDS` listed the caller's `.m` files and not the headers spliced into the
+  translation unit. The build said `ninja: no work to do` while the compiled C
+  went on releasing an ivar the source now said was `__unsafe_unretained`. A
+  header closure is only known after preprocessing, so it has to come from a
+  depfile; `DEPENDS` cannot express it (#299).
 - **An instrument that cannot see the defect reports zero.** An ARM
   `-Wpedantic` sweep written the obvious way reports a clean result on output
   that is not clean: CMSIS does `#pragma GCC diagnostic ignored "-Wpedantic"`
