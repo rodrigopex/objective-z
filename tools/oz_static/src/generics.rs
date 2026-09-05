@@ -319,32 +319,28 @@ fn check_dispatch_signature_agreement(
         .collect()
 }
 
-/// Would routing both return types through one shared shim be a C error?
+/// Do two implementors' return types disagree at all?
 ///
-/// Only a *pointer* or by-value *aggregate* mismatch is. Two differing
-/// arithmetic types are not: the shim declares one of them and returns the
-/// other, and C's usual conversions apply -- `OZArray` returns
-/// `unsigned int` for `-count` where a test class returns `int`, which has
-/// always worked and is not what #290 was about. Rejecting it here would
-/// break working code to no purpose, so the narrower rule is deliberate
-/// rather than an oversight: the shim is imprecise there, and the
-/// imprecision is harmless.
+/// Any difference, deliberately. One shared `OZ_PROTOCOL_SEND_<sel>` can
+/// declare exactly one return type, so a disagreement means it is wrong for
+/// at least one implementor -- a `-Wincompatible-pointer-types` error for
+/// pointers, and a silent conversion for arithmetic types.
 ///
-/// What is not harmless is `const struct alpha_spec *` against
-/// `const struct beta_spec *` -- GCC's `-Wincompatible-pointer-types`, and
-/// the shape the issue was filed for.
+/// The narrower "pointers and aggregates only" rule this replaces existed
+/// because the SDK itself disagreed: `-count` was `unsigned int` on
+/// `OZArray` while other classes wrote `int`. With the SDK's size APIs
+/// typed `size_t`/`ptrdiff_t` that disagreement is gone, and the rule can
+/// say what it means.
+///
+/// The alternative -- keep accepting arithmetic differences and have the
+/// shim declare the type C's usual arithmetic conversions would give -- was
+/// considered and rejected as not implementable here. That common type is
+/// not computable from the spelling: whether `size_t` is wider than
+/// `unsigned int` is target-dependent, equal on 32-bit ARM and not on a
+/// 64-bit host, so ranking them textually would be a guess. Refusing is
+/// honest where guessing is not.
 fn returns_are_incompatible(a: &str, b: &str) -> bool {
-    let (a, b) = (a.trim(), b.trim());
-    if a == b {
-        return false;
-    }
-    let pointer = |t: &str| t.contains('*');
-    if pointer(a) || pointer(b) {
-        return true;
-    }
-    /* An aggregate returned by value has no conversion to another. */
-    let aggregate = |t: &str| t.contains("struct ") || t.contains("union ");
-    aggregate(a) || aggregate(b)
+    a.trim() != b.trim()
 }
 
 /// `(line, col)` of `class`'s declaration or definition of `selector`, for a

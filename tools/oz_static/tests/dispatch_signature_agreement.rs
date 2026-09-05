@@ -69,45 +69,51 @@ int main(void) { return 0; }
     );
 }
 
-/// Two differing *arithmetic* returns are left alone, deliberately.
+/// Two differing *arithmetic* returns are rejected too.
 ///
-/// The shim declares one and returns the other, and C's usual conversions
-/// apply. `OZArray` returns `unsigned int` for `-count` where a class of
-/// one's own may return `int`; that has always worked, is not what #290 was
-/// about, and rejecting it would break working code to no purpose. The
-/// first version of this check did reject it and took `behavior_forin` down
-/// with it.
+/// #290 first shipped accepting them, because the SDK itself disagreed --
+/// `-count` was `unsigned int` on `OZArray` where other classes wrote
+/// `int` -- and rejecting would have broken working code. With the SDK's
+/// size APIs typed `size_t`/`ptrdiff_t` that disagreement is gone and the
+/// rule says what it means: one shim declares one return type, so any
+/// disagreement is wrong for at least one implementor.
+///
+/// Having the shim declare the type C's usual arithmetic conversions would
+/// give was the other option, and it is not implementable from the
+/// spelling: whether `size_t` is wider than `unsigned int` is
+/// target-dependent, so ranking them textually would be a guess.
 #[test]
-fn two_classes_with_differing_arithmetic_returns_are_accepted() {
+fn two_classes_with_differing_arithmetic_returns_are_rejected() {
     let src = format!(
         "{}{}",
         PREAMBLE(),
         "\
 @interface Small : OZObject
-- (int)count;
+- (int)tally;
 @end
 @interface Big : OZObject
-- (unsigned int)count;
+- (unsigned int)tally;
 @end
 
 @implementation Small
-- (int)count { return 2; }
+- (int)tally { return 2; }
 @end
 @implementation Big
-- (unsigned int)count { return 3; }
+- (unsigned int)tally { return 3; }
 @end
-
-#include <stdio.h>
-int main(void) {
-	Small *s = [[Small alloc] init];
-	Big *b = [[Big alloc] init];
-	printf(\"n=%d\\n\", [s count] + (int)[b count]);
-	return 0;
-}
+int main(void) { return 0; }
 "
     );
-    oz_static::transpile(&src).expect("an arithmetic-return difference is not an error");
-    assert_eq!(compile_and_run(&src, "differing_arithmetic_returns"), "n=5\n");
+    let diags = match oz_static::transpile(&src) {
+        Err(diags) => diags,
+        Ok(_) => panic!("an arithmetic-return disagreement must be rejected"),
+    };
+    let text = diags.iter().map(|d| d.message.clone()).collect::<Vec<_>>().join("\n");
+    assert!(
+        text.contains("'int'") && text.contains("'unsigned int'"),
+        "the diagnostic should name both types, got:\n{}",
+        text
+    );
 }
 
 /// `instancetype` is exempt and has to be: every implementor's resolved
