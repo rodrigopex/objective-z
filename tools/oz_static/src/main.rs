@@ -351,15 +351,15 @@ fn main() -> ExitCode {
         }
     }
 
+    /* Sizes by `stat`, not by reading: the dumps are read one at a time
+     * inside the pipeline now (`Options::ast_paths`), so reading them here
+     * purely to measure them would reinstate the 1.30 GB peak this
+     * avoids. */
     oz_static::progress::Observer::enter(&mut rep, oz_static::progress::Phase::AstRead);
-    let mut ast_json: Vec<String> = Vec::new();
     let mut ast_sizes: Vec<usize> = Vec::new();
     for path in &ast_paths {
-        match fs::read_to_string(path) {
-            Ok(text) => {
-                ast_sizes.push(text.len());
-                ast_json.push(text);
-            }
+        match fs::metadata(path) {
+            Ok(meta) => ast_sizes.push(meta.len() as usize),
             Err(e) => {
                 eprintln!("oz_static: error: cannot read --ast '{}': {}", path.display(), e);
                 return ExitCode::FAILURE;
@@ -378,7 +378,8 @@ fn main() -> ExitCode {
         &resolved.origins,
         &oz_static::Options {
             pool_sizes: pool_overrides,
-            ast_json,
+            ast_json: Vec::new(),
+            ast_paths: ast_paths.clone(),
             heap_support,
             introspection,
             reflection,

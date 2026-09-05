@@ -48,6 +48,23 @@ pub struct Options {
     /// written in that file. The facts are unioned -- see
     /// `astinfo::AstFacts::merge`.
     pub ast_json: Vec<String>,
+    /// The same dumps, as paths to read lazily -- one at a time, parsed and
+    /// dropped before the next is opened.
+    ///
+    /// This is what the CLI passes. `ast_json` held every dump in memory
+    /// simultaneously, which on px-keyboard meant 742 MB of text plus the
+    /// tree built over it: 1.30 GB resident to answer questions about two
+    /// ivars (#299).
+    ///
+    /// Both fields are honoured and their facts unioned. `ast_json` stays
+    /// because the hand-written fixtures in `tests/ast_facts.rs` and
+    /// `astinfo`'s own tests are strings, not files, and requiring them to
+    /// be written to disk would make them worse tests.
+    ///
+    /// Ordering, which the progress index depends on: `ast_json` entries
+    /// are reported first, then `ast_paths`. The CLI supplies only paths,
+    /// so its indices start at 0 and line up with its own `--ast` list.
+    pub ast_paths: Vec<std::path::PathBuf>,
     /// Enable `+allocWithHeap:` and the heap-aware free path -- the oracle's
     /// `--heap-support`. Off by default: the field it adds to every object
     /// and the branch it adds to every free are only worth paying for if
@@ -294,18 +311,29 @@ fn attach_ast(
     options: &Options,
     obs: &mut dyn progress::Observer,
 ) -> Result<(), String> {
-    if options.ast_json.is_empty() {
+    if options.ast_json.is_empty() && options.ast_paths.is_empty() {
         return Ok(());
     }
     let mut facts = astinfo::AstFacts::default();
-    for (index, text) in options.ast_json.iter().enumerate() {
+    let mut index = 0usize;
+    for text in &options.ast_json {
         facts.merge(astinfo::AstFacts::from_json(text)?);
         /* Reported after the merge, not before it: a complete line about
          * work that has finished is worth more than an announcement of work
          * in flight, and at ~0.6s per dump it still reads as live progress.
-         * `index` is the caller's own position in `ast_json`, which is how
-         * a report names the file without the library knowing any paths. */
+         * `index` is the caller's own position in its dump list, which is
+         * how a report names the file without the library knowing paths. */
         obs.ast_dump(index, text.len());
+        index += 1;
+    }
+    for path in &options.ast_paths {
+        /* Read, parsed and dropped inside `from_path`, so the peak is one
+         * dump rather than all of them. */
+        let one = astinfo::AstFacts::from_path(path)?;
+        let bytes = std::fs::metadata(path).map(|m| m.len() as usize).unwrap_or(0);
+        facts.merge(one);
+        obs.ast_dump(index, bytes);
+        index += 1;
     }
     if facts.is_empty() {
         return Err(
