@@ -169,6 +169,42 @@ impl AstFacts {
     pub fn is_empty(&self) -> bool {
         self.owned_object.is_empty() && self.defined_methods.is_empty()
     }
+
+    /// Every fact the merged dumps carry, as sorted lines -- what
+    /// `oz2c --dump-ast-facts` prints.
+    ///
+    /// This exists to make a change to the AST path *provable*. Ingesting
+    /// these dumps is 97.5% of oz2c's wall clock on px-keyboard, so it is
+    /// where the optimisation pressure is (#299), and the failure mode of
+    /// getting it wrong is the oracle answering one question fewer -- which
+    /// is a silent leak, not a failed build. Diffing the generated C is the
+    /// weaker check: it only catches facts that happen to matter for one
+    /// program today. Diffing this catches the oracle itself weakening.
+    ///
+    /// All four sets are included, not just the two with live callers
+    /// (`is_owned_object_ivar`, `has_method_body`): a refactor that dropped
+    /// `classes` or `implemented_classes` would be invisible in generated C
+    /// until something started reading them again.
+    ///
+    /// Sorted, so two runs over the same dumps compare byte for byte.
+    pub fn dump_lines(&self) -> Vec<String> {
+        let mut lines = Vec::new();
+        for ((class, ivar), owned) in &self.owned_object {
+            let owned = if *owned { "owned" } else { "unowned" };
+            lines.push(format!("ivar {} {} {}", class, ivar, owned));
+        }
+        for (class, selector) in &self.defined_methods {
+            lines.push(format!("method {} {}", class, selector));
+        }
+        for class in &self.classes {
+            lines.push(format!("class {}", class));
+        }
+        for class in &self.implemented_classes {
+            lines.push(format!("impl {}", class));
+        }
+        lines.sort();
+        lines
+    }
 }
 
 /// Does this `qualType` describe an object the declaring class owns, and so
