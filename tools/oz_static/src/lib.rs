@@ -108,38 +108,76 @@ pub fn transpile_with_pool_sizes(
     )
 }
 
-/// `transpile` with everything a caller can supply.
-pub fn transpile_with_options(
-    source: &str,
-    options: &Options,
-) -> Result<TranspileOutput, Vec<Diagnostic>> {
+/// Everything the passes before `emit` produce, which both entry points
+/// need and neither one shapes differently.
+///
+/// `repaired` is in here because the whole pipeline reads the *repaired*
+/// text by byte offset -- so it has to outlive the front end, and the
+/// caller's `source` is the wrong string to hand to `emit`.
+struct FrontEnd {
+    repaired: String,
+    repaired_semicolons: Vec<usize>,
+    program: Program,
+    pools: pools::PoolSizes,
+}
+
+/// Every pass up to and including pool sizing -- the half of the pipeline
+/// `transpile_with_options` and `transpile_split_with_options` share.
+///
+/// They used to hold two copies of this sequence, identical line for line
+/// from the repair through `resolve_pools` and differing only in which
+/// `emit` they call. Two copies of a seven-pass ordering is an invitation
+/// to fix a bug in one of them: the passes are order-dependent (the repair
+/// must precede anything that reads a byte offset, `attach_ast` must
+/// precede `arc::analyze`, and `generics` must see a fully-populated
+/// `Program`), and nothing enforced that both agreed.
+///
+/// Diagnostics stop the pipeline at the first pass that produces any --
+/// oz_static has no soft-diagnostic mode, so a returned `Err` is always
+/// final and later passes would only report consequences of the first
+/// failure.
+fn front_end(source: &str, options: &Options) -> Result<FrontEnd, Vec<Diagnostic>> {
     /* Every later pass -- collect, arc, generics, pools, emit -- reads this
      * text by byte offset, so the repair has to happen before any of them
      * and has to preserve length. See
      * `parse::repair_bare_macro_statements` (#288, #289). */
     let (repaired, repaired_semicolons) = parse::repair_bare_macro_statements(source);
-    let source: &str = &repaired;
-    let (mut program, mut diagnostics) = collect::collect(source);
+    let text: &str = &repaired;
+    let (mut program, mut diagnostics) = collect::collect(text);
     if !diagnostics.is_empty() {
         return Err(diagnostics);
     }
     if let Err(why) = attach_ast(&mut program, options) {
         return Err(vec![Diagnostic::new(why, 1, 1)]);
     }
-    program.owning_methods = arc::analyze(source, &program);
+    program.owning_methods = arc::analyze(text, &program);
     program.heap_support = options.heap_support;
     program.introspection = options.introspection;
     program.reflection = options.reflection;
-    let overrides = &options.pool_sizes;
-    diagnostics.extend(generics::check_program(source, &program));
+    diagnostics.extend(generics::check_program(text, &program));
     if !diagnostics.is_empty() {
         return Err(diagnostics);
     }
-    let pools = resolve_pools(source, &program, overrides, options.item_pool_size, &mut diagnostics);
+    let pools = resolve_pools(
+        text,
+        &program,
+        &options.pool_sizes,
+        options.item_pool_size,
+        &mut diagnostics,
+    );
     if !diagnostics.is_empty() {
         return Err(diagnostics);
     }
-    let result = emit::emit(source, &program, &pools, &repaired_semicolons);
+    Ok(FrontEnd { repaired, repaired_semicolons, program, pools })
+}
+
+/// `transpile` with everything a caller can supply.
+pub fn transpile_with_options(
+    source: &str,
+    options: &Options,
+) -> Result<TranspileOutput, Vec<Diagnostic>> {
+    let fe = front_end(source, options)?;
+    let result = emit::emit(&fe.repaired, &fe.program, &fe.pools, &fe.repaired_semicolons);
     if !result.diagnostics.is_empty() {
         return Err(result.diagnostics);
     }
@@ -188,42 +226,16 @@ pub fn transpile_split_with_options(
     origins: &[(String, std::ops::Range<usize>)],
     options: &Options,
 ) -> Result<emit::EmitSplitOutput, Vec<Diagnostic>> {
-    /* Every later pass -- collect, arc, generics, pools, emit -- reads this
-     * text by byte offset, so the repair has to happen before any of them
-     * and has to preserve length. See
-     * `parse::repair_bare_macro_statements` (#288, #289). */
-    let (repaired, repaired_semicolons) = parse::repair_bare_macro_statements(source);
-    let source: &str = &repaired;
-    let (mut program, mut diagnostics) = collect::collect(source);
-    if !diagnostics.is_empty() {
-        return Err(diagnostics);
-    }
-    if let Err(why) = attach_ast(&mut program, options) {
-        return Err(vec![Diagnostic::new(why, 1, 1)]);
-    }
-    program.owning_methods = arc::analyze(source, &program);
-    program.heap_support = options.heap_support;
-    program.introspection = options.introspection;
-    program.reflection = options.reflection;
-    let overrides = &options.pool_sizes;
-    diagnostics.extend(generics::check_program(source, &program));
-    if !diagnostics.is_empty() {
-        return Err(diagnostics);
-    }
-    let pools = resolve_pools(source, &program, overrides, options.item_pool_size, &mut diagnostics);
-    if !diagnostics.is_empty() {
-        return Err(diagnostics);
-    }
-    let mut result =
-        emit::emit_split(
-            source,
-            &program,
-            origins,
-            &pools,
-            &options.header_ranges,
-            &repaired_semicolons,
-        );
-    diagnostics.extend(std::mem::take(&mut result.diagnostics));
+    let fe = front_end(source, options)?;
+    let mut result = emit::emit_split(
+        &fe.repaired,
+        &fe.program,
+        origins,
+        &fe.pools,
+        &options.header_ranges,
+        &fe.repaired_semicolons,
+    );
+    let diagnostics = std::mem::take(&mut result.diagnostics);
     if !diagnostics.is_empty() {
         return Err(diagnostics);
     }
