@@ -4,7 +4,7 @@
 // signatures). Two sub-passes: class names/hierarchy first, then
 // ivars/methods (which need the class-name set to render object types).
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use tree_sitter::Node;
 
@@ -352,7 +352,8 @@ pub(crate) fn extract_ivars(node: Node, src: &str, known_classes: &HashSet<Strin
     extract_ivars_with_ownership(node, src, known_classes).0
 }
 
-/// `extract_ivars`, plus the names declared `__unsafe_unretained`.
+/// `extract_ivars`, plus the names declared `__unsafe_unretained`, plus the
+/// array extent of any ivar that has one (`"_values"` -> `"[4]"`).
 ///
 /// The qualifier is dropped from the generated struct, meaning nothing to C
 /// (see `emit::lower_ivar_decl`), so this is the only point at which it can
@@ -364,11 +365,12 @@ pub(crate) fn extract_ivars_with_ownership(
     node: Node,
     src: &str,
     known_classes: &HashSet<String>,
-) -> (Vec<(String, String)>, HashSet<String>) {
+) -> (Vec<(String, String)>, HashSet<String>, HashMap<String, String>) {
     let Some(vars_node) = child_by_kind(node, "instance_variables") else {
-        return (Vec::new(), HashSet::new());
+        return (Vec::new(), HashSet::new(), HashMap::new());
     };
     let mut unretained = HashSet::new();
+    let mut extents = HashMap::new();
     let mut out = Vec::new();
     let mut cursor = vars_node.walk();
     for child in vars_node.children(&mut cursor) {
@@ -389,9 +391,41 @@ pub(crate) fn extract_ivars_with_ownership(
         if node_text(decl, src).contains("__unsafe_unretained") {
             unretained.insert(name.clone());
         }
+        if let Some(extent) = array_extent(declarator, src) {
+            extents.insert(name.clone(), extent);
+        }
         out.push((name, render_type(&type_text, stars, known_classes)));
     }
-    (out, unretained)
+    (out, unretained, extents)
+}
+
+/// The bracketed extent of an array declarator, verbatim -- `"[4]"` for
+/// `int _values[4]`, `"[SLOTS]"` for `int _values[SLOTS]`, `"[]"` for an
+/// unsized one. `None` when the declarator names no array.
+///
+/// Text rather than a parsed size: the extent only ever has to be copied
+/// into a declaration, and a count would have to evaluate an arbitrary
+/// constant expression that the C compiler is already going to evaluate
+/// correctly.
+///
+/// Multi-dimensional declarators nest, so the extents concatenate on the
+/// way back up -- `int _grid[2][3]` yields `"[2][3]"`.
+fn array_extent(node: Node, src: &str) -> Option<String> {
+    if node.kind() == "array_declarator" {
+        let mut cursor = node.walk();
+        let children: Vec<Node> = node.children(&mut cursor).collect();
+        let open = children.iter().position(|c| c.kind() == "[")?;
+        let own = node_text(node, src).get(
+            node_text(node, src).find('[')?..,
+        )?;
+        /* An inner declarator's own extent is already inside `own`, since
+         * the text spans the whole nest. Nothing to concatenate. */
+        let _ = open;
+        return Some(own.to_string());
+    }
+    let mut cursor = node.walk();
+    let children: Vec<Node> = node.children(&mut cursor).collect();
+    children.into_iter().find_map(|c| array_extent(c, src))
 }
 
 pub(crate) fn find_declared_name(node: Node, src: &str) -> String {
@@ -702,11 +736,12 @@ pub fn collect(source: &str) -> (Program, Vec<crate::model::Diagnostic>) {
                 // its selectors before it.
                 let is_category = category.is_some();
                 if !is_category {
-                    let (ivars, unretained) =
+                    let (ivars, unretained, extents) =
                         extract_ivars_with_ownership(node, source, &known_classes);
                     if let Some(info) = classes.get_mut(&name) {
                         info.own_ivars = ivars;
                         info.unretained_ivars = unretained;
+                        info.array_extents = extents;
                     }
                 }
                 let mut c = node.walk();
@@ -752,7 +787,7 @@ pub fn collect(source: &str) -> (Program, Vec<crate::model::Diagnostic>) {
                 // identifier '_throttleLevel'". A category cannot declare
                 // ivars, so only the primary implementation contributes.
                 if category.is_none() {
-                    let (impl_ivars, impl_unretained) =
+                    let (impl_ivars, impl_unretained, impl_extents) =
                         extract_ivars_with_ownership(node, source, &known_classes);
                     if let Some(info) = classes.get_mut(&name) {
                         for (ivar, c_type) in impl_ivars {
@@ -761,6 +796,7 @@ pub fn collect(source: &str) -> (Program, Vec<crate::model::Diagnostic>) {
                             }
                         }
                         info.unretained_ivars.extend(impl_unretained);
+                        info.array_extents.extend(impl_extents);
                     }
                 }
                 let mut c = node.walk();

@@ -220,7 +220,78 @@ pub fn check_program(source: &str, program: &Program) -> Vec<Diagnostic> {
     let tree = crate::parse::parse(source);
     let mut diags = Vec::new();
     walk_for_method_bodies(tree.root_node(), source, program, &mut diags);
+    walk_for_owned_array_ivars(tree.root_node(), source, program, &mut diags);
     diags
+}
+
+/// Reject an owned array of objects with more than one dimension.
+///
+/// A one-dimensional one is released element by element, with the count from
+/// `sizeof(a) / sizeof(a[0])` (see `companion::render_release_ivars`). At two
+/// dimensions that expression counts *rows*, and `a[i]` is a sub-array rather
+/// than an object -- so the release would cast array storage to an object
+/// pointer and read a refcount out of it. That is the corruption #287's fix
+/// removed at one dimension, and it returns unchanged at two or more.
+///
+/// Flattening the release with a cast to `Element **` would work on every
+/// real target and is still the wrong answer: reaching across a
+/// multi-dimensional array through a pointer to its first element is not
+/// something ISO C defines, and "no undefined behaviour in emitted C" is a
+/// standing requirement rather than a preference.
+///
+/// So it is a located error, which leaves the author the shape that does
+/// work: one dimension, indexed arithmetically.
+///
+/// Scalar arrays are unaffected at any dimensionality -- they own nothing,
+/// and `int _v[2][3][4][5]` transpiles and indexes correctly.
+fn walk_for_owned_array_ivars(
+    node: Node,
+    src: &str,
+    program: &Program,
+    diags: &mut Vec<Diagnostic>,
+) {
+    if node.kind() == "class_interface" || node.kind() == "class_implementation" {
+        let (class_name, _, category) = crate::collect::class_header(node, src);
+        if category.is_none() {
+            let owned = program.owned_object_ivar_names(&class_name);
+            for (ivar, extent) in collect_declared_extents(node, src) {
+                if extent.matches('[').count() < 2 {
+                    continue;
+                }
+                if !owned.iter().any(|n| *n == ivar) {
+                    continue;
+                }
+                let (line, col) = crate::parse::line_col(src, node.start_byte());
+                diags.push(Diagnostic::new(
+                    format!(
+                        "'{ivar}' is an owned array of objects with more than one dimension \
+                         ('{extent}'), which this backend cannot release: the elements are \
+                         released one by one, and at two or more dimensions '{ivar}[i]' is a \
+                         sub-array rather than an object. Declare it with a single dimension \
+                         and index it arithmetically, or '__unsafe_unretained' if {class} does \
+                         not own the elements.",
+                        ivar = ivar,
+                        extent = extent,
+                        class = class_name
+                    ),
+                    line,
+                    col,
+                ));
+            }
+        }
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        walk_for_owned_array_ivars(child, src, program, diags);
+    }
+}
+
+/// `(ivar name, extent text)` for every array ivar declared directly on
+/// `node`'s `instance_variables` block.
+fn collect_declared_extents(node: Node, src: &str) -> Vec<(String, String)> {
+    let known = std::collections::HashSet::new();
+    let (_, _, extents) = crate::collect::extract_ivars_with_ownership(node, src, &known);
+    extents.into_iter().collect()
 }
 
 fn walk_for_method_bodies(node: Node, src: &str, program: &Program, diags: &mut Vec<Diagnostic>) {

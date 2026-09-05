@@ -75,6 +75,23 @@ pub struct ClassInfo {
     /// is unowned -- and releasing an unowned backref is exactly the
     /// double-free the qualifier exists to prevent.
     pub unretained_ivars: HashSet<String>,
+    /// Array extents, by ivar name: `"_values"` -> `"[4]"`.
+    ///
+    /// Tracked separately from `own_ivars` for the same reason
+    /// `unretained_ivars` is: an ivar is a `(name, c_type)` pair, and C
+    /// spells an array's extent *after* the name, so there is nowhere in
+    /// the type to put it. An ivar declared in an `@interface` keeps its
+    /// extent because `emit::lower_ivar_decl` copies the declaration
+    /// through verbatim; one declared in an `@implementation` block is
+    /// rebuilt from this pair, and without the extent recorded here the
+    /// struct field silently became a scalar while every use of it kept
+    /// its subscript (#287).
+    ///
+    /// The text is stored, not a count, and deliberately: `_values[SLOTS]`
+    /// is as valid as `_values[4]`, and nothing here can evaluate the
+    /// former. Every consumer either copies it into a declaration or
+    /// derives the count with `sizeof`.
+    pub array_extents: HashMap<String, String>,
     /// `(selector, is_class_method)` for every method an `@implementation`
     /// in the parsed source really defines -- as opposed to `methods`, which
     /// also holds everything only *declared* in an `@interface`.
@@ -236,11 +253,33 @@ impl Program {
     ///     failing to release an object only leaks. The oracle releases
     ///     `id` ivars because Clang tells it which are objects; without
     ///     that this stays conservative rather than guessing.
-    pub fn owned_object_ivars(&self, class_name: &str) -> Vec<String> {
+    /// Each owned object ivar as `(access path, array extent)`. The extent
+    /// is `None` for the ordinary single-object case, and `Some("[2]")` for
+    /// an array of them -- which decides whether the release is one call or
+    /// a loop over the elements (#287).
+    pub fn owned_object_ivars(&self, class_name: &str) -> Vec<(String, Option<String>)> {
         self.owned_object_ivar_names(class_name)
             .into_iter()
-            .filter_map(|ivar| self.ivar_access_path(class_name, &ivar))
+            .filter_map(|ivar| {
+                let path = self.ivar_access_path(class_name, &ivar)?;
+                Some((path, self.array_extent_of(class_name, &ivar)))
+            })
             .collect()
+    }
+
+    /// The array extent recorded for `ivar_name`, searching the class's own
+    /// declarations and then its ancestors' -- the same walk
+    /// `ivar_access_path` does, and for the same reason.
+    pub fn array_extent_of(&self, from_class: &str, ivar_name: &str) -> Option<String> {
+        let mut cur = Some(from_class.to_string());
+        while let Some(name) = cur {
+            let info = self.classes.get(&name)?;
+            if let Some(extent) = info.array_extents.get(ivar_name) {
+                return Some(extent.clone());
+            }
+            cur = info.superclass.clone();
+        }
+        None
     }
 
     /// `owned_object_ivars` as plain ivar names rather than access paths --
