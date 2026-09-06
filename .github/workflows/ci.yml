@@ -334,6 +334,17 @@ jobs:
           PYTHONPATH=tools west build -b ${{ matrix.board }} samples/hello_world
           -- -DOBJZ_REQUIRE_TESTED_CLANG=ON
 
+      # The Objective-C compile_commands entries, which are the only thing
+      # standing between a `.m` file and an IDE that guesses. They vanished
+      # for four days when the Python backend took `_objz_collect_compile_db()`'s
+      # only call site with it, and no gate here noticed, because every gate
+      # reads the *generated C* (#304). This one reads the database.
+      - name: Verify ObjC compile_commands entries
+        run: >
+          python3 scripts/objz_check_compile_db.py build
+          --expect samples/hello_world/src/main.m
+          --expect src/OZObject.m
+
       - name: Verify PAL inlining (ARM only)
         if: contains(matrix.board, 'mps2')
         run: |
