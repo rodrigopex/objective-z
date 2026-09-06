@@ -43,6 +43,14 @@ tests:
         # Light. Checking only declared protocols would print no.
         - "conforms-inherited=yes"
         - "conforms-unrelated=no"
+        # Through a receiver typed `id<Switchable>` rather than a class
+        # (#307). The answers are the object's, so they match the lines
+        # above; what these gate is that the shape parses at all -- before
+        # `Switchable` adopted `<ObjectProtocol>`, Clang rejected every
+        # one of these three sends.
+        - "proto-recv-conforms=yes"
+        - "proto-recv-kind=yes"
+        - "proto-recv-responds=yes"
         - "responds=yes"
         - "responds-not=no"
         # tree-sitter exposes no node for a keyword selector's name, so
