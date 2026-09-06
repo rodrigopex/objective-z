@@ -29,7 +29,7 @@
 // goes unparsed.
 
 mod common;
-use common::{compile_and_run, ozobject_src as PREAMBLE};
+use common::{compile_and_run, compile_and_run_strict, ozobject_src as PREAMBLE};
 
 /// A stand-in for a target that stores callbacks in function-pointer
 /// fields, initialized after the `=` where `OZM` cannot reach.
@@ -177,4 +177,129 @@ int main(void) {
 "
     );
     assert_eq!(compile_and_run(&src, "ozfn_comma_in_block_body"), "sum=6\n");
+}
+
+/// A callback field that does not return `int` -- #303.
+///
+/// The reason this needed its own fix: the hoisted function's return type
+/// came from a *guess* at the body (`int` for any return-with-value), and
+/// writing the type on the literal to correct it made things worse rather
+/// than better, because an explicit return type moved the parameter list
+/// to a place `render_block` did not look. `^uint32_t(int seed)` was
+/// hoisted `int f(void)`, so the body's own `seed` was undeclared and the
+/// error came from GCC about a signature the author never wrote.
+///
+/// `uint32_t` is Zephyr's `bt_conn_auth_cb.app_passkey`, which is what
+/// found this. `px-keyboard` had to keep a named C function for that one
+/// callback while the two `void` ones beside it stayed blocks.
+///
+/// Deliberately `_strict`: the host `cc` is Apple clang, which only
+/// *warns* on assigning `int (*)(int)` to a `uint32_t (*)(int)` field,
+/// while Zephyr's GCC errors under `-Werror`. Without
+/// `-Werror=incompatible-pointer-types` the wrong return type still runs
+/// here and the test passes for the wrong reason.
+#[test]
+fn an_explicit_return_type_survives_the_hoist() {
+    let src = format!(
+        "{}{}{}",
+        PREAMBLE(),
+        "\
+#include <stdio.h>
+#include <stdint.h>
+struct fake_auth_cb {
+	uint32_t (*app_passkey)(int);
+	void (*cancel)(int);
+};
+",
+        "\
+static struct fake_auth_cb auth_cbs = {
+	.app_passkey = OZFN(^uint32_t(int seed) {
+		return (uint32_t)seed + 1U;
+	}),
+	.cancel = OZFN(^(int reason) {
+		printf(\"cancel=%d\\n\", reason);
+	}),
+};
+
+int main(void) {
+	printf(\"passkey=%u\\n\", auth_cbs.app_passkey(555554));
+	auth_cbs.cancel(3);
+	return 0;
+}
+"
+    );
+    assert_eq!(
+        compile_and_run_strict(&src, "ozfn_explicit_return_type"),
+        "passkey=555555\ncancel=3\n"
+    );
+}
+
+/// The exact signature, so a regression names itself instead of arriving
+/// as a puzzling compile error in the test above.
+///
+/// Both halves are asserted because they failed independently: the return
+/// type was `int` whether or not one was written, and the parameter list
+/// was dropped only when one was.
+#[test]
+fn the_hoisted_signature_carries_both_the_type_and_the_parameters() {
+    let src = format!(
+        "{}{}",
+        PREAMBLE(),
+        "\
+#include <stdint.h>
+static void *held = OZFN(^uint32_t(int seed) {
+	return (uint32_t)seed + 1U;
+});
+"
+    );
+    let out = oz_static::transpile(&src).expect("should transpile");
+    let signature = out
+        .source_c
+        .lines()
+        .find(|l| l.contains("oz_block_") && l.trim_end().ends_with(';'))
+        .unwrap_or_else(|| panic!("no hoisted prototype:\n{}", out.source_c))
+        .to_string();
+    assert!(
+        signature.starts_with("uint32_t "),
+        "the written return type should be carried, not guessed `int`: {}",
+        signature
+    );
+    assert!(
+        signature.contains("(int seed)"),
+        "an explicit return type must not cost the parameter list: {}",
+        signature
+    );
+}
+
+/// A pointer return type, which is where the fix could most easily go
+/// wrong in the other direction.
+///
+/// The return type and the parameter list are chained through the same
+/// declarator nodes, so a walk that collects `*` without stopping at the
+/// parameters counts theirs too -- `^void *(char *s)` becomes
+/// `void **`, a pointer level the author never wrote. One star, from the
+/// return type alone.
+#[test]
+fn a_pointer_return_type_does_not_collect_the_parameters_stars() {
+    let src = format!(
+        "{}{}",
+        PREAMBLE(),
+        "\
+static void *held = OZFN(^const char *(char *s, char *t) {
+	return s ? s : t;
+});
+"
+    );
+    let out = oz_static::transpile(&src).expect("should transpile");
+    let signature = out
+        .source_c
+        .lines()
+        .find(|l| l.contains("oz_block_") && l.trim_end().ends_with(';'))
+        .unwrap_or_else(|| panic!("no hoisted prototype:\n{}", out.source_c))
+        .to_string();
+    assert!(
+        signature.starts_with("const char* "),
+        "exactly one star, and the qualifier kept: {}",
+        signature
+    );
 }

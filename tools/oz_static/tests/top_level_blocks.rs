@@ -363,3 +363,146 @@ int main(void) { return 0; }
         "the prototype must precede the static initializer that names it"
     );
 }
+
+/// A file-scope block variable's own declared type is the return type of
+/// the literal initializing it -- #303.
+///
+/// `static unsigned (^sq)(int) = ^(int x) { ... }` writes no return type on
+/// the literal, so before this the body was guessed at: any
+/// return-with-value meant `int`, and the hoisted function disagreed with
+/// the very declaration it was initializing. The type was never in doubt,
+/// only unread -- it is a sibling of the initializer in the same
+/// `declaration` node.
+///
+/// The guess stays for a literal with neither an explicit type nor a
+/// declared one, because several cases in this suite rely on it (see
+/// `emit::infer_block_return_type`); this only prefers a fact over it.
+#[test]
+fn a_block_variables_declared_return_type_is_carried() {
+    let src = format!(
+        "{}{}",
+        ozobject_src(),
+        "\
+#include <stdio.h>
+static unsigned (^sq)(int) = ^(int x) {
+	return (unsigned)(x * x);
+};
+
+int main(void) {
+	printf(\"sq=%u\\n\", sq(7));
+	return 0;
+}
+"
+    );
+    let out = oz_static::transpile(&src).expect("should transpile");
+    let signature = out
+        .source_c
+        .lines()
+        .find(|l| l.contains("oz_block_") && l.trim_end().ends_with(';'))
+        .unwrap_or_else(|| panic!("no hoisted prototype:\n{}", out.source_c))
+        .to_string();
+    assert!(
+        signature.starts_with("unsigned "),
+        "the declaration's own type should be carried, not guessed `int`: {}",
+        signature
+    );
+    assert_eq!(compile_and_run(&src, "block_variable_declared_return_type"), "sq=49\n");
+}
+
+/// The guard on the rule above: a declaration whose declarator is *not* a
+/// block pointer describes the variable, not the literal, and must lend it
+/// nothing.
+///
+/// `static void *p = ^(int x) { return x + 1; };` puts the literal in the
+/// same position as the case above -- a direct child of the
+/// `init_declarator` -- while the declared type belongs to a `void *`
+/// variable holding the function pointer, not to the block. Taking it
+/// would hoist `void *f(int x)` over a body returning `int`: a wrong
+/// answer where there had only been a guess.
+///
+/// Verified to have teeth by removing the `block_pointer_declarator` check
+/// in `emit::declared_block_pointer_type`, which turns this `int` into
+/// `void*`. Worth recording because the first version of this test used a
+/// struct initializer (`.fn = OZFN(^(int seed) { ... })`) and passed with
+/// the guard gone -- there the literal's parent is an `initializer_pair`,
+/// so the function returns before the guard is ever consulted, and the
+/// test proved only that some *other* line worked.
+#[test]
+fn a_declaration_that_is_not_a_block_pointer_lends_no_type() {
+    let src = format!(
+        "{}{}",
+        ozobject_src(),
+        "\
+#include <stdio.h>
+static void *p = ^(int x) {
+	return x + 1;
+};
+
+int main(void) {
+	int (*fn)(int) = p;
+	printf(\"fn=%d\\n\", fn(41));
+	return 0;
+}
+"
+    );
+    let out = oz_static::transpile(&src).expect("should transpile");
+    let signature = out
+        .source_c
+        .lines()
+        .find(|l| l.contains("oz_block_") && l.trim_end().ends_with(';'))
+        .unwrap_or_else(|| panic!("no hoisted prototype:\n{}", out.source_c))
+        .to_string();
+    assert!(
+        signature.starts_with("int "),
+        "the variable's own type must not be taken as the block's: {}",
+        signature
+    );
+    assert_eq!(compile_and_run(&src, "non_block_pointer_lends_no_type"), "fn=42\n");
+}
+
+/// A struct initializer lends nothing either -- the shape #303 was filed
+/// for, and the one that stays a guess.
+///
+/// `.fn = OZFN(^(int seed) { ... })` gets its return type from neither of
+/// the two sources this change added: nothing is written on the literal,
+/// and the enclosing declaration is a `struct holder`, not a block
+/// pointer. So it still comes out `int` from the body guess, which happens
+/// to be right here and would not be for a `uint32_t` field -- see
+/// `emit::render_block` for why the field's own type is out of reach.
+///
+/// What did change is the parameter list: it survives. That is the half of
+/// #303 that was a silent wrong answer rather than a weak guess, and this
+/// running at all is what proves it -- the body's `seed` was undeclared
+/// before.
+#[test]
+fn a_struct_initializer_keeps_the_parameters_though_not_the_type() {
+    let src = format!(
+        "{}{}",
+        ozobject_src(),
+        "\
+#include <stdio.h>
+struct holder { int (*fn)(int); };
+static struct holder h = { .fn = OZFN(^(int seed) {
+	return seed + 1;
+}) };
+
+int main(void) {
+	printf(\"fn=%d\\n\", h.fn(41));
+	return 0;
+}
+"
+    );
+    let out = oz_static::transpile(&src).expect("should transpile");
+    let signature = out
+        .source_c
+        .lines()
+        .find(|l| l.contains("oz_block_") && l.trim_end().ends_with(';'))
+        .unwrap_or_else(|| panic!("no hoisted prototype:\n{}", out.source_c))
+        .to_string();
+    assert!(
+        signature.contains("(int seed)"),
+        "the parameter list must survive even where the type is guessed: {}",
+        signature
+    );
+    assert_eq!(compile_and_run(&src, "struct_initializer_keeps_parameters"), "fn=42\n");
+}
