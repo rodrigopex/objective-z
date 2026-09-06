@@ -197,7 +197,6 @@ function(objz_transpile_sources_static target)
     # (`astinfo::AstFacts::merge`).
     objz_find_clang()
     _objz_build_ast_flags(_ast_flags)
-    list(APPEND _ast_flags -w)  # AST dump is transpiler input; warnings are noise
     list(PREPEND _ast_flags -I${_mod}/include/oz_sdk)
     # -fobjc-arc, or the dump carries no ownership qualifiers at all and the
     # whole exercise is pointless.
@@ -208,6 +207,12 @@ function(objz_transpile_sources_static target)
     foreach(_dir ${_target_inc_dirs})
         list(APPEND _ast_flags -I${_dir})
     endforeach()
+
+    # clangd wants the same flags, minus `-w`: showing the diagnostics the dump
+    # deliberately silences is the entire job (#304). Split here rather than
+    # deriving one list from the other, so neither can drift.
+    set(_ide_flags ${_ast_flags})
+    list(APPEND _ast_flags -w)  # AST dump is transpiler input; warnings are noise
 
     file(GLOB _sdk_impls ${_mod}/src/*.m)
     set(_ast_dir ${_outdir}/ast)
@@ -229,6 +234,16 @@ function(objz_transpile_sources_static target)
         string(MAKE_C_IDENTIFIER "${_name}" _safe)
         set(_ast "${_ast_dir}/${_safe}.ast.json")
         math(EXPR _ast_k "${_ast_k} + 1")
+
+        # The same source, the same flags, as a compile_commands.json entry, so
+        # clangd parses the Objective-C rather than guessing from the generated
+        # C. This loop is the right place because it already visits exactly the
+        # files that need one -- the target's sources and the module's `src/*.m`
+        # -- with flags Clang is known to accept on them: it is about to run
+        # this very command. The previous call site was in the Python backend's
+        # `oz_transpile.cmake` and went with it (#304), which left every `.m`
+        # file with no entry at all.
+        _objz_collect_compile_db(${_src} "${_ast_dir}/${_safe}.ide.o" ${_ide_flags})
         string(JOIN " " _one ${OBJZ_CLANG_COMPILER} ${_ast_flags}
                -fsyntax-only -Xclang -ast-dump=json ${_src})
         # Keep each dump's diagnostics next to it, but only the ones that
@@ -241,16 +256,18 @@ function(objz_transpile_sources_static target)
         #
         # Exit status alone is the wrong signal, which cost a pass here to
         # discover. Clang exits non-zero for an ordinary error too and then
-        # *carries on*, so these dumps have always been produced with a
-        # handful of errors in them -- `__get_BASEPRI` and friends, because
-        # these flags name no `--target` and CMSIS therefore selects its
-        # A-profile header on an M-profile build, plus `__oz_timer_setup`
-        # from the PAL arm that goes with it. None of that truncates
-        # anything, and none of it touches an ivar's ownership qualifier or
-        # whether an `@implementation` was seen, which is all the oracle
-        # reads. A `fatal error` is different in kind: Clang stops, and
-        # every declaration after it is simply absent from a file that still
-        # looks complete.
+        # *carries on*, so an ordinary error must not fail the dump. That is
+        # still the rule, but the examples this comment used to give are gone:
+        # `__get_BASEPRI` and friends came from flags that named no
+        # `--target`, fixed in #274, and `__oz_timer_setup` from a PAL arm
+        # retired with OZTimer in #267. The last one standing was
+        # `oz_assert`, undeclared because nothing imported
+        # `oz_sdk/assert.h` -- fixed in #304, and the dumps of px-keyboard and
+        # every Foundation impl are now error-free. None of those touched an
+        # ivar's ownership qualifier or whether an `@implementation` was seen,
+        # which is all the oracle reads. A `fatal error` is different in kind:
+        # Clang stops, and every declaration after it is simply absent from a
+        # file that still looks complete.
         # The `> ${_ast}` redirection is confined to the clang command, so
         # a bare `echo` reaches the script's own stdout and lands in the
         # build log alongside oz2c's own progress.

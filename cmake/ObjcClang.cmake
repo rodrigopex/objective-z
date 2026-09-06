@@ -171,212 +171,17 @@ function(_objz_get_clang_target_triple result)
     set(${result} ${_triple} PARENT_SCOPE)
 endfunction()
 
-# ─── Append arch built-in defines for host-target compile_commands ────
+# Two helpers used to sit here, and both went dead when the Python backend
+# was retired: `_objz_append_arch_defines()` and `_objz_build_clang_flags()`,
+# whose only call sites were in `cmake/oz_transpile.cmake` (#304). Deleted
+# rather than kept, because their premise expired with them -- both existed to
+# patch up a compile_commands.json built for the *host* target, which is why
+# one of them shelled out to Clang for `__ARM_*` predefines and the other
+# named `-fobjc-runtime=gnustep-2.0`. The entries now come from
+# `_objz_build_ast_flags()`, which names the real target triple (#274), so
+# there is nothing left to patch up. `git show fec8609^:cmake/oz_transpile.cmake`
+# has the callers if the reasoning is ever needed again.
 #
-# When compile_commands.json uses the host target instead of the
-# cross-compilation target, compiler built-in arch defines (__ARM_*,
-# __riscv*, __thumb*, etc.) are absent.  CMSIS and Zephyr headers need
-# them, so we query Clang for the embedded target's predefined macros
-# and inject them as -D flags.
-#
-function(_objz_append_arch_defines result_var)
-    set(_flags ${${result_var}})
-
-    # Reconstruct target + arch flags for the Clang predefines query
-    _objz_get_clang_target_triple(_triple)
-    set(_query_flags --target=${_triple})
-    if(DEFINED GCC_M_CPU)
-        list(APPEND _query_flags -mcpu=${GCC_M_CPU})
-    endif()
-    if(CONFIG_COMPILER_ISA_THUMB2)
-        list(APPEND _query_flags -mthumb)
-    endif()
-    if(CONFIG_FPU AND DEFINED GCC_M_FPU)
-        list(APPEND _query_flags -mfpu=${GCC_M_FPU})
-        if(CONFIG_FP_HARDABI)
-            list(APPEND _query_flags -mfloat-abi=hard)
-        elseif(CONFIG_FP_SOFTABI)
-            list(APPEND _query_flags -mfloat-abi=softfp)
-        endif()
-    elseif(NOT CONFIG_FPU AND "${ARCH}" STREQUAL "arm")
-        list(APPEND _query_flags -mfpu=none -mfloat-abi=soft)
-    endif()
-    if(CONFIG_RISCV)
-        set(_rv_march "rv32i")
-        set(_rv_mabi "ilp32")
-        if(CONFIG_64BIT)
-            set(_rv_march "rv64i")
-            set(_rv_mabi "lp64")
-        endif()
-        if(CONFIG_RISCV_ISA_EXT_M)
-            string(APPEND _rv_march "m")
-        endif()
-        if(CONFIG_RISCV_ISA_EXT_A)
-            string(APPEND _rv_march "a")
-        endif()
-        if(CONFIG_RISCV_ISA_EXT_C)
-            string(APPEND _rv_march "c")
-        endif()
-        list(APPEND _query_flags -march=${_rv_march} -mabi=${_rv_mabi})
-    endif()
-
-    # Query Clang for all predefined macros of the embedded target
-    execute_process(
-        COMMAND ${OBJZ_CLANG_COMPILER} ${_query_flags} -dM -E -x c /dev/null
-        OUTPUT_VARIABLE _predefs
-        OUTPUT_STRIP_TRAILING_WHITESPACE
-        ERROR_QUIET)
-
-    # Extract arch-specific defines and inject as -D flags
-    string(REPLACE "\n" ";" _lines "${_predefs}")
-    foreach(_line IN LISTS _lines)
-        if(_line MATCHES "^#define (__ARM_[A-Za-z0-9_]+) (.+)$")
-            list(APPEND _flags "-D${CMAKE_MATCH_1}=${CMAKE_MATCH_2}")
-        elseif(_line MATCHES "^#define (__riscv[A-Za-z0-9_]*) (.+)$")
-            list(APPEND _flags "-D${CMAKE_MATCH_1}=${CMAKE_MATCH_2}")
-        elseif(_line MATCHES "^#define (__thumb[A-Za-z0-9_]*) (.+)$")
-            list(APPEND _flags "-D${CMAKE_MATCH_1}=${CMAKE_MATCH_2}")
-        endif()
-    endforeach()
-
-    set(${result_var} ${_flags} PARENT_SCOPE)
-endfunction()
-
-# ─── Build Clang flags from zephyr_interface ─────────────────────────
-#
-# Used by oz_static.cmake for clangd compile_commands.json generation.
-#
-function(_objz_build_clang_flags result_var)
-    set(_flags "")
-
-    # Target triple
-    _objz_get_clang_target_triple(_triple)
-    list(APPEND _flags --target=${_triple})
-
-    # CPU
-    if(DEFINED GCC_M_CPU)
-        list(APPEND _flags -mcpu=${GCC_M_CPU})
-    endif()
-
-    # Thumb mode
-    if(CONFIG_COMPILER_ISA_THUMB2)
-        list(APPEND _flags -mthumb)
-    endif()
-
-    # FPU (ARM)
-    if(CONFIG_FPU AND DEFINED GCC_M_FPU)
-        list(APPEND _flags -mfpu=${GCC_M_FPU})
-        if(CONFIG_FP_HARDABI)
-            list(APPEND _flags -mfloat-abi=hard)
-        elseif(CONFIG_FP_SOFTABI)
-            list(APPEND _flags -mfloat-abi=softfp)
-        endif()
-    elseif(NOT CONFIG_FPU AND "${ARCH}" STREQUAL "arm")
-        list(APPEND _flags -mfpu=none -mfloat-abi=soft)
-    endif()
-
-    # RISC-V ISA and ABI
-    if(CONFIG_RISCV)
-        set(_rv_march "rv32i")
-        set(_rv_mabi "ilp32")
-        if(CONFIG_64BIT)
-            set(_rv_march "rv64i")
-            set(_rv_mabi "lp64")
-        endif()
-        if(CONFIG_RISCV_ISA_EXT_M)
-            string(APPEND _rv_march "m")
-        endif()
-        if(CONFIG_RISCV_ISA_EXT_A)
-            string(APPEND _rv_march "a")
-        endif()
-        if(CONFIG_RISCV_ISA_EXT_C)
-            string(APPEND _rv_march "c")
-        endif()
-        list(APPEND _flags -march=${_rv_march} -mabi=${_rv_mabi} -mno-relax)
-    endif()
-
-    # ObjC runtime (for clangd IDE support)
-    list(APPEND _flags -fobjc-runtime=gnustep-2.0)
-    list(APPEND _flags -fconstant-string-class=OZString)
-    list(APPEND _flags -fblocks)
-
-    # Include dirs from zephyr_interface (skip generator expressions)
-    get_property(_inc_dirs TARGET zephyr_interface
-        PROPERTY INTERFACE_INCLUDE_DIRECTORIES)
-    foreach(_dir ${_inc_dirs})
-        string(FIND "${_dir}" "$<" _is_genexpr)
-        if(_is_genexpr EQUAL -1)
-            list(APPEND _flags -I${_dir})
-        endif()
-    endforeach()
-
-    # System include dirs (skip generator expressions and GCC built-in paths)
-    get_property(_sys_inc_dirs TARGET zephyr_interface
-        PROPERTY INTERFACE_SYSTEM_INCLUDE_DIRECTORIES)
-    foreach(_dir ${_sys_inc_dirs})
-        string(FIND "${_dir}" "$<" _is_genexpr)
-        string(FIND "${_dir}" "lib/gcc/" _is_gcc)
-        if(_is_genexpr EQUAL -1 AND _is_gcc EQUAL -1)
-            list(APPEND _flags -isystem ${_dir})
-        endif()
-    endforeach()
-
-    # Compile definitions from zephyr_interface
-    get_property(_defs TARGET zephyr_interface
-        PROPERTY INTERFACE_COMPILE_DEFINITIONS)
-    foreach(_def ${_defs})
-        string(FIND "${_def}" "$<" _is_genexpr)
-        if(_is_genexpr EQUAL -1)
-            list(APPEND _flags -D${_def})
-        endif()
-    endforeach()
-
-    # autoconf.h (all CONFIG_* defines) — use AUTOCONF_H set by Zephyr
-    if(DEFINED AUTOCONF_H)
-        list(APPEND _flags -imacros ${AUTOCONF_H})
-    endif()
-
-    # Clang built-in headers (stddef.h, stdint.h, etc.) needed with -nostdinc
-    execute_process(
-        COMMAND ${OBJZ_CLANG_COMPILER} --target=${_triple} -print-resource-dir
-        OUTPUT_VARIABLE _resource_dir OUTPUT_STRIP_TRAILING_WHITESPACE)
-    list(APPEND _flags -isystem ${_resource_dir}/include)
-
-    # SDK sysroot libc headers (string.h, stdlib.h, etc.)
-    if(SYSROOT_DIR)
-        list(APPEND _flags
-            -isystem ${SYSROOT_DIR}/include
-            -isystem ${SYSROOT_DIR}/sys-include
-        )
-    elseif(CMAKE_SYSROOT)
-        list(APPEND _flags
-            -isystem ${CMAKE_SYSROOT}/include
-            -isystem ${CMAKE_SYSROOT}/sys-include
-        )
-    endif()
-
-    # Common flags (Clang-compatible subset of Zephyr's GCC flags)
-    list(APPEND _flags
-        -nostdinc
-        -fshort-enums
-        -fno-common
-        -ffunction-sections
-        -fdata-sections
-        -fno-strict-aliasing
-        -fno-pic
-        -fno-pie
-        -fno-asynchronous-unwind-tables
-        -fno-exceptions
-        -fno-unwind-tables
-        -Os
-        -g -gdwarf-4
-        -Wall
-        -Wno-objc-macro-redefinition
-    )
-
-    set(${result_var} ${_flags} PARENT_SCOPE)
-endfunction()
-
 # ─── Collect compile_commands.json entry for ObjC files ──────────────
 #
 # _objz_collect_compile_db(<source.m> <output.o> <flag1> [flag2 ...])
@@ -384,6 +189,11 @@ endfunction()
 # Appends a JSON entry to the OBJZ_COMPILE_DB_JSON global property.
 # Registers a deferred function to write compile_commands_objc.json
 # and create a merge target (once).
+#
+# Called from `oz_static.cmake`'s AST-dump loop, once per `.m` file it is
+# about to hand to Clang, with the same flags. That is the only caller: the
+# entry is only as good as the flags, and those are the flags Clang is known
+# to accept on that exact file.
 #
 function(_objz_collect_compile_db source object)
     set(_args ${OBJZ_CLANG_COMPILER})
@@ -402,7 +212,6 @@ function(_objz_collect_compile_db source object)
 
     set_property(GLOBAL APPEND_STRING PROPERTY OBJZ_COMPILE_DB_JSON
         "{\"directory\": \"${CMAKE_BINARY_DIR}\", \"file\": \"${source}\", \"arguments\": [${_json_args}]},\n")
-    set_property(GLOBAL APPEND PROPERTY _OBJZ_COLLECTED_M_FILES "${source}")
 
     get_property(_deferred GLOBAL PROPERTY _OBJZ_COMPILE_DB_DEFERRED)
     if(NOT _deferred)
@@ -422,39 +231,25 @@ function(_objz_write_compile_db)
     get_property(_mod GLOBAL PROPERTY _OBJZ_MODULE_DIR)
     get_filename_component(_mod "${_mod}" REALPATH)
 
-    # Scan all .m files in the project and add compile_commands entries
-    # for any not already collected.  clangd strips -f flags during
-    # interpolation, so every .m file needs an explicit entry.
-    get_property(_collected_files GLOBAL PROPERTY _OBJZ_COLLECTED_M_FILES)
-    file(GLOB_RECURSE _all_m_files
-        "${_mod}/samples/*.m"
-        "${_mod}/tests/*.m"
-        "${_mod}/benchmarks/*.m"
-        "${_mod}/src/*.m")
-    # Extract the template arguments from the first collected entry
-    # (everything between "arguments": [...] in the JSON).
-    string(REGEX MATCH "\"arguments\": \\[([^]]+)\\]" _ "${_json}")
-    set(_template_args "${CMAKE_MATCH_1}")
-    if(_template_args AND _all_m_files)
-        foreach(_m_file ${_all_m_files})
-            get_filename_component(_m_file "${_m_file}" REALPATH)
-            list(FIND _collected_files "${_m_file}" _idx)
-            if(_idx EQUAL -1)
-                # Build a synthetic entry reusing the template args but
-                # replacing the source and object paths.
-                string(MAKE_C_IDENTIFIER "${_m_file}" _safe)
-                set(_obj "${CMAKE_BINARY_DIR}/clang_objc_arc/${_safe}.o")
-                # Escape for JSON
-                string(REPLACE "\\" "\\\\" _m_esc "${_m_file}")
-                string(REPLACE "\"" "\\\"" _m_esc "${_m_esc}")
-                string(REPLACE "\\" "\\\\" _obj_esc "${_obj}")
-                string(REPLACE "\"" "\\\"" _obj_esc "${_obj_esc}")
-                string(APPEND _json
-                    "{\"directory\": \"${CMAKE_BINARY_DIR}\", \"file\": \"${_m_esc}\", \"arguments\": [${_template_args}]},\n")
-            endif()
-        endforeach()
-    endif()
-
+    # Only the files that were actually collected get an entry.
+    #
+    # There used to be a fallback here that globbed every `.m` in the module
+    # and synthesised an entry for the ones this build did not compile, on the
+    # theory that clangd needs one per file. Two problems, and it is the second
+    # that retires the idea rather than repairing it (#304). It globbed only
+    # the module's own `samples/`, `tests/`, `benchmarks/` and `src/`, so an
+    # out-of-tree app was never covered by it in the first place; and each
+    # synthetic entry reused the *first* collected entry's argument list
+    # verbatim, `-c <source> -o <object>` included, so every one of them named
+    # the wrong input.
+    #
+    # Nothing is lost by dropping it. For a `.m` with no entry of its own
+    # clangd interpolates from the nearest one it has, and now that the nearest
+    # one is a real Objective-C command -- `-fobjc-arc`, `-fblocks`,
+    # `-fobjc-runtime=macosx`, the right `--target` -- interpolation lands
+    # somewhere far better than a synthesised command with a wrong `-c` ever
+    # did. Only the include paths differ, and only for a file outside this
+    # build.
     string(REGEX REPLACE ",\n$" "\n" _json "${_json}")
     file(WRITE "${CMAKE_BINARY_DIR}/compile_commands_objc.json" "[\n${_json}]\n")
 
@@ -467,28 +262,42 @@ function(_objz_write_compile_db)
         VERBATIM
     )
 
-    # Generate minimal .clangd at the app project root.  compile_commands
-    # entries use the host target (macOS) for ObjC blocks/ARC support, so
-    # ELF section attributes from Zephyr macros trigger a Mach-O error
-    # that can only be suppressed via clangd's Diagnostics Suppress (it's
-    # a hard error, not a -Wno-suppressible warning).
-    set(_clangd_path "${CMAKE_SOURCE_DIR}/.clangd")
-    file(WRITE "${_clangd_path}"
+    # Generate a minimal .clangd at the app project root, naming the build
+    # directory this configure actually used -- but only when that directory
+    # lives inside the source tree.
+    #
+    # It used to be the bare literal `build`, correct only for the default
+    # in-tree layout. Naming ${CMAKE_BINARY_DIR} instead fixes `west build -d`
+    # and breaks something worse: twister builds every sample in a temporary
+    # directory, so `just test` would leave each sample's checked-out `.clangd`
+    # pointing at a path that no longer exists. Skipping the write is the
+    # answer for that case -- an out-of-tree build has no business rewriting
+    # the editor config of a tree it is only reading (#304).
+    file(RELATIVE_PATH _bin_rel "${CMAKE_SOURCE_DIR}" "${CMAKE_BINARY_DIR}")
+    if(_bin_rel MATCHES "^\\.\\." OR IS_ABSOLUTE "${_bin_rel}")
+        message(STATUS "Objective-Z: build dir is outside the source tree; "
+                       "leaving ${CMAKE_SOURCE_DIR}/.clangd alone")
+    else()
+        set(_clangd_path "${CMAKE_SOURCE_DIR}/.clangd")
+        file(WRITE "${_clangd_path}"
 "# Auto-generated by Objective-Z module — do not edit manually.\n\
 # Regenerated on every CMake configure (just build / just rebuild).\n\
 \n\
 CompileFlags:\n\
-  CompilationDatabase: build\n\
-\n\
-Diagnostics:\n\
-  Suppress:\n\
-    - attribute_section_invalid_for_target\n")
-    message(STATUS "Objective-Z: generated ${_clangd_path}")
+  CompilationDatabase: ${_bin_rel}\n")
+        message(STATUS "Objective-Z: generated ${_clangd_path}")
+    endif()
 
     message(STATUS "Objective-Z: wrote ${CMAKE_BINARY_DIR}/compile_commands_objc.json")
 endfunction()
 
-# ─── Build Clang flags for AST analysis (host-compatible) ───────────
+# ─── Build Clang flags for AST analysis, and for the IDE ────────────
+#
+# No longer "host-compatible", which this heading said for as long as the
+# dump was parsed as the build machine: `--target=` has named the real
+# embedded triple since #274. The same flags, minus `-w`, are what
+# `oz_static.cmake` hands to `_objz_collect_compile_db()` (#304), so a change
+# here moves both the transpiler's oracle and what clangd sees.
 #
 # The AST dump only needs include paths, defines, and ObjC parsing.
 # Uses -fobjc-runtime=macosx so both Apple Clang and LLVM Clang
