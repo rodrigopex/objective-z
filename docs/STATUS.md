@@ -51,7 +51,7 @@ hidden a defect.
 
 | Subject | Status |
 | --- | --- |
-| Rust suite (`cargo test`) | **331 tests**, `RUSTFLAGS=-D warnings` clean. The primary gate |
+| Rust suite (`cargo test`) | **362 tests**, `RUSTFLAGS=-D warnings` clean. The primary gate |
 | Behaviour corpus | **74/74** transpile, compile and run — gcc/clang × `-O0`/`-O2`, plus ASan, UBSan and LeakSanitizer |
 | Corpus ISO C validity | Gate at **0** under `-std=c17 -pedantic-errors` |
 | Adapted upstream tests | **40/40** (LLVM, GNUstep, Apple, ObjFW, mulle-objc) |
@@ -221,6 +221,29 @@ initializer needs a null pointer constant, and `((blk), 0)` or
 pointer initializer rejects them. So the block goes unparsed either way, and
 a signature mismatch surfaces from GCC on generated code rather than from
 oz_static on the source. That is a real gap, not a detail.
+
+### What the author can still pin down
+
+The return type, by writing it on the literal -- `^uint32_t(int seed) { ... }`
+is carried into the hoisted function (#303). Worth knowing because it is the
+only way to type a callback that does not return `int`: with no return type
+written, oz_static takes the enclosing block-pointer declaration's if there
+is one, and otherwise *guesses* from the body, where any return-with-value
+means `int`.
+
+A designated initializer has no such declaration, so `.fn = OZFN(^(int seed)
+{ ... })` gets the guess -- and Zephyr's `bt_conn_auth_cb.app_passkey`
+returns `uint32_t`, which is how #303 was found. Inferring it from the field
+instead is not a gap waiting to be filled; it is closed twice over. The
+field's type lives in a `#include`d pure-C header, which `imports`
+deliberately leaves verbatim rather than splicing, so the struct never
+enters the CST at all. And Clang cannot supply it either, for the reason
+just above: `OZFN` expands to `0`, so no block exists at that position to
+type.
+
+So: write the return type on any callback block that does not return `int`.
+`px-keyboard` needed a named C function for `.app_passkey` before this and
+does not now.
 
 ## What one cause can look like
 

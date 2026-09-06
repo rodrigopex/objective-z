@@ -16,9 +16,15 @@
 //     };
 //
 // `OZFN` hides one *expression* instead, so the real macro expands on both
-// sides and only the block is unparsed. The transpiler needed no change for
-// this: `emit::top_level_block_edits` already hoists a block literal in
-// that position, and the two preprocessor halves were the whole gap.
+// sides and only the block is unparsed. The transpiler needed no change to
+// *place* the block: `emit::top_level_block_edits` already hoists a literal
+// in that position, and the two preprocessor halves were the whole gap for
+// the `void` callbacks #300 was written against.
+//
+// It did need one to get the block's *type* right, which #303 found as soon
+// as a callback returned anything but `int` -- the hoisted function's return
+// type was guessed from the body, and saying otherwise on the literal cost
+// the parameter list. See the return-type cases at the end of this file.
 //
 // Expanding to `0` is forced rather than chosen. The position wants a value,
 // and reaching a *static* initializer means the expansion has to be a null

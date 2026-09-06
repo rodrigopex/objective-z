@@ -4697,7 +4697,7 @@ pub fn emit(
     // (`struct OZString` is defined at OZString's `@interface`), so the
     // definition cannot go where the prototype does.
     if !blocks.is_empty() {
-        out.push_str("/* non-capturing blocks, hoisted out of their enclosing methods -- prototypes (defined below, after every class) */\n");
+        out.push_str("/* non-capturing blocks, hoisted from block literals -- prototypes (defined below, after every class) */\n");
         for (prototype, _) in &blocks {
             out.push_str(prototype);
         }
@@ -4725,7 +4725,7 @@ pub fn emit(
     }
 
     if !blocks.is_empty() {
-        out.push_str("\n/* non-capturing blocks, hoisted out of their enclosing methods */\n");
+        out.push_str("\n/* non-capturing blocks, hoisted from block literals */\n");
         for (_, definition) in &blocks {
             out.push_str(definition);
             out.push('\n');
@@ -5469,7 +5469,7 @@ pub fn emit_split(
         }
         if let Some(blocks) = hoisted_blocks_by_stem.get(stem) {
             if !blocks.is_empty() {
-                c.push_str("/* non-capturing blocks, hoisted out of their enclosing methods -- prototypes (defined below) */\n");
+                c.push_str("/* non-capturing blocks, hoisted from block literals -- prototypes (defined below) */\n");
                 for (prototype, _) in blocks {
                     c.push_str(prototype);
                 }
@@ -5491,7 +5491,7 @@ pub fn emit_split(
         }
         if let Some(blocks) = hoisted_blocks_by_stem.get(stem) {
             if !blocks.is_empty() {
-                c.push_str("\n/* non-capturing blocks, hoisted out of their enclosing methods */\n");
+                c.push_str("\n/* non-capturing blocks, hoisted from block literals */\n");
                 for (_, definition) in blocks {
                     c.push_str(definition);
                     c.push('\n');
