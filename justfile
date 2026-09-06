@@ -31,19 +31,30 @@ run:
 monitor:
     tio {{ tty }}
 
+# `-c` (--clobber-output) on every twister recipe below, and it is not
+# cosmetic. Without it twister *renames* the previous output directory rather
+# than replacing it -- `twister-out` becomes `twister-out.1`, then `.2`, and so
+# on with no upper bound. Each run of this recipe writes about a gigabyte, so
+# the rotations are pure accumulation: 34 of them had built up to 27 GB, on a
+# volume that was at 97% capacity as a result. `-c` deletes the old directory
+# instead, so each target keeps exactly one.
+#
+# The cost, stated because it is a real loss: a previous run's output is gone
+# rather than kept as `.1`, so two runs can no longer be diffed against each
+# other. Copy the directory aside first when that is what you need.
 test:
-    west twister -T samples/ -p {{ board }} -O /tmp/twister-out
+    west twister -T samples/ -p {{ board }} -c -O /tmp/twister-out
 
 # Same samples on RISC-V. gpio_demo is filtered out by its own sample.yaml:
 # qemu_riscv32 has no led0/sw0 device-tree aliases, so 12 of 13 run here.
 test-riscv:
-    west twister -T samples/ -p {{ riscv_board }} -O /tmp/twister-out-riscv
+    west twister -T samples/ -p {{ riscv_board }} -c -O /tmp/twister-out-riscv
 
 # Two cores (CONFIG_SMP=y, CONFIG_MP_MAX_NUM_CPUS=2). Only the samples that
 # pin no platform, plus arc_demo's own SMP scenarios -- see its sample.yaml for
 # why the single-core expectations cannot be reused under real concurrency.
 test-smp:
-    west twister -T samples/ -p {{ smp_board }} -O /tmp/twister-out-smp
+    west twister -T samples/ -p {{ smp_board }} -c -O /tmp/twister-out-smp
 
 # Both supported boards, so an architecture-specific regression cannot hide.
 test-boards:
@@ -77,9 +88,9 @@ test-pedantic *args:
 #
 # Zephyr's own spinlock assertions against generated C, on both boards (#278).
 test-spin-validate:
-    west twister -T samples/ -p {{ board }} -O /tmp/twister-out-spinvalidate \
+    west twister -T samples/ -p {{ board }} -c -O /tmp/twister-out-spinvalidate \
         -x=EXTRA_CONF_FILE={{ justfile_directory() }}/samples/overlay-spin-validate.conf
-    west twister -T samples/ -p {{ smp_board }} -O /tmp/twister-out-spinvalidate-smp \
+    west twister -T samples/ -p {{ smp_board }} -c -O /tmp/twister-out-spinvalidate-smp \
         -x=EXTRA_CONF_FILE={{ justfile_directory() }}/samples/overlay-spin-validate.conf
 
 # Real silicon: nRF52833DK over its on-board J-Link, flashed and run, with
@@ -104,7 +115,7 @@ test-spin-validate:
 # which asserts the button path QEMU cannot: mps2/an385 has no GPIO interrupt
 # support, so the callback registration returns -ENOTSUP there.
 test-hardware:
-    west twister -T samples/ -p {{ hw_board }} -O /tmp/twister-out-hw \
+    west twister -T samples/ -p {{ hw_board }} -c -O /tmp/twister-out-hw \
         --device-testing --hardware-map hardware-map.yaml
 
 # Every board, including SMP. The only recipe that exercises two cores.
@@ -113,8 +124,13 @@ test-all-boards:
     just test-riscv
     just test-smp
 
+# Its own output directory, not `test`'s. Both wrote to /tmp/twister-out, which
+# was survivable while twister rotated -- the loser's output became `.1` -- and
+# is not once `-c` deletes instead. Running this would then silently discard the
+# sample results, and the two suites test different things (13 samples vs the
+# ztest cases over committed C), so neither is a stand-in for the other.
 test-zephyr:
-    west twister -T tests/zephyr/ -p {{ if os() == "linux" { "native_sim" } else { board } }} -O /tmp/twister-out
+    west twister -T tests/zephyr/ -p {{ if os() == "linux" { "native_sim" } else { board } }} -c -O /tmp/twister-out-zephyr
 
 bench:
     west build -p -b {{ board }} benchmarks/objc && west flash
@@ -131,8 +147,9 @@ bench-mem-cpp:
 bench-mem-objc:
     west build -p -b {{ board }} benchmarks/memory/objc && west flash
 
+# Its own output directory too, for the reason on `test-zephyr`.
 test-bench:
-    west twister -T benchmarks/ --device-testing --hardware-map hardware-map.yaml -O /tmp/twister-out
+    west twister -T benchmarks/ --device-testing --hardware-map hardware-map.yaml -c -O /tmp/twister-out-bench
 
 bench-mem:
     just bench-mem-c
