@@ -192,6 +192,36 @@ the AST dump's benefit would make the same comparison mean two different things
 there and in the emitted C. The contract is observable without it: a nil
 receiver's class matches nothing at all, not even the root class.
 
+## Two escapes for a block where a function pointer is wanted
+
+Objective-C refuses the conversion in every position, so neither is optional:
+
+| | Hides | Use when |
+| --- | --- | --- |
+| `OZM(MACRO, args...)` | the whole macro invocation | the target macro token-pastes its callback into a symbol name -- `INPUT_CALLBACK_DEFINE` does |
+| `OZFN(^{ ... })` | one expression | everywhere else, and it is the better default |
+
+`OZFN` is preferred because `OZM` costs the symbol: with the invocation
+discarded, Clang never sees what the macro declares, so a reference to it
+needs a hand-written `#ifdef __OBJC__` twin. `OZFN` leaves the real macro to
+expand on both sides. It also reaches callbacks `OZM` cannot -- a designated
+initializer is not a macro argument, which is the shape Zephyr's
+`BT_CONN_CB_DEFINE(name) = { .connected = ..., }` uses (#300).
+
+Where `OZFN` is *wrong*: a macro pasting its callback into a name. The
+argument expands to `0` before the paste, so two callbacks in one file both
+become `_input_callback__0` and Clang reports `redefinition` -- on the
+AST-dump path, where a truncated dump silently costs ivar ownership facts.
+Zephyr's `INPUT_CALLBACK_DEFINE_NAMED` is the way out for a caller who wants
+`OZFN` there anyway.
+
+Neither lets Clang check the block. `OZFN` expands to `0` because a static
+initializer needs a null pointer constant, and `((blk), 0)` or
+`((void)sizeof(blk), 0)` are not ones -- they have the value zero and a
+pointer initializer rejects them. So the block goes unparsed either way, and
+a signature mismatch surfaces from GCC on generated code rather than from
+oz_static on the source. That is a real gap, not a detail.
+
 ## What one cause can look like
 
 Worth keeping because it cost two wrong diagnoses before the right one.
