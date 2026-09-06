@@ -161,6 +161,33 @@ Measured on the linked `samples/reflection_demo` image for
 for all of it, plus 42 bytes for the two `OZ_PROTOCOL_SEND_*` functions the
 reflected selectors forced into existence. 1.4% of that sample's flash.
 
+**A protocol-typed receiver needs `<ObjectProtocol>` (#307).** None of the
+above can be sent to an `id<P>` unless `P` adopts oz_sdk's base protocol:
+
+```objc
+@protocol PXToggleable <ObjectProtocol>
+- (void)toggle;
+@end
+```
+
+Clang resolves a message to `id<P>` against `P` and its super-protocols and
+nowhere else — the root class is unreachable from such a type — so without the
+adoption `[indicator conformsToProtocol:...]` is
+`error: no known instance method for selector 'conformsToProtocol:'` however
+plainly `OZObject` declares it. Real Objective-C has the same rule and
+`<NSObject>` is the same answer. `ObjectProtocol` lives in
+`include/oz_sdk/Foundation/Object+Protocol.h`, is reached through `OZObject.h`
+(which defines the `BOOL` its methods return), and is adopted by `OZObject`,
+`IteratorProtocol` and `SingletonProtocol`. Adopting it demands nothing of a
+conforming class: every method it declares is defined once, on the root class,
+and an inherited implementation satisfies a protocol requirement.
+
+It costs nothing. Its ten selectors become protocol-declared, so
+`is_dynamically_dispatched` generates a dispatch function for each — and
+`hello_world`'s image is byte-identical across the change (13740 text, 228
+data, 5975 bss), because `-ffunction-sections` plus `--gc-sections` collects
+every one a program does not call.
+
 Three things about the design are worth knowing before changing it:
 
 - **Tables are gated on use, not on the option.** A program that enables both
@@ -211,9 +238,11 @@ initializer is not a macro argument, which is the shape Zephyr's
 Where `OZFN` is *wrong*: a macro pasting its callback into a name. The
 argument expands to `0` before the paste, so two callbacks in one file both
 become `_input_callback__0` and Clang reports `redefinition` -- on the
-AST-dump path, where a truncated dump silently costs ivar ownership facts.
-Zephyr's `INPUT_CALLBACK_DEFINE_NAMED` is the way out for a caller who wants
-`OZFN` there anyway.
+AST-dump path, where a truncated dump costs ivar ownership facts. No longer
+*silently*: since #307 any error in a dump fails the build, not only a
+`fatal error`, so this now surfaces as the redefinition it is instead of as a
+leak found later. Zephyr's `INPUT_CALLBACK_DEFINE_NAMED` is the way out for a
+caller who wants `OZFN` there anyway.
 
 Neither lets Clang check the block. `OZFN` expands to `0` because a static
 initializer needs a null pointer constant, and `((blk), 0)` or

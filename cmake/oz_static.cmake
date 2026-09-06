@@ -274,7 +274,8 @@ function(objz_transpile_sources_static target)
         string(APPEND _ast_lines
             "echo \"oz_static: clang ast ${_ast_k}/${_n_ast} ${_name}\"\n"
             "${_one} > ${_ast} 2> ${_ast}.err\n"
-            "grep -q 'fatal error:' ${_ast}.err || rm -f ${_ast}.err\n")
+            "grep 'error:' ${_ast}.err | grep -qv -e 'disallowed with ARC' \\\n"
+            "    -e 'ARC forbids explicit message send' || rm -f ${_ast}.err\n")
         list(APPEND _ast_args --ast ${_ast})
 
         # The same dump as its own build-time edge, so ninja can track what
@@ -293,7 +294,8 @@ function(objz_transpile_sources_static target)
         file(WRITE ${_one_script}
             "#!/bin/sh\n"
             "${_one} -MD -MF ${_ast}.d -MT ${_ast} > ${_ast} 2> ${_ast}.err\n"
-            "grep -q 'fatal error:' ${_ast}.err || rm -f ${_ast}.err\n")
+            "grep 'error:' ${_ast}.err | grep -qv -e 'disallowed with ARC' \\\n"
+            "    -e 'ARC forbids explicit message send' || rm -f ${_ast}.err\n")
         add_custom_command(
             OUTPUT  ${_ast}
             COMMAND sh ${_one_script}
@@ -309,6 +311,39 @@ function(objz_transpile_sources_static target)
     # indistinguishable from a complete one by inspection and it silently
     # weakens the only oracle for ivar ownership (gaps N and AA of the
     # retired PARITY.md; docs/STATUS.md says how to read it).
+    #
+    # **Any** error, not only a `fatal error`, as of #307 -- with two
+    # named exceptions, and the exceptions are the whole design.
+    #
+    # The old rule made the dumps a place diagnostics went to be ignored.
+    # #304's `oz_assert` was undeclared in every dump of every sample for
+    # as long as `oz_sdk/assert.h` went unimported, and no build ever said
+    # so; #307's `conformsToProtocol:` sat in px-keyboard's the same way.
+    # Neither truncated anything, both were real defects in the headers
+    # oz2c reads, and "ordinary errors are fine" is why nobody saw either.
+    #
+    # But the old rule was not merely lax. Clang parses this Objective-C
+    # under `-fobjc-arc`, and oz_static deliberately supports constructs
+    # whose Objective-C *spelling* ARC refuses:
+    #
+    #   * `ARC forbids explicit message send of 'dealloc'` -- oz_static
+    #     synthesizes the dealloc chain, and `samples/pool_demo`,
+    #     `transpiled_led` and `gpio_demo` all write the send out;
+    #   * `cast of a block pointer to '...' is disallowed with ARC` --
+    #     `samples/gpio_demo` hands a block to a Zephyr callback field.
+    #
+    # Those two are matched and let through. Everything else fails, which
+    # keeps the two defects above from recurring: neither is an ARC
+    # complaint, so neither is covered by the exception.
+    #
+    # Measured, and the measurement is why the list is exactly two long.
+    # Across `hello_world`, `zbus_service` and px-keyboard the dumps
+    # carried one error between them (#307's). Across all thirteen
+    # samples they carried four kinds: those two, plus a
+    # `K_THREAD_DEFINE` in `samples/arc_demo` that does not parse as
+    # Objective-C at all -- fixed there by wrapping it in `OZM`, not
+    # excused here, because `expected identifier` is too broad a pattern
+    # to ever allow through.
     #
     # Checked by its own script rather than here, because **this script runs
     # at two different times and only one of them can succeed**:
@@ -342,7 +377,7 @@ function(objz_transpile_sources_static target)
             "# correct, but a leak.\n"
             "for f in ${_ast_dir}/*.ast.json.err; do\n"
             "  [ -e \"$f\" ] || exit 0\n"
-            "  echo \"oz_static: WARNING: truncated Clang AST dump:\" >&2\n"
+            "  echo \"oz_static: WARNING: diagnostics in a Clang AST dump:\" >&2\n"
             "  cat \"$f\" >&2\n"
             "done\n"
             "exit 0\n")
@@ -353,15 +388,23 @@ function(objz_transpile_sources_static target)
             "for f in ${_ast_dir}/*.ast.json.err; do\n"
             "  [ -e \"$f\" ] || break\n"
             "  found=1\n"
-            "  echo \"oz_static: Clang hit a fatal error, so this AST dump stops\" >&2\n"
-            "  echo \"where the error is and the ivar-ownership oracle is\" >&2\n"
-            "  echo \"incomplete for that file (see docs/STATUS.md):\" >&2\n"
+            "  if grep -q 'fatal error:' \"$f\"; then\n"
+            "    echo \"oz_static: Clang hit a fatal error, so this AST dump stops\" >&2\n"
+            "    echo \"where the error is and the ivar-ownership oracle is\" >&2\n"
+            "    echo \"incomplete for that file (see docs/STATUS.md):\" >&2\n"
+            "  else\n"
+            "    echo \"oz_static: Clang reported an error while dumping this AST.\" >&2\n"
+            "    echo \"It does not truncate the dump, but it means the Objective-C\" >&2\n"
+            "    echo \"oz2c reads does not parse cleanly -- usually a declaration\" >&2\n"
+            "    echo \"missing from an oz_sdk header (#304, #307):\" >&2\n"
+            "  fi\n"
             "  cat \"$f\" >&2\n"
             "done\n"
             "[ \$found -eq 0 ] && exit 0\n"
             "echo \"oz_static: fix the diagnostics above, or configure with\" >&2\n"
-            "echo \"-DOBJZ_ALLOW_PARTIAL_AST=ON to proceed with conservative\" >&2\n"
-            "echo \"ARC (which leaks \\`id\\` ivars in those files).\" >&2\n"
+            "echo \"-DOBJZ_ALLOW_PARTIAL_AST=ON to report them and carry on\" >&2\n"
+            "echo \"(with conservative ARC, which leaks \\`id\\` ivars in any\" >&2\n"
+            "echo \"file whose dump really was truncated).\" >&2\n"
             "exit 1\n")
     endif()
 
