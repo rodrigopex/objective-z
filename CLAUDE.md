@@ -102,6 +102,11 @@ The Rust suite has no `just` recipe — run it directly:
 ```sh
 cargo test --manifest-path tools/oz_static/Cargo.toml
 ```
+
+Every twister recipe depends on `just oz2c`, so the transpiler is built before
+any sample configures. Driving `west twister` directly skips that: build oz2c
+first, or 13 configure steps each fork their own cargo and a slot can fail to
+start oz2c at all (#308).
 | `just ast-dump file`      | Clang JSON AST dump                |
 | `just smoke`              | Run host-side PAL smoke test       |
 
