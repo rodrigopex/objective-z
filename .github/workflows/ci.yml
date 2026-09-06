@@ -345,6 +345,16 @@ jobs:
           --expect samples/hello_world/src/main.m
           --expect src/OZObject.m
 
+      # A configure-time oz2c failure has to say what oz2c said and whether
+      # it ran at all. Passing `RESULT_VARIABLE` alone reported neither, and
+      # a failure that printed nothing sent #308 four days into the
+      # transpiler when the process had never started. Configure-only: the
+      # provoked build fails before a single object is compiled.
+      - name: Verify configure-time oz2c failures are diagnosable
+        run: >
+          python3 scripts/objz_check_oz2c_diagnostics.py samples/hello_world
+          --board ${{ matrix.board }}
+
       - name: Verify PAL inlining (ARM only)
         if: contains(matrix.board, 'mps2')
         run: |
