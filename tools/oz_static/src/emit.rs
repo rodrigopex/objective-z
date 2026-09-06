@@ -4165,9 +4165,16 @@ fn render_interface(node: Node, ctx: &mut EmitCtx, program: &Program) -> (String
 
     for protocol in &info.conforms {
         for required in program.protocol_methods(protocol) {
-            let implemented = info.methods.iter().any(|m| {
-                m.selector == required.selector && m.is_class_method == required.is_class_method
-            });
+            // The whole superclass chain, not just this class's own
+            // methods: an inherited implementation satisfies a protocol
+            // requirement (#307). Reading `info.methods` alone made
+            // `ObjectProtocol` unadoptable, since every method it
+            // declares is defined once, on the root class.
+            let implemented = program.implements_selector(
+                &name,
+                &required.selector,
+                required.is_class_method,
+            );
             if !implemented {
                 ctx.err(
                     node,

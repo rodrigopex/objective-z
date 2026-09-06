@@ -11,7 +11,7 @@
 
 #import "OZObject.h"
 
-@protocol SingletonProtocol
+@protocol SingletonProtocol <ObjectProtocol>
 @required
 + (void)initialize;
 + (instancetype)sharedInstance;

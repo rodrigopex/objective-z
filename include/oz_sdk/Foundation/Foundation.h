@@ -7,6 +7,9 @@
  */
 #pragma once
 
+/* OZObject.h first, and it is what brings in `Object+Protocol.h`: that
+ * header needs `BOOL`, which OZObject.h defines just before importing it
+ * (#307). Importing it here, ahead of OZObject.h, trips its own `#error`. */
 #import "OZObject.h"
 #import "OZString.h"
 #import "OZMutableString.h"
