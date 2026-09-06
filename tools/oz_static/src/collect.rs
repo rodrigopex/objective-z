@@ -172,6 +172,47 @@ pub(crate) fn render_type(type_text: &str, stars: usize, known_classes: &HashSet
 /// Extract (type_text, star_count) from a method_type / struct_declaration's
 /// declared type, e.g. "(int)" -> ("int", 0), "OZObject *foo" -> ("OZObject", 1).
 pub(crate) fn extract_type_and_stars(node: Node, src: &str) -> (String, usize) {
+    extract_type_and_stars_inner(node, src, false)
+}
+
+/// `extract_type_and_stars`, stopping at the declarator -- any
+/// `abstract_function_declarator` or `init_declarator` subtree is ignored.
+///
+/// For a block's return type (#303), which sits before a declarator that
+/// holds a *parameter list* an unpruned walk would read as part of the
+/// type. Two positions need it:
+///
+///   - the literal's own `^uint32_t(int seed)`, where `type_name` chains
+///     the return type into an `abstract_function_declarator`, so an
+///     unpruned walk counts the parameters' stars as the return type's and
+///     `^void *(char *s)` comes out `void **`;
+///   - the `declaration` around `static unsigned (^sq)(int) = ...`, whose
+///     `init_declarator` holds both the parameter list and the `^`.
+///
+/// Deliberately *not* the default, because `abstract_function_declarator`
+/// means the opposite thing one position over. In a block literal the
+/// return type's own star sits in an `abstract_pointer_declarator`
+/// *wrapping* the function declarator, so pruning still finds it. In a cast
+/// it sits *inside* it -- `(void (*)(int))` parses the `(*)` as an
+/// `abstract_parenthesized_declarator` under the
+/// `abstract_function_declarator` -- so pruning there would drop the
+/// pointer entirely. Casting to a function-pointer type is its own
+/// unsupported shape (it already renders wrong, `void **`); this changes
+/// nothing about it either way.
+///
+/// Stars *after* the pruned declarator are the caller's problem: in
+/// `static void *(^f)(int)` the `*` is inside the `init_declarator`, not
+/// beside the type specifier, so `emit::declared_block_pointer_type`
+/// counts that chain itself.
+pub(crate) fn extract_type_and_stars_to_declarator(node: Node, src: &str) -> (String, usize) {
+    extract_type_and_stars_inner(node, src, true)
+}
+
+fn extract_type_and_stars_inner(
+    node: Node,
+    src: &str,
+    prune_declarators: bool,
+) -> (String, usize) {
     let mut type_text = String::new();
     let mut stars = 0;
     let mut qualifiers: Vec<String> = Vec::new();
@@ -182,7 +223,13 @@ pub(crate) fn extract_type_and_stars(node: Node, src: &str) -> (String, usize) {
         type_text: &mut String,
         stars: &mut usize,
         qualifiers: &mut Vec<String>,
+        prune_declarators: bool,
     ) {
+        if prune_declarators
+            && matches!(n.kind(), "abstract_function_declarator" | "init_declarator")
+        {
+            return;
+        }
         match n.kind() {
             // `const`/`volatile`/`restrict`, which are their own nodes and
             // were simply dropped. That made a generated signature disagree
@@ -334,13 +381,13 @@ pub(crate) fn extract_type_and_stars(node: Node, src: &str) -> (String, usize) {
             _ => {
                 let mut c = n.walk();
                 for child in n.children(&mut c) {
-                    walk(child, src, type_text, stars, qualifiers);
+                    walk(child, src, type_text, stars, qualifiers, prune_declarators);
                 }
             }
         }
     }
     for child in node.children(&mut cursor) {
-        walk(child, src, &mut type_text, &mut stars, &mut qualifiers);
+        walk(child, src, &mut type_text, &mut stars, &mut qualifiers, prune_declarators);
     }
     if !qualifiers.is_empty() && !type_text.is_empty() {
         type_text = format!("{} {}", qualifiers.join(" "), type_text);
