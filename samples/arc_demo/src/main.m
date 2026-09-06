@@ -173,5 +173,17 @@ void arc_demo_extra_thread_entry(void *p1, void *p2, void *p3)
 	[[d sensor] setValue:100];
 }
 
-K_THREAD_DEFINE(arc_demo_thread, 1024, arc_demo_extra_thread_entry,
-		NULL, NULL, NULL, 7, 0, 0);
+/* Wrapped so Clang never parses it. `K_THREAD_DEFINE` builds its symbols
+ * by token-pasting the thread name, and the result does not parse as
+ * Objective-C: `error: expected identifier` plus an implicit-int warning,
+ * at the AST dump this sample's ivar ownership comes from. It truncated
+ * nothing, so it went unreported until #307 made any dump error a hard
+ * failure -- which is the point of that change, and this is the first
+ * thing it found.
+ *
+ * `OZM` rather than `OZFN`: `OZFN` hides an expression, and here the
+ * whole invocation has to go. The usual cost of that -- Clang not seeing
+ * what the macro declares -- is nil, because nothing in this file refers
+ * to `arc_demo_thread`, so there is no `#ifdef __OBJC__` twin to write. */
+OZM(K_THREAD_DEFINE, arc_demo_thread, 1024, arc_demo_extra_thread_entry,
+    NULL, NULL, NULL, 7, 0, 0);
