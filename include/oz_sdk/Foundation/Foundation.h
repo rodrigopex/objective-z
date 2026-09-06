@@ -19,3 +19,13 @@
 #import "OZLog.h"
 #import "OZSpinLock.h"
 #import "Singleton+Protocol.h"
+
+/*
+ * `oz_assert` and friends, as `static inline` stubs. Not a Foundation class,
+ * but every `.m` that asserts needs them declared or Clang reports
+ * `call to undeclared function 'oz_assert'` -- which lands in the AST dump
+ * oz2c reads as its ivar-ownership oracle, and in clangd (#304).
+ * `../assert.h` rather than `<assert.h>`: `-I include/oz_sdk` is prepended to
+ * the dump flags, so the unqualified spelling is ambiguous with libc's.
+ */
+#import "../assert.h"
