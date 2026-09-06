@@ -1,6 +1,6 @@
 #import "OZObject.h"
 
-@protocol IteratorProtocol
+@protocol IteratorProtocol <ObjectProtocol>
 
 @required
 @property (nonatomic, readonly) uint16_t iterIdx;

@@ -282,6 +282,39 @@ impl Program {
         None
     }
 
+    /// Does `class_name` or any ancestor define `selector` itself?
+    ///
+    /// The same walk as `array_extent_of`, for protocol conformance: an
+    /// inherited implementation satisfies a protocol requirement, in
+    /// Objective-C and here. `render_interface`'s conformance check read
+    /// only the class's own `methods` until #307, which made the base
+    /// protocol every other protocol should adopt impossible to adopt --
+    /// `OZArray <IteratorProtocol>` was told it "doesn't implement
+    /// 'isEqual:'" for nine methods it inherits from `OZObject` and never
+    /// needed to restate.
+    pub fn implements_selector(
+        &self,
+        class_name: &str,
+        selector: &str,
+        is_class_method: bool,
+    ) -> bool {
+        let mut cur = Some(class_name.to_string());
+        while let Some(name) = cur {
+            let Some(info) = self.classes.get(&name) else {
+                return false;
+            };
+            if info
+                .methods
+                .iter()
+                .any(|m| m.selector == selector && m.is_class_method == is_class_method)
+            {
+                return true;
+            }
+            cur = info.superclass.clone();
+        }
+        false
+    }
+
     /// `owned_object_ivars` as plain ivar names rather than access paths --
     /// what `staticbar` needs to recognise one being released by hand.
     ///
