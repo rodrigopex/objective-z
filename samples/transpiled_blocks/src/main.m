@@ -53,10 +53,16 @@ static int apply_twice(int (^op)(int), int v)
  * A real Zephyr timer wired straight to an inline block -- what replaces
  * OZTimer (#267). `K_TIMER_DEFINE` stores a `k_timer_expiry_t`, and
  * Objective-C refuses block-to-function-pointer conversion in every
- * position, so `OZM` carries it: discarded unparsed on the Objective-C
- * side, expanded to the real macro in the generated C, where the literal
- * has already become a hoisted function's name. See
- * include/oz_sdk/Foundation/OZMacro.h.
+ * position, so `OZFN` carries the block: discarded unparsed on the
+ * Objective-C side, replaced by the hoisted function's name in the
+ * generated C. See include/oz_sdk/Foundation/OZMacro.h.
+ *
+ * `OZFN` rather than `OZM`, which is what this used to use (#300). `OZM`
+ * hides the whole invocation, so Clang never saw `demo_timer` and the
+ * `k_timer_start` below needed a hand-written
+ * `#ifdef __OBJC__ static struct k_timer demo_timer; #endif` to compile.
+ * `OZFN` hides only the block, so the real `K_TIMER_DEFINE` expands on
+ * both sides and declares the symbol on both -- the twin is gone.
  *
  * The block captures nothing -- it reaches its state through a file-scope
  * variable, which the static bar permits and does not count as a capture.
@@ -65,18 +71,10 @@ static int apply_twice(int (^op)(int), int v)
  */
 static volatile int timer_fires;
 
-OZM(K_TIMER_DEFINE, demo_timer, ^(struct k_timer *t) {
+K_TIMER_DEFINE(demo_timer, OZFN(^(struct k_timer *t) {
 	(void)t;
 	timer_fires = timer_fires + 1;
-}, NULL);
-
-#ifdef __OBJC__
-/* The definition above is discarded on this side, so Clang needs a
- * declaration for the `k_timer_start` below. Passed through to the
- * generated C, where `__OBJC__` is undefined and the real macro defines
- * it. */
-static struct k_timer demo_timer;
-#endif
+}), NULL);
 
 int main(void)
 {
