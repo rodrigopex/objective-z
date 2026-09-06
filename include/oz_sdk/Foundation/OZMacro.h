@@ -1,6 +1,7 @@
 /**
  * @file OZMacro.h
- * @brief OZM -- write a target definition macro with an inline block.
+ * @brief OZM and OZFN -- write an inline block where a function pointer
+ *        is wanted.
  *
  * A target's static definition macros take a callback as a function
  * pointer:
@@ -89,4 +90,52 @@
  */
 #ifdef __OBJC__
 #define OZM(...)
+#endif
+
+/*
+ * `OZFN(^{ ... })` -- the same trick applied to one *expression* rather
+ * than a whole invocation, for a callback that is not a macro argument at
+ * all (#300).
+ *
+ * Zephyr's connection callbacks are the shape that needs it:
+ *
+ *     BT_CONN_CB_DEFINE(conn_callbacks) = {
+ *             .connected = OZFN(^(struct bt_conn *conn, uint8_t err) { ... }),
+ *             .recycled  = OZFN(^(void) { ... }),
+ *     };
+ *
+ * The macro takes only the *name*; the callbacks sit in a designated
+ * initializer after the `=`, so `OZM` has nothing to wrap. `OZFN` wraps
+ * each block instead.
+ *
+ * **Prefer it to `OZM` where both fit.** `OZM` discards the whole
+ * invocation, so what the macro declares is invisible to Clang and needs a
+ * hand-written declaration (the second limit above). `OZFN` hides only the
+ * block, so Clang expands the real macro and sees the real symbol -- no
+ * `#ifdef __OBJC__` twin.
+ *
+ * **One place it is wrong and `OZM` is right:** a target macro that
+ * token-pastes its callback into a symbol name. `INPUT_CALLBACK_DEFINE`
+ * does (`_input_callback__##name`, with `name` defaulting to the callback),
+ * so with `OZFN` the argument expands to `0` before the paste and two
+ * callbacks in one file both become `_input_callback__0` -- Clang reports
+ * `redefinition`, and it does so on the AST-dump path, where a truncated
+ * dump silently costs ivar ownership facts. Use `OZM` there, or Zephyr's
+ * own `INPUT_CALLBACK_DEFINE_NAMED` to choose the symbol yourself.
+ *
+ * Expands to `0` rather than to nothing, because the position it stands in
+ * wants a value: a null pointer constant, which converts to any function
+ * pointer type. Nothing cleverer is available -- `((blk), 0)` and
+ * `((void)sizeof(blk), 0)` both have the value zero and are *not* null
+ * pointer constants, so a pointer initializer rejects them
+ * (`-Wint-conversion`). That is also why Clang cannot be made to check the
+ * block: to reach a static initializer the expansion must be a constant,
+ * and the block has to go unparsed.
+ *
+ * Variadic for `OZM`'s reason -- a comma at the top level of the block body
+ * would otherwise split the argument list
+ * (`too many arguments provided to function-like macro invocation`).
+ */
+#ifdef __OBJC__
+#define OZFN(...) 0
 #endif
