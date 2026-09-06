@@ -100,4 +100,17 @@ static inline size_t oz_heap_used_bytes(struct oz_heap_inner *inner)
 #define OZM(target, ...) target(__VA_ARGS__)
 #endif
 
+/*
+ * `OZFN`'s other half. By the time the generated C sees this, oz_static has
+ * replaced the block literal with the name of the function it hoisted out
+ * of it, so the argument is already the function pointer the field wanted
+ * and this only has to get out of the way (#300).
+ *
+ * Variadic to match the Objective-C half, which needs it so a comma inside
+ * a block body does not split the argument list.
+ */
+#ifndef __OBJC__
+#define OZFN(...) __VA_ARGS__
+#endif
+
 #endif /* OZ_PLATFORM_H */
