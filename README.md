@@ -473,12 +473,11 @@ Requires [just](https://github.com/casey/just). Default board: `mps2/an385`.
 | `just test-behavior`   | 74-case behavior corpus through `oz2c` |
 | `just test-adapted`    | 40 adapted upstream tests              |
 | `just smoke`           | Transpile-and-compile smoke test       |
-| `just smoke`           | Run host-side PAL smoke test           |
+| `just test-pal`        | The PAL's own C tests, on the host     |
 | `just bench`           | Run ObjC benchmark (build + flash)     |
 | `just bench-cpp`       | Run C++ comparison benchmark           |
 | `just bench-mem`       | Run memory comparison (C, C++, ObjC)   |
 | `just test-bench`      | Run all benchmarks via twister (HW)    |
-| `just transpile`       | Run OZ transpiler directly             |
 | `just ast-dump file`   | Clang JSON AST dump                    |
 
 Override defaults:

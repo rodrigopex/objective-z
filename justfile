@@ -83,6 +83,8 @@ monitor:
 # and no configure step has work to do. It also enforces the standing
 # measurement rule: a sweep that picks up a new binary halfway through
 # reports a blend of two versions.
+#
+# Build the transpiler once, before anything configures a sample (#308).
 oz2c:
     cargo build --manifest-path tools/oz_static/Cargo.toml
 
@@ -101,17 +103,23 @@ oz2c:
 #
 # `-c` is also why `outdir` above has to be per checkout: deleting a directory
 # a concurrent sweep is writing into is worse than rotating it away (#315).
+#
+# All samples on ARM (`mps2/an385`), built and run under twister.
 test: oz2c
     west twister -T samples/ -p {{ board }} -c -O {{ outdir }}
 
 # Same samples on RISC-V. gpio_demo is filtered out by its own sample.yaml:
 # qemu_riscv32 has no led0/sw0 device-tree aliases, so 12 of 13 run here.
+#
+# The same samples on RISC-V (`qemu_riscv32`); 12 of 13 select.
 test-riscv: oz2c
     west twister -T samples/ -p {{ riscv_board }} -c -O {{ outdir }}-riscv
 
 # Two cores (CONFIG_SMP=y, CONFIG_MP_MAX_NUM_CPUS=2). Only the samples that
 # pin no platform, plus arc_demo's own SMP scenarios -- see its sample.yaml for
 # why the single-core expectations cannot be reused under real concurrency.
+#
+# The same samples on two cores, the only board with real lock contention.
 test-smp: oz2c
     west twister -T samples/ -p {{ smp_board }} -c -O {{ outdir }}-smp
 
@@ -173,6 +181,8 @@ test-spin-validate: oz2c
 # object and this part has one. `gpio_demo` runs its own hardware scenario,
 # which asserts the button path QEMU cannot: mps2/an385 has no GPIO interrupt
 # support, so the callback registration returns -ENOTSUP there.
+#
+# Every single-core sample flashed and run on a real nRF52833DK.
 test-hardware: oz2c
     west twister -T samples/ -p {{ hw_board }} -c -O {{ outdir }}-hw \
         --device-testing --hardware-map hardware-map.yaml
@@ -189,6 +199,8 @@ test-all-boards:
 # Running this would then silently discard the sample results, and the two
 # suites test different things (13 samples vs the ztest cases over committed C),
 # so neither is a stand-in for the other.
+#
+# The ztest cases over committed C, not the samples -- see tests/zephyr/.
 test-zephyr:
     west twister -T tests/zephyr/ -p {{ if os() == "linux" { "native_sim" } else { board } }} -c -O {{ outdir }}-zephyr
 
@@ -207,7 +219,9 @@ bench-mem-cpp:
 bench-mem-objc:
     west build -p -b {{ board }} benchmarks/memory/objc && west flash
 
-# Its own output directory too, for the reason on `test-zephyr`.
+# Its own output directory, for the reason on `test-zephyr`.
+#
+# Every benchmark under twister, on hardware.
 test-bench: oz2c
     west twister -T benchmarks/ --device-testing --hardware-map hardware-map.yaml -c -O {{ outdir }}-bench
 
@@ -228,12 +242,12 @@ bench-all:
 ast-dump file *includes:
     clang -Xclang -ast-dump=json -fsyntax-only {{includes}} {{file}} 2>/dev/null
 
-# The 71-case behavior corpus through oz_static, the default backend. This
+# The 74-case behavior corpus through oz_static, the default backend. This
 # harness carries the compiler/-O matrix, the sanitizers, leak detection and
 # gcov, so it is where those reach the *generated* C -- `cargo test`'s
 # corpus_parity only transpiles and compiles each case, never runs it.
 #
-# The 71-case behavior corpus through oz_static (gcc/clang, -O0/-O2, ASan, LSan).
+# The 74-case behavior corpus through oz_static (gcc/clang, -O0/-O2, ASan, LSan).
 test-behavior *args:
     python3 -m pytest tests/behavior/ -v {{args}}
 
@@ -251,6 +265,8 @@ test-pal:
 # gone with the Python backend -- it existed to run that pipeline's own unit
 # suite alongside the corpora, and there is no second implementation to have
 # a suite of its own now.
+#
+# Everything host-side: both corpora, the PAL's own C tests, and smoke.
 test-all:
     just test-behavior
     just test-adapted

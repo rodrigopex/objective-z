@@ -97,6 +97,9 @@ Versions CI pins, and so the ones to match locally: **Zephyr v4.4.2**
 | `just test-behavior`      | Behavior corpus, 74 cases; `--compiler`/`--opt`/`--sanitize`/`--check-leaks` |
 | `just test-adapted`       | 40 adapted upstream tests |
 | `just test-hardware`      | Every single-core sample flashed and run on an nRF52833DK |
+| `just smoke`              | Transpile-and-compile smoke test |
+| `just test-pal`           | The PAL's own C tests, on the host |
+| `just ast-dump file`      | Clang JSON AST dump |
 
 The Rust suite has no `just` recipe — run it directly:
 
@@ -115,8 +118,6 @@ at once without one deleting the other's output mid-run (#315). Override it per
 invocation to keep a run aside: `just outdir=/tmp/twister-out-before test`.
 Those directories accumulate one per checkout; `just clean-twister` removes them
 all, and `just clean` deliberately leaves them alone.
-| `just ast-dump file`      | Clang JSON AST dump                |
-| `just smoke`              | Run host-side PAL smoke test       |
 
 Build a specific sample: `just project_dir=samples/arc_demo rebuild`
 Build for RISC-V: `just board=qemu_riscv32 rebuild`
