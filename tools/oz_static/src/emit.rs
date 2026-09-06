@@ -3228,14 +3228,32 @@ fn dynamic_dispatch_call(
     (format!("OZ_PROTOCOL_SEND_{}({})", selc, call_args.join(", ")), ret_ty)
 }
 
-/// Infer a hoisted block's C return type by scanning its body for a
-/// `return_statement` carrying a value. This spike has no general
-/// expression-type inference (an arithmetic expression elsewhere always
-/// resolves to the opaque "id" static type -- see `render_expr`'s
-/// catch-all), so any returned value is assumed `int`, true of every block
-/// in the current static-subset test suite. No return-with-value anywhere
-/// in the body -> `void`. Does not descend into a nested `block_literal`
-/// (a separate scope/function of its own).
+/// Guess a hoisted block's C return type from its body: any
+/// `return_statement` carrying a value -> `int`, none -> `void`.
+///
+/// The **last** of the three sources `render_block` tries, and the only one
+/// that guesses. It runs when the author wrote no return type
+/// (`^(int x) { ... }`) *and* the declaration around the literal names none
+/// either -- see `block_return_type` for the two that come first. Until #303
+/// it was the only source, so `^uint32_t(int seed) { ... }` also came out
+/// `int`.
+///
+/// `int` is a guess, not an inference: this spike has no general expression
+/// typing (an arithmetic expression elsewhere resolves to the opaque `id`
+/// static type -- see `render_expr`'s catch-all), so the returned
+/// expression is not consulted at all. It is load-bearing rather than
+/// merely tolerated -- `tests/behavior/cases/blocks/non_capturing_basic.m`,
+/// `block_with_static_var.m`, `tests/adapted/llvm_rewriter/block_rewrite.m`
+/// and `samples/transpiled_blocks` all rely on it -- which is why #303 left
+/// it in place instead of rejecting a value-returning block with no
+/// declared type.
+///
+/// A block that returns something else and is reached by neither earlier
+/// source still comes out `int`, and GCC reports the mismatch on generated
+/// code. The way out is to write the return type, which is now carried.
+///
+/// Does not descend into a nested `block_literal` (a separate
+/// scope/function of its own).
 fn infer_block_return_type(body: Node) -> &'static str {
     fn scan(node: Node) -> bool {
         if node.kind() == "block_literal" {
@@ -3253,6 +3271,158 @@ fn infer_block_return_type(body: Node) -> &'static str {
     } else {
         "void"
     }
+}
+
+/// The `parameter_list` of a `block_literal`, wherever the grammar put it.
+///
+/// Two places, decided by whether a return type was written:
+///
+/// ```text
+/// ^(int seed) { ... }           block_literal -> parameter_list
+/// ^uint32_t(int seed) { ... }   block_literal -> type_name
+///                                 -> abstract_function_declarator -> parameter_list
+/// ^void *(int seed) { ... }     block_literal -> type_name
+///                                 -> abstract_pointer_declarator
+///                                   -> abstract_function_declarator -> parameter_list
+/// ```
+///
+/// Only the first was looked for until #303, so an explicit return type
+/// lost the whole parameter list and the block was hoisted `(void)` --
+/// leaving the body's references to its own parameters undeclared. That is
+/// the half of #303 that made it a silent wrong answer rather than a
+/// missing feature: nothing in oz2c reported anything, and the error came
+/// from GCC, about a signature the author never wrote.
+///
+/// Searched by descent rather than by a fixed path, so the pointer-return
+/// nesting above needs no separate case.
+fn block_parameter_list(node: Node) -> Option<Node> {
+    fn find(n: Node) -> Option<Node> {
+        if n.kind() == "parameter_list" {
+            return Some(n);
+        }
+        let mut cursor = n.walk();
+        let children: Vec<Node> = n.children(&mut cursor).collect();
+        children.into_iter().find_map(find)
+    }
+    let mut cursor = node.walk();
+    let children: Vec<Node> = node.children(&mut cursor).collect();
+    // The body is a sibling of both shapes above and can hold a nested
+    // literal with a parameter list of its own, which is not this one.
+    children.into_iter().filter(|c| c.kind() != "compound_statement").find_map(find)
+}
+
+/// A hoisted block's C return type, from the best source available (#303).
+///
+/// In order, because each is more authoritative than the next:
+///
+/// 1. **What the author wrote on the block.** `^uint32_t(int seed) { ... }`
+///    -- the shape Objective-C already provides for saying what a block
+///    returns. Carried through `collect::render_type`, so it agrees with
+///    every other type position: `id` -> `void *`, a known class ->
+///    `struct Name *`, anything else (a typedef like `uint32_t`) verbatim.
+/// 2. **The declaration the literal initializes.**
+///    `static unsigned (^sq)(int) = ^(int x) { ... };` -- the type belongs
+///    to the variable, not the literal, but it is the same type and it is
+///    right there in the enclosing `declaration`.
+/// 3. **A guess from the body** -- `infer_block_return_type`, which is
+///    where every block landed before this.
+///
+/// What is deliberately *not* here is the shape #303 was filed for:
+/// `.fn = OZFN(^(int seed) { ... })` in a designated initializer, whose
+/// type is a field of a C struct. oz_static cannot reach it and no amount
+/// of work here changes that -- see the note on `render_block`. Such a
+/// block still gets source 3, but it keeps its parameters now, and writing
+/// the return type on the literal (source 1) is the fix for it.
+fn block_return_type(node: Node, body: Option<Node>, ctx: &EmitCtx) -> String {
+    let known: HashSet<String> = ctx.program.classes.keys().cloned().collect();
+
+    let mut cursor = node.walk();
+    let type_name = node.children(&mut cursor).find(|c| c.kind() == "type_name");
+    if let Some(type_name) = type_name {
+        // Pruned, or the parameters' own stars are counted as the return
+        // type's -- `^void *(char *s)` would come out `void **`.
+        let (text, stars) =
+            crate::collect::extract_type_and_stars_to_declarator(type_name, ctx.src);
+        if !text.is_empty() {
+            return crate::collect::render_type(&text, stars, &known).trim().to_string();
+        }
+    }
+
+    if let Some((text, stars)) = declared_block_pointer_type(node, ctx.src) {
+        return crate::collect::render_type(&text, stars, &known).trim().to_string();
+    }
+
+    body.map(infer_block_return_type).unwrap_or("void").to_string()
+}
+
+/// The return type of the block-pointer variable this literal initializes,
+/// if that is where it sits: `static unsigned (^sq)(int) = ^(int x) {...}`
+/// -> `("unsigned", 0)`.
+///
+/// ```text
+/// declaration
+///   storage_class_specifier    "static"
+///   sized_type_specifier       "unsigned"   <- the return type
+///   init_declarator
+///     function_declarator
+///       parenthesized_declarator
+///         block_pointer_declarator           <- what makes it a block
+///       parameter_list
+///     block_literal                          <- `node`
+/// ```
+///
+/// The type specifier is a sibling of the `init_declarator`, so this walks
+/// *up* from the literal to the `declaration` and then reads its declared
+/// type. Guarded on a `block_pointer_declarator` actually being present:
+/// without that check, any literal inside any initializer would take the
+/// enclosing declaration's type, which for `.fn = OZFN(^...)` inside
+/// `static struct holder h = { ... }` would confidently return
+/// `struct holder` -- worse than guessing.
+///
+/// The type text comes from the `declaration` (with the `init_declarator`
+/// pruned, so the parameter list cannot contribute). The stars do *not*:
+/// in `static void *(^f)(int)` the `*` sits inside the `init_declarator`,
+/// in a `pointer_declarator` wrapping the `function_declarator`, so the
+/// declarator chain is walked separately for them -- stopping at the
+/// `function_declarator`, past which any star belongs to a parameter.
+fn declared_block_pointer_type(node: Node, src: &str) -> Option<(String, usize)> {
+    let init_declarator = node.parent().filter(|p| p.kind() == "init_declarator")?;
+    let declaration = init_declarator.parent().filter(|p| p.kind() == "declaration")?;
+
+    fn has_block_pointer(n: Node) -> bool {
+        if n.kind() == "block_pointer_declarator" {
+            return true;
+        }
+        if n.kind() == "block_literal" {
+            return false;
+        }
+        let mut cursor = n.walk();
+        let children: Vec<Node> = n.children(&mut cursor).collect();
+        children.into_iter().any(has_block_pointer)
+    }
+    if !has_block_pointer(init_declarator) {
+        return None;
+    }
+
+    let (type_text, _) = crate::collect::extract_type_and_stars_to_declarator(declaration, src);
+    if type_text.is_empty() {
+        return None;
+    }
+
+    /// `*`s on the declared variable itself, i.e. before the
+    /// `function_declarator` that carries the parameters.
+    fn return_stars(n: Node) -> usize {
+        if n.kind() == "function_declarator" || n.kind() == "block_literal" {
+            return 0;
+        }
+        let mut cursor = n.walk();
+        let children: Vec<Node> = n.children(&mut cursor).collect();
+        children
+            .into_iter()
+            .map(|c| if c.kind() == "*" { 1 } else { return_stars(c) })
+            .sum()
+    }
+    Some((type_text, return_stars(init_declarator)))
 }
 
 /// A cast expression, which needs handling for two separate reasons:
@@ -3314,13 +3484,30 @@ fn render_cast_expression(node: Node, ctx: &mut EmitCtx) -> (String, String) {
 /// Non-capturing block literal -> hoisted static C function; the block
 /// expression itself is replaced with a reference to that function.
 /// (Capturing blocks were already rejected by the static-bar scan.)
+///
+/// The signature is assembled from `block_parameter_list` and
+/// `block_return_type` rather than read off one fixed child, because the
+/// grammar moves the parameter list when a return type is written and the
+/// return type has three possible sources -- see both for the detail.
+///
+/// **Not** among those sources: the C struct field a designated
+/// initializer assigns the block to, which is the shape #303 was filed
+/// for (`.fn = OZFN(^(int seed) { ... })`, against Zephyr's
+/// `bt_conn_auth_cb.app_passkey`). It is out of reach twice over, and
+/// neither is an implementation gap. The field's type lives in a
+/// `#include`d pure-C header, which `imports` deliberately leaves verbatim
+/// rather than splicing -- so the struct never enters the CST at all. And
+/// the Clang AST cannot answer either, because `OZFN` expands to `0` on the
+/// Objective-C side (a static initializer needs a null pointer constant),
+/// so there is no block at that position for Clang to type. Writing the
+/// return type on the literal is the fix for that shape, which is why
+/// carrying it matters.
 fn render_block(node: Node, ctx: &mut EmitCtx) -> (String, String) {
     let (line, col) = line_col(ctx.src, node.start_byte());
     ctx.block_counter += 1;
     let name = format!("oz_block_L{}_C{}_{}", line, col, ctx.block_counter);
 
-    let mut cursor = node.walk();
-    let found_plist = node.children(&mut cursor).find(|c| c.kind() == "parameter_list");
+    let found_plist = block_parameter_list(node);
     let params = match found_plist {
         // An `id` parameter is spelled as the root class pointer, matching
         // the function-pointer *type* this block will be assigned or passed
@@ -3341,7 +3528,7 @@ fn render_block(node: Node, ctx: &mut EmitCtx) -> (String, String) {
 
     let mut cursor2 = node.walk();
     let body = node.children(&mut cursor2).find(|c| c.kind() == "compound_statement");
-    let ret_ty = body.map(infer_block_return_type).unwrap_or("void");
+    let ret_ty = block_return_type(node, body, ctx);
     let body_text = match body {
         Some(body) => {
             // Block bodies use the same flat scope as their enclosing
