@@ -13,6 +13,26 @@ hw_board := "nrf52833dk/nrf52833"   # real silicon; see test-hardware
 flags := ""
 tty := "/dev/tty.usbmodem0006850372581"
 
+# Twister output root, one per checkout, and every twister recipe below derives
+# its own directory from it rather than repeating a literal.
+#
+# It is keyed on the checkout because work happens in `.claude/worktrees/oz-NNN`
+# and several of those can be under test at once. Every recipe used to hardcode
+# `/tmp/twister-out`, so two sweeps shared one path -- and `-c` below is what
+# makes that fatal rather than merely wasteful: the second sweep *deletes* the
+# directory the first one is still writing into. What that looks like is 8 of 14
+# configurations failing at configure time, in Zephyr's snippet handling, with
+# a FileNotFoundError for a directory that existed when the run started and
+# nothing at all pointing at the change under test (#315).
+#
+# Keyed on the directory rather than the branch so that switching branches
+# mid-sweep does not move the path out from under it, and so a worktree keeps
+# one directory instead of one per branch it has ever held.
+#
+# Override it per invocation when a run's output has to be kept aside:
+# `just outdir=/tmp/twister-out-before test`.
+outdir := "/tmp/twister-out-" + file_name(justfile_directory())
+
 rebuild:
     west build -p -b {{ board }} {{ project_dir }} -- {{ flags }}
 
@@ -24,6 +44,27 @@ flash:
 
 clean:
     rip build
+
+# Every twister output directory for every checkout, at roughly a gigabyte
+# each. `outdir` is keyed on the checkout, so a worktree that has been deleted
+# leaves its sweep output behind with nothing left to name it -- this is the
+# only thing that reaches those.
+#
+# `rm -rf`, not `rip`: `rip` moves the bytes to /tmp/graveyard-$USER, which
+# frees no space at all and is the opposite of the point. Confirm with `df -h`
+# rather than assuming.
+#
+# Deliberately not part of `clean`, which is scoped to the build directory:
+# this destroys sweep output someone may still be reading.
+#
+# The glob is `twister-out*`, not `twister-out-*`, so it also reaches the
+# single shared directory the recipes used before this scheme and any `.1`,
+# `.2` rotation left over from before `-c` (#312) -- the same reason
+# .gitignore spells it that way.
+#
+# Every checkout's twister output, ~1 GB each; not part of `clean` (#315).
+clean-twister:
+    rm -rf /tmp/twister-out*
 
 run:
     west build -t run
@@ -55,20 +96,24 @@ oz2c:
 #
 # The cost, stated because it is a real loss: a previous run's output is gone
 # rather than kept as `.1`, so two runs can no longer be diffed against each
-# other. Copy the directory aside first when that is what you need.
+# other. Copy the directory aside first, or point the run elsewhere with
+# `just outdir=... test`, when that is what you need.
+#
+# `-c` is also why `outdir` above has to be per checkout: deleting a directory
+# a concurrent sweep is writing into is worse than rotating it away (#315).
 test: oz2c
-    west twister -T samples/ -p {{ board }} -c -O /tmp/twister-out
+    west twister -T samples/ -p {{ board }} -c -O {{ outdir }}
 
 # Same samples on RISC-V. gpio_demo is filtered out by its own sample.yaml:
 # qemu_riscv32 has no led0/sw0 device-tree aliases, so 12 of 13 run here.
 test-riscv: oz2c
-    west twister -T samples/ -p {{ riscv_board }} -c -O /tmp/twister-out-riscv
+    west twister -T samples/ -p {{ riscv_board }} -c -O {{ outdir }}-riscv
 
 # Two cores (CONFIG_SMP=y, CONFIG_MP_MAX_NUM_CPUS=2). Only the samples that
 # pin no platform, plus arc_demo's own SMP scenarios -- see its sample.yaml for
 # why the single-core expectations cannot be reused under real concurrency.
 test-smp: oz2c
-    west twister -T samples/ -p {{ smp_board }} -c -O /tmp/twister-out-smp
+    west twister -T samples/ -p {{ smp_board }} -c -O {{ outdir }}-smp
 
 # Both supported boards, so an architecture-specific regression cannot hide.
 test-boards:
@@ -102,9 +147,9 @@ test-pedantic *args: oz2c
 #
 # Zephyr's own spinlock assertions against generated C, on both boards (#278).
 test-spin-validate: oz2c
-    west twister -T samples/ -p {{ board }} -c -O /tmp/twister-out-spinvalidate \
+    west twister -T samples/ -p {{ board }} -c -O {{ outdir }}-spinvalidate \
         -x=EXTRA_CONF_FILE={{ justfile_directory() }}/samples/overlay-spin-validate.conf
-    west twister -T samples/ -p {{ smp_board }} -c -O /tmp/twister-out-spinvalidate-smp \
+    west twister -T samples/ -p {{ smp_board }} -c -O {{ outdir }}-spinvalidate-smp \
         -x=EXTRA_CONF_FILE={{ justfile_directory() }}/samples/overlay-spin-validate.conf
 
 # Real silicon: nRF52833DK over its on-board J-Link, flashed and run, with
@@ -129,7 +174,7 @@ test-spin-validate: oz2c
 # which asserts the button path QEMU cannot: mps2/an385 has no GPIO interrupt
 # support, so the callback registration returns -ENOTSUP there.
 test-hardware: oz2c
-    west twister -T samples/ -p {{ hw_board }} -c -O /tmp/twister-out-hw \
+    west twister -T samples/ -p {{ hw_board }} -c -O {{ outdir }}-hw \
         --device-testing --hardware-map hardware-map.yaml
 
 # Every board, including SMP. The only recipe that exercises two cores.
@@ -138,13 +183,14 @@ test-all-boards:
     just test-riscv
     just test-smp
 
-# Its own output directory, not `test`'s. Both wrote to /tmp/twister-out, which
-# was survivable while twister rotated -- the loser's output became `.1` -- and
-# is not once `-c` deletes instead. Running this would then silently discard the
-# sample results, and the two suites test different things (13 samples vs the
-# ztest cases over committed C), so neither is a stand-in for the other.
+# Its own output directory, not `test`'s -- the `-zephyr` suffix on `outdir`.
+# Both once wrote to the same path, which was survivable while twister rotated
+# -- the loser's output became `.1` -- and is not once `-c` deletes instead.
+# Running this would then silently discard the sample results, and the two
+# suites test different things (13 samples vs the ztest cases over committed C),
+# so neither is a stand-in for the other.
 test-zephyr:
-    west twister -T tests/zephyr/ -p {{ if os() == "linux" { "native_sim" } else { board } }} -c -O /tmp/twister-out-zephyr
+    west twister -T tests/zephyr/ -p {{ if os() == "linux" { "native_sim" } else { board } }} -c -O {{ outdir }}-zephyr
 
 bench:
     west build -p -b {{ board }} benchmarks/objc && west flash
@@ -163,7 +209,7 @@ bench-mem-objc:
 
 # Its own output directory too, for the reason on `test-zephyr`.
 test-bench: oz2c
-    west twister -T benchmarks/ --device-testing --hardware-map hardware-map.yaml -c -O /tmp/twister-out-bench
+    west twister -T benchmarks/ --device-testing --hardware-map hardware-map.yaml -c -O {{ outdir }}-bench
 
 bench-mem:
     just bench-mem-c
