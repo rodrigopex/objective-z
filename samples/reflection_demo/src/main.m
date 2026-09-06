@@ -18,7 +18,17 @@
 
 #import <Foundation/Foundation.h>
 
-@protocol Switchable
+/* `<ObjectProtocol>` is what lets a receiver *typed as this protocol* be
+ * introspected at all (#307). Clang resolves a message to an `id<P>`
+ * against `P` and its super-protocols and nowhere else, so without the
+ * adoption the `switchable` receiver below is
+ * `error: no known instance method for selector 'conformsToProtocol:'`
+ * -- in the AST dump oz2c reads and in clangd, though never in the
+ * generated C, which dispatches it correctly either way. Adopting it
+ * requires nothing of `Light`: every method it declares is defined once,
+ * on `OZObject`, and an inherited implementation satisfies a protocol
+ * requirement. */
+@protocol Switchable <ObjectProtocol>
 - (void)toggle;
 @end
 
@@ -113,6 +123,16 @@ int main(void)
 	 * through Light. */
 	report("conforms-inherited", [dim conformsToProtocol:@protocol(Switchable)]);
 	report("conforms-unrelated", [fan conformsToProtocol:@protocol(Switchable)]);
+
+	/* The same questions through a protocol-qualified receiver, which is
+	 * the shape #307 was filed about: the static type says only "some
+	 * object that toggles", so nothing at the call site names a class.
+	 * The answers must not change -- an object's conformance is its
+	 * own, not its declared type's. */
+	id<Switchable> switchable = (id)dim;
+	report("proto-recv-conforms", [switchable conformsToProtocol:@protocol(Switchable)]);
+	report("proto-recv-kind", [switchable isKindOfClass:[Light class]]);
+	report("proto-recv-responds", [switchable respondsToSelector:@selector(toggle)]);
 
 	/* Reflection: the selector records. `toggle` is a SEL in a local,
 	 * so this exercises the value path and not only a literal at the

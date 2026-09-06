@@ -293,6 +293,26 @@ fn remove_line_containing(src: &str, marker: &str) -> String {
     kept.join("\n") + "\n"
 }
 
+/// Replace the line containing `marker` with `replacement`. Panics if no
+/// line matched, so a splice that stops applying (the real file changed)
+/// fails loudly rather than silently leaving the original line in place.
+fn replace_line_containing(src: &str, marker: &str, replacement: &str) -> String {
+    let mut found = false;
+    let out: Vec<String> = src
+        .lines()
+        .map(|l| {
+            if l.contains(marker) {
+                found = true;
+                replacement.to_string()
+            } else {
+                l.to_string()
+            }
+        })
+        .collect();
+    assert!(found, "replace_line_containing: marker {:?} not found", marker);
+    out.join("\n") + "\n"
+}
+
 /// Remove every line from the first line containing `start_marker`
 /// through the next line containing `end_marker` (inclusive of both).
 /// For a multi-line declaration/signature with no braces to balance.
@@ -348,14 +368,38 @@ fn remove_method_body(src: &str, signature_marker: &str) -> String {
     out.join("\n") + "\n"
 }
 
+/// `ObjectProtocol`, verbatim from
+/// `include/oz_sdk/Foundation/Object+Protocol.h` -- the protocol
+/// `OZObject` adopts and that every other protocol should adopt in turn
+/// (#307).
+///
+/// Not named directly by a test: `ozobject_src` splices it in at the
+/// point `OZObject.h` imports it.
+pub fn object_protocol_src() -> String {
+    strip_import_and_pragma_lines(include_str!(
+        "../../../../include/oz_sdk/Foundation/Object+Protocol.h"
+    ))
+}
+
 /// OZObject, the real Foundation root class -- assembled from
 /// `include/oz_sdk/Foundation/OZObject.h` / `src/OZObject.m` verbatim
-/// (only the two generic adaptations from the module doc comment).
+/// (only the two generic adaptations from the module doc comment), with
+/// its one `#import` of a *Foundation* header resolved in place.
+///
+/// That import cannot just be dropped the way the others are. `OZObject`
+/// declares `<ObjectProtocol>`, so the protocol has to be declared before
+/// the `@interface` that adopts it -- and it has to come *after* the
+/// `BOOL` typedef its own methods return. Splicing at the import site is
+/// the only position satisfying both, and it is exactly what the
+/// preprocessor does with the real header (#307).
 pub fn ozobject_src() -> String {
-    assemble(
-        include_str!("../../../../include/oz_sdk/Foundation/OZObject.h"),
-        include_str!("../../../../src/OZObject.m"),
-    )
+    let header = include_str!("../../../../include/oz_sdk/Foundation/OZObject.h");
+    let spliced = replace_line_containing(
+        header,
+        "#import \"Object+Protocol.h\"",
+        &object_protocol_src(),
+    );
+    assemble(&spliced, include_str!("../../../../src/OZObject.m"))
 }
 
 /// OZQ31, the fixed-point Foundation class -- assembled from
