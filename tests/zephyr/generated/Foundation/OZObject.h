@@ -42,6 +42,12 @@ typedef bool BOOL;
   * @ingroup objc
   */
 #define NO false
+/* `ObjectProtocol`, the protocol this class adopts and that every other
+  * protocol should adopt in turn (#307). Imported *here*, after `BOOL` and
+  * `YES`: that header declares methods returning `BOOL` and `size_t` and
+  * deliberately defines neither, since this file importing it makes the
+  * reverse edge a cycle. It says so with an `#error` if reached first.
+  */
 /**
  * @brief Read the reference count of an object.
  *
@@ -51,7 +57,7 @@ typedef bool BOOL;
 unsigned int __objc_refcount_get(id obj);
 /* =============================================================================
  * __attribute__((objc_root_class))
- * @interface OZObject
+ * @interface OZObject <ObjectProtocol>
  * {
  * 	int _refcount;
  * }
