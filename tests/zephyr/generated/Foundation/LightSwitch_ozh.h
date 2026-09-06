@@ -3,6 +3,7 @@
 #include "Foundation/OZObject.h"
 #include "Foundation/OZQ31.h"
 #include "Foundation/OZTestBase.h"
+#include "Foundation/Object+Protocol.h"
 #include "alloc_returns_valid.h"
 #include "boxed_expression.h"
 #include "deep_inheritance.h"
