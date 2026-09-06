@@ -31,6 +31,20 @@ run:
 monitor:
     tio {{ tty }}
 
+# The transpiler, built once, before anything that configures a sample.
+#
+# Every sample's configure step runs this same cargo build itself
+# (oz_static.cmake), so a sweep that starts with a rebuild pending has 13 of
+# them invoking cargo -- each with its own rustc fan-out -- within the same
+# second. Cargo's own locks make those builds correct, not cheap, and the
+# load spike is what makes a configure step fail to *start* oz2c at all
+# (#308). Every twister recipe below depends on this, so the binary is warm
+# and no configure step has work to do. It also enforces the standing
+# measurement rule: a sweep that picks up a new binary halfway through
+# reports a blend of two versions.
+oz2c:
+    cargo build --manifest-path tools/oz_static/Cargo.toml
+
 # `-c` (--clobber-output) on every twister recipe below, and it is not
 # cosmetic. Without it twister *renames* the previous output directory rather
 # than replacing it -- `twister-out` becomes `twister-out.1`, then `.2`, and so
@@ -42,18 +56,18 @@ monitor:
 # The cost, stated because it is a real loss: a previous run's output is gone
 # rather than kept as `.1`, so two runs can no longer be diffed against each
 # other. Copy the directory aside first when that is what you need.
-test:
+test: oz2c
     west twister -T samples/ -p {{ board }} -c -O /tmp/twister-out
 
 # Same samples on RISC-V. gpio_demo is filtered out by its own sample.yaml:
 # qemu_riscv32 has no led0/sw0 device-tree aliases, so 12 of 13 run here.
-test-riscv:
+test-riscv: oz2c
     west twister -T samples/ -p {{ riscv_board }} -c -O /tmp/twister-out-riscv
 
 # Two cores (CONFIG_SMP=y, CONFIG_MP_MAX_NUM_CPUS=2). Only the samples that
 # pin no platform, plus arc_demo's own SMP scenarios -- see its sample.yaml for
 # why the single-core expectations cannot be reused under real concurrency.
-test-smp:
+test-smp: oz2c
     west twister -T samples/ -p {{ smp_board }} -c -O /tmp/twister-out-smp
 
 # Both supported boards, so an architecture-specific regression cannot hide.
@@ -67,7 +81,7 @@ test-boards:
 # a few sites remaining with their reasons in the script; the host half of this
 # claim *is* a gate, in corpus_parity.rs.
 # ISO C constraint violations in generated C, on target with the ARM toolchain.
-test-pedantic *args:
+test-pedantic *args: oz2c
     python3 scripts/objz_pedantic_sweep.py --board {{ board }} {{args}}
 
 # CONFIG_SPIN_VALIDATE had never been on, on any board, so every green
@@ -87,7 +101,7 @@ test-pedantic *args:
 # is worth anything against.
 #
 # Zephyr's own spinlock assertions against generated C, on both boards (#278).
-test-spin-validate:
+test-spin-validate: oz2c
     west twister -T samples/ -p {{ board }} -c -O /tmp/twister-out-spinvalidate \
         -x=EXTRA_CONF_FILE={{ justfile_directory() }}/samples/overlay-spin-validate.conf
     west twister -T samples/ -p {{ smp_board }} -c -O /tmp/twister-out-spinvalidate-smp \
@@ -114,7 +128,7 @@ test-spin-validate:
 # object and this part has one. `gpio_demo` runs its own hardware scenario,
 # which asserts the button path QEMU cannot: mps2/an385 has no GPIO interrupt
 # support, so the callback registration returns -ENOTSUP there.
-test-hardware:
+test-hardware: oz2c
     west twister -T samples/ -p {{ hw_board }} -c -O /tmp/twister-out-hw \
         --device-testing --hardware-map hardware-map.yaml
 
@@ -148,7 +162,7 @@ bench-mem-objc:
     west build -p -b {{ board }} benchmarks/memory/objc && west flash
 
 # Its own output directory too, for the reason on `test-zephyr`.
-test-bench:
+test-bench: oz2c
     west twister -T benchmarks/ --device-testing --hardware-map hardware-map.yaml -c -O /tmp/twister-out-bench
 
 bench-mem:
