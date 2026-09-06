@@ -87,6 +87,7 @@ Versions CI pins, and so the ones to match locally: **Zephyr v4.4.2**
 | `just flash` / `just f`   | Flash to hardware                  |
 | `just monitor` / `just m` | Serial monitor via tio             |
 | `just clean` / `just c`   | Remove build dir                   |
+| `just clean-twister`       | Remove every checkout's twister output (~1 GB each); not part of `clean` |
 | `just test` / `just t`    | Run twister on all samples (ARM)   |
 | `just test-riscv`          | Same samples on RISC-V (12 of 13; `gpio_demo` is ARM-only) |
 | `just test-smp`            | Two cores, `qemu_cortex_a53/smp` — the only board that exercises real lock contention |
@@ -107,6 +108,13 @@ Every twister recipe depends on `just oz2c`, so the transpiler is built before
 any sample configures. Driving `west twister` directly skips that: build oz2c
 first, or 13 configure steps each fork their own cargo and a slot can fail to
 start oz2c at all (#308).
+
+Their output directories derive from `outdir`, which is keyed on the checkout —
+`/tmp/twister-out-<checkout>` and suffixed siblings — so two worktrees can sweep
+at once without one deleting the other's output mid-run (#315). Override it per
+invocation to keep a run aside: `just outdir=/tmp/twister-out-before test`.
+Those directories accumulate one per checkout; `just clean-twister` removes them
+all, and `just clean` deliberately leaves them alone.
 | `just ast-dump file`      | Clang JSON AST dump                |
 | `just smoke`              | Run host-side PAL smoke test       |
 

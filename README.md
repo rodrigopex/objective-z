@@ -464,6 +464,7 @@ Requires [just](https://github.com/casey/just). Default board: `mps2/an385`.
 | `just flash` / `just f`  | Flash to hardware                   |
 | `just monitor` / `just m` | Serial monitor (tio)               |
 | `just clean` / `just c`  | Remove build directory               |
+| `just clean-twister`   | Remove every checkout's twister output |
 | `just test` / `just t`   | Run twister on all samples (ARM)    |
 | `just test-riscv`      | Same samples on RISC-V (12 of 13)      |
 | `just test-smp`        | Two cores (`qemu_cortex_a53/smp`)      |
