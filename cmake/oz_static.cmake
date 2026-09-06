@@ -51,8 +51,9 @@ function(objz_transpile_sources_static target)
             "objz_transpile_sources_static: no .m source files given")
     endif()
 
-    # ── Build oz2c once (debug profile: configure-time compile speed
-    #    matters here, not the transpiler's own runtime speed) ────────
+    # ── Build oz2c (debug profile: configure-time compile speed matters
+    #    here, not the transpiler's own runtime speed). Once per configure,
+    #    which is not once per sweep -- see the lock below ──────────────
     set(_oz_static_dir ${_mod}/tools/oz_static)
     set(_oz2c ${_oz_static_dir}/target/debug/oz2c)
     # Globbed at configure time, which is enough for the case this exists
@@ -70,16 +71,54 @@ function(objz_transpile_sources_static target)
     # least visible: three `execute_process` calls that between them ran
     # cargo, wrote hundreds of megabytes of AST and transpiled the whole
     # program, announced by nothing (#299).
+    # Serialize this across the parallel CMake processes a twister sweep
+    # runs. Thirteen samples configure at once and every one of them reaches
+    # this line, so thirteen cargos -- each with its own rustc fan-out --
+    # start within the same second. Cargo's own locks make the concurrent
+    # *builds* correct, not cheap: the ones that lose the race still fork,
+    # block and exit, and the log says so ("Blocking waiting for file lock
+    # on package cache", 66 times in one 13-sample sweep). That load spike
+    # is what makes a later `execute_process` fail to *start* oz2c at all,
+    # which CMake reports as an error string in RESULT_VARIABLE with both
+    # output streams empty -- the silent configure failure of #308.
+    #
+    # The lock lives under `target/`, so it is gitignored and `cargo clean`
+    # takes it with the build it guards. `GUARD PROCESS` also releases it if
+    # this CMake process dies before the explicit release below.
+    set(_oz2c_lock ${_oz_static_dir}/target/.oz2c-build.lock)
+    file(MAKE_DIRECTORY ${_oz_static_dir}/target)
+    file(LOCK ${_oz2c_lock} GUARD PROCESS TIMEOUT 900 RESULT_VARIABLE _lock_rc)
+    if(NOT _lock_rc STREQUAL "")
+        # Not fatal: a lock we could not take costs concurrency, and cargo's
+        # own locking still makes the build correct. Say so and carry on
+        # rather than failing a build for a missing optimisation.
+        message(WARNING
+            "objz_transpile_sources_static: could not lock ${_oz2c_lock} "
+            "(${_lock_rc}); building oz2c unserialized")
+    endif()
     message(STATUS "oz_static: building oz2c (cargo)")
     execute_process(
         COMMAND ${CMAKE_COMMAND} -E env --unset=CC --unset=CXX --unset=CFLAGS --unset=CXXFLAGS
                 --unset=LDFLAGS --unset=AR --unset=RANLIB --unset=NM
                 cargo build --manifest-path ${_oz_static_dir}/Cargo.toml
         RESULT_VARIABLE _cargo_rc
+        OUTPUT_VARIABLE _cargo_out
+        ERROR_VARIABLE _cargo_err
+        ECHO_OUTPUT_VARIABLE
+        ECHO_ERROR_VARIABLE
     )
     if(NOT _cargo_rc EQUAL 0)
-        message(FATAL_ERROR "objz_transpile_sources_static: cargo build of oz2c failed")
+        message(FATAL_ERROR
+            "objz_transpile_sources_static: cargo build of oz2c failed\n"
+            "  result: ${_cargo_rc}\n"
+            "  stderr: ${_cargo_err}\n"
+            "  stdout: ${_cargo_out}")
     endif()
+    # Released as soon as the binary exists: what has to be serialized is
+    # the build, not the rest of this function. The `FATAL_ERROR` above
+    # needs no release of its own -- `GUARD PROCESS` drops the lock when
+    # CMake exits.
+    file(LOCK ${_oz2c_lock} RELEASE)
 
     # Every listed `.m` becomes one entry file, and every directory they
     # live in becomes an `--impl-dir` so `#import "X.h"` can find its
@@ -453,13 +492,28 @@ function(objz_transpile_sources_static target)
     # `compare_files` below turns "cannot" into "does not".
     message(STATUS
         "oz_static: reading the generated file list (--manifest-only)")
+    # `ECHO_*_VARIABLE` keeps #299's streamed progress -- the output still
+    # reaches the terminal as it did -- while also retaining it, so a
+    # failure can say what oz2c said. Without the capture the only record
+    # was "oz2c failed at configure time", which is what made #308 look
+    # like a transpiler bug for four days: the process died under a
+    # parallel sweep and CMake threw away both its message and its exit
+    # status.
     execute_process(
         COMMAND ${_oz2c} ${_oz2c_flags} --manifest-only ${_src_abs_list} ${_outdir}
                 --manifest ${_manifest}
         RESULT_VARIABLE _rc
+        OUTPUT_VARIABLE _oz2c_out
+        ERROR_VARIABLE _oz2c_err
+        ECHO_OUTPUT_VARIABLE
+        ECHO_ERROR_VARIABLE
     )
     if(NOT _rc EQUAL 0)
-        message(FATAL_ERROR "objz_transpile_sources_static: oz2c failed at configure time")
+        message(FATAL_ERROR
+            "objz_transpile_sources_static: oz2c failed at configure time\n"
+            "  result: ${_rc}\n"
+            "  stderr: ${_oz2c_err}\n"
+            "  stdout: ${_oz2c_out}")
     endif()
     file(STRINGS ${_manifest} _gen_files)
     # Keep the predicted list so the build-time run can be checked against
