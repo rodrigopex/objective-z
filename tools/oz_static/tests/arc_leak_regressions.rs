@@ -417,3 +417,209 @@ int main(void) {
     let out = compile_and_run(&src, "discarded_init_on_fresh_alloc");
     assert_eq!(out, "deallocs=1\n", "the discarded allocation must be released: {}", out);
 }
+
+/// A discarded +1 result reached *through a cast* is released too, so
+/// `(void)[t copy];` cannot differ from `[t copy];` in whether it leaks
+/// (#327).
+///
+/// The two spellings mean the same thing, and the cast is the one people
+/// actually write: `(void)expr` is the idiom for "I am throwing this away
+/// on purpose", so it is the spelling most likely to have come from
+/// someone who thought about the result. #322 released the bare statement
+/// and left this one leaking, because `arc::is_owning_expr` reads a cast
+/// as borrowed -- deliberately, and still does. `arc::discarded_value`
+/// looks through the cast at the discarded statement and nowhere else.
+///
+/// A cast to a real type is covered with the `(void)` one: it discards
+/// just as completely, and there is no reading under which one leaks and
+/// the other does not.
+#[test]
+fn discarded_owning_result_through_a_cast_is_released() {
+    let src = format!(
+        "/* oz-pool: Thing=3 */\n{}{}",
+        PREAMBLE(),
+        "\
+static int g_deallocs = 0;
+
+@interface Thing : OZObject
+- (instancetype)copy;
+@end
+@implementation Thing
+- (instancetype)copy {
+	return [Thing alloc];
+}
+- (void)dealloc {
+	g_deallocs = g_deallocs + 1;
+}
+@end
+
+#include <stdio.h>
+int main(void) {
+	Thing *t = [Thing alloc];
+	/* The deliberate-discard idiom, and the shape #322 left leaking. */
+	(void)[t copy];
+	/* A cast to a real type discards just as completely. */
+	(Thing *)[t copy];
+	/* `t` is still alive here, so this counts the discarded sends and
+	 * not a scope exit. */
+	printf(\"deallocs=%d\\n\", g_deallocs);
+	return 0;
+}
+"
+    );
+    let out = compile_and_run(&src, "discarded_owning_result_through_cast");
+    assert_eq!(out, "deallocs=2\n", "both cast-wrapped copies must be released: {}", out);
+}
+
+/// The double-free half of #327, and the reason the cast is looked through
+/// in `arc::discarded_value` rather than in `arc::is_owning_expr`.
+///
+/// #322's `discarded_retain_and_init_on_an_owned_receiver_are_left_alone`
+/// has to keep holding once a cast can no longer hide the send inside it.
+/// `-retain` returns its own receiver -- `samples/smp_shared` balances a
+/// bare `[c retain];` by hand -- and `-init...` consumes the receiver's
+/// +1, which here belongs to a local scope-based ARC already releases.
+/// Wrapping either in `(void)` changes nothing about who owns the
+/// reference, so neither may be released.
+///
+/// Getting this wrong is memory corruption where #327 itself is only a
+/// leak, so it is the direction that has to fail closed.
+#[test]
+fn discarded_retain_and_init_through_a_cast_are_left_alone() {
+    let src = format!(
+        "/* oz-pool: Counter=1,Widget=1 */\n{}{}",
+        PREAMBLE(),
+        "\
+static int g_deallocs = 0;
+
+@interface Counter : OZObject
+@end
+@implementation Counter
+- (void)dealloc {
+	g_deallocs = g_deallocs + 1;
+}
+@end
+
+@interface Widget : OZObject
+@end
+@implementation Widget
+@end
+
+#include <stdio.h>
+int main(void) {
+	Counter *c = [Counter alloc];
+	/* Balanced by hand, as samples/smp_shared writes it -- with the
+	 * cast the idiom often carries to silence an unused result. */
+	(void)[c retain];
+	[c release];
+	printf(\"after_retain=%d\\n\", g_deallocs);
+
+	Widget *w = [Widget alloc];
+	/* The +1 this hands back is `w`'s, and `w` is released at the end
+	 * of this scope. */
+	(void)[w init];
+	/* The receiver behind a cast is followed the same way. */
+	[(Widget *)w init];
+	printf(\"after_init=%d\\n\", g_deallocs);
+	return 0;
+}
+"
+    );
+    let out = compile_and_run(&src, "discarded_retain_and_init_through_cast");
+    assert_eq!(
+        out, "after_retain=0\nafter_init=0\n",
+        "no cast-wrapped receiver may be released twice: {}",
+        out
+    );
+}
+
+/// The other side of that reading, reached through a cast: an `init` send
+/// whose receiver is a temporary nothing tracks *is* abandoned, and a cast
+/// on the receiver does not change that.
+///
+/// `[(Widget *)[Widget alloc] init];` leaked before #327 for the same
+/// reason `(void)[t copy];` did -- the cast stopped the receiver from
+/// being resolved back to an `+alloc` -- so both spellings fall out of the
+/// one peel.
+#[test]
+fn discarded_init_behind_a_cast_receiver_is_released() {
+    let src = format!(
+        "/* oz-pool: Widget=2 */\n{}{}",
+        PREAMBLE(),
+        "\
+static int g_deallocs = 0;
+
+@interface Widget : OZObject
+@end
+@implementation Widget
+- (void)dealloc {
+	g_deallocs = g_deallocs + 1;
+}
+@end
+
+#include <stdio.h>
+int main(void) {
+	/* A cast on the receiver of the discarded init. */
+	[(Widget *)[Widget alloc] init];
+	/* And a cast on the whole discarded statement. */
+	(void)[[Widget alloc] init];
+	printf(\"deallocs=%d\\n\", g_deallocs);
+	return 0;
+}
+"
+    );
+    let out = compile_and_run(&src, "discarded_init_behind_cast_receiver");
+    assert_eq!(out, "deallocs=2\n", "both discarded allocations must be released: {}", out);
+}
+
+/// A *bridging* cast is the one cast #327 does not look through, and the
+/// reason `arc::is_bridging_cast` exists.
+///
+/// `(__bridge_retained void *)[t copy];` hands the reference to a
+/// non-Objective-C holder; releasing it would pull the object out from
+/// under that holder, which is a double free and not a leak. `__bridge`
+/// and `__bridge_transfer` are held back with it -- not because either is
+/// known to be unsafe, but because there is no CoreFoundation here for any
+/// of the three to bridge to, so leaving all of them borrowed costs
+/// nothing observable and keeps the conservative bias exact.
+///
+/// So `deallocs=0` here is the answer being asserted, not a leak being
+/// tolerated: under `__bridge_retained` the reference belongs to whatever
+/// took the `void *`.
+#[test]
+fn a_bridging_cast_is_not_looked_through() {
+    let src = format!(
+        "/* oz-pool: Thing=3 */\n{}{}",
+        PREAMBLE(),
+        "\
+static int g_deallocs = 0;
+
+@interface Thing : OZObject
+- (instancetype)copy;
+@end
+@implementation Thing
+- (instancetype)copy {
+	return [Thing alloc];
+}
+- (void)dealloc {
+	g_deallocs = g_deallocs + 1;
+}
+@end
+
+#include <stdio.h>
+int main(void) {
+	Thing *t = [Thing alloc];
+	(__bridge_retained void *)[t copy];
+	(__bridge void *)[t copy];
+	printf(\"deallocs=%d\\n\", g_deallocs);
+	return 0;
+}
+"
+    );
+    let out = compile_and_run(&src, "bridging_cast_not_looked_through");
+    assert_eq!(
+        out, "deallocs=0\n",
+        "a bridging cast keeps the reference on the bridge's other side: {}",
+        out
+    );
+}

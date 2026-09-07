@@ -3937,14 +3937,16 @@ fn render_loop_jump(node: Node, ctx: &mut EmitCtx) -> (String, String) {
 /// Not a `-performSelector:` concern, though that is where the Clang
 /// warning pointed: a direct send leaked identically, which is why the
 /// answer lives at the statement and not in the reflection path.
+///
+/// What comes back is the abandoned *value*, not the statement's
+/// expression: `(void)[t copy];` discards the same reference the bare
+/// `[t copy];` does, and it is the send that gets released, not the
+/// `(void)` announcing the discard (#327). `arc::discarded_owning_value`
+/// owns both halves of that.
 fn discarded_owning_expr<'a>(stmt: Node<'a>, ctx: &EmitCtx) -> Option<Node<'a>> {
     let mut cursor = stmt.walk();
     let value = stmt.children(&mut cursor).find(|c| c.kind() != ";")?;
-    if crate::arc::discards_ownership(value, ctx.src, ctx.program, &ctx.program.owning_methods) {
-        Some(value)
-    } else {
-        None
-    }
+    crate::arc::discarded_owning_value(value, ctx.src, ctx.program, &ctx.program.owning_methods)
 }
 
 fn discards_owning_result(stmt: Node, ctx: &EmitCtx) -> bool {

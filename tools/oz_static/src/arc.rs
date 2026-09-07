@@ -11,9 +11,12 @@
 // release asks whether a local holding a value may be released when its
 // scope ends (`is_owning_expr`); a statement whose value is bound to
 // nothing asks whether discarding it abandons a reference nothing else
-// accounts for (`discards_ownership`, #322). `-retain` and `-init...` are
-// +1 to the first and not to the second, because the reference they hand
-// back is one something else is already tracking.
+// accounts for (`discarded_owning_value`, #322). `-retain` and `-init...`
+// are +1 to the first and not to the second, because the reference they
+// hand back is one something else is already tracking. A cast runs the
+// other way: borrowed to the first, looked through by the second, so
+// `(void)[t copy];` and `[t copy];` cannot differ in whether they leak
+// (#327).
 //
 // Ported from the oracle's `_is_owning_expr` / `_find_owning_return_methods`
 // (tools/oz_transpile/emit.py), with one improvement: the oracle's scan is a
@@ -433,6 +436,12 @@ pub fn is_owning_expr(
         }
         // A cast says nothing about ownership, and `__bridge` explicitly
         // means "not mine" -- borrowed either way.
+        //
+        // `discarded_value` *does* look through a non-bridging cast
+        // (#327), and only there. This answer is not just about one local:
+        // `consider_method` classifies a method as an owning factory only
+        // when every return path is `is_owning_expr`, so widening it here
+        // changes what every caller of such a method is told to release.
         _ => false,
     }
 }
@@ -468,6 +477,27 @@ fn creates_reference(selector: &str) -> bool {
     matches!(selector, "alloc" | "allocWithHeap:" | "new" | "copy" | "mutableCopy")
 }
 
+/// The +1 reference throwing `node`'s value away would abandon, or None
+/// when discarding it abandons nothing.
+///
+/// The node handed back is the one to release, which is not always `node`
+/// itself: `(void)[t copy]` abandons the `[t copy]`, and
+/// `oz_static_release((struct OZObject *)((void)(...)))` is not C. Emit
+/// wraps *this* node, so the two answers -- whether to release, and what
+/// -- come from one place and cannot drift apart (#327).
+pub fn discarded_owning_value<'a>(
+    node: Node<'a>,
+    src: &str,
+    program: &Program,
+    owning: &OwningMethods,
+) -> Option<Node<'a>> {
+    if discards_ownership(node, src, program, owning) {
+        Some(discarded_value(node, src))
+    } else {
+        None
+    }
+}
+
 /// Does throwing this expression's value away abandon a +1 reference that
 /// nothing else releases?
 ///
@@ -486,17 +516,17 @@ fn creates_reference(selector: &str) -> bool {
 /// owning *method* cannot be returning `self` is not an assumption --
 /// `consider_method` classifies one only when every return path is
 /// `is_owning_expr`, and a bare `self` is not.
-pub fn discards_ownership(
+///
+/// The value is read out from behind whatever the discard is written
+/// behind first -- see `discarded_value`, which is why `(void)[t copy];`
+/// answers the same as `[t copy];` (#327).
+fn discards_ownership(
     node: Node,
     src: &str,
     program: &Program,
     owning: &OwningMethods,
 ) -> bool {
-    if node.kind() == "parenthesized_expression" {
-        let mut cursor = node.walk();
-        let inner = node.children(&mut cursor).find(|c| c.kind() != "(" && c.kind() != ")");
-        return inner.is_some_and(|inner| discards_ownership(inner, src, program, owning));
-    }
+    let node = discarded_value(node, src);
     if node.kind() != "message_expression" {
         return is_owning_expr(node, src, program, owning);
     }
@@ -513,6 +543,92 @@ pub fn discards_ownership(
         return discards_ownership(parts.receiver, src, program, owning);
     }
     created_by(&selector, receiver_class.as_deref(), owning)
+}
+
+/// The value a discarded expression actually abandons, read out from
+/// behind the parentheses and casts it may be written behind (#327).
+///
+/// `(void)[t copy];` has to answer the same as `[t copy];`. It is not a
+/// shape someone stumbles into: `(void)expr` is the idiom for "I am
+/// throwing this away on purpose", so it is the spelling *most* likely to
+/// have been written by someone who thought about the result, and least
+/// likely to be a mistake -- which is exactly why the two spellings must
+/// not differ in whether they leak. The alternative, rejecting the cast,
+/// would make a deliberate discard a hard error while leaving the careless
+/// one to compile.
+///
+/// Looking through a cast happens **here and nowhere else**. It is
+/// deliberately not done in `is_owning_expr`: that answer also decides
+/// which methods `consider_method` classifies as owning factories, and so
+/// what every caller of one is told to release, where this one only ever
+/// adds a release to a statement whose value nothing else can reach.
+///
+/// A *bridging* cast is the one cast that speaks about ownership rather
+/// than about type, and is not looked through.
+/// `(__bridge_retained void *)[t copy];` hands the reference to a
+/// non-Objective-C holder, so releasing it would pull the object out from
+/// under that holder -- a double free, the direction this module exists to
+/// avoid. `__bridge` and `__bridge_transfer` are held back with it: not
+/// because either is known to be unsafe, but because there is no
+/// CoreFoundation here for any of the three to bridge to, so leaving all
+/// of them borrowed costs nothing observable and keeps the bias exact
+/// rather than resting on a reading of a bridge this project does not
+/// have.
+fn discarded_value<'a>(node: Node<'a>, src: &str) -> Node<'a> {
+    let mut cursor = node.walk();
+    let children: Vec<Node<'a>> = node.children(&mut cursor).collect();
+    let inner = match node.kind() {
+        "parenthesized_expression" => {
+            children.into_iter().find(|c| c.kind() != "(" && c.kind() != ")")
+        }
+        "cast_expression" if !is_bridging_cast(node, src) => cast_value(children),
+        _ => None,
+    };
+    match inner {
+        Some(inner) => discarded_value(inner, src),
+        None => node,
+    }
+}
+
+/// The expression a `cast_expression` casts, or None when the node is one
+/// of the other shapes the grammar files under that kind -- a compound
+/// literal, whose value is an `initializer_list` and not an expression at
+/// all. `emit::render_cast_expression` splits the same two cases the same
+/// way, and by the same rule: the last child that is neither a paren nor
+/// the type.
+fn cast_value<'a>(children: Vec<Node<'a>>) -> Option<Node<'a>> {
+    if !children.iter().any(|c| c.kind() == "type_descriptor") {
+        return None;
+    }
+    children
+        .into_iter()
+        .rev()
+        .find(|c| c.kind() != ")" && c.kind() != "(" && c.kind() != "type_descriptor")
+}
+
+/// Does this cast carry an ARC bridging qualifier?
+///
+/// Named exactly rather than matched on a `__` prefix: the grammar files
+/// every Objective-C ownership word under `type_qualifier` alongside C's
+/// own `const`/`volatile`, and only these three say anything about a
+/// reference crossing out of Objective-C's hands. `__strong`, `__weak`,
+/// `__unsafe_unretained` and `__autoreleasing` describe *storage*, which a
+/// discarded value has none of.
+fn is_bridging_cast(node: Node, src: &str) -> bool {
+    let mut cursor = node.walk();
+    let Some(descriptor) = node.children(&mut cursor).find(|c| c.kind() == "type_descriptor")
+    else {
+        return false;
+    };
+    let mut cursor = descriptor.walk();
+    let qualifiers: Vec<Node> = descriptor.children(&mut cursor).collect();
+    qualifiers.into_iter().any(|child| {
+        child.kind() == "type_qualifier"
+            && matches!(
+                node_text(child, src).trim(),
+                "__bridge" | "__bridge_transfer" | "__bridge_retained"
+            )
+    })
 }
 
 /// Does a send of `selector` to a receiver of `class` create a reference
