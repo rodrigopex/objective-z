@@ -12,7 +12,15 @@ pub fn parse(source: &str) -> Tree {
     parser.parse(source, None).expect("tree-sitter parse returned None")
 }
 
-/// (line, col) 1-based, for diagnostics.
+/// (line, col) 1-based **in `source`**, for diagnostics.
+///
+/// `source` is the merged, `#import`-resolved buffer, so this is a
+/// position in that buffer and not in any file on disk -- the two differ
+/// by however much splicing inserted or dropped ahead of the offset. A
+/// diagnostic wants exactly this, since the offending text is what the
+/// caller is being shown. Anything that has to name a *file* -- a `#line`
+/// directive, a symbol named after where it was written -- wants
+/// `imports::ResolvedSource::source_location` instead (#305).
 pub fn line_col(source: &str, byte_offset: usize) -> (usize, usize) {
     let mut line = 1;
     let mut col = 1;
@@ -57,7 +65,19 @@ pub fn line_col(source: &str, byte_offset: usize) -> (usize, usize) {
 /// offsets into this text, and `origins`/`header_ranges` are ranges over
 /// it, so a repair that inserted a byte would shift every span past it. A
 /// single whitespace byte after the macro's `)` is overwritten with `;`
-/// instead, which changes no length and no offset. The `;` then arrives at
+/// instead, which changes no length and no offset.
+///
+/// It is **not line-preserving**, which is a different property and easy
+/// to read into the sentence above. The whitespace byte overwritten is
+/// normally the macro line's own newline --
+/// `first_bare_macro_semicolon_slot` requires a newline in the gap, and
+/// the byte at the gap's start is usually it -- so the repaired text has
+/// one line fewer per repair, and every line number past the first repair
+/// is one lower than in the text handed in. Nothing may derive a line
+/// number by counting newlines in *this* function's output;
+/// `imports::ResolvedSource::source_location` resolves an offset against
+/// the merged buffer as spliced for that reason, and takes offsets from
+/// here unchanged because the offsets themselves do agree (#305). The `;` then arrives at
 /// `walk_top_level` as a lone top-level `;` node, which it already drops
 /// rather than copying -- so the generated C gains nothing, not even the
 /// `;;` that would cost an ISO C diagnostic.

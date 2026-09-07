@@ -4,7 +4,10 @@
 // the filesystem-aware '#import' resolver that lives outside the core
 // (pure, filesystem-free) transpile()/transpile_split() pipeline. Also
 // covers OZ-096's origin-range tracking (`ResolvedSource::origins`),
-// added alongside the merged text itself.
+// added alongside the merged text itself. The other half of that
+// provenance -- the per-byte map back to the `.m`/`.h` line a byte was
+// spliced from (`ResolvedSource::source_location`, #305) -- is covered by
+// `tests/source_map.rs`.
 
 use std::fs;
 use std::path::PathBuf;

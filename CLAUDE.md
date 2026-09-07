@@ -149,7 +149,9 @@ from an AST, which is why unexpanded macros survive into the output.
   the primary frontend
 - **`pools.rs`** — slab and element-pool sizing, counted from allocation sites
 - **`staticbar.rs`** — accept/reject scan for the static subset
-- **`imports.rs`** — `#import` resolution and per-origin provenance
+- **`imports.rs`** — `#import` resolution and per-origin provenance, plus the merged-offset
+  → (`.m`/`.h`, line) source map a `#line` directive needs
+  (`ResolvedSource::source_location`, #305)
 - **`generics.rs`** — generic and protocol constraint checking
 - **`model.rs`** — `Program`, `ClassInfo`, `Diagnostic`
 - **`progress.rs`** — pass boundaries the pipeline reports; no printing, no clock
