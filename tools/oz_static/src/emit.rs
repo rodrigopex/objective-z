@@ -642,6 +642,31 @@ pub(crate) fn selector_to_c(selector: &str) -> String {
 /// style (`TYPE NAME`), but a function-pointer type needs the name embedded
 /// mid-declarator (`RET (*NAME)(ARGS)`) -- `detect_block_param_type` signals
 /// that by leaving `PARAM_NAME_PLACEHOLDER` in the type text.
+///
+/// # Where an `id` parameter is spelled as the root class pointer
+///
+/// This function is the roster the others point at, because it is the one
+/// every *method* signature goes through. Every position below produces or
+/// consumes the same C function-pointer type, so all of them have to agree
+/// on it -- one that keeps the `id` typedef says `void (*)(void *)` where
+/// its counterpart says `void (*)(struct OZObject *)`, and the assignment,
+/// initialization or call between them stops compiling:
+///
+///   - here, for a block-typed method parameter, off the
+///     `ID_TYPE_PLACEHOLDER` that `collect::detect_block_param_type` marked
+///     while it still had the CST;
+///   - `collect_ivar_lowering_edits`, for a function-pointer ivar's field
+///     type -- which is also where the reasoning for *not* making `id` the
+///     root pointer globally is written down;
+///   - `render_block`, for the signature it synthesizes for a hoisted block
+///     literal;
+///   - `render_block_type_param_list`, for a block variable's own declared
+///     type inside a method body;
+///   - `block_pointer_edits`, for that same declared type at file scope, and
+///     for a free function's block-typed parameter.
+///
+/// The last two are #319; the split between them is only that the `^` -> `*`
+/// lowering itself is spelled once as a render and once as text edits.
 pub(crate) fn render_param(ptype: &str, pname: &str, root: Option<&str>) -> String {
     if ptype.contains(crate::collect::PARAM_NAME_PLACEHOLDER) {
         // A function-pointer parameter: its own parameter list came through
@@ -650,10 +675,10 @@ pub(crate) fn render_param(ptype: &str, pname: &str, root: Option<&str>) -> Stri
         // therefore tell a parameter typed `id` from one merely named it
         // (#317). It has to become the root class pointer, for the same
         // reason a function-pointer *ivar*'s does -- see
-        // `collect_ivar_lowering_edits`. The two must agree: an
-        // `-initWithBlock:` parameter is assigned straight into the matching
-        // field, and with only the field lowered the assignment itself
-        // stopped compiling.
+        // `collect_ivar_lowering_edits`. Those two must agree in particular:
+        // an `-initWithBlock:` parameter is assigned straight into the
+        // matching field, and with only the field lowered the assignment
+        // itself stopped compiling.
         let rendered = ptype.replace(crate::collect::PARAM_NAME_PLACEHOLDER, pname);
         return match root {
             Some(root) => {
@@ -3593,8 +3618,11 @@ fn render_block(node: Node, ctx: &mut EmitCtx) -> (String, String) {
     let params = match found_plist {
         // An `id` parameter is spelled as the root class pointer, matching
         // the function-pointer *type* this block will be assigned or passed
-        // to (see `collect_ivar_lowering_edits` and `render_param`). The
-        // three have to agree: `samples/transpiled_generics` passes
+        // to. This is one of the positions that have to agree on that
+        // spelling -- `render_param` carries the roster and the reasoning --
+        // and it is the one every other position is measured against, since
+        // this signature is what the hoisted function actually has:
+        // `samples/transpiled_generics` passes
         // `^(id obj, unsigned int idx, BOOL *stop) { ... }` to
         // `-enumerateObjectsUsingBlock:`, and with only the parameter type
         // lowered the call stopped compiling on the function pointer's type.
@@ -5754,10 +5782,12 @@ fn class_tag_edits(node: Node, src: &str, program: &Program) -> Vec<(Range<usize
 /// extension rather than ISO C, so this is not a weaker type but text no GCC
 /// target can parse at all: `error: expected ')' before '^' token`.
 ///
-/// Nothing in the repository writes either shape, which is why they went
-/// unnoticed -- the same reason gaps Q, V and R went unnoticed, and the same
-/// family: the top-level path getting a reduced version of what a method
-/// body gets.
+/// Nothing in the repository wrote either shape until #272, which is why
+/// they went unnoticed -- the same reason gaps Q, V and R went unnoticed, and
+/// the same family: the top-level path getting a reduced version of what a
+/// method body gets. `samples/transpiled_blocks` writes both now, and
+/// deliberately, so an ARM build is the gate: the Rust suite compiles with
+/// the host clang, where a surviving `^` is a valid Clang block.
 ///
 /// A `block_literal` subtree is skipped, because `render_block` synthesizes
 /// that function's signature outright rather than patching it, and
@@ -5768,11 +5798,11 @@ fn class_tag_edits(node: Node, src: &str, program: &Program) -> Vec<(Range<usize
 /// in the declarator's own parameter list is lowered to `root` here too, by
 /// the same rule as everywhere else an `id` reaches a function-pointer
 /// parameter -- see `render_param`. Lowering only the `^` left
-/// `static void (^g)(id)`
-/// as `void (*g)(id)` -- `void (*)(void *)` -- initialized from a hoisted
-/// function taking `struct OZObject *`, which Clang rejects as incompatible
-/// function pointer types (#319). `root` is `None` when the program has no
-/// root class, in which case there is nothing to lower to and `id` stays.
+/// `static void (^g)(id)` as `void (*g)(id)`, i.e. `void (*)(void *)`,
+/// initialized from a hoisted function taking `struct OZObject *`, which
+/// Clang rejects as incompatible function pointer types (#319). `root` is
+/// `None` when the program has no root class, in which case there is nothing
+/// to lower to and `id` stays.
 fn block_pointer_edits(
     node: Node,
     src: &str,
