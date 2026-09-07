@@ -339,11 +339,18 @@ jobs:
       # for four days when the Python backend took `_objz_collect_compile_db()`'s
       # only call site with it, and no gate here noticed, because every gate
       # reads the *generated C* (#304). This one reads the database.
+      # `--expect-header` covers the second half of #320: a `.h` with no entry
+      # is not left alone, it is given the generated C twin's command, which
+      # parses `@interface` as C and shadows the SDK's ObjC headers with their
+      # generated plain-C namesakes. hello_world owns no headers, so the SDK's
+      # are what this asserts on -- they are present for every app.
       - name: Verify ObjC compile_commands entries
         run: >
           python3 scripts/objz_check_compile_db.py build
           --expect samples/hello_world/src/main.m
           --expect src/OZObject.m
+          --expect-header include/oz_sdk/Foundation/OZObject.h
+          --expect-header include/oz_sdk/Foundation/OZString.h
 
       # A configure-time oz2c failure has to say what oz2c said and whether
       # it ran at all. Passing `RESULT_VARIABLE` alone reported neither, and
