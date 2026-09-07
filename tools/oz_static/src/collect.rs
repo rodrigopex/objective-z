@@ -604,6 +604,15 @@ pub(crate) fn default_setter_sel(name: &str) -> String {
 /// (`TYPE NAME`, e.g. `int NAME`). See `detect_block_param_type`.
 pub(crate) const PARAM_NAME_PLACEHOLDER: &str = "@@PARAM_NAME@@";
 
+/// Marker for an `id` standing in *type* position inside such a type string.
+///
+/// The position has to be decided here, where the CST is still in hand: `id`
+/// is a type and a legal-to-Clang parameter name both, and once the
+/// parameter list is flat text the two are indistinguishable (#317). What it
+/// lowers to is the root class pointer, which only `emit::render_param`
+/// knows, so this carries the decision across to it.
+pub(crate) const ID_TYPE_PLACEHOLDER: &str = "@@ID_TYPE@@";
+
 /// A block-typed method parameter -- `(RET (^)(ARGS))name` -- parses under
 /// tree-sitter-objc as a `method_type` whose `type_name` contains an
 /// `abstract_function_declarator` wrapping an `abstract_parenthesized_declarator`/
@@ -625,7 +634,13 @@ fn detect_block_param_type(method_parameter: Node, src: &str) -> Option<String> 
         .map(|c| node_text(c, src).to_string())
         .unwrap_or_else(|| "void".to_string());
     let params = child_by_kind(func_decl, "parameter_list")
-        .map(|p| node_text(p, src).to_string())
+        .map(|p| {
+            // Mark type-position `id` while the nodes are still here; see
+            // `ID_TYPE_PLACEHOLDER`.
+            let mut edits = Vec::new();
+            crate::emit::rewrite_id_types(p, src, 0, ID_TYPE_PLACEHOLDER, &mut edits);
+            crate::emit::apply_edits(src, p.start_byte(), p.end_byte(), &edits)
+        })
         .unwrap_or_else(|| "(void)".to_string());
     Some(format!("{} (*{}){}", ret, PARAM_NAME_PLACEHOLDER, params))
 }
