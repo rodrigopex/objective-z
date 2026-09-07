@@ -307,7 +307,13 @@ int main(void) {{
 ///
 ///   - `b`: a block variable in a method body, the case as filed
 ///   - `mixed`: an `id` in the middle of a list of plain scalars, so the
-///     lowering neither misses it nor disturbs its neighbours
+///     lowering neither misses it nor disturbs its neighbours -- and, since
+///     #326, a *class*-typed neighbour beside it. The two promotions are
+///     independent (`id` -> the root class pointer; `Blkv` -> `struct Blkv`)
+///     and reach `apply_edits` as one merged edit list, so one list carrying
+///     both is the case that says they do not truncate each other. Before
+///     #326 a class-typed block parameter did not compile at all, which is
+///     why this list was scalars-only when it was written
 ///   - `sHook`: a file-scope block variable
 ///   - `take_cb`: a free function's block-typed parameter, prototype and
 ///     definition both
@@ -349,11 +355,11 @@ static void take_cb(void (^cb)(id))
 \tvoid (^b)(id) = ^(id obj) {{
 \t\tgSeen += obj != 0 ? 1 : 0;
 \t}};
-\tvoid (^mixed)(int, id, int) = ^(int seed, id obj, int bump) {{
-\t\tgSeen += seed + (obj != 0 ? 4 : 0) + bump;
+\tvoid (^mixed)(int, id, Blkv *, int) = ^(int seed, id obj, Blkv *owner, int bump) {{
+\t\tgSeen += seed + (obj != 0 ? 4 : 0) + (owner != 0 ? 8 : 0) + bump;
 \t}};
 \tb(_delegate);
-\tmixed(1, _delegate, 10);
+\tmixed(1, _delegate, self, 10);
 \tsHook(_delegate);
 \ttake_cb(^(id obj) {{
 \t\tgSeen += obj == 0 ? 1000 : 0;
@@ -374,7 +380,7 @@ int main(void) {{
     );
     assert_eq!(
         compile_and_run(&src, "id_typed_block_variable_agrees_with_its_hoisted_function"),
-        "seen=1116\n"
+        "seen=1124\n"
     );
 }
 
