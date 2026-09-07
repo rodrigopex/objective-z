@@ -736,6 +736,17 @@ pub fn collect(source: &str) -> (Program, Vec<crate::model::Diagnostic>) {
     let known_classes: HashSet<String> = classes.keys().cloned().collect();
     let mut diagnostics: Vec<crate::model::Diagnostic> = Vec::new();
 
+    /*
+     * Before anything else, because it is a fact about the *names* in the
+     * source rather than about any class: `id` is reserved, and a
+     * declaration that uses it as a name cannot be lowered coherently.
+     * Here rather than in one of `staticbar`'s three body-scoped entry
+     * points (`check_method_body`, `check_function_body`,
+     * `check_macro_body`) -- none of those sees an ivar block or a
+     * file-scope struct, and the name is reserved in those positions too.
+     */
+    diagnostics.extend(crate::staticbar::check_reserved_names(root, source));
+
     // A `superclass` reference that doesn't resolve to a class actually
     // collected above (e.g. a real Foundation class only ever pulled in
     // via `#import <Foundation/Foundation.h>` -- oz_static has no import
