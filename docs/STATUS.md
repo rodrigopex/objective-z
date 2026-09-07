@@ -251,6 +251,10 @@ pointer initializer rejects them. So the block goes unparsed either way, and
 a signature mismatch surfaces from GCC on generated code rather than from
 oz_static on the source. That is a real gap, not a detail.
 
+One shape of it has since moved to the right side of that line, and only
+because the name was reserved rather than the signature checked -- see
+`id` is a reserved word below.
+
 ### What the author can still pin down
 
 The return type, by writing it on the literal -- `^uint32_t(int seed) { ... }`
@@ -273,6 +277,33 @@ type.
 So: write the return type on any callback block that does not return `int`.
 `px-keyboard` needed a named C function for `.app_passkey` before this and
 does not now.
+
+### `id` is a reserved word (#317)
+
+Nothing may be *declared* with that name -- not a block or function or method
+parameter, not an ivar, not a plain C struct field, not a local. `id` is
+Objective-C's untyped object pointer, and oz_static rewrites it as one
+wherever a declaration uses it.
+
+Clang accepts the name, because shadowing a typedef with a declarator is
+legal C, so transcribing a C callback signature verbatim is how an author
+meets this: Zephyr's `bt_conn_auth_info_cb.bond_deleted` is
+`void (*)(uint8_t id, const bt_addr_le_t *peer)`, and copying that into an
+`OZFN` block emitted `uint8_t struct OZObject *` -- two type specifiers, no
+parameter name, and a body still referring to one. `px-keyboard` spells that
+parameter `identity`.
+
+Reserving the name was the fix rather than lowering it correctly, because
+lowering it correctly is only possible where the CST is still in hand. Once a
+parameter list is flat text, a parameter *typed* `id` and one *named* `id`
+are the same three characters. Both emit paths key on the grammar now and
+would emit correct C, but the rule is what turns the whole class of it into a
+located error on the author's own line -- the one thing the gap above says a
+block signature otherwise does not get.
+
+Member access is untouched: `sAdvParam.id` reads a field of a struct from a
+plain `#include`, which `imports` leaves verbatim, so no foreign declaration
+is visible to the check. Zephyr is full of `.id` fields.
 
 ## What one cause can look like
 
