@@ -484,8 +484,14 @@ that reported success while the thing it named was broken.
   bound it (#322). It also does not say that one reading of ownership serves
   every question. `is_owning_expr` answers "may a local holding this be
   released at scope exit"; a result bound to nothing needs the narrower
-  `discards_ownership`, because `-retain` and `-init...` hand back a reference
-  something else already accounts for, and releasing those is the corruption
-  direction.
+  `discarded_owning_value`, because `-retain` and `-init...` hand back a
+  reference something else already accounts for, and releasing those is the
+  corruption direction. The two readings differ in *both* directions, and a
+  cast is the case that runs the other way: borrowed to `is_owning_expr`,
+  looked through when the value is discarded, so `(void)[t copy];` cannot
+  leak where `[t copy];` does not (#327). Widening `is_owning_expr` to match
+  is the corruption direction and was measured to be: with a cast looked
+  through there, `Thing *t = (Thing *)[u init];` releases `u` twice, which
+  ASan reports as a heap-use-after-free.
 - **The version is `tools/oz_static/Cargo.toml`**, bumped in the same commit
   as the change it describes. The repo-level `VERSION` file is retired.

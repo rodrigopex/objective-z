@@ -470,7 +470,7 @@ Requires [just](https://github.com/casey/just). Default board: `mps2/an385`.
 | `just test-smp`        | Two cores (`qemu_cortex_a53/smp`)      |
 | `just test-boards`     | ARM and RISC-V                         |
 | `just test-all-boards` | All three boards, including SMP        |
-| `just test-behavior`   | 74-case behavior corpus through `oz2c` |
+| `just test-behavior`   | 76-case behavior corpus through `oz2c` |
 | `just test-adapted`    | 40 adapted upstream tests              |
 | `just smoke`           | Transpile-and-compile smoke test       |
 | `just test-pal`        | The PAL's own C tests, on the host     |
@@ -667,6 +667,7 @@ Rules:
 - `(__bridge void *)obj` — cast object to `void *` without ownership transfer
 - `(__bridge Type *)ptr` — cast `void *` back to object type, **borrowed** (not retained)
 - The `__bridge` result is never released at scope exit — the caller must ensure the object stays alive independently (e.g., via a strong ivar like OZTimer's `_userdata`)
+- A bridging cast is also the one cast a *discarded* statement does not look through. `(void)[t copy];` releases the abandoned `+1` exactly as `[t copy];` does (#327), but `(__bridge_retained void *)[t copy];` does not — that spelling hands the reference to whatever took the `void *`, and releasing it would pull the object out from under that holder
 
 ### ARC rules summary
 
