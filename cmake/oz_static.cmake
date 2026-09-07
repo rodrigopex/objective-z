@@ -251,6 +251,18 @@ function(objz_transpile_sources_static target)
     # deliberately silences is the entire job (#304). Split here rather than
     # deriving one list from the other, so neither can drift.
     set(_ide_flags ${_ast_flags})
+    # `-Warc-performSelector-leaks` fires on every `-performSelector:` whose
+    # selector is not a literal, whatever the selector returns -- on
+    # px-keyboard's four gestures, all void, that is four false positives with
+    # nothing to act on. It is editor-only and cannot fail a build: the AST
+    # dump runs with `-w` below, and the real build compiles generated C with
+    # gcc, which never sees a `-performSelector:`. The ObjC idioms for
+    # silencing it locally presuppose a runtime this project does not have.
+    #
+    # Suppressing it is only defensible together with #322, which answers the
+    # precise question -- is an owning return being discarded -- exactly,
+    # where Clang can only guess from a hair trigger.
+    list(APPEND _ide_flags -Wno-arc-performSelector-leaks)
     list(APPEND _ast_flags -w)  # AST dump is transpiler input; warnings are noise
 
     file(GLOB _sdk_impls ${_mod}/src/*.m)
