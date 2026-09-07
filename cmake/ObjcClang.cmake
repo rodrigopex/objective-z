@@ -253,11 +253,41 @@ function(_objz_write_compile_db)
     string(REGEX REPLACE ",\n$" "\n" _json "${_json}")
     file(WRITE "${CMAKE_BINARY_DIR}/compile_commands_objc.json" "[\n${_json}]\n")
 
+    # Whether the build directory sits inside the source tree. Both editor
+    # conveniences below are conditional on it, for the same reason: twister
+    # builds every sample in a temporary directory, and neither a symlink into
+    # a deleted build nor a `.clangd` naming one does a checked-out tree any
+    # good (#304).
+    file(RELATIVE_PATH _bin_rel "${CMAKE_SOURCE_DIR}" "${CMAKE_BINARY_DIR}")
+    if(_bin_rel MATCHES "^\\.\\." OR IS_ABSOLUTE "${_bin_rel}")
+        set(_objz_in_tree_build FALSE)
+    else()
+        set(_objz_in_tree_build TRUE)
+    endif()
+
+    # A database in the build directory is not enough on its own. Editors and
+    # their clangd plugins pass `--compile-commands-dir <project root>`, which
+    # *overrides* the `CompilationDatabase:` key written below -- so clangd
+    # looks in the source root, finds nothing, and falls back to a bare
+    # `clang -x objective-c file.m`: host triple, no include paths, every
+    # `#import` unresolved. Linking the database where they look is what makes
+    # an out-of-tree app work without per-editor configuration (#320).
+    #
+    # A symlink rather than a copy, so it cannot go quietly stale.
+    set(_objz_link_db "")
+    if(_objz_in_tree_build)
+        set(_objz_link_db
+            COMMAND ${CMAKE_COMMAND} -E create_symlink
+                    "${_bin_rel}/compile_commands.json"
+                    "${CMAKE_SOURCE_DIR}/compile_commands.json")
+    endif()
+
     add_custom_target(objz_compile_db ALL
         COMMAND ${Python3_EXECUTABLE}
                 ${_mod}/scripts/objz_merge_compile_db.py
                 ${CMAKE_BINARY_DIR}/compile_commands.json
                 ${CMAKE_BINARY_DIR}/compile_commands_objc.json
+        ${_objz_link_db}
         COMMENT "ObjZ: merging ObjC entries into compile_commands.json"
         VERBATIM
     )
@@ -273,8 +303,7 @@ function(_objz_write_compile_db)
     # pointing at a path that no longer exists. Skipping the write is the
     # answer for that case -- an out-of-tree build has no business rewriting
     # the editor config of a tree it is only reading (#304).
-    file(RELATIVE_PATH _bin_rel "${CMAKE_SOURCE_DIR}" "${CMAKE_BINARY_DIR}")
-    if(_bin_rel MATCHES "^\\.\\." OR IS_ABSOLUTE "${_bin_rel}")
+    if(NOT _objz_in_tree_build)
         message(STATUS "Objective-Z: build dir is outside the source tree; "
                        "leaving ${CMAKE_SOURCE_DIR}/.clangd alone")
     else()
