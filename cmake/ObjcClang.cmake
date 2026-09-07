@@ -231,7 +231,13 @@ function(_objz_write_compile_db)
     get_property(_mod GLOBAL PROPERTY _OBJZ_MODULE_DIR)
     get_filename_component(_mod "${_mod}" REALPATH)
 
-    # Only the files that were actually collected get an entry.
+    # Only the `.m` files that were actually collected get an entry here.
+    #
+    # Headers are a separate matter and are synthesised, by
+    # `scripts/objz_merge_compile_db.py` rather than in this loop -- see #320.
+    # The reasoning below is about `.m` files and does not carry over to them:
+    # for a `.h` the nearest command clangd can interpolate from is the
+    # *generated* C twin, which is not an Objective-C command at all.
     #
     # There used to be a fallback here that globbed every `.m` in the module
     # and synthesised an entry for the ones this build did not compile, on the
@@ -249,7 +255,8 @@ function(_objz_write_compile_db)
     # `-fobjc-runtime=macosx`, the right `--target` -- interpolation lands
     # somewhere far better than a synthesised command with a wrong `-c` ever
     # did. Only the include paths differ, and only for a file outside this
-    # build.
+    # build. (That last sentence is why headers needed the opposite answer:
+    # for them it is not only the include paths that differ.)
     string(REGEX REPLACE ",\n$" "\n" _json "${_json}")
     file(WRITE "${CMAKE_BINARY_DIR}/compile_commands_objc.json" "[\n${_json}]\n")
 
