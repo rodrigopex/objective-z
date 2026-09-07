@@ -479,6 +479,13 @@ that reported success while the thing it named was broken.
 - **A leak is a bug; a double free is memory corruption.** ARC therefore fails
   toward leaking: an unrecognised shape is treated as borrowed. Widening what
   counts as owning is the dangerous direction and must be exact rather than
-  heuristic.
+  heuristic. Note what that rule does *not* say: recognising a shape as +1 is
+  only half the job, and a *recognised* one still leaked for as long as nothing
+  bound it (#322). It also does not say that one reading of ownership serves
+  every question. `is_owning_expr` answers "may a local holding this be
+  released at scope exit"; a result bound to nothing needs the narrower
+  `discards_ownership`, because `-retain` and `-init...` hand back a reference
+  something else already accounts for, and releasing those is the corruption
+  direction.
 - **The version is `tools/oz_static/Cargo.toml`**, bumped in the same commit
   as the change it describes. The repo-level `VERSION` file is retired.

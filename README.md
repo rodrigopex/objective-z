@@ -510,7 +510,7 @@ The notable exclusions:
 
 ## ARC Guide
 
-Automatic Reference Counting (ARC) is always enabled. The transpiler inserts `retain`/`release` calls at compile time — you never call them manually.
+Automatic Reference Counting (ARC) is always enabled. The transpiler inserts `retain`/`release` calls at compile time — you never call them manually. A hand-written `[x retain]` / `[x release]` pair is still honoured verbatim, and left alone (`samples/smp_shared` uses one to put the refcount itself under contention), so the two schemes do not collide; what ARC will not do is release a `retain` you wrote.
 
 ### How it works
 

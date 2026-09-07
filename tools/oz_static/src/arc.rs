@@ -7,6 +7,14 @@
 // failing to release an owned one is a leak. So every local this decides to
 // release must be provably +1, and everything else is left alone.
 //
+// Two questions, not one, and they have different answers. Scope-based
+// release asks whether a local holding a value may be released when its
+// scope ends (`is_owning_expr`); a statement whose value is bound to
+// nothing asks whether discarding it abandons a reference nothing else
+// accounts for (`discards_ownership`, #322). `-retain` and `-init...` are
+// +1 to the first and not to the second, because the reference they hand
+// back is one something else is already tracking.
+//
 // Ported from the oracle's `_is_owning_expr` / `_find_owning_return_methods`
 // (tools/oz_transpile/emit.py), with one improvement: the oracle's scan is a
 // single pass, so a factory whose returns call *another* factory is not
@@ -381,6 +389,13 @@ fn value_of_return<'a>(ret: Node<'a>) -> Option<Node<'a>> {
 /// Deliberately narrow: anything not recognised is treated as borrowed, so
 /// an unrecognised shape leaks rather than double-frees. That asymmetry is
 /// the whole point -- a leak is a bug, a double free is memory corruption.
+///
+/// The question is specifically whether a *local* holding this value may be
+/// released when its scope ends. It is the wrong one for a value bound to
+/// nothing: `[c retain]` and `[f init]` are +1 here and must be, since a
+/// local taking one over needs no retain of its own, but discarding either
+/// abandons no reference -- see `discards_ownership`, which #322 added for
+/// exactly that difference.
 pub fn is_owning_expr(
     node: Node,
     src: &str,
