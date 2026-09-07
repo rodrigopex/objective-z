@@ -287,6 +287,9 @@ function(_objz_write_compile_db)
                 ${_mod}/scripts/objz_merge_compile_db.py
                 ${CMAKE_BINARY_DIR}/compile_commands.json
                 ${CMAKE_BINARY_DIR}/compile_commands_objc.json
+                --root ${CMAKE_SOURCE_DIR}
+                --root ${_mod}
+                --build-dir ${CMAKE_BINARY_DIR}
         ${_objz_link_db}
         COMMENT "ObjZ: merging ObjC entries into compile_commands.json"
         VERBATIM
