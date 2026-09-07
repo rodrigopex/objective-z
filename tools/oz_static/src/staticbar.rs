@@ -500,6 +500,174 @@ fn find_first_identifier_before_eq(node: Node, src: &str) -> Option<String> {
     None
 }
 
+/// Type specifiers and qualifiers, which a declaration's name never is.
+///
+/// Used to find the declarator among a declaration's direct children: what is
+/// left once these are skipped is what carries the declared name.
+const TYPE_SPECIFIER_KINDS: &[&str] = &[
+    "primitive_type",
+    "sized_type_specifier",
+    "struct_specifier",
+    "union_specifier",
+    "enum_specifier",
+    "type_identifier",
+    "typedefed_specifier",
+];
+
+const DECL_TYPE_KINDS: &[&str] = &[
+    "type_qualifier",
+    "primitive_type",
+    "sized_type_specifier",
+    "struct_specifier",
+    "union_specifier",
+    "enum_specifier",
+    "type_identifier",
+    "typedefed_specifier",
+    "storage_class_specifier",
+    "macro_type_specifier",
+    "attribute_specifier",
+];
+
+/// `id` is a reserved word, so nothing may be *declared* with that name.
+///
+/// It is a type in Objective-C -- the untyped object pointer -- and oz_static
+/// rewrites it as one wherever it appears in a declaration. Nothing in the
+/// emitter can tell `uint8_t id` (a parameter that happens to be called `id`)
+/// from `id obj` (a parameter typed `id`) once a declaration has been
+/// flattened to text, and #317 is what that costs: a block parameter named
+/// `id` came out as `uint8_t struct OZObject *` -- two type specifiers, no
+/// parameter name, and a body still referring to one. Clang accepts the name,
+/// because shadowing a typedef with a declarator is legal C, so nothing
+/// upstream refuses it either.
+///
+/// Reserving the name is the fix rather than lowering it correctly. It keeps
+/// one spelling of `id` in the language oz_static accepts, and it turns a
+/// GCC error about generated C -- in a file the author did not write -- into
+/// a located error on the line that caused it. Emitting broken C is the
+/// silent degradation this bar exists to prevent.
+///
+/// Member access is deliberately untouched. `sAdvParam.id` reads a field of
+/// a struct that came from a plain `#include`, which `imports::resolve_imports`
+/// never expands, so no foreign declaration is even visible here -- only
+/// names the author wrote. Zephyr is full of `.id` fields and reaching them
+/// has to keep working.
+pub fn check_reserved_names(root: Node, src: &str) -> Vec<Diagnostic> {
+    let mut diags = Vec::new();
+    walk_reserved_names(root, src, &mut diags);
+    diags
+}
+
+fn walk_reserved_names(node: Node, src: &str, diags: &mut Vec<Diagnostic>) {
+    match node.kind() {
+        "parameter_declaration" | "declaration" | "field_declaration" | "struct_declaration" => {
+            let mut names = Vec::new();
+            declared_name_nodes(node, &mut names);
+            for name in names {
+                if node_text(name, src) == "id" {
+                    reserved_name_err(diags, src, name);
+                }
+            }
+        }
+        /*
+         * An Objective-C method parameter is `:(type)name`, where the name is
+         * a plain identifier sibling of the `method_type` -- not a
+         * `parameter_declaration`, so the arm above never sees it.
+         */
+        "method_parameter" => {
+            let mut cursor = node.walk();
+            let name = node.children(&mut cursor).find(|c| c.kind() == "identifier");
+            if let Some(name) = name {
+                if node_text(name, src) == "id" {
+                    reserved_name_err(diags, src, name);
+                }
+            }
+        }
+        _ => {}
+    }
+
+    /*
+     * An ivar block is the one place the grammar reads the *name* as a type.
+     * `uint8_t id;` there parses as `struct_declaration(primitive_type,
+     * typedefed_specifier(id), struct_declarator(identifier ""))` -- two
+     * stacked type specifiers and an empty declarator -- so there is no
+     * identifier node spelling `id` to find, and the arm above sees only
+     * what looks like a type.
+     *
+     * Two type specifiers cannot stack in C, so a `typedefed_specifier`
+     * spelling `id` that *follows* another specifier is a name. A lone one
+     * is a genuine `id`-typed ivar (`id _delegate;`) and is left alone.
+     * Qualifiers deliberately do not count as the preceding specifier, or
+     * `const id _delegate;` would trip this.
+     */
+    if node.kind() == "struct_declaration" {
+        let mut cursor = node.walk();
+        let mut seen_specifier = false;
+        for child in node.children(&mut cursor) {
+            let bare_id =
+                child.kind() == "typedefed_specifier" && node_text(child, src).trim() == "id";
+            if bare_id && seen_specifier {
+                reserved_name_err(diags, src, child);
+                break;
+            }
+            if TYPE_SPECIFIER_KINDS.contains(&child.kind()) {
+                seen_specifier = true;
+            }
+        }
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        walk_reserved_names(child, src, diags);
+    }
+}
+
+/// Every name a declaration declares, as the identifier node spelling it.
+///
+/// Walks the declaration's *direct* children, skips the type specifiers and
+/// qualifiers, and takes the first identifier inside each remaining
+/// declarator -- so `int a, id;` yields both, and a declaration with no
+/// declarator at all (`(void)`, an abstract parameter type) yields nothing.
+///
+/// First rather than last: in `void (*id)(int count)` the declarator's own
+/// name comes before its parameter list, and the last identifier there is
+/// `count`.
+fn reserved_name_err(diags: &mut Vec<Diagnostic>, src: &str, node: Node) {
+    err(
+        diags,
+        src,
+        node,
+        "'id' is a reserved word (Objective-C's untyped object pointer type) and cannot be used \
+         as a declared name -- rename it (e.g. 'identity')",
+    );
+}
+
+fn declared_name_nodes<'a>(decl: Node<'a>, out: &mut Vec<Node<'a>>) {
+    let mut cursor = decl.walk();
+    for child in decl.children(&mut cursor) {
+        if !child.is_named() || DECL_TYPE_KINDS.contains(&child.kind()) {
+            continue;
+        }
+        if let Some(name) = first_identifier(child) {
+            out.push(name);
+        }
+    }
+}
+
+fn first_identifier<'a>(node: Node<'a>) -> Option<Node<'a>> {
+    // `field_identifier` as well as `identifier`: a plain C struct spells a
+    // field name with the former (`struct thing { uint8_t id; }`), an
+    // ordinary declarator with the latter.
+    if matches!(node.kind(), "identifier" | "field_identifier") {
+        return Some(node);
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if let Some(found) = first_identifier(child) {
+            return Some(found);
+        }
+    }
+    None
+}
+
 fn find_capture(
     node: Node,
     src: &str,
