@@ -1229,6 +1229,10 @@ fn render_expr(node: Node, ctx: &mut EmitCtx) -> (String, String) {
         "break_statement" | "continue_statement" if !ctx.arc_scopes.is_empty() => {
             render_loop_jump(node, ctx)
         }
+        // A +1 result bound to nothing (#322).
+        "expression_statement" if discards_owning_result(node, ctx) => {
+            render_discarded_owning_statement(node, ctx)
+        }
         "declaration" if is_block_qualified_declaration(node, ctx.src) => {
             hoist_block_var(node, ctx);
             (String::new(), "id".to_string())
@@ -1250,10 +1254,10 @@ fn render_expr(node: Node, ctx: &mut EmitCtx) -> (String, String) {
     }
 }
 
-struct MessageParts<'a> {
-    receiver: Node<'a>,
-    selector: String,
-    args: Vec<Node<'a>>,
+pub(crate) struct MessageParts<'a> {
+    pub(crate) receiver: Node<'a>,
+    pub(crate) selector: String,
+    pub(crate) args: Vec<Node<'a>>,
 }
 
 /// Is this send's receiver the literal `super`? A super send names one
@@ -1264,7 +1268,7 @@ fn is_super_receiver(parts: &MessageParts, ctx: &EmitCtx) -> bool {
     parts.receiver.kind() == "identifier" && node_text(parts.receiver, ctx.src) == "super"
 }
 
-fn parse_message<'a>(node: Node<'a>, src: &str) -> MessageParts<'a> {
+pub(crate) fn parse_message<'a>(node: Node<'a>, src: &str) -> MessageParts<'a> {
     let mut cursor = node.walk();
     let children: Vec<Node> =
         node.children(&mut cursor).filter(|c| c.kind() != "[" && c.kind() != "]").collect();
@@ -3757,6 +3761,56 @@ fn render_loop_jump(node: Node, ctx: &mut EmitCtx) -> (String, String) {
         return (keyword.to_string(), "void".to_string());
     }
     (format!("{}\n\t{}", releases.join("\n\t"), keyword), "void".to_string())
+}
+
+/// The expression of an `expression_statement` whose +1 result is bound to
+/// nothing, or None when the statement keeps nothing to release.
+///
+/// A statement is the one place a reference can be created and abandoned
+/// in the same breath. `arc.rs` knows `-copy`, `-new`, `+alloc`,
+/// `+allocWithHeap:` and every analysed factory return +1; every path that
+/// *binds* such a result already releases it -- a local at its scope's end
+/// (`release_lines`), a strong local or ivar on the next store
+/// (`render_strong_local_assign`), a `return` on its way out
+/// (`render_return_statement`) -- and a result bound to nothing had no
+/// release at all, so `[t copy];` on its own line leaked a Thing every
+/// time it ran (#322).
+///
+/// Not a `-performSelector:` concern, though that is where the Clang
+/// warning pointed: a direct send leaked identically, which is why the
+/// answer lives at the statement and not in the reflection path.
+fn discarded_owning_expr<'a>(stmt: Node<'a>, ctx: &EmitCtx) -> Option<Node<'a>> {
+    let mut cursor = stmt.walk();
+    let value = stmt.children(&mut cursor).find(|c| c.kind() != ";")?;
+    if crate::arc::discards_ownership(value, ctx.src, ctx.program, &ctx.program.owning_methods) {
+        Some(value)
+    } else {
+        None
+    }
+}
+
+fn discards_owning_result(stmt: Node, ctx: &EmitCtx) -> bool {
+    discarded_owning_expr(stmt, ctx).is_some()
+}
+
+/// Release the abandoned +1 at the end of the full expression, which is
+/// what ARC's `objc_release` on an unused result does.
+///
+/// The release wraps the value rather than going through a temporary: the
+/// send is evaluated exactly once, in the same statement, and there is no
+/// local for a later jump to have to unwind past. `oz_static_release` is
+/// null-safe, so an allocation that found no free slab slot needs no guard
+/// of its own.
+fn render_discarded_owning_statement(node: Node, ctx: &mut EmitCtx) -> (String, String) {
+    let Some(value) = discarded_owning_expr(node, ctx) else {
+        return (node_text(node, ctx.src).to_string(), "void".to_string());
+    };
+    let root = ctx.program.root_class().unwrap_or("OZObject").to_string();
+    let (rendered, _) = render_expr(value, ctx);
+    (
+        format!("oz_static_release((struct {} *)({}));", root, rendered),
+        "void".to_string(),
+    )
 }
 
 /// A nested block that owns object locals: render its statements, then

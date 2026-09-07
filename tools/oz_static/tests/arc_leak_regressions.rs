@@ -17,7 +17,7 @@
 // reachable at exit" but "did the object's teardown run".
 
 mod common;
-use common::{compile_and_run, ozobject_src as PREAMBLE};
+use common::{compile_and_run, compile_and_run_with_reflection, ozobject_src as PREAMBLE};
 
 /// An early `return` from a scope nested inside a loop must release the
 /// loop body's owned local.
@@ -221,4 +221,199 @@ int main(void) {
     );
     let out = compile_and_run(&src, "unknown_receiver_stays_borrowed");
     assert!(out.contains("value=7"), "output: {}", out);
+}
+
+/// A +1 result bound to nothing is released at the end of the full
+/// expression, which is what ARC's `objc_release` on an unused result does.
+///
+/// Every path that *binds* an owning result already released it -- a local
+/// at its scope's end, a strong local or ivar on the next store, a `return`
+/// on its way out. A result bound to nothing had no release at all, so
+/// `[t copy];` on its own line abandoned a Thing every time it ran (#322).
+///
+/// Not covered by the two leaks above, both of which bind their result;
+/// this is a third shape, and it is the one #283's own framing predicted
+/// would stay silent -- conservative ARC leaks rather than double-frees.
+///
+/// `tests/behavior/cases/arc/discarded_owning_return.m` is the corpus case
+/// this mirrors. There the signal is a two-slot slab running dry, since
+/// `-fsanitize=leak` is unsupported on arm64-apple-darwin; here it is the
+/// dealloc counter, for the reason this file's header gives.
+#[test]
+fn discarded_owning_result_is_released() {
+    let src = format!(
+        "/* oz-pool: Thing=2 */\n{}{}",
+        PREAMBLE(),
+        "\
+static int g_deallocs = 0;
+
+@interface Thing : OZObject
+- (instancetype)copy;
+@end
+@implementation Thing
+- (instancetype)copy {
+	return [Thing alloc];
+}
+- (void)dealloc {
+	g_deallocs = g_deallocs + 1;
+}
+@end
+
+#include <stdio.h>
+int main(void) {
+	Thing *t = [Thing alloc];
+	/* +1 by convention, bound to nothing. */
+	[t copy];
+	/* `t` is still alive here, which is what makes this a check on the
+	 * discarded send and not on scope exit. */
+	printf(\"deallocs=%d\\n\", g_deallocs);
+	return 0;
+}
+"
+    );
+    let out = compile_and_run(&src, "discarded_owning_result");
+    assert_eq!(out, "deallocs=1\n", "the discarded copy must be released: {}", out);
+}
+
+/// The same defect reached through `-performSelector:`, which is where the
+/// Clang warning that started #322 pointed -- and where it was least
+/// actionable, since `-Warc-performSelector-leaks` fires on every
+/// non-literal selector whatever it returns.
+///
+/// The selector is a run-time value in general, so only the two spellings
+/// the source states exactly are resolved: a `@selector(...)` at the call
+/// site, and a local declared once from one and never reassigned. This
+/// covers both.
+#[test]
+fn discarded_result_of_a_performed_selector_is_released() {
+    let src = format!(
+        "/* oz-pool: Thing=3 */\n{}{}",
+        PREAMBLE(),
+        "\
+static int g_deallocs = 0;
+
+@interface Thing : OZObject
+- (instancetype)copy;
+@end
+@implementation Thing
+- (instancetype)copy {
+	return [Thing alloc];
+}
+- (void)dealloc {
+	g_deallocs = g_deallocs + 1;
+}
+@end
+
+#include <stdio.h>
+int main(void) {
+	Thing *t = [Thing alloc];
+	SEL c = @selector(copy);
+
+	[t performSelector:c];
+	[t performSelector:@selector(copy)];
+	printf(\"deallocs=%d\\n\", g_deallocs);
+	return 0;
+}
+"
+    );
+    let out = compile_and_run_with_reflection(&src, "discarded_performed_result");
+    assert_eq!(out, "deallocs=2\n", "both performed copies must be released: {}", out);
+}
+
+/// The double-free half of #322, and the reason `arc::creates_reference`
+/// is narrower than `arc::is_owning_selector`.
+///
+/// Two of the convention-named +1 selectors hand back a reference
+/// something else already accounts for. `-retain` returns its own
+/// receiver, and a bare `[c retain];` is the manual-retain/release idiom
+/// whose balancing `[c release];` is written by hand -- `samples/smp_shared`
+/// does exactly that in its contention loop, so releasing the discarded
+/// result would have freed the shared Counter out from under two cores.
+/// `-init` *consumes* the receiver's +1, which here belongs to a local
+/// scope-based ARC already releases.
+///
+/// A leak is a bug and a double free is memory corruption, so this is the
+/// direction that has to fail closed.
+#[test]
+fn discarded_retain_and_init_on_an_owned_receiver_are_left_alone() {
+    let src = format!(
+        "/* oz-pool: Counter=1,Widget=1 */\n{}{}",
+        PREAMBLE(),
+        "\
+static int g_deallocs = 0;
+
+@interface Counter : OZObject
+@end
+@implementation Counter
+- (void)dealloc {
+	g_deallocs = g_deallocs + 1;
+}
+@end
+
+@interface Widget : OZObject
+@end
+@implementation Widget
+- (void)dealloc {
+	g_deallocs = g_deallocs + 1;
+}
+@end
+
+#include <stdio.h>
+int main(void) {
+	Counter *c = [Counter alloc];
+	/* Balanced by hand, exactly as samples/smp_shared writes it. */
+	[c retain];
+	[c release];
+	printf(\"after_retain=%d\\n\", g_deallocs);
+
+	Widget *w = [Widget alloc];
+	/* The +1 this hands back is `w`'s, and `w` is released at the end of
+	 * this scope. */
+	[w init];
+	printf(\"after_init=%d\\n\", g_deallocs);
+	return 0;
+}
+"
+    );
+    let out = compile_and_run(&src, "discarded_retain_and_init");
+    assert_eq!(
+        out, "after_retain=0\nafter_init=0\n",
+        "neither receiver may be released twice: {}",
+        out
+    );
+}
+
+/// The other side of that reading: an `init` send whose receiver *is* a
+/// temporary nothing tracks does abandon a reference, so it is released.
+///
+/// `[[Widget alloc] init];` is the classic discarded-allocation shape, and
+/// resolving it means following the send back to its receiver rather than
+/// trusting the selector's name -- the same exactness `message_target`
+/// applies to a receiver's class.
+#[test]
+fn discarded_init_on_a_fresh_allocation_is_released() {
+    let src = format!(
+        "/* oz-pool: Widget=1 */\n{}{}",
+        PREAMBLE(),
+        "\
+static int g_deallocs = 0;
+
+@interface Widget : OZObject
+@end
+@implementation Widget
+- (void)dealloc {
+	g_deallocs = g_deallocs + 1;
+}
+@end
+
+#include <stdio.h>
+int main(void) {
+	[[Widget alloc] init];
+	printf(\"deallocs=%d\\n\", g_deallocs);
+	return 0;
+}
+"
+    );
+    let out = compile_and_run(&src, "discarded_init_on_fresh_alloc");
+    assert_eq!(out, "deallocs=1\n", "the discarded allocation must be released: {}", out);
 }

@@ -422,6 +422,170 @@ pub fn is_owning_expr(
     }
 }
 
+/// Of the convention-named +1 selectors, the ones whose reference is a
+/// *newly created* object rather than one the send was handed.
+///
+/// The distinction only matters when the result is thrown away, and there
+/// it is the whole question. Two of `is_owning_selector`'s entries hand
+/// back a reference something else is already accounting for:
+///
+///   - `-retain` returns its own receiver, and a bare `[c retain];` is the
+///     manual-retain/release idiom whose balancing `[c release];` is
+///     written by hand -- `samples/smp_shared` does exactly that, twice per
+///     iteration. Releasing the discarded result would undo the retain and
+///     free the object out from under the sample. Real ARC has nothing to
+///     match here either: it makes an explicit `retain` a compile error.
+///   - `-init...` *consumes* the receiver's +1 and hands it back, so the
+///     reference is the receiver's. In `[[Foo alloc] init]` that receiver
+///     is a temporary nothing tracks, and the result is genuinely
+///     abandoned; in
+///
+///     ```objc
+///     Foo *f = [Foo alloc];
+///     [f init];
+///     ```
+///
+///     it is `f`, which scope-based ARC already releases at the end of the
+///     block. Releasing the discarded result too would be a double free.
+///     So an `init` send is followed back to its receiver rather than
+///     trusted on its name.
+fn creates_reference(selector: &str) -> bool {
+    matches!(selector, "alloc" | "allocWithHeap:" | "new" | "copy" | "mutableCopy")
+}
+
+/// Does throwing this expression's value away abandon a +1 reference that
+/// nothing else releases?
+///
+/// `is_owning_expr` answers a different question -- may a *local* holding
+/// this value be released at scope exit -- and it is the wrong one for a
+/// result bound to nothing: it says yes to `[f init]` and `[c retain]`,
+/// where the reference belongs to the receiver. Getting that wrong here is
+/// a double free rather than a leak, which is the direction this module
+/// exists to avoid, so the two selectors that hand back a reference
+/// something else accounts for are separated out (`creates_reference`) and
+/// an `init` send is resolved through its receiver.
+///
+/// Everything else is `is_owning_expr` unchanged: a boxed literal, a
+/// collection literal, a call to an owning C function and an
+/// analysis-derived owning method all produce a fresh object. That an
+/// owning *method* cannot be returning `self` is not an assumption --
+/// `consider_method` classifies one only when every return path is
+/// `is_owning_expr`, and a bare `self` is not.
+pub fn discards_ownership(
+    node: Node,
+    src: &str,
+    program: &Program,
+    owning: &OwningMethods,
+) -> bool {
+    if node.kind() == "parenthesized_expression" {
+        let mut cursor = node.walk();
+        let inner = node.children(&mut cursor).find(|c| c.kind() != "(" && c.kind() != ")");
+        return inner.is_some_and(|inner| discards_ownership(inner, src, program, owning));
+    }
+    if node.kind() != "message_expression" {
+        return is_owning_expr(node, src, program, owning);
+    }
+    let (receiver_class, selector) = message_target(node, src, program);
+    // A `-performSelector:` whose selector resolves statically is the same
+    // send by another spelling, so it gets the same answer. When it does
+    // not resolve, the selector is a run-time value and no +1 can be seen:
+    // borrowed, as ever, is the safe reading.
+    if let Some(performed) = statically_performed_selector(node, src) {
+        return created_by(&performed, receiver_class.as_deref(), owning);
+    }
+    if selector.starts_with("init") {
+        let parts = crate::emit::parse_message(node, src);
+        return discards_ownership(parts.receiver, src, program, owning);
+    }
+    created_by(&selector, receiver_class.as_deref(), owning)
+}
+
+/// Does a send of `selector` to a receiver of `class` create a reference
+/// its caller owns and nothing else accounts for?
+fn created_by(selector: &str, class: Option<&str>, owning: &OwningMethods) -> bool {
+    if creates_reference(selector) {
+        return true;
+    }
+    if selector == "retain" || selector.starts_with("init") {
+        return false;
+    }
+    class.is_some_and(|class| owning.contains(class, selector))
+}
+
+/// The selector a `-performSelector:` send performs, when the source says
+/// so exactly: a `@selector(...)` literal at the call site, or a local
+/// declared once from one and never reassigned.
+///
+/// `SEL` is a real value type here, so the argument can be anything --
+/// a parameter, a field, the result of a call. Only these two spellings
+/// are readings of the source rather than guesses, and anything else stays
+/// unresolved.
+fn statically_performed_selector(node: Node, src: &str) -> Option<String> {
+    let parts = crate::emit::parse_message(node, src);
+    if !matches!(
+        parts.selector.as_str(),
+        "performSelector:" | "performSelector:withObject:" | "performSelector:withObject:withObject:"
+    ) {
+        return None;
+    }
+    selector_value_of(*parts.args.first()?, src)
+}
+
+/// The selector literal `node` evaluates to, or None.
+fn selector_value_of(node: Node, src: &str) -> Option<String> {
+    if node.kind() == "parenthesized_expression" {
+        let mut cursor = node.walk();
+        let inner = node.children(&mut cursor).find(|c| c.kind() != "(" && c.kind() != ")")?;
+        return selector_value_of(inner, src);
+    }
+    if node.kind() == "selector_expression" {
+        return crate::collect::selector_literal_name(node, src);
+    }
+    if node.kind() != "identifier" {
+        return None;
+    }
+    // A named local, read out of its own declaration. Declared exactly
+    // once, so an inner block shadowing the name cannot be mistaken for
+    // the outer one, and assigned nowhere, so what the declaration says is
+    // what the send performs. The initializer must be the literal itself:
+    // following a chain of identifiers would have to guard against
+    // `SEL s = s;`, and nothing writes that.
+    let scope = enclosing_scope(node)?;
+    let name = node_text(node, src);
+    if declaration_count(scope, src, name) != 1 || is_reassigned(scope, src, name) {
+        return None;
+    }
+    let init = declared_initializer(scope, src, name)?;
+    if init.kind() != "selector_expression" {
+        return None;
+    }
+    crate::collect::selector_literal_name(init, src)
+}
+
+/// The `method_definition` or `function_definition` enclosing `node`.
+fn enclosing_scope<'a>(node: Node<'a>) -> Option<Node<'a>> {
+    let mut scope = node.parent();
+    while let Some(n) = scope {
+        if matches!(n.kind(), "method_definition" | "function_definition") {
+            return Some(n);
+        }
+        scope = n.parent();
+    }
+    None
+}
+
+/// How many declarations or parameters inside `node` introduce `name`.
+fn declaration_count(node: Node, src: &str, name: &str) -> usize {
+    if matches!(node.kind(), "declaration" | "parameter_declaration")
+        && declares_name(node, name, src)
+    {
+        return 1;
+    }
+    let mut cursor = node.walk();
+    let children: Vec<Node> = node.children(&mut cursor).collect();
+    children.into_iter().map(|child| declaration_count(child, src, name)).sum()
+}
+
 /// The receiver's class (when statically known) and the selector of a
 /// message send, for looking the send up in `OwningMethods`.
 fn message_target(node: Node, src: &str, program: &Program) -> (Option<String>, String) {
