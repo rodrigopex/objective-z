@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // single_file_class_tags.rs -- a bare class name must get its `struct` tag in
-// the two positions that are copied through from source rather than rebuilt
-// from a type: a top-level declaration and a free function's signature (#246).
+// every position that is copied through from source rather than rebuilt from a
+// type: a top-level declaration and a free function's signature (#246), and
+// the parameter list of the function a block literal is hoisted into (#326).
 //
 // This is gap A, fixed once in `emit_split` and then found still open in the
 // single-file `emit()`, which had no `declaration` arm at all and did not tag
@@ -233,4 +234,120 @@ int main(void) {
     );
     let stdout = compile_and_run(&src, "non_class_type_names_are_not_tagged");
     assert_eq!(stdout, "x=3\n");
+}
+
+/// A third position copied through from source rather than rebuilt from a
+/// type: the parameter list of the function a block literal is hoisted into
+/// (#326).
+///
+/// `render_block` synthesizes that function's signature by patching the
+/// literal's own parameter list, and until #326 the patch lowered only a
+/// type-position `id` (#319) -- a *class* name came through with its bare
+/// Objective-C spelling and the hoisted prototype was not valid C at all:
+///
+/// ```text
+/// void oz_block_L200_C24_1(Widget *w);                 /* no `struct` tag */
+///         void (*b)(struct Widget *) = oz_block_L200_C24_1;
+/// ```
+///
+/// The declarator side was right all along --
+/// `render_block_type_param_list` promotes the name through the ordinary
+/// `needs_translation` recursion -- so the two sides also disagreed about the
+/// type, which is why running matters here as much as compiling: it says the
+/// two are the *same* type rather than two spellings a compiler tolerated.
+///
+/// Two shapes:
+///
+///   - `b`: a block variable in a method body, the case as filed
+///   - `mixed`: a class name among plain scalars, so the promotion neither
+///     misses it nor disturbs its neighbours
+///
+/// A *file-scope* block variable with a class-typed parameter
+/// (`static void (^h)(Widget *) = ^(Widget *wp) { ... };`) is deliberately
+/// not here: it is corrupted by a **separate, pre-existing** defect --
+/// `class_tag_edits` descends into the literal and hands `apply_edits` a
+/// range that overlaps `top_level_block_edits`'s replacement of the whole
+/// literal, and overlapping edits truncate each other
+/// (`static void (*sHook)(struct Widget *) = oz_block_L213_C34_1 : 0;`).
+/// Verified with this fix reverted: byte-identical corruption. Filed
+/// separately rather than folded in here.
+///
+/// No message is sent to the block parameter: a block body shares its
+/// enclosing method's flat scope and the parameter is not seeded into it, so
+/// a send would be rejected as an `id` receiver. That is a separate gap; what
+/// this case is about is the parameter's *type*.
+#[test]
+fn hoisted_block_parameter_gets_struct_tag() {
+    let src = format!(
+        "{}{}\n{}",
+        ozobject_src(),
+        WIDGET,
+        "\
+#include <stdio.h>
+
+static int gSeen = 0;
+
+@interface Runner : OZObject {
+	Widget *_held;
+}
+- (void)hold:(Widget *)wp;
+- (int)run;
+@end
+
+@implementation Runner
+- (void)hold:(Widget *)wp
+{
+	_held = wp;
+}
+- (int)run
+{
+	void (^b)(Widget *) = ^(Widget *wp) {
+		gSeen += wp != 0 ? 1 : 0;
+	};
+	void (^mixed)(int, Widget *, int) = ^(int seed, Widget *wp, int bump) {
+		gSeen += seed + (wp != 0 ? 4 : 0) + bump;
+	};
+	b(_held);
+	mixed(1, _held, 10);
+	return gSeen;
+}
+@end
+
+int main(void) {
+	Widget *w = [[Widget alloc] initWithN:3];
+	Runner *r = [Runner alloc];
+	[r hold:w];
+	printf(\"seen=%d\\n\", [r run]);
+	return 0;
+}
+"
+    );
+    // Compiled and run first, deliberately: without the tag this stops at
+    // `must use 'struct' tag to refer to type 'Widget'`, the report's own
+    // error -- four of them, a prototype and a definition per literal -- and
+    // the most direct statement of the bug. The text assertions below then say
+    // *which* spelling it settled on.
+    let stdout = compile_and_run(&src, "hoisted_block_parameter_gets_struct_tag");
+    assert_eq!(stdout, "seen=16\n");
+
+    let out = oz_static::transpile(&src).expect("should transpile").source_c;
+    assert!(
+        out.contains("(int seed, struct Widget *wp, int bump)"),
+        "the hoisted signature must be tagged:\n{}",
+        out
+    );
+    // The original of a translated line is echoed above it as a `/* ... */`
+    // comment, and *that* keeps the Objective-C spelling by design -- so only
+    // code lines are checked.
+    let leaked: Vec<&str> = out
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("/*"))
+        .filter(|line| line.contains("(Widget *"))
+        .collect();
+    assert!(
+        leaked.is_empty(),
+        "a hoisted block parameter kept its bare class name: {:?}\n{}",
+        leaked,
+        out
+    );
 }

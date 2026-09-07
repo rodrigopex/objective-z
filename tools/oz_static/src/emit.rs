@@ -3634,14 +3634,25 @@ fn render_block(node: Node, ctx: &mut EmitCtx) -> (String, String) {
         // (`staticbar::check_reserved_names`), so this cannot be reached with
         // one; keying on the CST means it emits correct C rather than two
         // stacked type specifiers if it ever is.
-        Some(plist) => match ctx.program.root_class() {
-            Some(root) => {
-                let mut edits = Vec::new();
+        //
+        // A *class*-typed parameter is promoted to `struct Name *` by the
+        // same `class_tag_edits` every other patched-text signature uses.
+        // This list is copied out of the author's source, and until #326 it
+        // was copied with the bare Objective-C spelling intact, so
+        // `void (^b)(Widget *) = ^(Widget *w) { ... };` hoisted
+        // `void oz_block_...(Widget *w)` -- `error: must use 'struct' tag to
+        // refer to type 'Widget'`, no valid C at all. The declarator side
+        // (`render_block_type_param_list`) had promoted it all along, so the
+        // two sides also disagreed on the type. Independent of the `id`
+        // lowering above and applied unconditionally: it needs no root class,
+        // only the class table.
+        Some(plist) => {
+            let mut edits = class_tag_edits(plist, ctx.src, ctx.program);
+            if let Some(root) = ctx.program.root_class() {
                 rewrite_id_types(plist, ctx.src, 0, &format!("struct {} *", root), &mut edits);
-                apply_edits(ctx.src, plist.start_byte(), plist.end_byte(), &edits)
             }
-            None => node_text(plist, ctx.src).to_string(),
-        },
+            apply_edits(ctx.src, plist.start_byte(), plist.end_byte(), &edits)
+        }
         None => "(void)".to_string(),
     };
 
