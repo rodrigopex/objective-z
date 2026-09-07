@@ -643,14 +643,14 @@ pub(crate) fn selector_to_c(selector: &str) -> String {
 /// mid-declarator (`RET (*NAME)(ARGS)`) -- `detect_block_param_type` signals
 /// that by leaving `PARAM_NAME_PLACEHOLDER` in the type text.
 ///
-/// # Where an `id` parameter is spelled as the root class pointer
+/// # Where a parameter type has to be spelled the same way twice
 ///
 /// This function is the roster the others point at, because it is the one
 /// every *method* signature goes through. Every position below produces or
 /// consumes the same C function-pointer type, so all of them have to agree
-/// on it -- one that keeps the `id` typedef says `void (*)(void *)` where
-/// its counterpart says `void (*)(struct OZObject *)`, and the assignment,
-/// initialization or call between them stops compiling:
+/// on how a parameter type is spelled -- one side disagreeing is an
+/// incompatible-pointer initialization at best and text no C compiler
+/// accepts at worst:
 ///
 ///   - here, for a block-typed method parameter, off the
 ///     `ID_TYPE_PLACEHOLDER` that `collect::detect_block_param_type` marked
@@ -667,6 +667,24 @@ pub(crate) fn selector_to_c(selector: &str) -> String {
 ///
 /// The last two are #319; the split between them is only that the `^` -> `*`
 /// lowering itself is spelled once as a render and once as text edits.
+///
+/// **Two** spellings have to agree at those positions, not one, and a
+/// position can get one right and the other wrong:
+///
+///   1. a type-position `id` becomes the root class pointer (#317, #319).
+///      Keeping the `id` typedef says `void (*)(void *)` where its
+///      counterpart says `void (*)(struct OZObject *)`, and the assignment,
+///      initialization or call between them stops compiling.
+///   2. a bare class name gets its `struct` tag (#246, #326) -- see
+///      `class_tag_edits`. This one is not merely a weaker type: `Widget *`
+///      with no tag is `error: must use 'struct' tag to refer to type
+///      'Widget'`, not valid C at all.
+///
+/// Rule 2 was the one `render_block` missed while getting rule 1 right, so a
+/// class-typed block parameter did not compile even after #319. Every
+/// position that rebuilds its type through `collect::render_type` gets both
+/// for free; the ones above patch source text instead, which is why they
+/// have to spell each rule out.
 pub(crate) fn render_param(ptype: &str, pname: &str, root: Option<&str>) -> String {
     if ptype.contains(crate::collect::PARAM_NAME_PLACEHOLDER) {
         // A function-pointer parameter: its own parameter list came through
@@ -739,10 +757,16 @@ fn wraps_block_pointer_declarator(node: Node) -> bool {
 /// lowering: unlike theirs, this list sits inside a declaration that is
 /// *already* being rendered, and the ordinary `needs_translation` recursion
 /// promotes a class name in it (`void (^b)(Widget *)` ->
-/// `void (*b)(struct Widget *)`). A flat-text rewrite over the original
-/// bytes would drop that promotion. The `id` cases are therefore tested
-/// before `needs_translation`, so a `parameter_declaration` carrying both an
-/// `id` and a translatable child still gets both.
+/// `void (*b)(struct Widget *)`) as a side effect. The `id` cases are
+/// therefore tested before `needs_translation`, so a
+/// `parameter_declaration` carrying both an `id` and a translatable child
+/// still gets both.
+///
+/// That side effect is what left this side right and the hoisted side wrong
+/// until #326: a flat-text rewrite of only the `id` drops the class-name
+/// promotion, and `render_block` -- which does patch text -- had to be told
+/// to promote class names explicitly, through `class_tag_edits`. The two
+/// sides agree again; see `render_param`'s roster for both rules.
 ///
 /// `root` is `None` when the program has no root class, in which case there
 /// is nothing to lower `id` to and the spelling stays -- the same answer
@@ -5735,11 +5759,12 @@ pub fn emit_split(
 /// A class generates `struct Name`, never a typedef, so any type position
 /// that keeps the ObjC spelling is invalid C: `error: must use 'struct' tag
 /// to refer to type 'Sensor'`. Method signatures, ivars, locals and casts
-/// all route through `collect::render_type` already; the two positions that
-/// did not were a plain top-level declaration (`samples/heap_alloc`'s
-/// `static OZHeap *sHeap;`) and a free function's own signature
-/// (`samples/arc_demo`'s `static Sensor *createSensor(int v)`), because both
-/// were copied through verbatim.
+/// all route through `collect::render_type` already; the positions that do
+/// not are the ones copied through verbatim -- a plain top-level declaration
+/// (`samples/heap_alloc`'s `static OZHeap *sHeap;`), a free function's own
+/// signature (`samples/arc_demo`'s `static Sensor *createSensor(int v)`),
+/// both #246, and the parameter list `render_block` patches into a hoisted
+/// block literal's signature (#326).
 ///
 /// A name already under a `struct_specifier` is skipped, so an
 /// already-tagged `struct OZHeap *` is left alone rather than becoming
