@@ -645,45 +645,28 @@ pub(crate) fn selector_to_c(selector: &str) -> String {
 pub(crate) fn render_param(ptype: &str, pname: &str, root: Option<&str>) -> String {
     if ptype.contains(crate::collect::PARAM_NAME_PLACEHOLDER) {
         // A function-pointer parameter: its own parameter list came through
-        // verbatim from source (`collect::detect_block_param_type`), so an
-        // `id` in it is still spelled `id`. It has to become the root class
-        // pointer, for the same reason a function-pointer *ivar*'s does --
-        // see `collect_ivar_lowering_edits`. The two must agree: an
+        // from source, with any `id` *type* in it already marked by
+        // `collect::detect_block_param_type` -- which had the CST and could
+        // therefore tell a parameter typed `id` from one merely named it
+        // (#317). It has to become the root class pointer, for the same
+        // reason a function-pointer *ivar*'s does -- see
+        // `collect_ivar_lowering_edits`. The two must agree: an
         // `-initWithBlock:` parameter is assigned straight into the matching
         // field, and with only the field lowered the assignment itself
         // stopped compiling.
         let rendered = ptype.replace(crate::collect::PARAM_NAME_PLACEHOLDER, pname);
         return match root {
-            Some(root) => replace_bare_id(&rendered, &format!("struct {} *", root)),
-            None => rendered,
+            Some(root) => {
+                rendered.replace(crate::collect::ID_TYPE_PLACEHOLDER, &format!("struct {} *", root))
+            }
+            // No root class, so there is nothing to lower `id` to; put the
+            // spelling back rather than leaking the marker.
+            None => rendered.replace(crate::collect::ID_TYPE_PLACEHOLDER, "id"),
         };
     }
     format!("{} {}", ptype, pname)
 }
 
-/// Replace `id` where it stands as a whole word, leaving `id`-containing
-/// identifiers (`idx`, `valid`, a parameter actually named `id`) alone.
-fn replace_bare_id(text: &str, replacement: &str) -> String {
-    let is_ident = |c: char| c.is_ascii_alphanumeric() || c == '_';
-    let mut out = String::with_capacity(text.len());
-    let bytes: Vec<char> = text.chars().collect();
-    let mut i = 0;
-    while i < bytes.len() {
-        let at_word = bytes[i] == 'i'
-            && i + 1 < bytes.len()
-            && bytes[i + 1] == 'd'
-            && (i == 0 || !is_ident(bytes[i - 1]))
-            && (i + 2 >= bytes.len() || !is_ident(bytes[i + 2]));
-        if at_word {
-            out.push_str(replacement);
-            i += 2;
-        } else {
-            out.push(bytes[i]);
-            i += 1;
-        }
-    }
-    out
-}
 
 /// Class methods get a `_cls` suffix so `+foo` and `-foo` on the same
 /// class never collide on the same C function name.
@@ -3516,13 +3499,22 @@ fn render_block(node: Node, ctx: &mut EmitCtx) -> (String, String) {
         // `^(id obj, unsigned int idx, BOOL *stop) { ... }` to
         // `-enumerateObjectsUsingBlock:`, and with only the parameter type
         // lowered the call stopped compiling on the function pointer's type.
-        Some(plist) => {
-            let text = node_text(plist, ctx.src).to_string();
-            match ctx.program.root_class() {
-                Some(root) => replace_bare_id(&text, &format!("struct {} *", root)),
-                None => text,
+        //
+        // Driven off the CST rather than the parameter list's text, so only
+        // an `id` the grammar reads as a *type* is rewritten. A flat-text
+        // sweep could not tell that from a parameter merely *named* `id`,
+        // and rewrote both -- #317. That name is reserved now
+        // (`staticbar::check_reserved_names`), so this cannot be reached with
+        // one; keying on the CST means it emits correct C rather than two
+        // stacked type specifiers if it ever is.
+        Some(plist) => match ctx.program.root_class() {
+            Some(root) => {
+                let mut edits = Vec::new();
+                rewrite_id_types(plist, ctx.src, 0, &format!("struct {} *", root), &mut edits);
+                apply_edits(ctx.src, plist.start_byte(), plist.end_byte(), &edits)
             }
-        }
+            None => node_text(plist, ctx.src).to_string(),
+        },
         None => "(void)".to_string(),
     };
 
@@ -4052,7 +4044,7 @@ fn find_parameter_lists<'a>(node: Node<'a>, out: &mut Vec<Node<'a>>) {
 /// `typedefed_specifier` where it reads it as a typedef reference. A
 /// declarator's own `*` is a separate token and is left alone, so `id *`
 /// becomes `struct Root **` as it should.
-fn rewrite_id_types(
+pub(crate) fn rewrite_id_types(
     node: Node,
     src: &str,
     origin: usize,
@@ -5722,7 +5714,7 @@ fn contains_block_literal(node: Node) -> bool {
 }
 
 /// Apply `edits` (absolute source offsets) to the text of `start..end`.
-fn apply_edits(src: &str, start: usize, end: usize, edits: &[(Range<usize>, String)]) -> String {
+pub(crate) fn apply_edits(src: &str, start: usize, end: usize, edits: &[(Range<usize>, String)]) -> String {
     let mut text = src[start..end].to_string();
     let mut relevant: Vec<&(Range<usize>, String)> =
         edits.iter().filter(|(r, _)| r.start >= start && r.end <= end).collect();
