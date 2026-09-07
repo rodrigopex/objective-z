@@ -667,6 +667,75 @@ pub(crate) fn render_param(ptype: &str, pname: &str, root: Option<&str>) -> Stri
     format!("{} {}", ptype, pname)
 }
 
+/// Is this `function_declarator` the shape a block-pointer *type* parses
+/// as -- `RET (^NAME)(ARGS)` -- rather than an ordinary function
+/// declarator?
+///
+/// The `^` sits one level down, inside the parenthesized declarator:
+/// `function_declarator > parenthesized_declarator > block_pointer_declarator`.
+/// A `*` on the return type (`void *(^f)(id)`) hangs off a
+/// `pointer_declarator` *above* this node, so it does not disturb the
+/// two-level walk.
+fn wraps_block_pointer_declarator(node: Node) -> bool {
+    let mut cursor = node.walk();
+    let parens: Vec<Node> = node
+        .children(&mut cursor)
+        .filter(|c| {
+            matches!(c.kind(), "parenthesized_declarator" | "abstract_parenthesized_declarator")
+        })
+        .collect();
+    for paren in parens {
+        let mut inner = paren.walk();
+        let children: Vec<Node> = paren.children(&mut inner).collect();
+        let carets = children.into_iter().any(|c| {
+            matches!(c.kind(), "block_pointer_declarator" | "abstract_block_pointer_declarator")
+        });
+        if carets {
+            return true;
+        }
+    }
+    false
+}
+
+/// Render a block-pointer declarator's own parameter list, lowering a
+/// type-position `id` to `root` (the root class pointer, already spelled
+/// `struct Root *`).
+///
+/// The same lowering `render_param`, `collect_ivar_lowering_edits` and
+/// `render_block` already apply -- see `render_param` for the roster and why
+/// they have to agree -- at the one position that did not.
+/// `void (^b)(id) = ^(id obj) { ... };` hoisted a function taking
+/// `struct OZObject *` while declaring `b` as `void (*)(id)`, which is
+/// `void (*)(void *)`, and the initialization was then an
+/// incompatible-function-pointer error (#319).
+///
+/// A recursive render rather than `rewrite_id_types` + `apply_edits`, which
+/// is how `render_block` and `collect_ivar_lowering_edits` spell the same
+/// lowering: unlike theirs, this list sits inside a declaration that is
+/// *already* being rendered, and the ordinary `needs_translation` recursion
+/// promotes a class name in it (`void (^b)(Widget *)` ->
+/// `void (*b)(struct Widget *)`). A flat-text rewrite over the original
+/// bytes would drop that promotion. The `id` cases are therefore tested
+/// before `needs_translation`, so a `parameter_declaration` carrying both an
+/// `id` and a translatable child still gets both.
+///
+/// `root` is `None` when the program has no root class, in which case there
+/// is nothing to lower `id` to and the spelling stays -- the same answer
+/// `render_param` gives.
+fn render_block_type_param_list(node: Node, ctx: &mut EmitCtx, root: Option<&str>) -> String {
+    rebuild(node, ctx, &mut |child, ctx| {
+        if is_bare_id_type(child, ctx.src) {
+            return root.map(|root| root.to_string());
+        }
+        if contains_bare_id_type(child, ctx.src) {
+            return Some(render_block_type_param_list(child, ctx, root));
+        }
+        if needs_translation(child) {
+            return Some(render_expr(child, ctx).0);
+        }
+        None
+    })
+}
 
 /// Class methods get a `_cls` suffix so `+foo` and `-foo` on the same
 /// class never collide on the same C function name.
@@ -1180,6 +1249,32 @@ fn render_expr(node: Node, ctx: &mut EmitCtx) -> (String, String) {
         "string_literal" => render_boxed_string_literal(node, ctx),
         "array_literal" => render_boxed_array_literal(node, ctx),
         "dictionary_literal" => render_boxed_dictionary_literal(node, ctx),
+        // The `(ARGS)` half of a block-typed variable's own declared type:
+        // `void (^b)(id) = ^(id obj) { ... };`. The list hangs off this
+        // `function_declarator` as a *sibling* of the
+        // `parenthesized_declarator` holding the `^`, so the
+        // `block_pointer_declarator` arm below never sees it -- and left to
+        // the generic rebuild it passed through verbatim, so `b` was
+        // declared `void (*b)(id)` (i.e. `void (*)(void *)`) and
+        // initialized from a hoisted function taking `struct OZObject *`.
+        // Clang rejects that as incompatible function pointer types (#319).
+        // See `render_block_type_param_list`.
+        "function_declarator" | "abstract_function_declarator"
+            if wraps_block_pointer_declarator(node) =>
+        {
+            let root = ctx.program.root_class().map(|root| format!("struct {} *", root));
+            let text = rebuild(node, ctx, &mut |child, ctx| {
+                if child.kind() == "parameter_list" {
+                    return Some(render_block_type_param_list(child, ctx, root.as_deref()));
+                }
+                if needs_translation(child) {
+                    Some(render_expr(child, ctx).0)
+                } else {
+                    None
+                }
+            });
+            (text, "id".to_string())
+        }
         "block_pointer_declarator" | "abstract_block_pointer_declarator" => {
             // A block-typed local (`int (^square)(int) = ...;`) keeps its
             // `^` declarator syntax verbatim from source, but its
@@ -4091,12 +4186,31 @@ fn find_parameter_lists<'a>(node: Node<'a>, out: &mut Vec<Node<'a>>) {
     }
 }
 
+/// Is `node` a bare `id` standing in *type* position?
+///
+/// Both node kinds a bare `id` can appear as are matched: `type_identifier`
+/// where the grammar reads it as an ordinary type name, and
+/// `typedefed_specifier` where it reads it as a typedef reference. Asking
+/// the CST rather than the text is what keeps a parameter *typed* `id`
+/// distinct from one merely *named* it (#317).
+fn is_bare_id_type(node: Node, src: &str) -> bool {
+    matches!(node.kind(), "type_identifier" | "typedefed_specifier")
+        && node_text(node, src).trim() == "id"
+}
+
+/// Does a bare `id` type appear anywhere at or under `node`?
+fn contains_bare_id_type(node: Node, src: &str) -> bool {
+    if is_bare_id_type(node, src) {
+        return true;
+    }
+    let mut cursor = node.walk();
+    let found = node.children(&mut cursor).any(|child| contains_bare_id_type(child, src));
+    found
+}
+
 /// Rewrite every bare `id` type name under `node` to `replacement`.
 ///
-/// Both node kinds a bare `id` can appear as are handled: `type_identifier`
-/// where the grammar reads it as an ordinary type name, and
-/// `typedefed_specifier` where it reads it as a typedef reference. A
-/// declarator's own `*` is a separate token and is left alone, so `id *`
+/// A declarator's own `*` is a separate token and is left alone, so `id *`
 /// becomes `struct Root **` as it should.
 pub(crate) fn rewrite_id_types(
     node: Node,
@@ -4105,9 +4219,7 @@ pub(crate) fn rewrite_id_types(
     replacement: &str,
     edits: &mut Vec<(Range<usize>, String)>,
 ) {
-    if matches!(node.kind(), "type_identifier" | "typedefed_specifier")
-        && node_text(node, src).trim() == "id"
-    {
+    if is_bare_id_type(node, src) {
         edits.push((node.start_byte() - origin..node.end_byte() - origin, replacement.to_string()));
         return;
     }
@@ -5135,7 +5247,7 @@ fn walk_top_level(
                 // `collect::render_type`, so nothing else lowers it and the
                 // `^` reached GCC (#272). A method's equivalent parameter
                 // has always been lowered.
-                sig_edits.extend(block_pointer_edits(node, source));
+                sig_edits.extend(block_pointer_edits(node, source, program.root_class()));
                 let mut text = apply_edits(source, node.start_byte(), node.end_byte(), &sig_edits);
                 let mut c2 = node.walk();
                 if let Some(body) = node.children(&mut c2).find(|c| c.kind() == "compound_statement") {
@@ -5252,7 +5364,7 @@ fn walk_top_level(
                         .filter(|o| (node.start_byte()..node.end_byte()).contains(o))
                         .map(|o| (*o..*o + 1, " ".to_string())),
                 );
-                edits.extend(block_pointer_edits(node, source));
+                edits.extend(block_pointer_edits(node, source, program.root_class()));
                 if contains_block_literal(node) {
                     let mut ctx =
                         EmitCtx::new(source, program, String::new(), file_vars.clone(), pools);
@@ -5651,7 +5763,21 @@ fn class_tag_edits(node: Node, src: &str, program: &Program) -> Vec<(Range<usize
 /// that function's signature outright rather than patching it, and
 /// `top_level_block_edits` replaces the whole literal anyway -- an edit
 /// inside it would be discarded or would collide.
-fn block_pointer_edits(node: Node, src: &str) -> Vec<(Range<usize>, String)> {
+///
+/// The `^` is not the only thing the type has to lose: a type-position `id`
+/// in the declarator's own parameter list is lowered to `root` here too, by
+/// the same rule as everywhere else an `id` reaches a function-pointer
+/// parameter -- see `render_param`. Lowering only the `^` left
+/// `static void (^g)(id)`
+/// as `void (*g)(id)` -- `void (*)(void *)` -- initialized from a hoisted
+/// function taking `struct OZObject *`, which Clang rejects as incompatible
+/// function pointer types (#319). `root` is `None` when the program has no
+/// root class, in which case there is nothing to lower to and `id` stays.
+fn block_pointer_edits(
+    node: Node,
+    src: &str,
+    root: Option<&str>,
+) -> Vec<(Range<usize>, String)> {
     fn caret(node: Node, src: &str) -> Option<Range<usize>> {
         let mut cursor = node.walk();
         if let Some(tok) = node.children(&mut cursor).find(|c| c.kind() == "^") {
@@ -5663,7 +5789,12 @@ fn block_pointer_edits(node: Node, src: &str) -> Vec<(Range<usize>, String)> {
         let start = node.start_byte();
         src[node.byte_range()].find('^').map(|off| (start + off)..(start + off + 1))
     }
-    fn walk(node: Node, src: &str, out: &mut Vec<(Range<usize>, String)>) {
+    fn walk(
+        node: Node,
+        src: &str,
+        root: Option<&str>,
+        out: &mut Vec<(Range<usize>, String)>,
+    ) {
         if node.kind() == "block_literal" {
             return;
         }
@@ -5673,14 +5804,32 @@ fn block_pointer_edits(node: Node, src: &str) -> Vec<(Range<usize>, String)> {
                 out.push((range, "*".to_string()));
             }
         }
+        // The parameter list is a *sibling* of the parenthesized declarator
+        // holding the `^`, not a child of it, so it is reached from the
+        // enclosing function declarator rather than from the arm above.
+        if matches!(node.kind(), "function_declarator" | "abstract_function_declarator")
+            && wraps_block_pointer_declarator(node)
+        {
+            if let Some(root) = root {
+                let replacement = format!("struct {} *", root);
+                let mut cursor = node.walk();
+                let lists: Vec<Node> = node
+                    .children(&mut cursor)
+                    .filter(|c| c.kind() == "parameter_list")
+                    .collect();
+                for list in lists {
+                    rewrite_id_types(list, src, 0, &replacement, out);
+                }
+            }
+        }
         let mut cursor = node.walk();
         let children: Vec<Node> = node.children(&mut cursor).collect();
         for child in children {
-            walk(child, src, out);
+            walk(child, src, root, out);
         }
     }
     let mut out = Vec::new();
-    walk(node, src, &mut out);
+    walk(node, src, root, &mut out);
     out
 }
 

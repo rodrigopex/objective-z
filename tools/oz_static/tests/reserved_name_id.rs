@@ -246,14 +246,10 @@ fn second_declarator_named_id_rejected() {
 /// `typedefed_specifier` spelling `id` is a genuine type, which is what
 /// separates `id _delegate;` from the rejected `unsigned char id;`.
 ///
-/// The block literal is passed straight to a block-typed parameter rather
-/// than through a local block variable. A local one does not compile here,
-/// and not because of anything #317 changed: the variable's own declared
-/// type keeps `id` (so `void (*)(void *)`) while the hoisted function's
-/// parameter is lowered to `struct OZObject *`, and the initialization is
-/// then an incompatible-function-pointer error. That is a fourth site to
-/// the three `render_param` names as having to agree, it reproduces on an
-/// unmodified tree, and it is filed separately.
+/// The block literal is passed straight to a block-typed parameter, which
+/// is `render_param`'s path. Routing it through a local block variable
+/// instead exercises a different one, and used not to compile: see
+/// `id_typed_block_variable_agrees_with_its_hoisted_function` below (#319).
 #[test]
 fn id_as_a_type_still_accepted() {
     let src = format!(
@@ -294,6 +290,92 @@ int main(void) {{
         PREAMBLE()
     );
     assert_eq!(compile_and_run(&src, "id_as_a_type_still_accepted"), "hits=1\n");
+}
+
+/// #319: a block *type*'s own parameter list has to spell an `id` parameter
+/// the way `render_param` does, and it did not. Every shape below hoists a
+/// function taking `struct OZObject *` while declaring the thing that holds
+/// it as taking `id` -- `void *` -- so the initialization or the call was
+/// "incompatible function pointer types ... with an expression of type
+/// 'void (struct OZObject *)'".
+///
+/// Four shapes, because the `^` -> `*` lowering is spelled twice: in
+/// `render_expr`'s `function_declarator` arm for a declarator inside a
+/// method body, and as text edits in `block_pointer_edits` for one at file
+/// scope. Neither half covers the other -- disabling either leaves two of
+/// the four broken.
+///
+///   - `b`: a block variable in a method body, the case as filed
+///   - `mixed`: an `id` in the middle of a list of plain scalars, so the
+///     lowering neither misses it nor disturbs its neighbours
+///   - `sHook`: a file-scope block variable
+///   - `take_cb`: a free function's block-typed parameter, prototype and
+///     definition both
+///
+/// Running it, not just compiling it, is what proves the two sides ended up
+/// as the *same* type rather than merely two spellings the compiler
+/// tolerated.
+#[test]
+fn id_typed_block_variable_agrees_with_its_hoisted_function() {
+    let src = format!(
+        "{}\n\
+#include <stdio.h>
+
+static int gSeen = 0;
+
+static void (^sHook)(id) = ^(id o) {{
+\tgSeen += o != 0 ? 100 : 0;
+}};
+
+static void take_cb(void (^cb)(id));
+
+static void take_cb(void (^cb)(id))
+{{
+\tcb(0);
+}}
+
+@interface Blkv : OZObject {{
+\t__unsafe_unretained id _delegate;
+}}
+- (void)hold:(id)obj;
+- (int)run;
+@end
+
+@implementation Blkv
+- (void)hold:(id)obj {{
+\t_delegate = obj;
+}}
+- (int)run {{
+\tvoid (^b)(id) = ^(id obj) {{
+\t\tgSeen += obj != 0 ? 1 : 0;
+\t}};
+\tvoid (^mixed)(int, id, int) = ^(int seed, id obj, int bump) {{
+\t\tgSeen += seed + (obj != 0 ? 4 : 0) + bump;
+\t}};
+\tb(_delegate);
+\tmixed(1, _delegate, 10);
+\tsHook(_delegate);
+\ttake_cb(^(id obj) {{
+\t\tgSeen += obj == 0 ? 1000 : 0;
+\t}});
+\treturn gSeen;
+}}
+@end
+
+int main(void) {{
+\tBlkv *v = [Blkv alloc];
+\t[v hold:v];
+\tprintf(\"seen=%d\\n\", [v run]);
+\t[v release];
+\treturn 0;
+}}
+",
+        PREAMBLE()
+    );
+    assert_eq!(
+        compile_and_run(&src, "id_typed_block_variable_agrees_with_its_hoisted_function"),
+        "seen=1116\n"
+    );
 }
 
 /// The px-keyboard shape, and the reason C struct fields are the *only*
