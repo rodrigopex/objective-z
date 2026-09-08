@@ -1616,6 +1616,21 @@ fn render_expr(node: Node, ctx: &mut EmitCtx) -> (String, String) {
         "assignment_expression" => render_assignment_expression(node, ctx),
         "cast_expression" => render_cast_expression(node, ctx),
         "for_statement" if is_forin_shape(node) => render_forin_statement(node, ctx),
+        // A +1 operand in a `for` header's initialiser (#341). Its own arm
+        // rather than a widened guard on the declaration one below: a `for`
+        // header cannot take a statement group, so the whole loop is
+        // wrapped instead, with the temporary above it and the release
+        // after it. Bracing scopes nothing out -- a header declaration is
+        // already scoped to the `for` -- and the release lands after the
+        // loop rather than after the send, which costs the temporary its
+        // slab slot for the loop's duration and buys a release that happens
+        // exactly once.
+        //
+        // Below the for-in arm, so `for (id x in c)` still claims its own.
+        "for_statement" if !for_header_owning_operands(node, ctx).is_empty() => {
+            let values = for_header_owning_operands(node, ctx);
+            render_owning_operand_statement(node, ctx, values)
+        }
         "synchronized_statement" => render_synchronized_statement(node, ctx),
         "return_statement" => render_return_statement(node, ctx),
         "compound_statement" if is_autoreleasepool_shape(node) => {
@@ -1636,7 +1651,8 @@ fn render_expr(node: Node, ctx: &mut EmitCtx) -> (String, String) {
         // renders the statement through the ordinary dispatch, so that one
         // still gets its turn.
         "expression_statement" if !owning_send_operands(node, ctx).is_empty() => {
-            render_owning_operand_statement(node, ctx)
+            let values = owning_send_operands(node, ctx);
+            render_owning_operand_statement(node, ctx, values)
         }
         // A +1 result bound to nothing (#322).
         "expression_statement" if discards_owning_result(node, ctx) => {
@@ -1659,7 +1675,8 @@ fn render_expr(node: Node, ctx: &mut EmitCtx) -> (String, String) {
             if node.parent().is_some_and(|parent| parent.kind() == "compound_statement")
                 && !owning_send_operands(node, ctx).is_empty() =>
         {
-            render_owning_operand_statement(node, ctx)
+            let values = owning_send_operands(node, ctx);
+            render_owning_operand_statement(node, ctx, values)
         }
         _ => {
             if !needs_translation(node) {
@@ -4372,6 +4389,38 @@ fn owning_send_operands<'a>(
     values
 }
 
+/// The +1 operands of a `for` header's **initialiser**, and of nothing
+/// else in the header (#341).
+///
+/// `child_by_field_name("initializer")` and no other child, deliberately.
+/// An initialiser runs **once**, which is the whole reason its allocation
+/// may be lifted above the loop; the condition runs before every iteration
+/// and the update after every one, so lifting either would allocate once
+/// where the source allocates every time round -- handing the same object
+/// to every evaluation and changing what the program does rather than only
+/// where it frees. Both of those still leak, and
+/// `a_for_conditions_owning_operand_is_not_hoisted` is what keeps them from
+/// being swept in by a later widening.
+///
+/// Note this is the *opposite* of the constraint that shaped #328, which
+/// avoided `ctx.pre_stmts` precisely because hoisting an allocation out of
+/// a loop **body** would run it once instead of per iteration
+/// (`an_owning_argument_inside_a_loop_allocates_per_iteration`). A header
+/// initialiser is the one place in a loop where hoisting is the correct
+/// answer, which is why this is a separate arm and not a widened guard on
+/// the declaration one.
+fn for_header_owning_operands<'a>(
+    node: Node<'a>,
+    ctx: &EmitCtx,
+) -> Vec<(Node<'a>, OperandPosition)> {
+    let mut values: Vec<(Node<'a>, OperandPosition)> = Vec::new();
+    if let Some(init) = node.child_by_field_name("initializer") {
+        collect_owning_operands(init, ctx, &mut values);
+    }
+    values.sort_by_key(|(value, _)| value.end_byte());
+    values
+}
+
 fn collect_owning_operands<'a>(
     node: Node<'a>,
     ctx: &EmitCtx,
@@ -4451,6 +4500,14 @@ fn collect_owning_operands<'a>(
 /// wherever a statement is, so an unbraced `if (x) [self setFoo:[Foo
 /// new]];` needs no special case.
 ///
+/// Since #341 the statement wrapped can be a whole `for` loop, which is
+/// why the group's own indentation walks the statement's lines rather than
+/// prefixing only the first. That case is also the one exception to the
+/// paragraph above: a `for` header's initialiser runs *once*, so lifting
+/// its allocation above the loop is correct -- see
+/// `for_header_owning_operands`, which is careful to read the initialiser
+/// and not the condition or the update.
+///
 /// The statement itself is then rendered by the ordinary dispatch, with
 /// `ctx.arg_temps` standing in for the arguments (see `render_expr`), so
 /// nothing here has to know how a send is called -- direct, dynamic, or
@@ -4459,8 +4516,11 @@ fn collect_owning_operands<'a>(
 ///
 /// `oz_static_release` is null-safe, so an allocation that found no free
 /// slab slot needs no guard of its own.
-fn render_owning_operand_statement(node: Node, ctx: &mut EmitCtx) -> (String, String) {
-    let values = owning_send_operands(node, ctx);
+fn render_owning_operand_statement(
+    node: Node,
+    ctx: &mut EmitCtx,
+    values: Vec<(Node, OperandPosition)>,
+) -> (String, String) {
     let root = ctx.program.root_class().unwrap_or("OZObject").to_string();
     let mut decls: Vec<String> = Vec::with_capacity(values.len());
     let mut releases: Vec<String> = Vec::with_capacity(values.len());
@@ -4504,9 +4564,26 @@ fn render_owning_operand_statement(node: Node, ctx: &mut EmitCtx) -> (String, St
     }
     let mut out = String::from("{\n");
     for line in lines {
-        out.push_str("\t\t");
-        out.push_str(line);
-        out.push('\n');
+        /* Every line of the entry, not only its first. A decl and a
+         * release are one line each, but the *statement* need not be: since
+         * #341 it can be a whole `for` loop, and prefixing only its opening
+         * line left the loop body at its original depth -- one level
+         * shallower than the brace it now sits inside, which reads as if
+         * the body had escaped the group.
+         *
+         * One extra tab on the continuation lines and two on the first,
+         * because the two start from different depths: a rendered
+         * statement's opening line begins at the statement token with no
+         * indentation of its own, while the lines after it are passed
+         * through carrying the author's, already at the depth the
+         * statement had before this group was wrapped around it. */
+        for (i, text) in line.lines().enumerate() {
+            if !text.is_empty() {
+                out.push_str(if i == 0 { "\t\t" } else { "\t" });
+                out.push_str(text);
+            }
+            out.push('\n');
+        }
     }
     out.push_str("\t}");
     (out, "void".to_string())
