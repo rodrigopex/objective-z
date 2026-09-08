@@ -4007,6 +4007,21 @@ fn render_block(node: Node, ctx: &mut EmitCtx) -> (String, String) {
     let mut cursor2 = node.walk();
     let body = node.children(&mut cursor2).find(|c| c.kind() == "compound_statement");
     let ret_ty = block_return_type(node, body, ctx);
+    // The block's own return type is what a `return` inside it has to be
+    // evaluated into on the cleanup path, so record it before the body is
+    // rendered and put the enclosing body's back afterwards (#339).
+    //
+    // The two other positions that record this -- `render_method_definition`
+    // and `walk_top_level`'s `function_definition` arm -- each own a fresh
+    // `EmitCtx` and so can simply assign. A block literal is rendered
+    // *inside* an enclosing body's context, on that body's `EmitCtx`, so
+    // without the restore the next `return` in the enclosing body, after
+    // the literal, would take the block's type.
+    //
+    // Setting it for a `void` block is correct too: a valueless `return`
+    // takes `render_return_statement`'s `None` arm and builds no temporary
+    // at all.
+    let enclosing_return_type = std::mem::replace(&mut ctx.method_return_type, ret_ty.clone());
     let body_text = match body {
         Some(body) => {
             // Block bodies use the same flat scope as their enclosing
@@ -4016,6 +4031,7 @@ fn render_block(node: Node, ctx: &mut EmitCtx) -> (String, String) {
         }
         None => "{\n}".to_string(),
     };
+    ctx.method_return_type = enclosing_return_type;
 
     // `(void)param;` for the block's own unused parameters. This function and
     // its signature are both synthesized here, so unlike a plain C function's
