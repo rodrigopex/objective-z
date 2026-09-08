@@ -262,15 +262,10 @@ int main(void) {
 ///   - `mixed`: a class name among plain scalars, so the promotion neither
 ///     misses it nor disturbs its neighbours
 ///
-/// A *file-scope* block variable with a class-typed parameter
-/// (`static void (^h)(Widget *) = ^(Widget *wp) { ... };`) is deliberately
-/// not here: it is corrupted by a **separate, pre-existing** defect --
-/// `class_tag_edits` descends into the literal and hands `apply_edits` a
-/// range that overlaps `top_level_block_edits`'s replacement of the whole
-/// literal, and overlapping edits truncate each other
-/// (`static void (*sHook)(struct Widget *) = oz_block_L213_C34_1 : 0;`).
-/// Verified with this fix reverted: byte-identical corruption. Filed
-/// separately rather than folded in here.
+/// The *file-scope* form of the same shape was left out of this case when it
+/// was written, because a separate, pre-existing defect corrupted it. That
+/// is #331, fixed since, and the shape now has a case of its own --
+/// `file_scope_block_variable_with_class_parameter_compiles_and_runs` below.
 ///
 /// No message is sent to the block parameter: a block body shares its
 /// enclosing method's flat scope and the parameter is not seeded into it, so

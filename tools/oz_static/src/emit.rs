@@ -18,6 +18,11 @@
 // doing so is how it managed to disagree with `emit_split()` four times
 // (#254): anything no arm claimed simply survived, so a missing arm produced
 // no error and no output difference until a C compiler saw it.
+//
+// Several passes may contribute edits for the same construct, and they must
+// be *disjoint*: a pass that replaces a subtree owns its whole byte range.
+// Two overlapping edits truncate each other and produce text no C compiler
+// accepts, which is #331; `apply_edits` states the rule and asserts it.
 
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
@@ -5735,6 +5740,12 @@ fn walk_top_level<'a>(
                 // that name (`top_level_block_edits` -- which is what makes
                 // `ZBUS_LISTENER_DEFINE(n, ^(...){ ... })` compile).
                 //
+                // All three feed one `apply_edits` call, so their ranges
+                // have to be disjoint: the literal belongs to
+                // `top_level_block_edits` alone, and the other two skip it
+                // (#331). `apply_edits` asserts that rather than trusting
+                // it.
+                //
                 // Everything else here is trivia and passes through
                 // untouched: with no edits, `apply_edits` returns the
                 // original text byte for byte.
@@ -6137,6 +6148,13 @@ pub fn emit_split(
 /// A name already under a `struct_specifier` is skipped, so an
 /// already-tagged `struct OZHeap *` is left alone rather than becoming
 /// `struct struct OZHeap *`.
+///
+/// A `block_literal` is skipped too, by the disjointness rule `apply_edits`
+/// states: `top_level_block_edits` replaces the literal's whole byte range
+/// with the hoisted function's name, so an edit inside it can only collide
+/// (#331). Nothing is lost by not descending -- `render_block` renders that
+/// subtree, and patches the hoisted signature's own parameter list through
+/// this same helper (#326).
 fn class_tag_edits(node: Node, src: &str, program: &Program) -> Vec<(Range<usize>, String)> {
     fn walk(
         node: Node,
@@ -6203,6 +6221,13 @@ fn class_tag_edits(node: Node, src: &str, program: &Program) -> Vec<(Range<usize
 /// that function's signature outright rather than patching it, and
 /// `top_level_block_edits` replaces the whole literal anyway -- an edit
 /// inside it would be discarded or would collide.
+///
+/// That is the disjointness rule `apply_edits` states, not a quirk of this
+/// pass: a pass that replaces a subtree owns its whole byte range, and no
+/// other pass may edit inside it. `class_tag_edits` had no such skip until
+/// #331, and the file-scope shape this pass exists for -- `static void
+/// (^sHook)(Widget *) = ^(Widget *wp) { ... };` -- was corrupted by the
+/// collision for the whole life of `top_level_block_edits`.
 ///
 /// The `^` is not the only thing the type has to lose: a type-position `id`
 /// in the declarator's own parameter list is lowered to `root` here too, by
