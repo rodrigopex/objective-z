@@ -7,16 +7,29 @@
 // failing to release an owned one is a leak. So every local this decides to
 // release must be provably +1, and everything else is left alone.
 //
-// Two questions, not one, and they have different answers. Scope-based
-// release asks whether a local holding a value may be released when its
-// scope ends (`is_owning_expr`); a statement whose value is bound to
-// nothing asks whether discarding it abandons a reference nothing else
-// accounts for (`discarded_owning_value`, #322). `-retain` and `-init...`
-// are +1 to the first and not to the second, because the reference they
-// hand back is one something else is already tracking. A cast runs the
-// other way: borrowed to the first, looked through by the second, so
-// `(void)[t copy];` and `[t copy];` cannot differ in whether they leak
-// (#327).
+// Two questions, not one, and they have different answers.
+// `is_owning_expr` asks whether an expression is +1 *by shape* -- may a
+// local holding it be released at scope exit; `discards_ownership` asks
+// whether throwing that value away abandons a reference nothing else
+// accounts for (`discarded_owning_value`, #322). `-retain` and
+// `-init...` are +1 to the first and not to the second, because the
+// reference they hand back is one something else is already tracking.
+//
+// A cast is where the two have to be combined rather than chosen between,
+// because `is_owning_expr` reads one as borrowed -- deliberately, and
+// still does, since that answer also decides which methods are owning
+// factories and so what every caller of one must release. `binds_ownership`
+// is the combination, and it is what every *binding* site consults: +1 by
+// shape, or a non-bridging cast over a reference `created_by` says is
+// genuinely new. That is what lets
+//
+//     Thing *t = (Thing *)[Thing alloc];   /* +1, released at scope end */
+//     Thing *t = (Thing *)[u init];        /* u's own +1, left alone */
+//
+// differ (#332), and what makes `(void)[t copy];` and `[t copy];` agree on
+// whether they leak (#327). Both peels go through `value_behind_casts`, so
+// the two cannot drift apart, and a *bridging* cast is looked through by
+// neither.
 //
 // Ported from the oracle's `_is_owning_expr` / `_find_owning_return_methods`
 // (tools/oz_transpile/emit.py), with one improvement: the oracle's scan is a
@@ -270,6 +283,14 @@ fn scan_once(root: Node, src: &str, program: &Program, owning: &mut OwningMethod
 /// reassigned might hold something borrowed by the time it is returned, and
 /// guessing wrong in that direction is a double free, where guessing wrong
 /// the other way only leaks.
+///
+/// A `return` is a binding site like any other, so it asks
+/// `binds_ownership` rather than `is_owning_expr`: `return (Thing *)[Thing
+/// alloc];` hands the caller the same +1 the uncast spelling does (#332).
+/// The identifier is read from behind a cast too --
+/// `emit::render_return_statement` reads the returned *name* through the
+/// same peel, and the two have to agree: whichever local it decides not to
+/// release is the one whose ownership this says passes to the caller.
 fn return_hands_back_ownership(
     ret: Node,
     body: Node,
@@ -280,9 +301,10 @@ fn return_hands_back_ownership(
     let Some(value) = value_of_return(ret) else {
         return false;
     };
-    if is_owning_expr(value, src, program, owning) {
+    if binds_ownership(value, src, program, owning) {
         return true;
     }
+    let value = value_behind_casts(value, src);
     if value.kind() != "identifier" {
         return false;
     }
@@ -291,7 +313,7 @@ fn return_hands_back_ownership(
         return false;
     }
     declared_initializer(body, src, name)
-        .is_some_and(|init| is_owning_expr(init, src, program, owning))
+        .is_some_and(|init| binds_ownership(init, src, program, owning))
 }
 
 /// The initialiser of `name`'s declaration inside `node`, if it has one.
@@ -393,12 +415,14 @@ fn value_of_return<'a>(ret: Node<'a>) -> Option<Node<'a>> {
 /// an unrecognised shape leaks rather than double-frees. That asymmetry is
 /// the whole point -- a leak is a bug, a double free is memory corruption.
 ///
-/// The question is specifically whether a *local* holding this value may be
-/// released when its scope ends. It is the wrong one for a value bound to
-/// nothing: `[c retain]` and `[f init]` are +1 here and must be, since a
-/// local taking one over needs no retain of its own, but discarding either
-/// abandons no reference -- see `discards_ownership`, which #322 added for
-/// exactly that difference.
+/// The question is specifically whether this expression is +1 *by shape*.
+/// It is the wrong one for a value bound to nothing: `[c retain]` and
+/// `[f init]` are +1 here and must be, since a local taking one over needs
+/// no retain of its own, but discarding either abandons no reference -- see
+/// `discards_ownership`, which #322 added for exactly that difference.
+///
+/// It is also not the whole answer at a binding site, because it reads a
+/// cast as borrowed: `binds_ownership` is what those sites consult (#332).
 pub fn is_owning_expr(
     node: Node,
     src: &str,
@@ -435,15 +459,66 @@ pub fn is_owning_expr(
             })
         }
         // A cast says nothing about ownership, and `__bridge` explicitly
-        // means "not mine" -- borrowed either way.
+        // means "not mine" -- borrowed either way, *here*.
         //
-        // `discarded_value` *does* look through a non-bridging cast
-        // (#327), and only there. This answer is not just about one local:
+        // `binds_ownership` (#332) and `discards_ownership` (#327) both
+        // look through a non-bridging cast; this function still does not,
+        // and the difference is not stylistic. Those two read the send
+        // behind the cast through `created_by`, which excludes `-retain`
+        // and follows an `-init...` back to its receiver. Answering yes
+        // here instead would skip that check and hand every +1-named
+        // selector through, and it is not just about one local:
         // `consider_method` classifies a method as an owning factory only
         // when every return path is `is_owning_expr`, so widening it here
         // changes what every caller of such a method is told to release.
+        // `Thing *t = (Thing *)[u init];` then releases `t` and `u`, which
+        // are one pointer -- measured, and a use-after-free under ASan.
         _ => false,
     }
+}
+
+/// Does binding this expression's value to a strong slot -- a local, an
+/// ivar, an array element, a `return` -- take over a +1 reference nothing
+/// else accounts for?
+///
+/// This is the question every *binding* site asks, and it is
+/// `is_owning_expr` plus exactly one shape: a non-bridging cast over a
+/// reference `created_by` says is genuinely new (#332).
+///
+/// The cast has to be looked through, because it changes the static type
+/// and nothing else -- `Thing *t = (Thing *)[Thing alloc];` leaked where
+/// the uncast spelling did not. It has to be looked through *narrowly*,
+/// through `discards_ownership` rather than by widening `is_owning_expr`,
+/// because the reference behind a cast is not always new:
+///
+/// ```objc
+/// Thing *u = [Thing alloc];
+/// Thing *t = (Thing *)[u init];   /* -init hands back u's own +1 */
+/// ```
+///
+/// `-init...` consumes its receiver's +1 and hands it back, so releasing
+/// `t` as well as `u` frees one pointer twice. `created_by` is what
+/// separates the two: it excludes `-retain` outright and follows an
+/// `-init...` send back to its receiver instead of trusting the selector's
+/// name. A bridging cast is looked through by neither -- see
+/// `value_behind_casts`.
+///
+/// Nothing is added where no cast was peeled, so every uncast shape keeps
+/// exactly the answer `is_owning_expr` gave it.
+pub fn binds_ownership(
+    node: Node,
+    src: &str,
+    program: &Program,
+    owning: &OwningMethods,
+) -> bool {
+    if is_owning_expr(node, src, program, owning) {
+        return true;
+    }
+    let behind = value_behind_casts(node, src);
+    if behind.id() == node.id() {
+        return false;
+    }
+    discards_ownership(behind, src, program, owning)
 }
 
 /// Of the convention-named +1 selectors, the ones whose reference is a
@@ -492,7 +567,7 @@ pub fn discarded_owning_value<'a>(
     owning: &OwningMethods,
 ) -> Option<Node<'a>> {
     if discards_ownership(node, src, program, owning) {
-        Some(discarded_value(node, src))
+        Some(value_behind_casts(node, src))
     } else {
         None
     }
@@ -518,7 +593,7 @@ pub fn discarded_owning_value<'a>(
 /// `is_owning_expr`, and a bare `self` is not.
 ///
 /// The value is read out from behind whatever the discard is written
-/// behind first -- see `discarded_value`, which is why `(void)[t copy];`
+/// behind first -- see `value_behind_casts`, which is why `(void)[t copy];`
 /// answers the same as `[t copy];` (#327).
 fn discards_ownership(
     node: Node,
@@ -526,7 +601,7 @@ fn discards_ownership(
     program: &Program,
     owning: &OwningMethods,
 ) -> bool {
-    let node = discarded_value(node, src);
+    let node = value_behind_casts(node, src);
     if node.kind() != "message_expression" {
         return is_owning_expr(node, src, program, owning);
     }
@@ -545,23 +620,26 @@ fn discards_ownership(
     created_by(&selector, receiver_class.as_deref(), owning)
 }
 
-/// The value a discarded expression actually abandons, read out from
-/// behind the parentheses and casts it may be written behind (#327).
+/// The value behind the parentheses and casts an expression may be written
+/// behind (#327).
 ///
-/// `(void)[t copy];` has to answer the same as `[t copy];`. It is not a
-/// shape someone stumbles into: `(void)expr` is the idiom for "I am
-/// throwing this away on purpose", so it is the spelling *most* likely to
-/// have been written by someone who thought about the result, and least
-/// likely to be a mistake -- which is exactly why the two spellings must
-/// not differ in whether they leak. The alternative, rejecting the cast,
-/// would make a deliberate discard a hard error while leaving the careless
-/// one to compile.
+/// `(void)[t copy];` has to answer the same as `[t copy];`, and
+/// `Thing *t = (Thing *)[Thing alloc];` the same as `Thing *t = [Thing
+/// alloc];`. Neither is a shape someone stumbles into: `(void)expr` is the
+/// idiom for "I am throwing this away on purpose", so it is the spelling
+/// *most* likely to have been written by someone who thought about the
+/// result, and least likely to be a mistake -- which is exactly why the
+/// two spellings must not differ in whether they leak. The alternative,
+/// rejecting the cast, would make a deliberate discard a hard error while
+/// leaving the careless one to compile.
 ///
-/// Looking through a cast happens **here and nowhere else**. It is
-/// deliberately not done in `is_owning_expr`: that answer also decides
-/// which methods `consider_method` classifies as owning factories, and so
-/// what every caller of one is told to release, where this one only ever
-/// adds a release to a statement whose value nothing else can reach.
+/// Two callers peel with this and no others do: `discards_ownership`
+/// (#322/#327) and `binds_ownership` (#332). Both then read the send
+/// behind the peel through `created_by`, which is what keeps the peel
+/// safe. It is deliberately *not* done in `is_owning_expr`: that answer
+/// bypasses `created_by` and also decides which methods `consider_method`
+/// classifies as owning factories, and so what every caller of one is told
+/// to release.
 ///
 /// A *bridging* cast is the one cast that speaks about ownership rather
 /// than about type, and is not looked through.
@@ -574,7 +652,7 @@ fn discards_ownership(
 /// of them borrowed costs nothing observable and keeps the bias exact
 /// rather than resting on a reading of a bridge this project does not
 /// have.
-fn discarded_value<'a>(node: Node<'a>, src: &str) -> Node<'a> {
+pub(crate) fn value_behind_casts<'a>(node: Node<'a>, src: &str) -> Node<'a> {
     let mut cursor = node.walk();
     let children: Vec<Node<'a>> = node.children(&mut cursor).collect();
     let inner = match node.kind() {
@@ -585,7 +663,7 @@ fn discarded_value<'a>(node: Node<'a>, src: &str) -> Node<'a> {
         _ => None,
     };
     match inner {
-        Some(inner) => discarded_value(inner, src),
+        Some(inner) => value_behind_casts(inner, src),
         None => node,
     }
 }

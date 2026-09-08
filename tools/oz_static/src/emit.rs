@@ -567,6 +567,10 @@ fn references_identifier(name: &str, root: Node, src: &str) -> bool {
 enum LocalStore {
     /// A `+1` right-hand side that does not mention the variable: the old
     /// value can be released *before* evaluating it.
+    ///
+    /// `+1` is `arc::binds_ownership`, so a cast over a genuinely new
+    /// reference lands here rather than in `Unsupported` -- and a cast over
+    /// one the receiver already owns still does not (#332).
     Owning,
     /// A plain identifier: free of side effects, so it can be named twice
     /// and retained before the release, which is what makes `c = c` safe.
@@ -580,7 +584,7 @@ enum LocalStore {
 }
 
 fn classify_store(name: &str, rhs: Node, src: &str, program: &Program) -> LocalStore {
-    let owning = crate::arc::is_owning_expr(rhs, src, program, &program.owning_methods);
+    let owning = crate::arc::binds_ownership(rhs, src, program, &program.owning_methods);
     let mentions_self = references_identifier(name, rhs, src);
     if owning && !mentions_self {
         return LocalStore::Owning;
@@ -718,7 +722,7 @@ pub(crate) fn managed_object_locals(
                         let Some(value) = eq.and_then(|i| parts.get(i + 1)).copied() else {
                             continue;
                         };
-                        if crate::arc::is_owning_expr(
+                        if crate::arc::binds_ownership(
                             value,
                             src,
                             program,
@@ -2363,6 +2367,11 @@ fn render_field_expression(node: Node, ctx: &mut EmitCtx) -> (String, String) {
 /// Everything else is borrowed and gets retained; where that value is also
 /// an owned local, its own scope-exit release keeps the count right.
 ///
+/// `+1` is `arc::binds_ownership`, so a cast does not hide it:
+/// `_kid = (Thing *)[Thing alloc];` used to be read as borrowed and get a
+/// retain it had no business having, which left the allocation at +2 with
+/// one release ever to come -- a leak (#332).
+///
 /// Emitted as a comma expression over a temporary rather than several
 /// statements, so it stays usable wherever an assignment was, and in the
 /// same order the synthesized setter uses: assign, retain new, release old.
@@ -2387,7 +2396,7 @@ fn render_strong_ivar_assign(
     let path = ctx.program.ivar_access_path(&ctx.class_name, &name)?;
     let root = ctx.program.root_class()?.to_string();
 
-    let takes_ownership = crate::arc::is_owning_expr(right, ctx.src, ctx.program, &ctx.program.owning_methods);
+    let takes_ownership = crate::arc::binds_ownership(right, ctx.src, ctx.program, &ctx.program.owning_methods);
     let (value, value_ty) = render_expr(right, ctx);
 
     let (line, col) = line_col(ctx.src, node.start_byte());
@@ -3015,12 +3024,24 @@ fn render_synchronized_statement(node: Node, ctx: &mut EmitCtx) -> (String, Stri
 fn render_return_statement(node: Node, ctx: &mut EmitCtx) -> (String, String) {
     // A local being returned hands its ownership to the caller, so it is
     // the one thing a return must not release.
+    //
+    // Read from behind whatever parentheses and non-bridging casts the
+    // return is written behind (#332). `return (Thing *)t;` used to find no
+    // identifier at all, so the returned local was released on the way out
+    // and the caller was handed a freed pointer -- a use-after-free where
+    // the uncast `return t;` is correct, and the cast changes the static
+    // type and nothing about who owns the reference.
+    // `arc::return_hands_back_ownership` peels with the same helper and has
+    // to: whichever local this decides not to release is the one whose
+    // ownership it tells the caller to take over.
     let mut cursor0 = node.walk();
     let returned_children: Vec<Node> = node.children(&mut cursor0).collect();
     let returned_name = returned_children
         .iter()
-        .find(|c| c.kind() == "identifier")
-        .map(|c| node_text(*c, ctx.src).to_string());
+        .find(|c| c.kind() != "return" && c.kind() != ";")
+        .map(|c| crate::arc::value_behind_casts(*c, ctx.src))
+        .filter(|c| c.kind() == "identifier")
+        .map(|c| node_text(c, ctx.src).to_string());
     let arc_releases = releases_for_all_scopes(ctx, returned_name.as_deref());
 
     // Outside any @synchronized, behave exactly as the catch-all in
@@ -3989,9 +4010,16 @@ fn render_block(node: Node, ctx: &mut EmitCtx) -> (String, String) {
 /// will own, if any.
 ///
 /// A local is owned only when its initializer is provably +1 (see
-/// `arc::is_owning_expr`); a borrowed reference is left alone, because
+/// `arc::binds_ownership`); a borrowed reference is left alone, because
 /// releasing one is a double free. `__unsafe_unretained` opts out
 /// explicitly, matching what the qualifier means everywhere else.
+///
+/// An intervening cast does not change the answer -- it changes the static
+/// type, not who owns the reference -- so `Thing *t = (Thing *)[Thing
+/// alloc];` is released here just as the uncast spelling is. That is
+/// `binds_ownership` rather than `is_owning_expr`, and the difference is
+/// load-bearing: `(Thing *)[u init]` hands back `u`'s own +1, and
+/// releasing it here as well frees one pointer twice (#332).
 fn owned_locals_of(decl: Node, ctx: &EmitCtx) -> Vec<String> {
     owned_locals_of_in(decl, decl.parent(), ctx)
 }
@@ -4072,7 +4100,7 @@ fn owned_locals_of_in(decl: Node, search_root: Option<Node>, ctx: &EmitCtx) -> V
         let Some(value) = eq.and_then(|i| parts.get(i + 1)).copied() else {
             continue;
         };
-        if !crate::arc::is_owning_expr(value, ctx.src, ctx.program, &ctx.program.owning_methods) {
+        if !crate::arc::binds_ownership(value, ctx.src, ctx.program, &ctx.program.owning_methods) {
             continue;
         }
         let name = crate::collect::find_declared_name(child, ctx.src);
