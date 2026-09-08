@@ -1116,13 +1116,16 @@ struct EmitCtx<'a> {
     /// renderer, keyed by `Node::id`: rendering one again yields the
     /// temporary's name and type instead of re-evaluating it.
     ///
-    /// Populated only by `render_owning_argument_statement` (#328), which
-    /// has to hold an argument's `+1` in a named local so it can release it
-    /// after the send, and then wants the rest of the statement rendered
-    /// *exactly* as it would have been. Substituting at the node rather
-    /// than rewriting the call keeps the emitted argument the same type it
-    /// always was, so nothing downstream -- direct call, dynamic dispatch,
-    /// a cast around the argument -- has to know this happened. Entries are
+    /// Populated only by `render_owning_operand_statement` (#328, #340),
+    /// which has to hold a send operand's `+1` in a named local so it can
+    /// release it after the send, and then wants the rest of the statement
+    /// rendered *exactly* as it would have been. Substituting at the node
+    /// rather than rewriting the call keeps the emitted operand the same
+    /// type it always was, so nothing downstream -- direct call, dynamic
+    /// dispatch, a cast around it -- has to know this happened. Checked
+    /// ahead of `render_expr`'s match so it holds for a *receiver* as
+    /// readily as an argument, which is what let #340 reuse this whole
+    /// mechanism without touching how a send is called. Entries are
     /// removed as soon as that statement is rendered, so the map is empty
     /// everywhere else.
     arg_temps: HashMap<usize, (String, String)>,
@@ -1626,13 +1629,14 @@ fn render_expr(node: Node, ctx: &mut EmitCtx) -> (String, String) {
         "break_statement" | "continue_statement" if !ctx.arc_scopes.is_empty() => {
             render_loop_jump(node, ctx)
         }
-        // A +1 result passed straight as an argument (#328). Ahead of the
-        // discarded-result arm below, because a statement can be both --
-        // `[[Foo new] take:[Bar new]];` abandons its own result *and*
-        // hands one over -- and this arm renders the statement through the
-        // ordinary dispatch, so that one still gets its turn.
-        "expression_statement" if !owning_message_arguments(node, ctx).is_empty() => {
-            render_owning_argument_statement(node, ctx)
+        // A +1 result passed straight as an argument (#328), or used as a
+        // send's receiver (#340). Ahead of the discarded-result arm below,
+        // because a statement can be both -- `[[Foo new] take:[Bar new]];`
+        // abandons its own result *and* hands one over -- and this arm
+        // renders the statement through the ordinary dispatch, so that one
+        // still gets its turn.
+        "expression_statement" if !owning_send_operands(node, ctx).is_empty() => {
+            render_owning_operand_statement(node, ctx)
         }
         // A +1 result bound to nothing (#322).
         "expression_statement" if discards_owning_result(node, ctx) => {
@@ -1642,9 +1646,10 @@ fn render_expr(node: Node, ctx: &mut EmitCtx) -> (String, String) {
             hoist_block_var(node, ctx);
             (String::new(), "id".to_string())
         }
-        // The same +1 argument in a declaration's initialiser --
-        // `int n = [self countOf:[Foo new]];` (#328). A declaration cannot
-        // be wrapped in a block, because that would scope the name it
+        // The same +1 operand in a declaration's initialiser --
+        // `int n = [self countOf:[Foo new]];` (#328), or
+        // `int n = [[Foo alloc] tag];` (#340). A declaration cannot be
+        // wrapped in a block, because that would scope the name it
         // introduces out of the rest of the body, so this one is a group of
         // statements rather than a braced one -- which is legal only where
         // several statements are, hence the parent check. It stays in place
@@ -1652,9 +1657,9 @@ fn render_expr(node: Node, ctx: &mut EmitCtx) -> (String, String) {
         // declaration's own byte range.
         "declaration"
             if node.parent().is_some_and(|parent| parent.kind() == "compound_statement")
-                && !owning_message_arguments(node, ctx).is_empty() =>
+                && !owning_send_operands(node, ctx).is_empty() =>
         {
-            render_owning_argument_statement(node, ctx)
+            render_owning_operand_statement(node, ctx)
         }
         _ => {
             if !needs_translation(node) {
@@ -4307,43 +4312,90 @@ fn render_discarded_owning_statement(node: Node, ctx: &mut EmitCtx) -> (String, 
     )
 }
 
-/// Every +1 argument in this statement's message sends whose reference
-/// nothing else will release, ordered so a nested one comes first (#328).
+/// Which position a +1 operand was written in.
+///
+/// The temporary's name says so -- `_oz_arg_...` or `_oz_recv_...` --
+/// because a reader of the generated C has to be able to tell which
+/// reference is being released, and because the two are decided by
+/// different predicates: `arc::owning_argument_value` asks only whether
+/// the reference is new, while `arc::receiver_owning_value` also has to
+/// consult the selector (#340).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum OperandPosition {
+    Argument,
+    Receiver,
+}
+
+impl OperandPosition {
+    fn prefix(self) -> &'static str {
+        match self {
+            OperandPosition::Argument => "_oz_arg",
+            OperandPosition::Receiver => "_oz_recv",
+        }
+    }
+}
+
+/// Every +1 operand of this statement's message sends whose reference
+/// nothing else will release, ordered so a nested one comes first (#328,
+/// #340).
 ///
 /// What comes back are the *values* to release, read out from behind any
-/// casts by `arc::owning_argument_value` -- the same nodes the temporaries
-/// will take their value from, so what is held and what is released cannot
-/// disagree.
+/// casts by `arc`, paired with the position they were written in -- the
+/// same nodes the temporaries will take their value from, so what is held
+/// and what is released cannot disagree.
 ///
-/// Only *message* arguments, and that boundary is the safe half of the
+/// Only *message* operands, and that boundary is the safe half of the
 /// change rather than an omission. A message send reaches transpiled
-/// Objective-Z, where a callee that keeps the argument retains it (a
+/// Objective-Z, where a callee that keeps the reference retains it (a
 /// synthesized setter, `render_strong_ivar_assign`), so dropping the
 /// caller's `+1` afterwards leaves the object held by whoever kept it. A
 /// plain C function has no such obligation and cannot retain: releasing
 /// after `oz_queue_push(q, [Foo new])` would hand the queue a dangling
 /// pointer, which is the direction `arc.rs` exists to avoid. So a C call --
 /// including a variadic one like `OZLog("%@", [Foo new])` -- is left alone
-/// and still leaks.
-fn owning_message_arguments<'a>(stmt: Node<'a>, ctx: &EmitCtx) -> Vec<Node<'a>> {
-    let mut values: Vec<Node<'a>> = Vec::new();
-    collect_owning_arguments(stmt, ctx, &mut values);
-    /* By where each expression *ends*: a nested argument ends before the
+/// and still leaks. A *receiver* has the same obligation for the same
+/// reason: a method that keeps `self` past its own return has to retain it,
+/// exactly as one that keeps an argument does.
+fn owning_send_operands<'a>(
+    stmt: Node<'a>,
+    ctx: &EmitCtx,
+) -> Vec<(Node<'a>, OperandPosition)> {
+    let mut values: Vec<(Node<'a>, OperandPosition)> = Vec::new();
+    collect_owning_operands(stmt, ctx, &mut values);
+    /* By where each expression *ends*: a nested operand ends before the
      * one containing it, so it is evaluated into its temporary first and
      * the outer initialiser names that temporary rather than allocating
-     * again. Siblings end in source order, so they keep it. */
-    values.sort_by_key(|value| value.end_byte());
+     * again. Siblings end in source order, so they keep it -- and a
+     * receiver ends before any of its own send's arguments, which is the
+     * order Objective-C evaluates them in. */
+    values.sort_by_key(|(value, _)| value.end_byte());
     values
 }
 
-fn collect_owning_arguments<'a>(node: Node<'a>, ctx: &EmitCtx, out: &mut Vec<Node<'a>>) {
+fn collect_owning_operands<'a>(
+    node: Node<'a>,
+    ctx: &EmitCtx,
+    out: &mut Vec<(Node<'a>, OperandPosition)>,
+) {
     /* A `block_literal`'s body is a separate function that runs later and
-     * however many times it is called. Hoisting an argument out of it
+     * however many times it is called. Hoisting an operand out of it
      * would allocate once, here, where the source allocates per call. */
     if node.kind() == "block_literal" {
         return;
     }
     if node.kind() == "message_expression" {
+        /* The receiver first, so it keeps its place under the sort even
+         * against an argument that starts at the same byte. */
+        if let Some(value) = crate::arc::receiver_owning_value(
+            node,
+            ctx.src,
+            ctx.program,
+            &ctx.program.owning_methods,
+        ) {
+            if !ctx.arg_temps.contains_key(&value.id()) {
+                out.push((value, OperandPosition::Receiver));
+            }
+        }
         for arg in parse_message(node, ctx.src).args {
             let Some(value) = crate::arc::owning_argument_value(
                 arg,
@@ -4357,14 +4409,14 @@ fn collect_owning_arguments<'a>(node: Node<'a>, ctx: &EmitCtx, out: &mut Vec<Nod
              * what lets its recursive render fall through to the ordinary
              * dispatch instead of back into this arm. */
             if !ctx.arg_temps.contains_key(&value.id()) {
-                out.push(value);
+                out.push((value, OperandPosition::Argument));
             }
         }
     }
     let mut cursor = node.walk();
     let children: Vec<Node<'a>> = node.children(&mut cursor).collect();
     for child in children {
-        collect_owning_arguments(child, ctx, out);
+        collect_owning_operands(child, ctx, out);
     }
 }
 
@@ -4407,13 +4459,13 @@ fn collect_owning_arguments<'a>(node: Node<'a>, ctx: &EmitCtx, out: &mut Vec<Nod
 ///
 /// `oz_static_release` is null-safe, so an allocation that found no free
 /// slab slot needs no guard of its own.
-fn render_owning_argument_statement(node: Node, ctx: &mut EmitCtx) -> (String, String) {
-    let values = owning_message_arguments(node, ctx);
+fn render_owning_operand_statement(node: Node, ctx: &mut EmitCtx) -> (String, String) {
+    let values = owning_send_operands(node, ctx);
     let root = ctx.program.root_class().unwrap_or("OZObject").to_string();
     let mut decls: Vec<String> = Vec::with_capacity(values.len());
     let mut releases: Vec<String> = Vec::with_capacity(values.len());
     let mut held: Vec<usize> = Vec::with_capacity(values.len());
-    for value in values {
+    for (value, position) in values {
         let (text, value_ty) = render_expr(value, ctx);
         /* The expression's own type, so the argument the send receives is
          * the type it always was and no caller of `arg_texts` has to be
@@ -4427,7 +4479,7 @@ fn render_owning_argument_statement(node: Node, ctx: &mut EmitCtx) -> (String, S
         };
         let (line, col) = line_col(ctx.src, value.start_byte());
         ctx.block_counter += 1;
-        let tmp = format!("_oz_arg_L{}_C{}_{}", line, col, ctx.block_counter);
+        let tmp = format!("{}_L{}_C{}_{}", position.prefix(), line, col, ctx.block_counter);
         decls.push(format!("{}{} = {};", ty, tmp, init));
         releases.push(format!("oz_static_release((struct {} *)({}));", root, tmp));
         ctx.arg_temps.insert(value.id(), (tmp, ty));
@@ -4438,7 +4490,7 @@ fn render_owning_argument_statement(node: Node, ctx: &mut EmitCtx) -> (String, S
         ctx.arg_temps.remove(id);
     }
     /* Released in the reverse of the order they were taken, so a nested
-     * argument outlives the one built from it. */
+     * operand outlives the one built from it. */
     releases.reverse();
     let lines: Vec<&String> =
         decls.iter().chain(std::iter::once(&rendered)).chain(releases.iter()).collect();
@@ -5264,7 +5316,7 @@ fn render_category_interface(node: Node, src: &str, name: &str, program: &Progra
 /// callee's identity, which a dynamically dispatched send does not have.
 /// It also does nothing for a callee that only borrows. So the caller
 /// releases its own reference after the send
-/// (`render_owning_argument_statement`) and this stays retain-new,
+/// (`render_owning_operand_statement`) and this stays retain-new,
 /// release-old, which leaves the object at +1 held by the ivar.
 fn render_synthesized_accessor(
     class_name: &str,
