@@ -500,6 +500,15 @@ that reported success while the thing it named was broken.
   reference `created_by` calls new -- and not a wider `is_owning_expr`,
   whose answer also decides which methods are owning factories and so what
   every caller of one must release. A *bridging* cast is looked through by
-  none of the three.
+  none of the three. An **argument** is the third site the question is asked
+  from, and it asks the discard question rather than a fourth one of its own
+  (`owning_argument_value`, #328): whether the callee retains the argument or
+  only borrows it does not change the caller's obligation, so all that is
+  left to decide is whether the reference is new. Getting *that* wrong is the
+  corruption direction again -- the naive `is_owning_expr` reading undoes a
+  manual `[e retain]` and frees `[u init]`'s receiver twice, and one Rust
+  test on the emitted C is the whole of what catches it, because an
+  over-release is invisible to a dealloc counter (a refcount already at zero
+  returns early) and to a slot count (the host slab clamps `num_used`).
 - **The version is `tools/oz_static/Cargo.toml`**, bumped in the same commit
   as the change it describes. The repo-level `VERSION` file is retired.

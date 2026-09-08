@@ -5255,6 +5255,17 @@ fn render_category_interface(node: Node, src: &str, name: &str, program: &Progra
 /// codebase's own `oz_static_retain`/`oz_static_release` (not Python's
 /// `{root}_retain`, which doesn't exist here -- see `render_message`'s
 /// `-retain`/`-release` translation for the same pattern).
+///
+/// **The setter retains its argument, and #328 deliberately left that
+/// alone.** A strong setter that *consumed* a `+1` argument instead would
+/// be cheaper for `[self setFoo:[Foo new]];` -- no temporary, no release
+/// -- but it changes this contract: every call site passing a *borrowed*
+/// value would then owe a retain, and knowing which is which needs the
+/// callee's identity, which a dynamically dispatched send does not have.
+/// It also does nothing for a callee that only borrows. So the caller
+/// releases its own reference after the send
+/// (`render_owning_argument_statement`) and this stays retain-new,
+/// release-old, which leaves the object at +1 held by the ivar.
 fn render_synthesized_accessor(
     class_name: &str,
     prop: &crate::model::PropertyInfo,
