@@ -3736,8 +3736,9 @@ fn block_return_type(node: Node, body: Option<Node>, ctx: &EmitCtx) -> String {
 /// pruned, so the parameter list cannot contribute). The stars do *not*:
 /// in `static void *(^f)(int)` the `*` sits inside the `init_declarator`,
 /// in a `pointer_declarator` wrapping the `function_declarator`, so the
-/// declarator chain is walked separately for them -- stopping at the
-/// `function_declarator`, past which any star belongs to a parameter.
+/// declarator chain is walked separately for them by
+/// `declarator_return_stars` -- stopping at the `function_declarator`,
+/// past which any star belongs to a parameter.
 fn declared_block_pointer_type(node: Node, src: &str) -> Option<(String, usize)> {
     let init_declarator = node.parent().filter(|p| p.kind() == "init_declarator")?;
     let declaration = init_declarator.parent().filter(|p| p.kind() == "declaration")?;
@@ -3762,20 +3763,7 @@ fn declared_block_pointer_type(node: Node, src: &str) -> Option<(String, usize)>
         return None;
     }
 
-    /// `*`s on the declared variable itself, i.e. before the
-    /// `function_declarator` that carries the parameters.
-    fn return_stars(n: Node) -> usize {
-        if n.kind() == "function_declarator" || n.kind() == "block_literal" {
-            return 0;
-        }
-        let mut cursor = n.walk();
-        let children: Vec<Node> = n.children(&mut cursor).collect();
-        children
-            .into_iter()
-            .map(|c| if c.kind() == "*" { 1 } else { return_stars(c) })
-            .sum()
-    }
-    Some((type_text, return_stars(init_declarator)))
+    Some((type_text, declarator_return_stars(init_declarator)))
 }
 
 /// A cast expression, which needs handling for two separate reasons:
@@ -4540,6 +4528,55 @@ fn find_parameter_lists<'a>(node: Node<'a>, out: &mut Vec<Node<'a>>) {
     for child in node.children(&mut cursor) {
         find_parameter_lists(child, out);
     }
+}
+
+/// A top-level `function_definition`'s C return type, rendered the way
+/// every other generated type is -- so a class name arrives with its
+/// `struct` tag (`Thing *` -> `struct Thing *`), an `id` lowers to
+/// `void *`, and a `struct`/`enum` keeps its keyword.
+///
+/// `render_method_definition` records the method equivalent into
+/// `EmitCtx::method_return_type`; this is the free-function half, and its
+/// absence was #336: the `function_definition` arm built a fresh `EmitCtx`
+/// and left the field at `EmitCtx::new`'s placeholder, so the temporary
+/// `render_return_statement` synthesizes on the cleanup path came out
+/// `int` whatever the function actually returned. A returned pointer was
+/// then a constraint violation on any target and a truncation on a 64-bit
+/// one, and a `double` was silently rounded.
+///
+/// Read off the function's *own* declarator rather than guessed from the
+/// returned expression, which is the only thing that can be right for
+/// `return 42;` in a `size_t` function -- there is nothing in the
+/// expression to read.
+///
+/// The type text comes from the whole `function_definition` (the first
+/// type specifier in child order is the return type, and every later one
+/// is ignored -- see `collect::extract_type_and_stars`); the stars do not,
+/// because a `*` inside the `function_declarator` belongs to a parameter.
+/// `declared_block_pointer_type` splits the two for the same reason.
+fn function_return_type(node: Node, src: &str, program: &Program) -> Option<String> {
+    let declarator = node.child_by_field_name("declarator")?;
+    let (type_text, _) = crate::collect::extract_type_and_stars(node, src);
+    if type_text.is_empty() {
+        return None;
+    }
+    let known: std::collections::HashSet<String> = program.classes.keys().cloned().collect();
+    Some(crate::collect::render_type(&type_text, declarator_return_stars(declarator), &known))
+}
+
+/// `*`s belonging to the declared thing itself, i.e. those before the
+/// `function_declarator` that carries the parameter list. A star past it
+/// is a parameter's, and a `block_literal` is a whole nested signature.
+fn declarator_return_stars(node: Node) -> usize {
+    if node.kind() == "function_declarator" || node.kind() == "block_literal" {
+        return 0;
+    }
+    let mut cursor = node.walk();
+    let children: Vec<Node> = node.children(&mut cursor).collect();
+    children
+        .into_iter()
+        .map(|c| if c.kind() == "*" { 1 } else { declarator_return_stars(c) })
+        .sum()
 }
 
 /// Is `node` a bare `id` standing in *type* position?
@@ -5652,6 +5689,18 @@ fn walk_top_level<'a>(
                 // `main()`.
                 let mut ctx =
                     EmitCtx::new(source, program, String::new(), file_vars.clone(), pools, lines);
+                // The free-function twin of the line in
+                // `render_method_definition` that records a method's return
+                // type: `render_return_statement` needs it to type the
+                // temporary it synthesizes when a `return` has cleanups to
+                // run after the value is evaluated. Without it the field
+                // kept `EmitCtx::new`'s placeholder and every such
+                // temporary was an `int` (#336). Left at the placeholder
+                // only if the declarator names no type at all, which no
+                // parsed `function_definition` does.
+                if let Some(ret_ty) = function_return_type(node, source, program) {
+                    ctx.method_return_type = ret_ty;
+                }
                 let mut sig_edits = class_tag_edits(node, source, program);
                 // A block-typed parameter is lowered to a function pointer
                 // here for the same reason its class names are tagged here:
