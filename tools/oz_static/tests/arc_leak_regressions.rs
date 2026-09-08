@@ -1130,3 +1130,462 @@ int main(void) {
         out
     );
 }
+
+/// A +1 result passed straight as an *argument* is released after the send
+/// (#328).
+///
+/// `[self setFoo:[Foo new]];` binds nothing and discards nothing, so no
+/// existing path reached it: scope-based release needs a local,
+/// `render_strong_local_assign` a store, `arc::discards_ownership` (#322)
+/// the whole of an `expression_statement`, and `arc::binds_ownership`
+/// (#332) a binding site. The `+1` from `+new` was simply never released --
+/// and a synthesized strong setter *retains* its argument on top of it, so
+/// the object ended at +2 with one release ever owed.
+///
+/// The signal is a slab running dry rather than a dealloc count alone,
+/// which matters because a leak passes any assertion about return values.
+/// `Foo=2` is exact: the third store can only find a slot if the first
+/// object was genuinely freed when the setter let it go. Leaked, the first
+/// two slots never come back and the third `+new` answers nil.
+#[test]
+fn owning_argument_to_a_setter_is_released() {
+    let src = format!(
+        "/* oz-pool: Foo=2,Holder=1 */\n{}{}",
+        PREAMBLE(),
+        "\
+static int g_deallocs = 0;
+
+@interface Foo : OZObject
++ (instancetype)new;
+@end
+@implementation Foo
++ (instancetype)new {
+	return [Foo alloc];
+}
+- (void)dealloc {
+	g_deallocs = g_deallocs + 1;
+}
+@end
+
+@interface Holder : OZObject
+@property (strong) Foo *foo;
+- (int)run;
+@end
+@implementation Holder
+- (int)run {
+	[self setFoo:[Foo new]];
+	[self setFoo:[Foo new]];
+	/* Only reachable if the first object's slot came back. */
+	[self setFoo:[Foo new]];
+	return [self foo] != nil;
+}
+@end
+
+#include <stdio.h>
+int main(void) {
+	Holder *h = [Holder alloc];
+	int v = [h run];
+	printf(\"v=%d deallocs=%d\\n\", v, g_deallocs);
+	return 0;
+}
+"
+    );
+    let out = compile_and_run(&src, "owning_argument_to_a_setter");
+    // Two of the three are handed over and then replaced, so two are torn
+    // down; the third is still held by the ivar when `run` returns.
+    assert_eq!(
+        out, "v=1 deallocs=2\n",
+        "the +1 an argument carries must be released after the send: {}",
+        out
+    );
+}
+
+/// The same fix where the callee only *borrows* the argument, which is the
+/// half a consuming setter could never have covered.
+///
+/// `-doThing:` stores nothing and retains nothing, so the caller's `+1` is
+/// the only reference there ever was and dropping it after the send is what
+/// runs `-dealloc`. `Foo=1` makes that the difference between three calls
+/// and one: with the release, one slot serves them all.
+#[test]
+fn owning_argument_to_a_borrowing_method_is_released() {
+    let src = format!(
+        "/* oz-pool: Foo=1,Runner=1 */\n{}{}",
+        PREAMBLE(),
+        "\
+static int g_deallocs = 0;
+static int g_pokes = 0;
+
+@interface Foo : OZObject
++ (instancetype)new;
+- (void)poke;
+@end
+@implementation Foo
++ (instancetype)new {
+	return [Foo alloc];
+}
+- (void)poke {
+	g_pokes = g_pokes + 1;
+}
+- (void)dealloc {
+	g_deallocs = g_deallocs + 1;
+}
+@end
+
+@interface Runner : OZObject
+- (void)doThing:(Foo *)f;
+- (void)run;
+@end
+@implementation Runner
+- (void)doThing:(Foo *)f {
+	[f poke];
+}
+- (void)run {
+	[self doThing:[Foo new]];
+	[self doThing:[Foo new]];
+	[self doThing:[Foo new]];
+}
+@end
+
+#include <stdio.h>
+int main(void) {
+	Runner *r = [Runner alloc];
+	[r run];
+	printf(\"pokes=%d deallocs=%d\\n\", g_pokes, g_deallocs);
+	return 0;
+}
+"
+    );
+    let out = compile_and_run(&src, "owning_argument_borrowed_by_callee");
+    // Three sends, each reaching a live object, each torn down after --
+    // one slab slot reused three times. Leaked, only the first allocation
+    // succeeds and the other two send to nil.
+    assert_eq!(
+        out, "pokes=3 deallocs=3\n",
+        "a borrowing callee leaves the caller's +1 to the caller: {}",
+        out
+    );
+}
+
+/// The other direction, and the one that must fail closed: a *borrowed*
+/// argument is not released by the call site.
+///
+/// `[self setFoo:f]` hands over a reference `f` still holds and the setter
+/// retains it; releasing at the call site as well would take the object
+/// away from `f` before its own scope exit does. Asserted where it is
+/// visible -- the object is used after the send and torn down exactly once,
+/// when the holder that kept it dies.
+#[test]
+fn borrowed_argument_is_not_released_by_the_call_site() {
+    let src = format!(
+        "/* oz-pool: Foo=1,Holder=1 */\n{}{}",
+        PREAMBLE(),
+        "\
+static int g_deallocs = 0;
+
+@interface Foo : OZObject
+- (int)value;
+@end
+@implementation Foo
+- (int)value {
+	return 7;
+}
+- (void)dealloc {
+	g_deallocs = g_deallocs + 1;
+}
+@end
+
+@interface Holder : OZObject
+@property (strong) Foo *foo;
+- (int)run;
+@end
+@implementation Holder
+- (int)run {
+	Foo *f = [Foo alloc];
+	[self setFoo:f];
+	/* Still ours to read: the send borrowed it, it did not consume it. */
+	int v = [f value];
+	/* And still the holder's, after our own reference goes at scope exit. */
+	return v + ([self foo] != nil);
+}
+@end
+
+#include <stdio.h>
+int main(void) {
+	Holder *h = [Holder alloc];
+	int v = [h run];
+	int during = g_deallocs;
+	[h release];
+	printf(\"v=%d during=%d after=%d\\n\", v, during, g_deallocs);
+	return 0;
+}
+"
+    );
+    let out = compile_and_run(&src, "borrowed_argument_stays");
+    assert_eq!(
+        out, "v=8 during=0 after=1\n",
+        "a borrowed argument is the caller's to release, once, at scope exit: {}",
+        out
+    );
+}
+
+/// **The double-free guard, and the only thing in the tree standing between
+/// this change and memory corruption.**
+///
+/// The naive reading of an argument is `arc::is_owning_expr`, which is +1
+/// *by shape* and says yes to `[e retain]` and `[u init]`. Both hand back a
+/// reference something else already accounts for -- `-retain` its own
+/// receiver, whose balancing `[e release]` is written by hand, and
+/// `-init...` its receiver's `+1`, which scope-based ARC already releases.
+/// Taking a call-site temporary for either and releasing it would free one
+/// pointer twice. `arc::owning_argument_value` goes through `created_by`
+/// instead, which excludes `-retain` outright and follows an `-init...`
+/// send back to its receiver (#322).
+///
+/// Asserted on the **emitted C**, deliberately, and this is the trap the
+/// predecessors documented: an over-release is invisible to a dealloc
+/// counter, because the second `oz_static_release` sees a refcount already
+/// at 0 and returns before `-dealloc`, and the host slab clamps `num_used`
+/// at 0. So a counter and a slot count are both blind here. What is
+/// checkable is that no call-site temporary was taken at all.
+#[test]
+fn retained_and_init_arguments_are_left_alone() {
+    let src = format!(
+        "/* oz-pool: Foo=2,Holder=1 */\n{}{}",
+        PREAMBLE(),
+        "\
+@interface Foo : OZObject
+@end
+@implementation Foo
+@end
+
+@interface Holder : OZObject
+@property (strong) Foo *foo;
+- (void)run;
+@end
+@implementation Holder
+- (void)run {
+	Foo *e = [Foo alloc];
+	/* The manual retain/release idiom: the +1 is `e`'s, and the
+	 * balancing release below is written by hand. */
+	[self setFoo:[e retain]];
+	[e release];
+	Foo *u = [Foo alloc];
+	/* -init consumes its receiver's +1 and hands it back, so this is
+	 * `u`'s reference and `u`'s scope exit releases it. */
+	[self setFoo:[u init]];
+}
+@end
+
+int main(void) { return 0; }
+"
+    );
+    let out = oz_static::transpile(&src).expect("should transpile");
+    let body = out
+        .source_c
+        .split("void Holder_run(struct Holder *self)\n{")
+        .nth(1)
+        .unwrap_or_else(|| panic!("no Holder_run definition in:\n{}", out.source_c))
+        .split("\n}\n")
+        .next()
+        .unwrap_or("");
+    assert!(
+        !body.contains("_oz_arg_"),
+        "neither argument creates a reference, so neither may be held in a \
+         call-site temporary and released; got:\n{}",
+        body
+    );
+    // Exactly the two releases the source already owed: the hand-written
+    // `[e release]`, and `u` at scope exit. `e` gets no scope-exit release
+    // of its own -- `emit::released_by_hand` sees the manual one and ARC
+    // defers to the author for that variable throughout, which is the
+    // standing rule and the reason the idiom is safe here at all. A third
+    // release would be one pointer freed twice.
+    assert_eq!(
+        body.matches("oz_static_release").count(),
+        2,
+        "only the releases the source already owed; got:\n{}",
+        body
+    );
+}
+
+/// The nested spelling from the issue, and the second half of the same
+/// guard: `[[Foo alloc] init]` is *one* reference under two sends, so it
+/// takes one temporary and one release, not two.
+///
+/// `created_by` follows the `-init...` back to `[Foo alloc]`, which is
+/// where the reference is actually created -- so the argument counts as
+/// owning once, at the outer send, and the inner `alloc` is not a second
+/// owning argument (it is a receiver, not an argument, which is the other
+/// reason).
+#[test]
+fn nested_alloc_init_argument_is_released_exactly_once() {
+    let src = format!(
+        "/* oz-pool: Foo=2,Holder=1 */\n{}{}",
+        PREAMBLE(),
+        "\
+@interface Foo : OZObject
+@end
+@implementation Foo
+@end
+
+@interface Holder : OZObject
+@property (strong) Foo *foo;
+- (void)run;
+@end
+@implementation Holder
+- (void)run {
+	[self setFoo:[[Foo alloc] init]];
+}
+@end
+
+int main(void) { return 0; }
+"
+    );
+    let out = oz_static::transpile(&src).expect("should transpile");
+    let body = out
+        .source_c
+        .split("void Holder_run(struct Holder *self)\n{")
+        .nth(1)
+        .unwrap_or_else(|| panic!("no Holder_run definition in:\n{}", out.source_c))
+        .split("\n}\n")
+        .next()
+        .unwrap_or("");
+    assert_eq!(
+        body.matches("oz_static_release").count(),
+        1,
+        "one object, one reference, so exactly one release; got:\n{}",
+        body
+    );
+    assert_eq!(
+        body.matches("_oz_arg_L").count(),
+        3,
+        "one temporary, named three times -- declared, passed, released; got:\n{}",
+        body
+    );
+}
+
+/// The same shape in a *declaration's initialiser*, where the send's own
+/// value is used: `int n = [self countOf:[Foo new]];`.
+///
+/// Emitted as a bare group of statements rather than a braced one, because
+/// bracing would scope `n` out of the rest of the body. `Foo=1` is again
+/// the signal: three calls, one slot.
+#[test]
+fn owning_argument_in_a_declaration_initializer_is_released() {
+    let src = format!(
+        "/* oz-pool: Foo=1,Runner=1 */\n{}{}",
+        PREAMBLE(),
+        "\
+static int g_deallocs = 0;
+
+@interface Foo : OZObject
++ (instancetype)new;
+@end
+@implementation Foo
++ (instancetype)new {
+	return [Foo alloc];
+}
+- (void)dealloc {
+	g_deallocs = g_deallocs + 1;
+}
+@end
+
+@interface Runner : OZObject
+- (int)countOf:(Foo *)f;
+- (int)run;
+@end
+@implementation Runner
+- (int)countOf:(Foo *)f {
+	return f != nil;
+}
+- (int)run {
+	int a = [self countOf:[Foo new]];
+	int b = [self countOf:[Foo new]];
+	int c = [self countOf:[Foo new]];
+	return a + b + c;
+}
+@end
+
+#include <stdio.h>
+int main(void) {
+	Runner *r = [Runner alloc];
+	int v = [r run];
+	printf(\"v=%d deallocs=%d\\n\", v, g_deallocs);
+	return 0;
+}
+"
+    );
+    let out = compile_and_run(&src, "owning_argument_in_declaration");
+    assert_eq!(
+        out, "v=3 deallocs=3\n",
+        "an initialiser's owning argument is released too, and `n` stays in scope: {}",
+        out
+    );
+}
+
+/// The allocation must stay *inside* the loop.
+///
+/// This is why the release is a self-contained group at the statement and
+/// not a `ctx.pre_stmts` temporary: `pre_stmts` are drained by the
+/// enclosing *top-level* statement, so a temporary written for a send
+/// inside a loop is hoisted above it -- the bug
+/// `render_strong_local_assign`'s comment records. Hoisting an
+/// *allocation* would run it once and release it once while the body used
+/// it every iteration. `Foo=1` cannot be satisfied any other way: four
+/// iterations, one slot, four teardowns.
+#[test]
+fn an_owning_argument_inside_a_loop_allocates_per_iteration() {
+    let src = format!(
+        "/* oz-pool: Foo=1,Runner=1 */\n{}{}",
+        PREAMBLE(),
+        "\
+static int g_deallocs = 0;
+static int g_seen = 0;
+
+@interface Foo : OZObject
++ (instancetype)new;
+@end
+@implementation Foo
++ (instancetype)new {
+	return [Foo alloc];
+}
+- (void)dealloc {
+	g_deallocs = g_deallocs + 1;
+}
+@end
+
+@interface Runner : OZObject
+- (void)take:(Foo *)f;
+- (void)run;
+@end
+@implementation Runner
+- (void)take:(Foo *)f {
+	if (f != nil) {
+		g_seen = g_seen + 1;
+	}
+}
+- (void)run {
+	for (int i = 0; i < 4; i++) {
+		[self take:[Foo new]];
+	}
+}
+@end
+
+#include <stdio.h>
+int main(void) {
+	Runner *r = [Runner alloc];
+	[r run];
+	printf(\"seen=%d deallocs=%d\\n\", g_seen, g_deallocs);
+	return 0;
+}
+"
+    );
+    let out = compile_and_run(&src, "owning_argument_in_a_loop");
+    assert_eq!(
+        out, "seen=4 deallocs=4\n",
+        "one slot must serve every iteration, which needs the allocation and \
+         the release both inside the loop: {}",
+        out
+    );
+}

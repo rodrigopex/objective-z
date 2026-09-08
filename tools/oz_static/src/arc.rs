@@ -31,6 +31,14 @@
 // the two cannot drift apart, and a *bridging* cast is looked through by
 // neither.
 //
+// An *argument* is a third site, and it asks the discard question rather
+// than a third one of its own: `owning_argument_value` is
+// `discarded_owning_value` under a name that says where it is asked from
+// (#328). Whether the callee retains the argument or only borrows it does
+// not change the caller's obligation -- the `+1` the caller created is the
+// caller's to drop -- so all that is left to decide is whether the
+// reference is new, which is `created_by` again.
+//
 // Ported from the oracle's `_is_owning_expr` / `_find_owning_return_methods`
 // (tools/oz_transpile/emit.py), with one improvement: the oracle's scan is a
 // single pass, so a factory whose returns call *another* factory is not
@@ -571,6 +579,40 @@ pub fn discarded_owning_value<'a>(
     } else {
         None
     }
+}
+
+/// The +1 reference an *argument* hands a message send that nothing else
+/// will release, or None when the argument is borrowed (#328).
+///
+/// `[self setFoo:[Foo new]];` binds nothing and discards nothing, so
+/// neither scope-based release nor `discarded_owning_value` reached it and
+/// the `+1` from `+new` was never released. A synthesized strong setter
+/// *retains* its argument on top of that, so the object ended at +2 with
+/// one release ever owed.
+///
+/// This is a *third site* asking the question `discards_ownership` already
+/// answers, and it is deliberately the same predicate rather than a
+/// parallel one. The caller's obligation does not depend on what the
+/// callee does with the argument: a callee that stores it strongly retains
+/// it (`render_strong_ivar_assign`, and a synthesized setter), and one that
+/// merely borrows it retains nothing -- either way the `+1` the *caller*
+/// created is the caller's to drop. So the only question left is the one
+/// this module keeps asking: is this reference genuinely new, or one
+/// something else already accounts for? `created_by` answers it, which is
+/// what keeps `[self setFoo:[c retain]];` and `[self setFoo:[u init]];`
+/// alone -- releasing either would be a double free, not a leak.
+///
+/// The node handed back is the one to release, read out from behind any
+/// casts, exactly as for a discard: the temporary the call site holds the
+/// reference in takes *that* node's value, so what is released and what is
+/// released *once* come from one place.
+pub fn owning_argument_value<'a>(
+    arg: Node<'a>,
+    src: &str,
+    program: &Program,
+    owning: &OwningMethods,
+) -> Option<Node<'a>> {
+    discarded_owning_value(arg, src, program, owning)
 }
 
 /// Does throwing this expression's value away abandon a +1 reference that
