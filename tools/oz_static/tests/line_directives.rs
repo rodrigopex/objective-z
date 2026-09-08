@@ -184,6 +184,7 @@ fn program_fixture(name: &str) -> (PathBuf, ResolvedSource) {
 @interface Counter
 - (int)bump;
 - (int)value;
+- (int)guarded;
 @end
 ",
     )
@@ -206,6 +207,15 @@ fn program_fixture(name: &str) -> (PathBuf, ResolvedSource) {
 - (int)value
 {
 	return _n;
+}
+
+- (int)guarded
+{
+	int seen = 0;
+	@synchronized (self) {
+		seen = 1;
+	}
+	return seen;
 }
 
 @end
@@ -243,6 +253,40 @@ int main(void)
     let entries = vec![dir.join("src/main.m")];
     let resolved = resolve_entry_files(&entries, &[dir.join("inc")], &[dir.join("src")])
         .unwrap_or_else(|e| panic!("resolution failed: {}", e));
+    (dir, resolved)
+}
+
+/// A `for-in` loop over a typed array: the one shape that splices a
+/// rendered body in *after text on the same line* (`for (...) <body>`), so
+/// it is the shape a leading directive on that body breaks. Needs the real
+/// Foundation, because for-in is protocol dispatch -- resolved from the
+/// repository's own `include/oz_sdk` and `src`, exactly as `oz2c` does by
+/// default.
+fn for_in_fixture(name: &str) -> (PathBuf, ResolvedSource) {
+    let dir = scratch_dir(name);
+    fs::write(
+        dir.join("src/main.m"),
+        "\
+#import <Foundation/Foundation.h>
+
+int main(void)
+{
+	OZArray<OZString *> *names = @[ @\"alpha\", @\"beta\" ];
+	for (OZString *name in names) {
+		OZLog(\"name: %@\", name);
+	}
+	return 0;
+}
+",
+    )
+    .unwrap();
+    let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let resolved = resolve_entry_files(
+        &[dir.join("src/main.m")],
+        &[repo.join("include/oz_sdk")],
+        &[repo.join("src"), dir.join("src")],
+    )
+    .unwrap_or_else(|e| panic!("resolution failed: {}", e));
     (dir, resolved)
 }
 
@@ -547,6 +591,51 @@ fn anonymize_block_positions(line: &str) -> String {
     }
     out.push_str(rest);
     out
+}
+
+/// A preprocessing directive may be indented but may not share its line
+/// with anything else. Nothing that assembles generated text may splice a
+/// directive into the middle of a line, and the shape that proved it is a
+/// **nested** body: `@synchronized (self) <body>` and
+/// `for (OZString *name in names) <body>` both render a nested body, and
+/// the for-in puts it after text on the same line -- so a leading
+/// directive on that body arrived as `for (...) #line 29 "main.m"`:
+/// `error: stray '#' in program`, an ARM build failure
+/// (`samples/transpiled_generics`) that no host test noticed.
+#[test]
+fn no_directive_shares_a_line_with_code() {
+    let (plain_dir, plain) = program_fixture("own_line");
+    let (loop_dir, looping) = for_in_fixture("own_line_forin");
+    let mut files = transpile_with_directives(&plain, &plain_dir);
+    files.extend(transpile_with_directives(&looping, &loop_dir));
+    let mut checked = 0usize;
+    for (stem, h, c) in &files {
+        for text in [h, c] {
+            for (index, line) in text.lines().enumerate() {
+                if !line.contains("#line ") {
+                    continue;
+                }
+                assert!(
+                    line.trim_start().starts_with("#line "),
+                    "{:?} line {}: a directive shares its line with code -- {:?}",
+                    stem,
+                    index + 1,
+                    line
+                );
+                /* And nothing after it either: everything a directive says
+                 * is over at the end of its own line. */
+                assert!(
+                    line.matches("#line ").count() == 1 && line.ends_with('"'),
+                    "{:?} line {}: something follows the directive -- {:?}",
+                    stem,
+                    index + 1,
+                    line
+                );
+                checked += 1;
+            }
+        }
+    }
+    assert!(checked > 10, "only {} directives seen -- the fixture shrank", checked);
 }
 
 /// Every directive names an absolute path, so a debugger resolves it from

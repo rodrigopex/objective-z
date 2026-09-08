@@ -88,11 +88,6 @@ impl<'a> LineDirectives<'a> {
         }
     }
 
-    /// No directives at all -- what every caller without a source map gets.
-    pub fn off() -> Self {
-        LineDirectives::default()
-    }
-
     /// A directive putting the *next* emitted line at the `.m`/`.h` line
     /// the byte at `merged_offset` was spliced from, or `None` when
     /// directives are off or the offset is not covered by the map.
@@ -529,26 +524,27 @@ fn splice_after_open_brace(body_text: &str, lines: &[String], resume: &str) -> S
     }
 }
 
-/// Join a signature to the body text that follows it, keeping a leading
-/// `#line` directive on a line of its own.
+/// The `#line` anchor for a **verbatim** body about to be emitted at the
+/// start of a line, or nothing.
 ///
-/// A preprocessing directive may be indented but may not share a line with
-/// anything else, and two of the three signature positions put the brace on
-/// the signature's own line -- `int main(void) {` is the author's own
-/// formatting in a plain C function, and `render_block` synthesizes the same
-/// shape. A body that begins with a directive (the verbatim fast path in
-/// `render_body_with_comments`) would land as
-/// `int main(void) #line 73 "..."`, which is not C at all. The extra newline
-/// costs nothing: the directive names the line the brace is *on* in the
-/// source, so everything after it still lines up.
-fn attach_body(head: &str, body: &str) -> String {
-    if body.starts_with("#line ") && !head.ends_with('\n') {
-        /* The space that used to separate the signature from the brace has
-         * nothing left to separate. */
-        format!("{}\n{}", head.trim_end_matches([' ', '\t']), body)
-    } else {
-        format!("{}{}", head, body)
+/// A body `render_body_with_comments` returned byte-identical has no
+/// per-statement directives, so its attribution is whatever precedes it,
+/// counted on line by line. That works out on its own only when the
+/// generated text ahead of it has the same line count as the source did,
+/// and a method's does not: `- (void)foo:(int)a\n bar:(int)b` is two source
+/// lines and one generated one. One anchor on the brace fixes every line of
+/// the body at once.
+///
+/// Nothing when the body was rendered (each statement carries its own),
+/// when it is written on a single line (it lands on the line after the
+/// signature, which is where the source has it too), or when directives are
+/// off.
+fn body_anchor(body: Node, body_text: &str, ctx: &EmitCtx) -> String {
+    let verbatim = body_text == node_text(body, ctx.src);
+    if !verbatim || !body_text.contains('\n') {
+        return String::new();
     }
+    ctx.lines.before(body.start_byte())
 }
 
 /// Does `root`'s subtree read the identifier `name`?
@@ -3945,28 +3941,38 @@ fn render_block(node: Node, ctx: &mut EmitCtx) -> (String, String) {
     // no enclosing method to name. It read "hoisted out of its enclosing
     // method" until then, which was true of every caller at the time and
     // became false for the new one -- the shape of stale claim docs/STATUS.md
-    // keeps recording, in generated output this time.
+    // keeps recording, in generated output this time. Since #305 the
+    // position it states is the `.m`'s, like the name's.
+    //
     // The directive goes below the banner and above the signature, so the
     // hoisted function's own line is the line of the block literal it came
     // from -- which is what a backtrace naming this symbol should resolve
-    // to. Its body carries its own directives, one per statement.
+    // to. Its body needs no anchor of its own (`body_anchor`): the
+    // synthesized signature is one line and starts at the literal's own
+    // line, so a verbatim body's lines line up from here by themselves,
+    // and a rendered one carries a directive per statement.
     let definition = format!(
-        "/* block at {}:{} -- synthesized function, hoisted from a block literal */\n{}{}\n",
+        "/* block at {}:{} -- synthesized function, hoisted from a block literal */\n{}{} {}{} {}\n",
         line,
         col,
         ctx.lines.before(node.start_byte()),
-        attach_body(&format!("{} {}{} ", ret_ty, name, params), &body_text)
+        ret_ty,
+        name,
+        params,
+        body_text
     );
     ctx.hoisted_blocks.push((prototype, definition));
     (name.clone(), "id".to_string())
 }
 
 /// Render a `compound_statement` body. If nothing inside needed
-/// translation, returned byte-identical to the original. Otherwise the
-/// whole body is reformatted one-statement-per-line, tab-indented: a
-/// translated statement gets its original (collapsed to one line) as a
-/// `/* ... */` comment directly above the translated line; an untouched
-/// statement is printed as-is. This trades exact preservation of the
+/// translation, returned byte-identical to the original -- with a leading
+/// `#line` directive, which is the only thing that ever precedes it.
+/// Otherwise the whole body is reformatted one-statement-per-line,
+/// tab-indented: a translated statement gets its original (collapsed to one
+/// line) as a `/* ... */` comment above it and a `#line` directive between
+/// the two, naming where the statement was written (#305); an untouched
+/// statement gets the directive and then itself. This trades exact preservation of the
 /// original body's own formatting (blank lines, inline comments between
 /// statements) for consistent, predictable output once a body is already
 /// being annotated -- a deliberate simplification, not an oversight.
@@ -4334,24 +4340,21 @@ fn render_body_with_comments(body: Node, ctx: &mut EmitCtx) -> String {
     if trailing.is_empty()
         && rendered_stmts.iter().all(|(rendered, original, _)| rendered == original)
     {
-        /* A body returned byte-identical needs one directive and no more:
-         * its lines *are* the source's lines, so once the first one is
-         * placed every line after it follows by itself. (An
-         * unused-parameter acknowledgement spliced in after the brace
-         * would shift the rest -- `splice_after_open_brace` re-states the
-         * position for exactly that reason.)
+        /* Byte-identical, and *no* directive: a verbatim body needs one
+         * anchor on its brace and then nothing (its lines are the
+         * source's, so they follow on their own), but this function
+         * cannot place it. Its result is spliced in by callers that are
+         * not at the start of a line -- `for (...) <body>` is the shape
+         * that proved it, where the anchor became
+         * `for (...) #line 29 "main.m"` and GCC answered "stray '#' in
+         * program". A directive may be indented but may not share a line.
          *
-         * A body written on *one* line needs not even that: it is emitted
-         * on the line after the signature, which is where the source has
-         * it too, so the definition's own directive already covers it. Not
-         * merely redundant -- the directive would have to be given a line
-         * of its own, and moving `{ return _n; }` off the signature line
-         * changes generated C for nothing. */
-        let text = node_text(body, ctx.src);
-        if !text.contains('\n') {
-            return text.to_string();
-        }
-        return format!("{}{}", ctx.lines.before(body.start_byte()), text);
+         * So the anchor is the caller's to emit, and only the callers that
+         * know they are at line start do (`render_method_definition`, the
+         * top-level `function_definition` arm) -- see `body_anchor`. A
+         * nested body inherits the enclosing statement's position, which
+         * is what every other nested construct here already does. */
+        return node_text(body, ctx.src).to_string();
     }
 
     let mut out = String::from("{\n");
@@ -5124,14 +5127,20 @@ fn render_method_definition(
     // One directive for the definition, between the signature comment and
     // the signature itself, so the function's own line is the line of the
     // `- (void)foo` that produced it (#305). Each statement of the body
-    // then carries its own -- `render_body_with_comments`.
+    // then carries its own -- `render_body_with_comments` -- except a
+    // verbatim body, which gets one anchor on its brace instead.
+    let anchor = match body {
+        Some(body) => body_anchor(body, &body_text, ctx),
+        None => String::new(),
+    };
     format!(
-        "/* {} */\n{}{} {}({})\n{}\n",
+        "/* {} */\n{}{} {}({})\n{}{}\n",
         one_line(&header),
         ctx.lines.before(node.start_byte()),
         ret_ty,
         fn_name,
         sig_params,
+        anchor,
         body_text
     )
 }
@@ -5628,9 +5637,9 @@ fn walk_top_level<'a>(
                 //
                 // A signature is *patched* text, not rebuilt, so it has the
                 // author's own line count and one directive at its start
-                // lines up every line of it. The same is true of a body
-                // emitted verbatim, which is why neither verbatim path
-                // below needs a directive of its own.
+                // lines up every line of it -- and every line of a
+                // verbatim body after it, which is why the untranslated
+                // paths below need nothing more.
                 let signature = lines.before(node.start_byte());
                 let mut text = format!(
                     "{}{}",
@@ -5663,7 +5672,7 @@ fn walk_top_level<'a>(
                             collect_function_params(node, &mut ctx);
                             collect_local_decls(body, &mut ctx);
                             let rendered_body = render_body_with_comments(body, &mut ctx);
-                            text = attach_body(&prefix, &rendered_body);
+                            text = format!("{}{}", prefix, rendered_body);
                         }
                     } else {
                         text = format!("{}{}", prefix, node_text(body, source));
