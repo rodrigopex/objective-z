@@ -436,15 +436,18 @@ objz_transpile_sources(<target> <source1.m> [source2.m ...]
 
 ## Configuration
 
-`CONFIG_OBJZ` enables the transpiler pipeline and auto-selects `STATIC_INIT_GNU`. Three options sit under it, and the defaults are what a plain `CONFIG_OBJZ=y` gives you:
+`CONFIG_OBJZ` enables the transpiler pipeline and auto-selects `STATIC_INIT_GNU`. Four options sit under it, and the defaults are what a plain `CONFIG_OBJZ=y` gives you:
 
 | Option | Default | Effect |
 |---|---|---|
 | `CONFIG_OBJZ_HEAP` | `n` | `+allocWithHeap:` and the heap-aware free path |
 | `CONFIG_OBJZ_INTROSPECTION` | `y` | `-isKindOfClass:` and `-conformsToProtocol:` |
 | `CONFIG_OBJZ_REFLECTION` | `y` | `@selector`, `SEL`, `-respondsToSelector:`, `-performSelector:` |
+| `CONFIG_OBJZ_DEBUG_LINES` | `y` | `#line` directives back to the `.m`, so a debugger names it |
 
 The two introspection options generate `const` tables only for the constructs a program actually uses, so leaving them on costs nothing until something introspects. Set either to `n` to forbid its constructs outright: they then become located transpile errors naming the option, never silently unavailable.
+
+`CONFIG_OBJZ_DEBUG_LINES` costs no code: every `.o`'s instructions are byte-identical with it on, because `#line` changes only what the compiler *records* about them. The one thing that does move is `__FILE__`, which now expands to the `.m` inside generated code — so an `__ASSERT` failure names the Objective-C too, and px-keyboard's image came out 64 bytes *smaller* (a `.m` name is shorter than a generated `.c` path). With it on, `break PXLEDController.m:161`, `list` and `step` work in Objective-C terms, and a fatal-error backtrace, `addr2line` and a GCC warning about generated code all name the `.m` instead of `oz_static_generated/<Class>.c` (#305). It covers the code you wrote -- method bodies, plain C function bodies, hoisted blocks; code oz_static synthesizes keeps pointing at the generated `.c`, which is where it lives. Set it to `n` to read the generated C without line markers in it.
 
 Supported architectures:
 
