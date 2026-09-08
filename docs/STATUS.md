@@ -501,7 +501,7 @@ that reported success while the thing it named was broken.
   whose answer also decides which methods are owning factories and so what
   every caller of one must release. A *bridging* cast is looked through by
   none of the three. An **argument** is the third site the question is asked
-  from, and it asks the discard question rather than a fourth one of its own
+  from, and it asks the discard question rather than a separate one of its own
   (`owning_argument_value`, #328): whether the callee retains the argument or
   only borrows it does not change the caller's obligation, so all that is
   left to decide is whether the reference is new. Getting *that* wrong is the
@@ -509,6 +509,24 @@ that reported success while the thing it named was broken.
   manual `[e retain]` and frees `[u init]`'s receiver twice, and one Rust
   test on the emitted C is the whole of what catches it, because an
   over-release is invisible to a dealloc counter (a refcount already at zero
-  returns early) and to a slot count (the host slab clamps `num_used`).
+  returns early) and to a slot count (the host slab clamps `num_used`). A
+  **receiver** is the fourth and last of these positions, and the first where
+  the discard question is necessary but *not sufficient*
+  (`receiver_owning_value`, #340). `[[Foo alloc] poke];` abandons a `+1` that
+  no name and no discarded value reaches, so nothing released it; but
+  `[[Foo alloc] init];` hands that same reference out through its return
+  value, where #322's arm already releases it, so releasing the receiver as
+  well is the second free. The selector therefore has to be consulted
+  alongside the receiver, and only the four selectors that consume or hand
+  back the receiver's *own* reference -- `init...`, `retain`, `release`,
+  `dealloc` -- are excluded. Being an *owning* selector is not the same
+  thing: `-copy` and an analysis-derived factory return a fresh object, so
+  the receiver's `+1` really is abandoned and both references are released.
+  The sweep through these four positions is complete as a question of
+  *which position* a `+1` sits in. Two known leaks remain, and neither is a
+  position: an owning operand of a plain **C** call, deliberately, since a C
+  callee cannot retain what it keeps; and an owning operand in a `for`
+  header's initialiser, which is outside the parent check the declaration
+  arm is guarded on (#341, open).
 - **The version is `tools/oz_static/Cargo.toml`**, bumped in the same commit
   as the change it describes. The repo-level `VERSION` file is retired.
