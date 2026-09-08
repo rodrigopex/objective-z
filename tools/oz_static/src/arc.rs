@@ -39,6 +39,16 @@
 // caller's to drop -- so all that is left to decide is whether the
 // reference is new, which is `created_by` again.
 //
+// A **receiver** is the fourth, and the first one that needs more than the
+// discard question: `receiver_owning_value` asks it *and* consults the
+// selector (#340). `[[Foo alloc] poke];` abandons the `+1` and must
+// release it, but `[[Foo alloc] init];` hands that same reference back out
+// and #322's arm already releases it -- so releasing the receiver as well
+// would free one pointer twice. `accounts_for_its_receiver` is that second
+// half, and note what it is *not*: being an owning selector is not being a
+// pass-through one. `-copy` and an analysis-derived factory return a fresh
+// object, so both references are live and both are released.
+//
 // Ported from the oracle's `_is_owning_expr` / `_find_owning_return_methods`
 // (tools/oz_transpile/emit.py), with one improvement: the oracle's scan is a
 // single pass, so a factory whose returns call *another* factory is not
@@ -592,7 +602,8 @@ pub fn discarded_owning_value<'a>(
 ///
 /// This is a *third site* asking the question `discards_ownership` already
 /// answers, and it is deliberately the same predicate rather than a
-/// parallel one. The caller's obligation does not depend on what the
+/// parallel one -- unlike the fourth, a receiver, where the same question
+/// is necessary but not sufficient (`receiver_owning_value`, #340). The caller's obligation does not depend on what the
 /// callee does with the argument: a callee that stores it strongly retains
 /// it (`render_strong_ivar_assign`, and a synthesized setter), and one that
 /// merely borrows it retains nothing -- either way the `+1` the *caller*
@@ -613,6 +624,76 @@ pub fn owning_argument_value<'a>(
     owning: &OwningMethods,
 ) -> Option<Node<'a>> {
     discarded_owning_value(arg, src, program, owning)
+}
+
+/// The +1 reference a send's **receiver** abandons, or None when the
+/// receiver is borrowed or the send itself accounts for that reference
+/// (#340).
+///
+/// `[[Foo alloc] poke];` is the shape: the allocation has no name, so no
+/// scope-exit release reaches it, and the send's *value* is `void`, so
+/// `discarded_owning_value` sees nothing to release. It was the last
+/// position in the sweep #322, #327, #332 and #328 worked through, and it
+/// is the one that cannot be answered by the discard question alone.
+///
+/// Releasing a receiver unconditionally is a double free, and
+/// `[[Foo alloc] init];` is the counterexample: `-init` consumes the
+/// receiver's `+1` and hands it back, and #322's discarded-statement arm
+/// **already releases that** by following the `-init...` send back to its
+/// receiver through `created_by`. So the selector has to be consulted as
+/// well as the receiver, which is what `accounts_for_its_receiver` is for
+/// and why this is not `owning_argument_value` with a different argument.
+///
+/// Being an *owning* selector is not the same as accounting for the
+/// receiver, and this is the distinction worth stating: `-copy` and an
+/// analysis-derived factory build a **fresh** object, so the receiver's
+/// `+1` is abandoned exactly as `-poke`'s is and both references are
+/// released -- one here, one by #322's arm. Only the four selectors that
+/// consume or hand back the *receiver's own* reference are excluded.
+///
+/// A `-performSelector:` whose selector resolves statically is the same
+/// send by another spelling and gets the same answer, exactly as in
+/// `discards_ownership`. When it does not resolve, the receiver is still
+/// released: whatever the run-time selector turns out to be, the reference
+/// the *call site* created is one reference, and releasing it once is
+/// right for any callee that retains what it keeps -- which is the same
+/// obligation `owning_argument_value` reasons from.
+pub fn receiver_owning_value<'a>(
+    send: Node<'a>,
+    src: &str,
+    program: &Program,
+    owning: &OwningMethods,
+) -> Option<Node<'a>> {
+    if send.kind() != "message_expression" {
+        return None;
+    }
+    let parts = crate::emit::parse_message(send, src);
+    let selector = statically_performed_selector(send, src).unwrap_or(parts.selector);
+    if accounts_for_its_receiver(&selector) {
+        return None;
+    }
+    discarded_owning_value(parts.receiver, src, program, owning)
+}
+
+/// Does a send of `selector` consume its receiver's reference, or hand that
+/// same reference back out as its value?
+///
+/// The four that do, and what each would cost if it were missing here:
+///
+/// - `init...` hands the `+1` back out, and #322's arm releases it at the
+///   receiver -- releasing here too frees one pointer twice;
+/// - `retain` hands the receiver back at +2, and `created_by` excludes it
+///   from being a new reference at all, so the balancing release is the
+///   author's;
+/// - `release` *is* the release, so a second one is the second free;
+/// - `dealloc` has already torn the object down when the send returns.
+///
+/// Nothing else belongs here. A selector left out leaks; a selector wrongly
+/// added would corrupt, so the list is a reading of the four selectors
+/// `emit::render_message` and `staticbar` already treat specially rather
+/// than a guess at which methods might keep their receiver.
+fn accounts_for_its_receiver(selector: &str) -> bool {
+    matches!(selector, "retain" | "release" | "dealloc") || selector.starts_with("init")
 }
 
 /// Does throwing this expression's value away abandon a +1 reference that

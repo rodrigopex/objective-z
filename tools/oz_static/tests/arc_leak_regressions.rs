@@ -1416,8 +1416,12 @@ int main(void) { return 0; }
 /// `created_by` follows the `-init...` back to `[Foo alloc]`, which is
 /// where the reference is actually created -- so the argument counts as
 /// owning once, at the outer send, and the inner `alloc` is not a second
-/// owning argument (it is a receiver, not an argument, which is the other
-/// reason).
+/// owning operand. Being a *receiver* rather than an argument is no longer
+/// a reason of its own: since #340 a receiver is collected too, and what
+/// keeps this one out is that its send's selector is `-init`, which hands
+/// the reference back rather than abandoning it
+/// (`arc::accounts_for_its_receiver`). Dropping that check makes this test
+/// fail with two releases where one is owed, which is what it is here for.
 #[test]
 fn nested_alloc_init_argument_is_released_exactly_once() {
     let src = format!(
@@ -1586,6 +1590,345 @@ int main(void) {
         out, "seen=4 deallocs=4\n",
         "one slot must serve every iteration, which needs the allocation and \
          the release both inside the loop: {}",
+        out
+    );
+}
+
+/// A `+1` used as the **receiver** of a send, which is the last position in
+/// the ownership sweep #322, #327, #332 and #328 worked through: `[[Foo
+/// alloc] poke];` allocated an object nothing ever released (#340).
+///
+/// The allocation has no name, so no scope-exit release reaches it, and the
+/// send's *value* is `void`, so `discarded_owning_value` (#322/#327) saw
+/// nothing to release either. Zero `oz_static_release` calls were emitted
+/// for it.
+///
+/// `Foo=1` is the whole assertion: three sends through one slab slot cannot
+/// succeed unless each receiver is released before the next one allocates.
+/// `-poke` counts only a non-nil `self` deliberately -- a direct call
+/// dereferences nothing, so a send to the nil a starved `+alloc` returns
+/// would otherwise count as a poke and the leak would print `poked=3`.
+/// Before the fix this printed `poked=1 deallocs=0`.
+#[test]
+fn an_owning_receiver_is_released_after_the_send() {
+    let src = format!(
+        "/* oz-pool: Foo=1,Runner=1 */\n{}{}",
+        PREAMBLE(),
+        "\
+static int g_poked = 0;
+static int g_deallocs = 0;
+
+@interface Foo : OZObject
+- (void)poke;
+@end
+@implementation Foo
+- (void)poke {
+	if (self != nil) {
+		g_poked = g_poked + 1;
+	}
+}
+- (void)dealloc {
+	g_deallocs = g_deallocs + 1;
+}
+@end
+
+@interface Runner : OZObject
+- (void)run;
+@end
+@implementation Runner
+- (void)run {
+	[[Foo alloc] poke];
+	[[Foo alloc] poke];
+	[[Foo alloc] poke];
+}
+@end
+
+#include <stdio.h>
+int main(void) {
+	Runner *r = [Runner alloc];
+	[r run];
+	printf(\"poked=%d deallocs=%d\\n\", g_poked, g_deallocs);
+	return 0;
+}
+"
+    );
+    let out = compile_and_run(&src, "owning_receiver_released");
+    assert_eq!(
+        out, "poked=3 deallocs=3\n",
+        "each abandoned receiver is released after its send, so one slot \
+         serves all three: {}",
+        out
+    );
+}
+
+/// The counterexample that makes this its own reasoning rather than an
+/// extension of #328: `[[Foo alloc] init];` must **not** release its
+/// receiver.
+///
+/// `-init` consumes the receiver's `+1` and hands it back, so the reference
+/// travels out through the return value and #322's discarded-result arm
+/// already owns it -- `arc::created_by` follows the `-init...` send back to
+/// `[Foo alloc]` and releases *there*. Releasing the receiver as well frees
+/// one pointer twice.
+///
+/// `[[f retain] poke]` is the other pass-through, excluded by `created_by`
+/// outright, and `[f poke]` is an ordinary borrowed receiver.
+///
+/// Asserted on the **emitted C**, and for the reason the four predecessors
+/// recorded: an over-release is invisible to a dealloc counter, because the
+/// second `oz_static_release` sees a refcount already at 0 and returns
+/// before `-dealloc`, and the host slab clamps `num_used` at 0. A counter
+/// and a slot count are both blind here. What is checkable is that no
+/// receiver temporary was taken.
+#[test]
+fn a_receiver_whose_reference_travels_out_is_left_alone() {
+    let src = format!(
+        "/* oz-pool: Foo=3,Runner=1 */\n{}{}",
+        PREAMBLE(),
+        "\
+@interface Foo : OZObject
+- (void)poke;
+@end
+@implementation Foo
+- (void)poke {}
+@end
+
+@interface Runner : OZObject
+- (void)run;
+@end
+@implementation Runner
+- (void)run {
+	/* -init hands the receiver's +1 back out; #322's arm releases it
+	 * there, so a receiver release here would be the second free. */
+	[[Foo alloc] init];
+	Foo *f = [Foo alloc];
+	/* An ordinary borrowed receiver: `f`'s scope exit owns it. */
+	[f poke];
+	/* -retain hands back the receiver too, and its balancing release
+	 * is written by hand below. */
+	[[f retain] poke];
+	[f release];
+}
+@end
+
+int main(void) { return 0; }
+"
+    );
+    let out = oz_static::transpile(&src).expect("should transpile");
+    let body = out
+        .source_c
+        .split("void Runner_run(struct Runner *self)\n{")
+        .nth(1)
+        .unwrap_or_else(|| panic!("no Runner_run definition in:\n{}", out.source_c))
+        .split("\n}\n")
+        .next()
+        .unwrap_or("");
+    assert!(
+        !body.contains("_oz_recv_"),
+        "none of these three receivers abandons a reference, so none may be \
+         held in a call-site temporary and released; got:\n{}",
+        body
+    );
+    // Exactly the two the source already owed: `[Foo alloc] init`'s
+    // reference, released by #322's discarded-result arm, and the
+    // hand-written `[f release]`. `f` gets no scope-exit release of its
+    // own -- `emit::released_by_hand` sees the manual one and ARC defers to
+    // the author for that variable throughout. A third release would be one
+    // pointer freed twice.
+    assert_eq!(
+        body.matches("oz_static_release").count(),
+        2,
+        "only the releases the source already owed; got:\n{}",
+        body
+    );
+}
+
+/// An abandoned receiver and a `+1` *result* are two references, and both
+/// are released: `[[Foo alloc] duplicate];` where `-duplicate` is an
+/// analysis-derived owning factory.
+///
+/// This is the case that shows being an owning selector is not
+/// pass-through. `-init` and `-retain` hand back the *receiver's*
+/// reference; an owning factory builds a **fresh** object and the
+/// receiver's `+1` is abandoned exactly as `-poke`'s was. So the receiver
+/// arm releases one and #322's discarded-result arm releases the other,
+/// and `Foo=2` is what says so: two live objects at once, both torn down.
+#[test]
+fn an_abandoned_receiver_and_an_owning_result_are_both_released() {
+    let src = format!(
+        "/* oz-pool: Foo=2,Runner=1 */\n{}{}",
+        PREAMBLE(),
+        "\
+static int g_deallocs = 0;
+
+@interface Foo : OZObject
+- (instancetype)duplicate;
+@end
+@implementation Foo
+- (instancetype)duplicate {
+	return [Foo alloc];
+}
+- (void)dealloc {
+	g_deallocs = g_deallocs + 1;
+}
+@end
+
+@interface Runner : OZObject
+- (void)run;
+@end
+@implementation Runner
+- (void)run {
+	[[Foo alloc] duplicate];
+	[[Foo alloc] duplicate];
+}
+@end
+
+#include <stdio.h>
+int main(void) {
+	Runner *r = [Runner alloc];
+	[r run];
+	printf(\"deallocs=%d\\n\", g_deallocs);
+	return 0;
+}
+"
+    );
+    let out = compile_and_run(&src, "receiver_and_owning_result");
+    assert_eq!(
+        out, "deallocs=4\n",
+        "two references per statement, so four objects torn down on two \
+         slots: {}",
+        out
+    );
+}
+
+/// The receiver's allocation must stay *inside* the loop, for the reason
+/// `an_owning_argument_inside_a_loop_allocates_per_iteration` records: a
+/// `ctx.pre_stmts` temporary is drained by the enclosing top-level
+/// statement, so hoisting the allocation above the loop would run it once
+/// and release it once while the body sent to it every iteration.
+///
+/// The receiver is `[Foo new]` rather than `[Foo alloc]`, and that is not
+/// incidental: `staticbar::walk_for_reject` refuses a bare `alloc` in a
+/// loop that is not bound to a per-iteration local, so `[[Foo alloc]
+/// poke];` inside a `for` is a *located error* today, not a leak, and
+/// cannot be written as a case here. `+new`'s allocation is inside the
+/// factory, which the loop rule does not see -- the same reason #328's loop
+/// test spells it that way.
+///
+/// `Foo=1` cannot be satisfied any other way: four iterations, one slot,
+/// four teardowns.
+#[test]
+fn an_owning_receiver_inside_a_loop_allocates_per_iteration() {
+    let src = format!(
+        "/* oz-pool: Foo=1,Runner=1 */\n{}{}",
+        PREAMBLE(),
+        "\
+static int g_poked = 0;
+static int g_deallocs = 0;
+
+@interface Foo : OZObject
++ (instancetype)new;
+- (void)poke;
+@end
+@implementation Foo
++ (instancetype)new {
+	return [Foo alloc];
+}
+- (void)poke {
+	if (self != nil) {
+		g_poked = g_poked + 1;
+	}
+}
+- (void)dealloc {
+	g_deallocs = g_deallocs + 1;
+}
+@end
+
+@interface Runner : OZObject
+- (void)run;
+@end
+@implementation Runner
+- (void)run {
+	for (int i = 0; i < 4; i++) {
+		[[Foo new] poke];
+	}
+}
+@end
+
+#include <stdio.h>
+int main(void) {
+	Runner *r = [Runner alloc];
+	[r run];
+	printf(\"poked=%d deallocs=%d\\n\", g_poked, g_deallocs);
+	return 0;
+}
+"
+    );
+    let out = compile_and_run(&src, "owning_receiver_in_a_loop");
+    assert_eq!(
+        out, "poked=4 deallocs=4\n",
+        "one slot must serve every iteration, which needs the allocation and \
+         the release both inside the loop: {}",
+        out
+    );
+}
+
+/// The same abandoned receiver where the send's own value is *used*:
+/// `int n = [[Foo alloc] tag];`.
+///
+/// Emitted as a bare group of statements rather than a braced one, because
+/// bracing would scope `n` out of the rest of the body -- the shape #328
+/// established for a declaration's initialiser. `Foo=1` is again the
+/// signal: three declarations, one slot.
+#[test]
+fn an_owning_receiver_in_a_declaration_initializer_is_released() {
+    let src = format!(
+        "/* oz-pool: Foo=1,Runner=1 */\n{}{}",
+        PREAMBLE(),
+        "\
+static int g_deallocs = 0;
+
+@interface Foo : OZObject
+- (int)tag;
+@end
+@implementation Foo
+- (int)tag {
+	if (self == nil) {
+		return 0;
+	}
+	return 7;
+}
+- (void)dealloc {
+	g_deallocs = g_deallocs + 1;
+}
+@end
+
+@interface Runner : OZObject
+- (int)run;
+@end
+@implementation Runner
+- (int)run {
+	int a = [[Foo alloc] tag];
+	int b = [[Foo alloc] tag];
+	int c = [[Foo alloc] tag];
+	return a + b + c;
+}
+@end
+
+#include <stdio.h>
+int main(void) {
+	Runner *r = [Runner alloc];
+	int v = [r run];
+	printf(\"v=%d deallocs=%d\\n\", v, g_deallocs);
+	return 0;
+}
+"
+    );
+    let out = compile_and_run(&src, "owning_receiver_in_declaration");
+    assert_eq!(
+        out, "v=21 deallocs=3\n",
+        "an initialiser's abandoned receiver is released too, and `n` stays \
+         in scope: {}",
         out
     );
 }
