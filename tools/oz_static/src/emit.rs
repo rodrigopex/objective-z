@@ -6149,6 +6149,12 @@ fn class_tag_edits(node: Node, src: &str, program: &Program) -> Vec<(Range<usize
         if matches!(node.kind(), "struct_specifier" | "generic_specifier") {
             return;
         }
+        // A `block_literal` is skipped for the same reason
+        // `block_pointer_edits` skips one: another pass replaces the whole
+        // literal, so an edit inside it can only collide (#331).
+        if node.kind() == "block_literal" {
+            return;
+        }
         if node.kind() == "type_identifier" {
             let name = &src[node.byte_range()];
             if program.is_class(name) {
@@ -6351,12 +6357,48 @@ fn contains_block_literal(node: Node) -> bool {
 }
 
 /// Apply `edits` (absolute source offsets) to the text of `start..end`.
+///
+/// The edits must be **disjoint**. Two that overlap truncate each other:
+/// applying back to front keeps offsets valid only while each replacement
+/// leaves the bytes of every remaining edit alone, and an edit inside
+/// another's range does not. What comes out is neither edit but the tail of
+/// one spliced into the middle of the other -- text no C compiler accepts,
+/// with no diagnostic, since nothing here can tell a truncated splice from
+/// an intended one.
+///
+/// That is a standing rule for every pass that contributes edits, not a
+/// local quirk of one: a pass that replaces a whole subtree owns it, and no
+/// other pass may edit inside it. Both `block_pointer_edits` and
+/// `class_tag_edits` skip a `block_literal` on exactly that ground, because
+/// `top_level_block_edits` replaces the literal wholesale (#272, #331).
+///
+/// The `debug_assert!` is what makes a violation loud. It is not merely a
+/// test-only check: `Cargo.toml` keeps oz2c on the dev profile precisely so
+/// `debug-assertions` stay on in the binary the build actually runs, so a
+/// new pass that overlaps an old one fails at the point of the mistake
+/// instead of emitting garbage a C compiler complains about somewhere else.
+/// #331 was live for the whole life of `top_level_block_edits` and cost
+/// nothing to detect here.
 pub(crate) fn apply_edits(src: &str, start: usize, end: usize, edits: &[(Range<usize>, String)]) -> String {
     let mut text = src[start..end].to_string();
     let mut relevant: Vec<&(Range<usize>, String)> =
         edits.iter().filter(|(r, _)| r.start >= start && r.end <= end).collect();
     // Back to front, so earlier offsets stay valid.
     relevant.sort_by_key(|(r, _)| std::cmp::Reverse(r.start));
+    for pair in relevant.windows(2) {
+        let (later, earlier) = (&pair[0].0, &pair[1].0);
+        debug_assert!(
+            earlier.end <= later.start,
+            "overlapping edits at {}..{} and {}..{}: {:?} vs {:?} in {:?}",
+            earlier.start,
+            earlier.end,
+            later.start,
+            later.end,
+            pair[1].1,
+            pair[0].1,
+            &src[start..end]
+        );
+    }
     for (range, replacement) in relevant {
         text.replace_range(range.start - start..range.end - start, replacement);
     }
