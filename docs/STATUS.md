@@ -523,10 +523,24 @@ that reported success while the thing it named was broken.
   thing: `-copy` and an analysis-derived factory return a fresh object, so
   the receiver's `+1` really is abandoned and both references are released.
   The sweep through these four positions is complete as a question of
-  *which position* a `+1` sits in. Two known leaks remain, and neither is a
-  position: an owning operand of a plain **C** call, deliberately, since a C
-  callee cannot retain what it keeps; and an owning operand in a `for`
-  header's initialiser, which is outside the parent check the declaration
-  arm is guarded on (#341, open).
+  *which position* a `+1` sits in. What is left is a question of *where the
+  statement sits*, and the answer differs by how often the enclosing code
+  runs. A `for` header's **initialiser** runs once, so its operand's
+  allocation is lifted above the loop and released after it -- the whole
+  loop wrapped in a braced group, since a header cannot take a statement
+  group the way #328's two positions do (#341). The **condition** and the
+  **update** run per iteration, so hoisting either would allocate once
+  where the source allocates every time round; both still leak,
+  deliberately, and a Rust test on the emitted C is what keeps a later
+  widening from sweeping them in. So does an owning operand of a plain
+  **C** call, also deliberately, since a C callee cannot retain what it
+  keeps.
+
+  Worth stating as a rule rather than three cases: hoisting is correct
+  exactly where the hoisted-from code runs once. That is the *opposite* of
+  the constraint that shaped #328, which avoided `ctx.pre_stmts` because
+  hoisting out of a loop **body** would run an allocation once instead of
+  per iteration -- and it is why #341 is a separate arm rather than a
+  widened guard on #328's.
 - **The version is `tools/oz_static/Cargo.toml`**, bumped in the same commit
   as the change it describes. The repo-level `VERSION` file is retired.
