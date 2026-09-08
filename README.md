@@ -473,7 +473,7 @@ Requires [just](https://github.com/casey/just). Default board: `mps2/an385`.
 | `just test-smp`        | Two cores (`qemu_cortex_a53/smp`)      |
 | `just test-boards`     | ARM and RISC-V                         |
 | `just test-all-boards` | All three boards, including SMP        |
-| `just test-behavior`   | 77-case behavior corpus through `oz2c` |
+| `just test-behavior`   | 78-case behavior corpus through `oz2c` |
 | `just test-adapted`    | 40 adapted upstream tests              |
 | `just smoke`           | Transpile-and-compile smoke test       |
 | `just test-pal`        | The PAL's own C tests, on the host     |
@@ -672,6 +672,7 @@ Rules:
 - The `__bridge` result is never released at scope exit — the caller must ensure the object stays alive independently (e.g., via a strong ivar like OZTimer's `_userdata`)
 - A bridging cast is also the one cast ARC does not look through. An ordinary cast changes the static type and says nothing about ownership, so it never decides whether a `+1` is accounted for: `(void)[t copy];` releases the abandoned reference exactly as `[t copy];` does (#327), and `Thing *t = (Thing *)[Thing alloc];` is released at scope end exactly as `Thing *t = [Thing alloc];` is (#332) — at a local's initializer, a reassignment, a strong-ivar store and a `return` alike. `(__bridge_retained void *)[t copy];` is the exception: that spelling hands the reference to whatever took the `void *`, and releasing it would pull the object out from under that holder
 - The cast is looked through, but what is behind it is still read exactly. `Thing *t = (Thing *)[u init];` is **not** released, because `-init…` consumes its receiver's `+1` and hands the same reference back — `u` owns it, and `u`'s own scope-exit release is the one that runs
+- A `+1` result passed straight as an **argument** to a message send is released right after the send (#328). `[self setFoo:[Foo new]];` needs no temporary of your own: the reference is held, the message is sent, the reference is dropped — so a strong setter's retain leaves the object at `+1` held by the ivar, and a method that only *borrows* its argument sees it torn down as the statement ends. The same reading applies, so `[self setFoo:[x retain]];` and `[self setFoo:[u init]];` are left alone: neither creates a reference, and releasing either would be a double free. An argument to a plain **C** function is *not* released — a C callee cannot retain, so releasing would hand it a dangling pointer — which means `OZLog("%@", [Foo new])` still leaks; bind it to a local and let scope-based ARC release it
 
 ### ARC rules summary
 

@@ -242,12 +242,12 @@ bench-all:
 ast-dump file *includes:
     clang -Xclang -ast-dump=json -fsyntax-only {{includes}} {{file}} 2>/dev/null
 
-# The 77-case behavior corpus through oz_static, the default backend. This
+# The 78-case behavior corpus through oz_static, the default backend. This
 # harness carries the compiler/-O matrix, the sanitizers, leak detection and
 # gcov, so it is where those reach the *generated* C -- `cargo test`'s
 # corpus_parity only transpiles and compiles each case, never runs it.
 #
-# The 77-case behavior corpus through oz_static (gcc/clang, -O0/-O2, ASan, LSan).
+# The 78-case behavior corpus through oz_static (gcc/clang, -O0/-O2, ASan, LSan).
 test-behavior *args:
     python3 -m pytest tests/behavior/ -v {{args}}
 
