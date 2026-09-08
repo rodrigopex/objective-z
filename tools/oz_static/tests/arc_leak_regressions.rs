@@ -623,3 +623,510 @@ int main(void) {
         out
     );
 }
+
+/// A `+1` result *bound* through a cast is released at scope exit, so
+/// `Thing *t = (Thing *)[Thing alloc];` cannot differ from
+/// `Thing *t = [Thing alloc];` in whether it leaks (#332).
+///
+/// The other half of #327. That one released a `+1` *discarded* through a
+/// cast; this one is the value a local takes over. `arc::is_owning_expr`
+/// reads a cast as borrowed -- deliberately, and still does -- and it is
+/// what every binding site used to consult, so the cast local got no
+/// scope-exit release at all while its uncast neighbour did. A cast changes
+/// the static type and says nothing about who owns the reference.
+///
+/// Both locals are here on purpose: `u` is the shape that already worked,
+/// so the assertion distinguishes "the cast one is released" from "some
+/// release happened".
+#[test]
+fn owning_result_bound_through_a_cast_is_released() {
+    let src = format!(
+        "/* oz-pool: Thing=2,Runner=1 */\n{}{}",
+        PREAMBLE(),
+        "\
+static int g_deallocs = 0;
+
+@interface Thing : OZObject
+- (void)poke;
+@end
+@implementation Thing
+- (void)poke {}
+- (void)dealloc {
+	g_deallocs = g_deallocs + 1;
+}
+@end
+
+@interface Runner : OZObject
+- (int)bind;
+@end
+@implementation Runner
+- (int)bind {
+	/* The shape that leaked. */
+	Thing *t = (Thing *)[Thing alloc];
+	/* The shape that never did, for contrast. */
+	Thing *u = [Thing alloc];
+	[t poke];
+	[u poke];
+	return (t != nil) + (u != nil);
+}
+@end
+
+#include <stdio.h>
+int main(void) {
+	Runner *r = [Runner alloc];
+	int v = [r bind];
+	printf(\"v=%d deallocs=%d\\n\", v, g_deallocs);
+	return 0;
+}
+"
+    );
+    let out = compile_and_run(&src, "bound_owning_result_through_cast");
+    assert_eq!(out, "v=2 deallocs=2\n", "the cast-bound local must be released too: {}", out);
+}
+
+/// The double-free half of #332, and the reason the cast is looked through
+/// with `arc::created_by` rather than by widening `arc::is_owning_expr`.
+///
+/// ```objc
+/// Thing *u = [Thing alloc];
+/// Thing *t = (Thing *)[u init];   /* -init hands back u's own +1 */
+/// ```
+///
+/// `-init...` consumes its receiver's +1 and hands it back, so `t` and `u`
+/// are one pointer and one reference. Widening `is_owning_expr` -- the
+/// one-line change -- releases both: `heap-use-after-free ... READ of size
+/// 4` in `oz_static_release` under ASan.
+///
+/// This asserts on the generated C rather than on a dealloc counter, and
+/// that is not laziness. A second `oz_static_release` on a freed object
+/// reads a refcount that is already 0, so `oz_atomic_dec_and_test` returns
+/// false and no second `-dealloc` runs: **the double free is invisible to a
+/// dealloc counter, and the host slab clamps `num_used` at 0 so it is
+/// invisible to a slot count too.** Only a sanitizer sees it at run time,
+/// and the Rust suite runs without one. Counting the releases in the
+/// emitted body asks the question directly -- exactly one release, and it
+/// names the receiver -- and it fails on every host.
+///
+/// `just test-behavior --sanitize=address` is the run-time half; the corpus
+/// case `arc/bound_owning_return_through_cast.m` carries this same shape
+/// for it.
+#[test]
+fn init_bound_through_a_cast_is_released_exactly_once() {
+    let src = format!(
+        "/* oz-pool: Thing=2 */\n{}{}",
+        PREAMBLE(),
+        "\
+@interface Thing : OZObject
+- (void)poke;
+@end
+@implementation Thing
+- (void)poke {}
+@end
+
+@interface Runner : OZObject
+- (int)initThroughCast;
+@end
+@implementation Runner
+- (int)initThroughCast {
+	Thing *u = [Thing alloc];
+	/* One object, one reference, two names. */
+	Thing *t = (Thing *)[u init];
+	[t poke];
+	return t == u;
+}
+@end
+
+int main(void) { return 0; }
+"
+    );
+    let out = oz_static::transpile(&src).expect("should transpile");
+    let body = out
+        .source_c
+        .split("int Runner_initThroughCast(struct Runner *self)\n{")
+        .nth(1)
+        .unwrap_or_else(|| panic!("no Runner_initThroughCast definition in:\n{}", out.source_c))
+        .split("\n}")
+        .next()
+        .unwrap_or("");
+    assert_eq!(
+        body.matches("oz_static_release").count(),
+        1,
+        "one object, one reference, so exactly one release; got:\n{}",
+        body
+    );
+    // And it must be the receiver that is released, not the name the cast
+    // gave the same pointer -- which is also what keeps the release ahead
+    // of nothing that still reads `t`.
+    assert!(
+        body.contains("oz_static_release((struct OZObject *)(u));"),
+        "the surviving release must name the receiver; got:\n{}",
+        body
+    );
+}
+
+/// The same guard one step further out: a cast over a send whose ownership
+/// cannot be resolved at all must stay borrowed.
+///
+/// `-derive` is declared and defined here, and its every return path is a
+/// `+1`, so `arc::analyze` classifies it as an owning factory and a cast
+/// over it *is* released. `-borrow` returns `self`, which is not owning by
+/// any reading, so a cast over it must not be -- releasing it would free
+/// the receiver from under its own scope. Both spellings are the same three
+/// tokens apart, which is the point: the answer comes from `created_by`,
+/// not from the cast.
+#[test]
+fn a_cast_over_a_borrowed_send_stays_borrowed() {
+    let src = format!(
+        "/* oz-pool: Thing=2,Runner=1 */\n{}{}",
+        PREAMBLE(),
+        "\
+static int g_deallocs = 0;
+
+@interface Thing : OZObject
+- (instancetype)derive;
+- (instancetype)borrow;
+- (void)poke;
+@end
+@implementation Thing
+- (instancetype)derive {
+	return [Thing alloc];
+}
+- (instancetype)borrow {
+	return self;
+}
+- (void)poke {}
+- (void)dealloc {
+	g_deallocs = g_deallocs + 1;
+}
+@end
+
+@interface Runner : OZObject
+- (int)run;
+@end
+@implementation Runner
+- (int)run {
+	Thing *seed = [Thing alloc];
+	/* +1: an analysed owning factory behind a cast. */
+	Thing *made = (Thing *)[seed derive];
+	/* +0: `self`, which is `seed`, behind the same cast. */
+	Thing *same = (Thing *)[seed borrow];
+	[made poke];
+	[same poke];
+	return same == seed;
+}
+@end
+
+#include <stdio.h>
+int main(void) {
+	Runner *r = [Runner alloc];
+	int v = [r run];
+	/* Two objects were allocated and both are gone; `same` was never a
+	 * third reference to release. */
+	printf(\"v=%d deallocs=%d\\n\", v, g_deallocs);
+	return 0;
+}
+"
+    );
+    let out = compile_and_run(&src, "cast_over_borrowed_send");
+    assert_eq!(out, "v=1 deallocs=2\n", "only the created reference may be released: {}", out);
+}
+
+/// A store to a strong *ivar* through a cast takes over the reference
+/// rather than retaining it (#332).
+///
+/// The polarity here is the opposite of a local's, which is why it is its
+/// own test: `render_strong_ivar_assign` *adds a retain* to anything it
+/// reads as borrowed, so a cast being read as borrowed left the allocation
+/// at +2 with one release ever to come. The object outlived its owner and
+/// the slab slot never came back.
+///
+/// Both signals are read, because each on its own is weaker than it looks.
+/// The dealloc counter answers whether the overwritten Thing was actually
+/// freed; the two-slot slab answers whether the ones before it gave their
+/// slots back, which is the failure that reached hardware as an MPU fault
+/// rather than as a number. Under the defect they read `third=0
+/// deallocs=0`.
+///
+/// `Thing=2` is exact and not slack: the ivar path assigns the new value
+/// before releasing the old one -- deliberately, since releasing first
+/// could free the value being stored when the two are the same -- so two
+/// instances are briefly live on every overwrite and a one-slot slab
+/// cannot express the correct behaviour at all.
+#[test]
+fn owning_result_stored_into_a_strong_ivar_through_a_cast_is_not_retained() {
+    let src = format!(
+        "/* oz-pool: Thing=2,Holder=1 */\n{}{}",
+        PREAMBLE(),
+        "\
+static int g_deallocs = 0;
+
+@interface Thing : OZObject
+@end
+@implementation Thing
+- (void)dealloc {
+	g_deallocs = g_deallocs + 1;
+}
+@end
+
+@interface Holder : OZObject
+{
+	Thing *_kid;
+}
+- (int)refill;
+@end
+@implementation Holder
+- (int)refill {
+	/* The cast used to earn this store a retain it had no business
+	 * having. */
+	_kid = (Thing *)[Thing alloc];
+	return _kid != nil;
+}
+@end
+
+#include <stdio.h>
+int main(void) {
+	Holder *h = [Holder alloc];
+	int first = [h refill];
+	int second = [h refill];
+	/* Two slots, three allocations: this can only find a slot if each
+	 * overwrite released what the ivar held instead of leaving it
+	 * at +2. */
+	int third = [h refill];
+	printf(\"first=%d second=%d third=%d deallocs=%d\\n\",
+	       first, second, third, g_deallocs);
+	return 0;
+}
+"
+    );
+    let out = compile_and_run(&src, "ivar_store_through_cast");
+    // Two overwrites, so two Things freed; the third is still held by the
+    // ivar when the count is printed.
+    assert_eq!(
+        out, "first=1 second=1 third=1 deallocs=2\n",
+        "a cast-wrapped +1 must be stored without a retain: {}",
+        out
+    );
+}
+
+/// Reassigning a strong local through a cast releases what it held, and the
+/// local is ARC-managed at all (#332).
+///
+/// `classify_store` read the cast as neither owning nor a plain identifier,
+/// which is `LocalStore::Unsupported` -- and one unsupported store takes the
+/// whole local out of `managed_object_locals`. Two consequences, both here:
+/// nothing released the overwritten object, and `staticbar` rejected the
+/// ordinary reassign-in-a-loop shape outright ("allocation of 'Thing' inside
+/// a loop escapes the iteration"), because an unmanaged local cannot bound
+/// how many instances are live.
+///
+/// One slab slot for a three-iteration loop is the assertion: it can only
+/// hold if each iteration's release comes *before* the next allocation.
+#[test]
+fn strong_local_reassigned_through_a_cast_releases_the_old_value() {
+    let src = format!(
+        "/* oz-pool: Thing=1,Runner=1 */\n{}{}",
+        PREAMBLE(),
+        "\
+static int g_deallocs = 0;
+
+@interface Thing : OZObject
+- (void)poke;
+@end
+@implementation Thing
+- (void)poke {}
+- (void)dealloc {
+	g_deallocs = g_deallocs + 1;
+}
+@end
+
+@interface Runner : OZObject
+- (int)loop;
+@end
+@implementation Runner
+- (int)loop {
+	Thing *t = nil;
+	int i = 0;
+	int made = 0;
+	while (i < 3) {
+		t = (Thing *)[Thing alloc];
+		made = made + (t != nil);
+		i = i + 1;
+	}
+	[t poke];
+	return made;
+}
+@end
+
+#include <stdio.h>
+int main(void) {
+	Runner *r = [Runner alloc];
+	int made = [r loop];
+	printf(\"made=%d deallocs=%d\\n\", made, g_deallocs);
+	return 0;
+}
+"
+    );
+    let out = compile_and_run(&src, "reassign_through_cast");
+    assert_eq!(
+        out, "made=3 deallocs=3\n",
+        "one slot must serve the whole loop, and all three must be freed: {}",
+        out
+    );
+}
+
+/// A `return` is a binding site too, and both its halves have to agree
+/// about a cast (#332).
+///
+/// `return (Thing *)[Thing alloc];` left the enclosing function classified
+/// +0, so every caller kept the reference it had just been handed and
+/// nothing released it. And `return (Thing *)s;` was worse than a leak:
+/// `render_return_statement` looked for a bare `identifier` child, found
+/// none behind the cast, and so released `s` *on the way out* and handed
+/// the caller a freed pointer -- a use-after-free where the uncast
+/// `return s;` is correct. Both now read the value through
+/// `arc::value_behind_casts`, so the local the return keeps alive and the
+/// ownership the caller is told to take over are decided by one peel.
+///
+/// A one-slot slab per class is the assertion: the second call can only
+/// find a slot if the first result was released by its caller.
+#[test]
+fn returning_through_a_cast_hands_the_caller_the_reference() {
+    let src = format!(
+        "/* oz-pool: Thing=1,Other=1,Runner=1 */\n{}{}",
+        PREAMBLE(),
+        "\
+static int g_deallocs = 0;
+
+@interface Thing : OZObject
+@end
+@implementation Thing
+- (void)dealloc {
+	g_deallocs = g_deallocs + 1;
+}
+@end
+
+@interface Other : OZObject
+@end
+@implementation Other
+- (void)dealloc {
+	g_deallocs = g_deallocs + 1;
+}
+@end
+
+/* The send behind the cast. */
+static Thing *makeThing(void) {
+	return (Thing *)[Thing alloc];
+}
+
+/* A local behind the cast -- the shape that used to release `s` and
+ * return it anyway. */
+static Other *makeOther(void) {
+	Other *s = [Other alloc];
+	return (Other *)s;
+}
+
+@interface Runner : OZObject
+- (int)run;
+@end
+@implementation Runner
+- (int)run {
+	Thing *a = makeThing();
+	Other *b = makeOther();
+	return (a != nil) + (b != nil);
+}
+@end
+
+#include <stdio.h>
+int main(void) {
+	Runner *r = [Runner alloc];
+	int first = [r run];
+	/* One slot each: this can only match if -run released both. */
+	int second = [r run];
+	printf(\"first=%d second=%d deallocs=%d\\n\", first, second, g_deallocs);
+	return 0;
+}
+"
+    );
+    let out = compile_and_run(&src, "return_through_cast");
+    assert_eq!(
+        out, "first=2 second=2 deallocs=4\n",
+        "a cast on a return must not change who owns the result: {}",
+        out
+    );
+}
+
+/// A *bridging* cast is not looked through at a binding site either, for
+/// #327's reason.
+///
+/// `(__bridge_retained Thing *)` hands the reference to a non-Objective-C
+/// holder, so releasing it at scope exit would pull the object out from
+/// under that holder -- a double free, not a leak. `__bridge` and
+/// `__bridge_transfer` are held back with it, because there is no
+/// CoreFoundation here for any of the three to bridge to, so leaving all
+/// three borrowed keeps the conservative bias exact rather than resting on
+/// a reading of a bridge this project does not have.
+///
+/// `deallocs=0` is therefore the answer being asserted and not a leak being
+/// tolerated, exactly as in `a_bridging_cast_is_not_looked_through`. The
+/// non-bridging local in the same scope is what shows the peel is working
+/// at all and the bridging one is being singled out.
+#[test]
+fn a_bridging_cast_at_a_binding_site_is_not_looked_through() {
+    let src = format!(
+        "/* oz-pool: Thing=3,Runner=1 */\n{}{}",
+        PREAMBLE(),
+        "\
+static int g_bridged = 0;
+static int g_plain = 0;
+
+@interface Thing : OZObject
+- (void)poke;
+@end
+@implementation Thing
+- (void)poke {}
+@end
+
+@interface Bridged : OZObject
+@end
+@implementation Bridged
+- (void)dealloc {
+	g_bridged = g_bridged + 1;
+}
+@end
+
+@interface Plain : OZObject
+@end
+@implementation Plain
+- (void)dealloc {
+	g_plain = g_plain + 1;
+}
+@end
+
+@interface Runner : OZObject
+- (int)run;
+@end
+@implementation Runner
+- (int)run {
+	Bridged *held = (__bridge_retained Bridged *)[Bridged alloc];
+	Bridged *lent = (__bridge Bridged *)[Bridged alloc];
+	Plain *mine = (Plain *)[Plain alloc];
+	return (held != nil) + (lent != nil) + (mine != nil);
+}
+@end
+
+#include <stdio.h>
+int main(void) {
+	Runner *r = [Runner alloc];
+	int v = [r run];
+	printf(\"v=%d bridged=%d plain=%d\\n\", v, g_bridged, g_plain);
+	return 0;
+}
+"
+    );
+    let out = compile_and_run(&src, "bridging_cast_at_binding_site");
+    assert_eq!(
+        out, "v=3 bridged=0 plain=1\n",
+        "a bridging cast keeps the reference on the bridge's other side: {}",
+        out
+    );
+}
