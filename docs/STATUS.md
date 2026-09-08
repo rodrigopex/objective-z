@@ -482,16 +482,24 @@ that reported success while the thing it named was broken.
   heuristic. Note what that rule does *not* say: recognising a shape as +1 is
   only half the job, and a *recognised* one still leaked for as long as nothing
   bound it (#322). It also does not say that one reading of ownership serves
-  every question. `is_owning_expr` answers "may a local holding this be
-  released at scope exit"; a result bound to nothing needs the narrower
-  `discarded_owning_value`, because `-retain` and `-init...` hand back a
-  reference something else already accounts for, and releasing those is the
-  corruption direction. The two readings differ in *both* directions, and a
-  cast is the case that runs the other way: borrowed to `is_owning_expr`,
-  looked through when the value is discarded, so `(void)[t copy];` cannot
-  leak where `[t copy];` does not (#327). Widening `is_owning_expr` to match
-  is the corruption direction and was measured to be: with a cast looked
-  through there, `Thing *t = (Thing *)[u init];` releases `u` twice, which
-  ASan reports as a heap-use-after-free.
+  every question. `is_owning_expr` answers "is this +1 by shape"; a result
+  bound to nothing needs the narrower `discarded_owning_value`, because
+  `-retain` and `-init...` hand back a reference something else already
+  accounts for, and releasing those is the corruption direction. A cast runs
+  the other way: `is_owning_expr` reads one as borrowed, and both of the
+  other two questions look through it. Discarding does, so `(void)[t copy];`
+  cannot leak where `[t copy];` does not (#327); *binding* does too, so
+  `Thing *t = (Thing *)[Thing alloc];` cannot leak where
+  `Thing *t = [Thing alloc];` does not (#332). Both peel through
+  `arc::value_behind_casts` and then ask `created_by`, and that second step
+  is the whole safety argument -- widening `is_owning_expr` instead skips it
+  and was measured to be the corruption direction: `Thing *t = (Thing *)[u
+  init];` then releases `u` twice, which ASan reports as a
+  heap-use-after-free. So the right combination at a binding site is
+  `binds_ownership` -- `is_owning_expr`, plus a non-bridging cast over a
+  reference `created_by` calls new -- and not a wider `is_owning_expr`,
+  whose answer also decides which methods are owning factories and so what
+  every caller of one must release. A *bridging* cast is looked through by
+  none of the three.
 - **The version is `tools/oz_static/Cargo.toml`**, bumped in the same commit
   as the change it describes. The repo-level `VERSION` file is retired.

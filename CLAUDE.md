@@ -94,7 +94,7 @@ Versions CI pins, and so the ones to match locally: **Zephyr v4.4.2**
 | `just test-boards`         | ARM + RISC-V, so neither hides an architecture-specific regression |
 | `just test-all-boards`     | All three, including SMP |
 | `just test-pedantic`       | ISO C constraint violations in generated C, on target. Reports; the host half is a gate in `corpus_parity.rs` |
-| `just test-behavior`      | Behavior corpus, 76 cases; `--compiler`/`--opt`/`--sanitize`/`--check-leaks` |
+| `just test-behavior`      | Behavior corpus, 77 cases; `--compiler`/`--opt`/`--sanitize`/`--check-leaks` |
 | `just test-adapted`       | 40 adapted upstream tests |
 | `just test-hardware`      | Every single-core sample flashed and run on an nRF52833DK |
 | `just smoke`              | Transpile-and-compile smoke test |
@@ -196,7 +196,7 @@ Why it went, measured rather than assumed:
 
 - all 71 behaviour and 40 adapted cases *as the corpus stood then* transpile **and
   run** through oz_static, under gcc/clang × -O0/-O2, ASan, UBSan and
-  LeakSanitizer (the behaviour corpus is 76 cases now);
+  LeakSanitizer (the behaviour corpus is 77 cases now);
 - it implemented no construct oz_static lacks — `@try` was in its own
   `_UNSUPPORTED_AST_KINDS`, `@selector`/`@protocol()` appeared only in kind lists with
   no emission rule, reflection selectors were absent entirely, and there was no
@@ -258,7 +258,7 @@ Retained as reference for transpiler development. Not compiled — the runtime c
 
 ### Test Infrastructure (`tests/`)
 
-- **`tests/behavior/`** — 76 compiled behavior tests across 17 categories (Unity framework, host-side)
+- **`tests/behavior/`** — 77 compiled behavior tests across 17 categories (Unity framework, host-side)
 - **`tests/adapted/`** — 40 adapted upstream tests across 6 sources (LLVM, GNUstep, Apple, Bucket B, ObjFW, mulle-objc)
 - **`tests/zephyr/`** — 18 Zephyr integration cases in 5 ztest suites (`native_sim` +
   `ztest` + `twister`), over C committed under `tests/zephyr/generated/`. That C is

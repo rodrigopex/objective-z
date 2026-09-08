@@ -473,7 +473,7 @@ Requires [just](https://github.com/casey/just). Default board: `mps2/an385`.
 | `just test-smp`        | Two cores (`qemu_cortex_a53/smp`)      |
 | `just test-boards`     | ARM and RISC-V                         |
 | `just test-all-boards` | All three boards, including SMP        |
-| `just test-behavior`   | 76-case behavior corpus through `oz2c` |
+| `just test-behavior`   | 77-case behavior corpus through `oz2c` |
 | `just test-adapted`    | 40 adapted upstream tests              |
 | `just smoke`           | Transpile-and-compile smoke test       |
 | `just test-pal`        | The PAL's own C tests, on the host     |
@@ -670,7 +670,8 @@ Rules:
 - `(__bridge void *)obj` — cast object to `void *` without ownership transfer
 - `(__bridge Type *)ptr` — cast `void *` back to object type, **borrowed** (not retained)
 - The `__bridge` result is never released at scope exit — the caller must ensure the object stays alive independently (e.g., via a strong ivar like OZTimer's `_userdata`)
-- A bridging cast is also the one cast a *discarded* statement does not look through. `(void)[t copy];` releases the abandoned `+1` exactly as `[t copy];` does (#327), but `(__bridge_retained void *)[t copy];` does not — that spelling hands the reference to whatever took the `void *`, and releasing it would pull the object out from under that holder
+- A bridging cast is also the one cast ARC does not look through. An ordinary cast changes the static type and says nothing about ownership, so it never decides whether a `+1` is accounted for: `(void)[t copy];` releases the abandoned reference exactly as `[t copy];` does (#327), and `Thing *t = (Thing *)[Thing alloc];` is released at scope end exactly as `Thing *t = [Thing alloc];` is (#332) — at a local's initializer, a reassignment, a strong-ivar store and a `return` alike. `(__bridge_retained void *)[t copy];` is the exception: that spelling hands the reference to whatever took the `void *`, and releasing it would pull the object out from under that holder
+- The cast is looked through, but what is behind it is still read exactly. `Thing *t = (Thing *)[u init];` is **not** released, because `-init…` consumes its receiver's `+1` and hands the same reference back — `u` owns it, and `u`'s own scope-exit release is the one that runs
 
 ### ARC rules summary
 
