@@ -33,8 +33,20 @@ pub fn compile_and_run(source: &str, stem: &str) -> String {
 /// `compile_and_run` alone would silently pass a regression of e.g.
 /// OZ-100's `[super init]`/protocol-dispatch instancetype-covariance
 /// bugs.
+///
+/// `-Werror=int-conversion` is here for the same reason and covers the
+/// neighbouring mistake: a pointer put *into* an integer, or handed back
+/// out of a pointer-returning function. Recent clang already errors on
+/// that by default, but GCC and older clang only warn, so the flag is what
+/// makes the gate say the same thing everywhere -- #336 emitted
+/// `int tmp = <struct Widget *>` and would have passed here unnoticed on
+/// the toolchains that merely warn.
 pub fn compile_and_run_strict(source: &str, stem: &str) -> String {
-    compile_and_run_with_flags(source, stem, &["-Werror=incompatible-pointer-types"])
+    compile_and_run_with_flags(
+        source,
+        stem,
+        &["-Werror=incompatible-pointer-types", "-Werror=int-conversion"],
+    )
 }
 
 /// Same as `compile_and_run`, plus the host Zephyr stub headers on the
