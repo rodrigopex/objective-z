@@ -29,7 +29,7 @@
 // passing run is the strongest available statement that the tag is there.
 
 mod common;
-use common::{compile_and_run, ozobject_src};
+use common::{compile_and_run, compile_and_run_strict, ozobject_src};
 
 const WIDGET: &str = "\
 @interface Widget : OZObject {
@@ -347,6 +347,116 @@ int main(void) {
     assert!(
         leaked.is_empty(),
         "a hoisted block parameter kept its bare class name: {:?}\n{}",
+        leaked,
+        out
+    );
+}
+
+/// The same shape at **file scope**, which is where two edit passes met and
+/// corrupted each other (#331).
+///
+/// A file-scope block variable is assembled by patching text, and three
+/// passes contribute edits to the one `apply_edits` call: `class_tag_edits`
+/// tags the class names, `block_pointer_edits` lowers the `^` to a `*`, and
+/// `top_level_block_edits` replaces the whole literal with the name of the
+/// function `render_block` hoisted it into. The third owns the literal's
+/// entire byte range, and `class_tag_edits` was descending into it anyway --
+/// so `apply_edits`, which applies back to front, spliced the tail of one
+/// replacement into the middle of the other:
+///
+/// ```text
+/// static void (*sHook)(struct Widget *) = oz_block_L213_C34_1 : 0;
+/// };
+/// ```
+///
+/// A stray `: 0;` and an orphaned `};` -- not C, and no diagnostic, because
+/// nothing could tell a truncated splice from an intended one.
+/// `block_pointer_edits` had documented skipping a `block_literal` for
+/// exactly this reason since #272; `class_tag_edits` now does the same, and
+/// `apply_edits` carries a `debug_assert!` so the next pass to overlap an
+/// older one fails at the mistake rather than in the C compiler.
+///
+/// Run under `compile_and_run_strict`, so the two sides of each
+/// initialization have to be the *same* function pointer type rather than
+/// two spellings Apple clang merely warns about: the declarator's
+/// `void (*)(struct Widget *)` is promoted by
+/// `render_block_type_param_list`, while the hoisted prototype's is patched
+/// by `class_tag_edits`, and only agreement links.
+///
+/// Two shapes, matching the in-body case above: a lone class parameter, and
+/// a class name among plain scalars.
+#[test]
+fn file_scope_block_variable_with_class_parameter_compiles_and_runs() {
+    let src = format!(
+        "{}{}\n{}",
+        ozobject_src(),
+        WIDGET,
+        "\
+#include <stdio.h>
+
+static int gHookSeen = 0;
+
+static void (^sHook)(Widget *) = ^(Widget *wp) {
+	gHookSeen += wp != 0 ? 1 : 0;
+};
+
+static void (^sMixed)(int, Widget *, int) = ^(int seed, Widget *wp, int bump) {
+	gHookSeen += seed + (wp != 0 ? 4 : 0) + bump;
+};
+
+int main(void) {
+	Widget *w = [[Widget alloc] initWithN:3];
+	sHook(w);
+	sMixed(1, w, 10);
+	printf(\"seen=%d n=%d\\n\", gHookSeen, [w n]);
+	return 0;
+}
+"
+    );
+    // Compiled and run first, deliberately: without the fix this is a hard C
+    // syntax error on the corrupted initializer, which is the most direct
+    // statement of the bug. The text assertions below then say which spelling
+    // it settled on.
+    let stdout =
+        compile_and_run_strict(&src, "file_scope_block_variable_with_class_parameter");
+    assert_eq!(stdout, "seen=16 n=3\n");
+
+    let out = oz_static::transpile(&src).expect("should transpile").source_c;
+    // The initializer is the hoisted function's bare name and nothing else:
+    // this is the assertion that says the two edits did not truncate each
+    // other. Matched loosely on the name, whose `L<line>_C<col>` suffix moves
+    // with the preamble.
+    let hook: Vec<&str> = out
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("/*"))
+        .filter(|line| line.contains("sHook") && line.contains('='))
+        .collect();
+    assert_eq!(hook.len(), 1, "expected one `sHook` initialization; got {:?}\n{}", hook, out);
+    let hook = hook[0].trim();
+    assert!(
+        hook.starts_with("static void (*sHook)(struct Widget *) = oz_block_")
+            && hook.ends_with(';')
+            && !hook.contains(':')
+            && !hook.contains('}'),
+        "the initializer must be the hoisted name alone; got {:?}\n{}",
+        hook,
+        out
+    );
+    // And the hoisted signature on the other side of the `=` agrees, which is
+    // what #326 fixed for the in-body form.
+    assert!(
+        out.contains("(int seed, struct Widget *wp, int bump)"),
+        "the hoisted signature must be tagged:\n{}",
+        out
+    );
+    let leaked: Vec<&str> = out
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("/*"))
+        .filter(|line| line.contains("(Widget *") || line.contains('^'))
+        .collect();
+    assert!(
+        leaked.is_empty(),
+        "a file-scope block kept its Objective-C spelling: {:?}\n{}",
         leaked,
         out
     );
