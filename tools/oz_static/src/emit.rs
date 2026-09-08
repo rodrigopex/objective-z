@@ -1117,8 +1117,23 @@ struct EmitCtx<'a> {
     /// to replay them (innermost first) before leaving -- see
     /// `render_return_statement`.
     sync_cleanups: Vec<String>,
-    /// C return type of the method being rendered, needed to declare the
-    /// temporary a `return` inside `@synchronized` evaluates into.
+    /// C return type of the method *or free function* being rendered,
+    /// needed to declare the temporary a `return` on the cleanup path
+    /// evaluates into -- either `@synchronized` cleanups or pending ARC
+    /// releases (see `render_return_statement`).
+    ///
+    /// Named for the method case because that is the only one it had until
+    /// #336. A free function is not a method and shares no code with
+    /// `render_method_definition`: the `function_definition` arm in
+    /// `walk_top_level` records its own, from `function_return_type`.
+    ///
+    /// So every position that renders a body has to set this for itself,
+    /// and a `block_literal` still does not -- `render_block` computes the
+    /// block's return type for its hoisted signature and leaves this field
+    /// holding the *enclosing* body's, which is wrong for a `return`
+    /// inside a block whose type differs. Not reached by anything in the
+    /// tree today (it needs a cleanup pending at that `return`), and not
+    /// fixed here.
     method_return_type: String,
     /// Slots to reserve in each class's slab -- see `pools`.
     pools: &'a crate::pools::PoolSizes,
@@ -1195,6 +1210,14 @@ impl<'a> EmitCtx<'a> {
             block_counter: 0,
             pre_stmts: Vec::new(),
             sync_cleanups: Vec::new(),
+            // A placeholder, not a default that is ever right: whoever
+            // renders a body overwrites it with that body's real return
+            // type before any statement of it is rendered. It reads as
+            // harmless, which is exactly why #336 survived -- the
+            // free-function arm never overwrote it, and `int` is a
+            // plausible-looking type, so the wrong output compiled on ARM
+            // and truncated on the host instead of failing anywhere
+            // obvious.
             method_return_type: "int".to_string(),
             pools,
             arc_scopes: Vec::new(),
@@ -3021,6 +3044,14 @@ fn render_synchronized_statement(node: Node, ctx: &mut EmitCtx) -> (String, Stri
 /// Mirrors the oracle's handling of the same shape, where the OZSpinLock
 /// object is released by `emit.py::_emit_scope_releases` ahead of the
 /// return (`tests/behavior/cases/synchronized/early_return.m`).
+///
+/// Pending ARC releases reach the same temporary, and are the far more
+/// common way to get here -- `@synchronized` only named the shape first,
+/// and the temporary's name still says `sync` for that reason alone.
+/// Either way it is typed from `ctx.method_return_type`, which whoever
+/// renders the enclosing body has to have recorded: a method in
+/// `render_method_definition`, a free function in `walk_top_level`'s
+/// `function_definition` arm (#336).
 fn render_return_statement(node: Node, ctx: &mut EmitCtx) -> (String, String) {
     // A local being returned hands its ownership to the caller, so it is
     // the one thing a return must not release.
@@ -5151,8 +5182,10 @@ fn render_method_definition(
     // per-statement comments below.
     let header = header_text(node, ctx.src, &["compound_statement"]);
 
-    // Needed by `render_return_statement` to type the temporary a
-    // `return` inside `@synchronized` evaluates into.
+    // Needed by `render_return_statement` to type the temporary a `return`
+    // on the cleanup path evaluates into. The `function_definition` arm in
+    // `walk_top_level` records the same thing for a free function --
+    // separately, because nothing here is shared with that path (#336).
     ctx.method_return_type = ret_ty.clone();
 
     // Whether the body was really translated. A body the static bar rejected
