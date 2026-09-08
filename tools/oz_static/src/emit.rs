@@ -1144,13 +1144,21 @@ struct EmitCtx<'a> {
     /// `render_method_definition`: the `function_definition` arm in
     /// `walk_top_level` records its own, from `function_return_type`.
     ///
-    /// So every position that renders a body has to set this for itself,
-    /// and a `block_literal` still does not -- `render_block` computes the
-    /// block's return type for its hoisted signature and leaves this field
-    /// holding the *enclosing* body's, which is wrong for a `return`
-    /// inside a block whose type differs. Not reached by anything in the
-    /// tree today (it needs a cleanup pending at that `return`), and not
-    /// fixed here.
+    /// Every position that renders a body has to set this for itself, and
+    /// there are three:
+    ///
+    /// - `render_method_definition`, from the method's declared type;
+    /// - `walk_top_level`'s `function_definition` arm, from
+    ///   `function_return_type` (#336);
+    /// - `render_block`, from `block_return_type` -- the same type it gives
+    ///   the hoisted function's signature (#339).
+    ///
+    /// The first two each own a fresh `EmitCtx` and so just assign. The
+    /// block is different: it is rendered *inside* an enclosing body, on
+    /// that body's `EmitCtx`, so it saves this field, sets it, renders the
+    /// body and puts the enclosing body's type back. Without that restore a
+    /// `return` written after the literal in the same body would take the
+    /// block's type.
     method_return_type: String,
     /// Slots to reserve in each class's slab -- see `pools`.
     pools: &'a crate::pools::PoolSizes,
@@ -1235,7 +1243,9 @@ impl<'a> EmitCtx<'a> {
             // free-function arm never overwrote it, and `int` is a
             // plausible-looking type, so the wrong output compiled on ARM
             // and truncated on the host instead of failing anywhere
-            // obvious.
+            // obvious. #339 was the same omission in `render_block`, where
+            // what leaked through was not this placeholder but the
+            // *enclosing* body's type, equally plausible-looking.
             method_return_type: "int".to_string(),
             pools,
             arc_scopes: Vec::new(),
@@ -3120,7 +3130,9 @@ fn render_synchronized_statement(node: Node, ctx: &mut EmitCtx) -> (String, Stri
 /// Either way it is typed from `ctx.method_return_type`, which whoever
 /// renders the enclosing body has to have recorded: a method in
 /// `render_method_definition`, a free function in `walk_top_level`'s
-/// `function_definition` arm (#336).
+/// `function_definition` arm (#336), a block literal in `render_block`
+/// (#339) -- which also has to put the enclosing body's type back
+/// afterwards, since it borrows that body's `EmitCtx`.
 fn render_return_statement(node: Node, ctx: &mut EmitCtx) -> (String, String) {
     // A local being returned hands its ownership to the caller, so it is
     // the one thing a return must not release.
