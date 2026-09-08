@@ -21,6 +21,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
+use std::path::{Path, PathBuf};
 
 use tree_sitter::Node;
 
@@ -29,6 +30,154 @@ use crate::parse::line_col;
 
 fn node_text<'a>(node: Node, src: &'a str) -> &'a str {
     &src[node.start_byte()..node.end_byte()]
+}
+
+/// The `#line` policy for one emit run: whether directives are emitted at
+/// all, and what they name (#305).
+///
+/// Without them every artefact carrying a source position -- a `gdb`
+/// breakpoint, a Zephyr fatal-error backtrace, `addr2line`, a coverage
+/// report -- points at `oz_static_generated/<Class>.c`, the only file the
+/// C compiler is ever handed, and translating that back to the `.m` is
+/// done by eye against files that are neither the same length nor skewed
+/// by a constant.
+///
+/// **A `None` map is the off switch**, and the only one: a caller with no
+/// map (`transpile()`, whose source is a string with no file behind it, and
+/// `oz2c` without `--line-directives`) emits exactly the bytes it emitted
+/// before this existed. Nothing else in here changes output.
+///
+/// Two directions to point in, both needed:
+///
+///   - `at`, for code the author wrote -- a method body statement, a
+///     hoisted block. Resolved by byte offset through
+///     `imports::SourceMap`, *never* by counting newlines in the text
+///     `emit` walks: `parse::repair_bare_macro_statements` preserves every
+///     offset but eats a newline per repair, so the repaired text has
+///     fewer lines than the buffer the map describes while the offsets
+///     still agree. Counting locally is the exact bug #305 was filed for.
+///   - `reset`, for code oz_static synthesized -- a slab definition, a
+///     dispatch thunk, a hoisted prototype. That code genuinely lives in
+///     the generated `.c`, and without a directive handing attribution
+///     back it would inherit whatever `.m` line preceded it.
+#[derive(Default)]
+pub struct LineDirectives<'a> {
+    map: Option<&'a crate::imports::SourceMap>,
+    /// Directory each origin stem's generated `.h`/`.c` pair is written
+    /// to, so `reset` can name that file absolutely. Empty (or missing a
+    /// stem) falls back to the bare `<stem>.c`, which is all a caller that
+    /// never writes the pair to disk can honestly say.
+    dirs: Option<&'a HashMap<String, PathBuf>>,
+    /// Resolved once, to absolutize a relative source path -- a debugger
+    /// has to find the file from whatever directory it is run in, and the
+    /// path in the map is whatever the caller passed on the command line.
+    /// Not canonicalized: that is a `stat` per component, and a `..` or a
+    /// symlink in the path resolves fine for every consumer of a `#line`.
+    cwd: Option<PathBuf>,
+}
+
+impl<'a> LineDirectives<'a> {
+    pub fn new(
+        map: Option<&'a crate::imports::SourceMap>,
+        dirs: Option<&'a HashMap<String, PathBuf>>,
+    ) -> Self {
+        LineDirectives {
+            map,
+            dirs,
+            cwd: map.and_then(|_| std::env::current_dir().ok()),
+        }
+    }
+
+    /// No directives at all -- what every caller without a source map gets.
+    pub fn off() -> Self {
+        LineDirectives::default()
+    }
+
+    /// A directive putting the *next* emitted line at the `.m`/`.h` line
+    /// the byte at `merged_offset` was spliced from, or `None` when
+    /// directives are off or the offset is not covered by the map.
+    ///
+    /// Includes its own trailing newline, so a caller splices it in ahead
+    /// of a line and nothing else moves.
+    fn at(&self, merged_offset: usize) -> Option<String> {
+        let (file, line) = self.map?.source_location(merged_offset)?;
+        Some(format!("#line {} \"{}\"\n", line, self.quoted(file)))
+    }
+
+    /// `at`, or an empty string -- for the many call sites that splice the
+    /// directive into a `format!` and must produce their old bytes exactly
+    /// when directives are off.
+    fn before(&self, merged_offset: usize) -> String {
+        self.at(merged_offset).unwrap_or_default()
+    }
+
+    /// The (line, column) of the source file the byte at `merged_offset`
+    /// was written at. `None` when directives are off, in which case a
+    /// caller naming a symbol after a position keeps the merged-buffer
+    /// position it always used.
+    fn position(&self, merged_offset: usize) -> Option<(usize, usize)> {
+        self.map?.source_position(merged_offset).map(|(_, line, col)| (line, col))
+    }
+
+    /// A directive re-anchoring a **verbatim** body after something was
+    /// spliced in behind its opening brace.
+    ///
+    /// A verbatim body is attributed by one directive on the brace and
+    /// then by nothing: its lines are the source's lines, so they follow
+    /// on their own. Inserting an unused-parameter acknowledgement
+    /// (`(void)self;`) breaks that -- every line after it is one late, per
+    /// line inserted, which is a whole body silently misattributed. So the
+    /// splice re-states the position it interrupted: the line after the
+    /// brace's, or the brace's own line when the body is written on one
+    /// line and the statement really does share it.
+    ///
+    /// `brace` is the body's own start offset and `end` its end, both into
+    /// the text `emit` walks -- and both offsets, never lines, for the
+    /// usual reason.
+    fn resume_after_brace(&self, src: &str, brace: usize, end: usize) -> String {
+        if self.map.is_none() {
+            return String::new();
+        }
+        match src.get(brace..end).and_then(|body| body.find('\n')) {
+            Some(rel) => self.before(brace + rel + 1),
+            None => self.before(brace),
+        }
+    }
+
+    /// Hand attribution back to the generated file itself, for the
+    /// synthesized code about to be appended to `out`.
+    ///
+    /// The line number is counted from `out` as it stands: the directive
+    /// occupies the line it is written on, so what follows is the line
+    /// after it. That is only correct because the whole file is assembled
+    /// front to back, which it is -- every caller appends.
+    fn reset(&self, out: &mut String, stem: &str, extension: &str) {
+        if self.map.is_none() {
+            return;
+        }
+        let generated = match self.dirs.and_then(|d| d.get(stem)) {
+            Some(dir) => dir.join(format!("{}.{}", stem, extension)),
+            None => PathBuf::from(format!("{}.{}", stem, extension)),
+        };
+        /* Lines already written, then the directive's own line, then the
+         * line the next byte lands on. */
+        let written = out.bytes().filter(|b| *b == b'\n').count();
+        out.push_str(&format!(
+            "#line {} \"{}\"\n",
+            written + 2,
+            self.quoted(&generated)
+        ));
+    }
+
+    /// `path` as a directive's file field: absolute, and with the two
+    /// characters a C string cannot carry raw escaped.
+    fn quoted(&self, path: &Path) -> String {
+        let absolute = match (path.is_absolute(), &self.cwd) {
+            (false, Some(cwd)) => cwd.join(path),
+            _ => path.to_path_buf(),
+        };
+        absolute.to_string_lossy().replace('\\', "\\\\").replace('"', "\\\"")
+    }
 }
 
 /// Collapse whitespace (including newlines) into single spaces, for a
@@ -291,9 +440,21 @@ fn acks_for_names(rendered_body: &str, names: &[&str]) -> Vec<String> {
         b.is_ascii_alphanumeric() || b == b'_'
     }
 
+    /* A `#line` directive is not code, and its file field is a path the
+     * author never wrote: a body in `src/status.m` whose method takes a
+     * `status` parameter would look as though it mentioned it, and the
+     * acknowledgement that keeps `-Wunused-parameter` quiet would be
+     * dropped for a parameter nothing actually reads (#305). Filtered
+     * rather than scanned around, so no caller has to know. */
+    let code_only: String = rendered_body
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("#line "))
+        .collect::<Vec<&str>>()
+        .join("\n");
+
     names
         .iter()
-        .filter(|name| !name.is_empty() && !mentions_word(rendered_body, name))
+        .filter(|name| !name.is_empty() && !mentions_word(&code_only, name))
         .map(|name| format!("\t(void){};", name))
         .collect()
 }
@@ -335,7 +496,13 @@ fn parameter_list_names(plist: Node, src: &str) -> Vec<String> {
 /// `compound_statement`). If it somehow does not, the body is returned
 /// unchanged rather than corrupted -- an acknowledgement is a nicety, and
 /// mangling a body to add one would not be.
-fn splice_after_open_brace(body_text: &str, lines: &[String]) -> String {
+///
+/// `resume` is a `#line` directive re-stating where the body was, written
+/// after the spliced lines -- empty when directives are off. Inserting a
+/// line into a body whose attribution came from *counting on* from one
+/// directive puts every line after it one late, which is a whole body
+/// misattributed by a nicety; see `LineDirectives::resume_after_brace`.
+fn splice_after_open_brace(body_text: &str, lines: &[String], resume: &str) -> String {
     if lines.is_empty() {
         return body_text.to_string();
     }
@@ -347,12 +514,40 @@ fn splice_after_open_brace(body_text: &str, lines: &[String]) -> String {
             // Generated C is read by people; `(void)b; return a; }` on one line
             // is valid and unpleasant.
             if tail.starts_with('\n') {
-                format!("{}\n{}{}", head, lines.join("\n"), tail)
+                format!(
+                    "{}\n{}\n{}{}",
+                    head,
+                    lines.join("\n"),
+                    resume,
+                    tail.strip_prefix('\n').unwrap_or(tail)
+                )
             } else {
-                format!("{}\n{}\n\t{}", head, lines.join("\n"), tail.trim_start())
+                format!("{}\n{}\n{}\t{}", head, lines.join("\n"), resume, tail.trim_start())
             }
         }
         None => body_text.to_string(),
+    }
+}
+
+/// Join a signature to the body text that follows it, keeping a leading
+/// `#line` directive on a line of its own.
+///
+/// A preprocessing directive may be indented but may not share a line with
+/// anything else, and two of the three signature positions put the brace on
+/// the signature's own line -- `int main(void) {` is the author's own
+/// formatting in a plain C function, and `render_block` synthesizes the same
+/// shape. A body that begins with a directive (the verbatim fast path in
+/// `render_body_with_comments`) would land as
+/// `int main(void) #line 73 "..."`, which is not C at all. The extra newline
+/// costs nothing: the directive names the line the brace is *on* in the
+/// source, so everything after it still lines up.
+fn attach_body(head: &str, body: &str) -> String {
+    if body.starts_with("#line ") && !head.ends_with('\n') {
+        /* The space that used to separate the signature from the brace has
+         * nothing left to separate. */
+        format!("{}\n{}", head.trim_end_matches([' ', '\t']), body)
+    } else {
+        format!("{}{}", head, body)
     }
 }
 
@@ -949,6 +1144,9 @@ struct EmitCtx<'a> {
     arc_managed_locals: std::collections::HashSet<String>,
     /// See `IntrospectionUse`.
     introspection_used: IntrospectionUse,
+    /// Where a `#line` directive on this construct's own code points, and
+    /// whether one is emitted at all -- see `LineDirectives`.
+    lines: &'a LineDirectives<'a>,
 }
 
 /// One block's worth of owned object locals.
@@ -976,6 +1174,7 @@ impl<'a> EmitCtx<'a> {
         class_name: String,
         scope: HashMap<String, String>,
         pools: &'a crate::pools::PoolSizes,
+        lines: &'a LineDirectives<'a>,
     ) -> Self {
         EmitCtx {
             src,
@@ -996,6 +1195,7 @@ impl<'a> EmitCtx<'a> {
             arc_scopes: Vec::new(),
             arc_managed_locals: HashSet::new(),
             introspection_used: IntrospectionUse::default(),
+            lines,
         }
     }
 
@@ -3634,7 +3834,21 @@ fn render_cast_expression(node: Node, ctx: &mut EmitCtx) -> (String, String) {
 /// return type on the literal is the fix for that shape, which is why
 /// carrying it matters.
 fn render_block(node: Node, ctx: &mut EmitCtx) -> (String, String) {
-    let (line, col) = line_col(ctx.src, node.start_byte());
+    /* The position in the file the author wrote, when there is a source
+     * map to ask (#305). The merged-buffer position is what this used to
+     * be, and it named nowhere: `px-keyboard/src/PXLEDController.m` is 210
+     * lines long and shipped an `oz_block_L3271_C38_1`, whose 3271 is a
+     * line of the 3,829-line spliced buffer. The *column* was right all
+     * along -- splicing moves lines, never a byte within one -- which is
+     * why only the line moves here.
+     *
+     * Falling back to the merged position rather than dropping the
+     * numbers: with directives off there is nothing better to say, and a
+     * symbol has to be named something stable. */
+    let (line, col) = ctx
+        .lines
+        .position(node.start_byte())
+        .unwrap_or_else(|| line_col(ctx.src, node.start_byte()));
     ctx.block_counter += 1;
     let name = format!("oz_block_L{}_C{}_{}", line, col, ctx.block_counter);
 
@@ -3701,7 +3915,15 @@ fn render_block(node: Node, ctx: &mut EmitCtx) -> (String, String) {
             let names = parameter_list_names(plist, ctx.src);
             let refs: Vec<&str> = names.iter().map(|s| s.as_str()).collect();
             let acks = acks_for_names(&body_text, &refs);
-            splice_after_open_brace(&body_text, &acks)
+            let resume = match body {
+                Some(body) => ctx.lines.resume_after_brace(
+                    ctx.src,
+                    body.start_byte(),
+                    body.end_byte(),
+                ),
+                None => String::new(),
+            };
+            splice_after_open_brace(&body_text, &acks, &resume)
         }
         None => body_text,
     };
@@ -3724,9 +3946,16 @@ fn render_block(node: Node, ctx: &mut EmitCtx) -> (String, String) {
     // method" until then, which was true of every caller at the time and
     // became false for the new one -- the shape of stale claim docs/STATUS.md
     // keeps recording, in generated output this time.
+    // The directive goes below the banner and above the signature, so the
+    // hoisted function's own line is the line of the block literal it came
+    // from -- which is what a backtrace naming this symbol should resolve
+    // to. Its body carries its own directives, one per statement.
     let definition = format!(
-        "/* block at {}:{} -- synthesized function, hoisted from a block literal */\n{} {}{} {}\n",
-        line, col, ret_ty, name, params, body_text
+        "/* block at {}:{} -- synthesized function, hoisted from a block literal */\n{}{}\n",
+        line,
+        col,
+        ctx.lines.before(node.start_byte()),
+        attach_body(&format!("{} {}{} ", ret_ty, name, params), &body_text)
     );
     ctx.hoisted_blocks.push((prototype, definition));
     (name.clone(), "id".to_string())
@@ -4070,7 +4299,10 @@ fn render_body_with_comments(body: Node, ctx: &mut EmitCtx) -> String {
     let stmts = &children[1..children.len() - 1];
 
     ctx.arc_scopes.push(ArcScope { owned: Vec::new(), is_loop_body: is_loop_body(body) });
-    let mut rendered_stmts: Vec<(String, &str)> = Vec::with_capacity(stmts.len());
+    /* (rendered text, the original it came from, its byte offset) -- the
+     * offset is what a `#line` directive for this statement is resolved
+     * from, and it has to be captured here while the node is in hand. */
+    let mut rendered_stmts: Vec<(String, &str, usize)> = Vec::with_capacity(stmts.len());
     let mut ended_with_jump = false;
     for stmt in stmts {
         let rendered = render_expr(*stmt, ctx).0;
@@ -4081,7 +4313,7 @@ fn render_body_with_comments(body: Node, ctx: &mut EmitCtx) -> String {
             ctx.pre_stmts.clear();
             format!("{}\n\t{}", pre, rendered)
         };
-        rendered_stmts.push((combined, node_text(*stmt, ctx.src)));
+        rendered_stmts.push((combined, node_text(*stmt, ctx.src), stmt.start_byte()));
         if stmt.kind() == "declaration" {
             let owned = owned_locals_of(*stmt, ctx);
             if let Some(scope) = ctx.arc_scopes.last_mut() {
@@ -4100,20 +4332,43 @@ fn render_body_with_comments(body: Node, ctx: &mut EmitCtx) -> String {
         release_lines(&scope.owned.iter().rev().cloned().collect::<Vec<_>>(), ctx)
     };
     if trailing.is_empty()
-        && rendered_stmts.iter().all(|(rendered, original)| rendered == original)
+        && rendered_stmts.iter().all(|(rendered, original, _)| rendered == original)
     {
-        return node_text(body, ctx.src).to_string();
+        /* A body returned byte-identical needs one directive and no more:
+         * its lines *are* the source's lines, so once the first one is
+         * placed every line after it follows by itself. (An
+         * unused-parameter acknowledgement spliced in after the brace
+         * would shift the rest -- `splice_after_open_brace` re-states the
+         * position for exactly that reason.)
+         *
+         * A body written on *one* line needs not even that: it is emitted
+         * on the line after the signature, which is where the source has
+         * it too, so the definition's own directive already covers it. Not
+         * merely redundant -- the directive would have to be given a line
+         * of its own, and moving `{ return _n; }` off the signature line
+         * changes generated C for nothing. */
+        let text = node_text(body, ctx.src);
+        if !text.contains('\n') {
+            return text.to_string();
+        }
+        return format!("{}{}", ctx.lines.before(body.start_byte()), text);
     }
 
     let mut out = String::from("{\n");
-    for (rendered, original) in &rendered_stmts {
+    for (rendered, original, offset) in &rendered_stmts {
+        /* Below the `/* original */` comment, not above it: the directive
+         * names the line the *next* emitted line is, and the line that has
+         * to be the statement's is the statement's, not its comment's. */
         if rendered == original {
+            out.push_str(&ctx.lines.before(*offset));
             out.push('\t');
             out.push_str(original);
         } else {
             out.push_str("\t/* ");
             out.push_str(&one_line(original));
-            out.push_str(" */\n\t");
+            out.push_str(" */\n");
+            out.push_str(&ctx.lines.before(*offset));
+            out.push('\t');
             out.push_str(rendered);
         }
         out.push('\n');
@@ -4855,12 +5110,30 @@ fn render_method_definition(
     // acknowledgements to code someone wrote is not this pass's business.
     let body_text = if translated {
         let acks = unused_param_acks(&body_text, &sig.params, sig.is_class_method);
-        splice_after_open_brace(&body_text, &acks)
+        let resume = match body {
+            Some(body) => {
+                ctx.lines.resume_after_brace(ctx.src, body.start_byte(), body.end_byte())
+            }
+            None => String::new(),
+        };
+        splice_after_open_brace(&body_text, &acks, &resume)
     } else {
         body_text
     };
 
-    format!("/* {} */\n{} {}({})\n{}\n", one_line(&header), ret_ty, fn_name, sig_params, body_text)
+    // One directive for the definition, between the signature comment and
+    // the signature itself, so the function's own line is the line of the
+    // `- (void)foo` that produced it (#305). Each statement of the body
+    // then carries its own -- `render_body_with_comments`.
+    format!(
+        "/* {} */\n{}{} {}({})\n{}\n",
+        one_line(&header),
+        ctx.lines.before(node.start_byte()),
+        ret_ty,
+        fn_name,
+        sig_params,
+        body_text
+    )
 }
 
 pub struct EmitOutput {
@@ -4891,9 +5164,10 @@ pub fn emit(
     program: &Program,
     pools: &crate::pools::PoolSizes,
     repaired_semicolons: &[usize],
+    lines: &LineDirectives,
 ) -> EmitOutput {
     let origins = [("main".to_string(), 0..source.len())];
-    let walked = walk_top_level(source, program, pools, &origins, &[], repaired_semicolons);
+    let walked = walk_top_level(source, program, pools, &origins, &[], repaired_semicolons, lines);
 
     // One stem in practice, but driven off `stem_order` rather than the
     // maps' own iteration order, which a `HashMap` does not promise.
@@ -4908,11 +5182,18 @@ pub fn emit(
         "/* Auto-generated by oz_static -- do not edit */\n#include \"oz_static_dispatch.h\"\n\n",
     );
 
+    /* Attribution of everything synthesized here belongs to this file, not
+     * to whatever `.m` line the section before it ended on -- see
+     * `LineDirectives::reset`. `emit()` has one synthetic origin ("main"),
+     * so that is the stem every section of its single output belongs to. */
+    let reset = |out: &mut String| lines.reset(out, "main", "c");
+
     // A promoted `__block` local is a self-contained
     // `static TYPE name [= init];` line, so unlike the blocks and literals
     // below it needs no prototype/definition split: it only has to precede
     // every reference to it, which living up here guarantees.
     if !statics.is_empty() {
+        reset(&mut out);
         out.push_str("/* __block-qualified locals, promoted to file scope */\n");
         for (_, decl) in &statics {
             out.push_str(decl);
@@ -4927,6 +5208,7 @@ pub fn emit(
     // (`struct OZString` is defined at OZString's `@interface`), so the
     // definition cannot go where the prototype does.
     if !blocks.is_empty() {
+        reset(&mut out);
         out.push_str("/* non-capturing blocks, hoisted from block literals -- prototypes (defined below, after every class) */\n");
         for (prototype, _) in &blocks {
             out.push_str(prototype);
@@ -4934,6 +5216,7 @@ pub fn emit(
         out.push('\n');
     }
     if !strings.is_empty() {
+        reset(&mut out);
         out.push_str("/* boxed string literals, hoisted -- extern forward declarations (defined below, after every class) */\n");
         for (prototype, _) in &strings {
             out.push_str(prototype);
@@ -4941,28 +5224,49 @@ pub fn emit(
         out.push('\n');
     }
 
+    /* Each section is preceded by a reset rather than the whole run of
+     * them, because a section can *end* inside a method body -- and so on
+     * a `.m` line -- and the next one is generated code again. With
+     * directives off `reset` writes nothing and this is the `join` it
+     * replaced, byte for byte. */
     for stem in &walked.stem_order {
         if let Some(sections) = walked.headers.get(stem) {
-            out.push_str(&sections.join("\n"));
+            for (i, section) in sections.iter().enumerate() {
+                if i > 0 {
+                    out.push('\n');
+                }
+                reset(&mut out);
+                out.push_str(section);
+            }
             out.push('\n');
         }
     }
     for stem in &walked.stem_order {
         if let Some(sections) = walked.bodies.get(stem) {
-            out.push_str(&sections.join("\n\n"));
+            for (i, section) in sections.iter().enumerate() {
+                if i > 0 {
+                    out.push_str("\n\n");
+                }
+                reset(&mut out);
+                out.push_str(section);
+            }
             out.push('\n');
         }
     }
 
     if !blocks.is_empty() {
-        out.push_str("\n/* non-capturing blocks, hoisted from block literals */\n");
+        out.push('\n');
+        reset(&mut out);
+        out.push_str("/* non-capturing blocks, hoisted from block literals */\n");
         for (_, definition) in &blocks {
             out.push_str(definition);
             out.push('\n');
         }
     }
     if !strings.is_empty() {
-        out.push_str("\n/* boxed string literals, hoisted -- static struct OZString instances */\n");
+        out.push('\n');
+        reset(&mut out);
+        out.push_str("/* boxed string literals, hoisted -- static struct OZString instances */\n");
         for (_, definition) in &strings {
             out.push_str(definition);
         }
@@ -5052,13 +5356,14 @@ struct TopLevel {
 /// `(stem, byte_range)` covering every byte of `source` (the same stem
 /// may appear more than once, non-contiguously). `emit()` passes a single
 /// synthetic origin covering the whole text.
-fn walk_top_level(
-    source: &str,
-    program: &Program,
-    pools: &crate::pools::PoolSizes,
+fn walk_top_level<'a>(
+    source: &'a str,
+    program: &'a Program,
+    pools: &'a crate::pools::PoolSizes,
     origins: &[(String, Range<usize>)],
     header_ranges: &[Range<usize>],
     repaired_semicolons: &[usize],
+    lines: &'a LineDirectives<'a>,
 ) -> TopLevel {
     let tree = crate::parse::parse(source);
     let root = tree.root_node();
@@ -5151,7 +5456,7 @@ fn walk_top_level(
                     }
                 }
                 let scope = base_scope(&name, program);
-                let mut ctx = EmitCtx::new(source, program, name.clone(), scope, pools);
+                let mut ctx = EmitCtx::new(source, program, name.clone(), scope, pools, lines);
                 let (header_part, alloc_free_part) = render_interface(node, &mut ctx, program);
                 diags.extend(ctx.diags);
                 introspection_used.merge(ctx.introspection_used);
@@ -5171,7 +5476,7 @@ fn walk_top_level(
             ivars_scope.entry(var.clone()).or_insert_with(|| ty.clone());
         }
                 let mut ctx =
-                    EmitCtx::new(source, program, name.clone(), ivars_scope.clone(), pools);
+                    EmitCtx::new(source, program, name.clone(), ivars_scope.clone(), pools, lines);
                 let mut out = String::new();
                 out.push_str(&banner_box(&header_text(node, source, &["implementation_definition"]), '-'));
                 out.push('\n');
@@ -5304,7 +5609,7 @@ fn walk_top_level(
                 // method -- `samples/gpio_demo`'s `[led toggle]` sits in
                 // `main()`.
                 let mut ctx =
-                    EmitCtx::new(source, program, String::new(), file_vars.clone(), pools);
+                    EmitCtx::new(source, program, String::new(), file_vars.clone(), pools, lines);
                 let mut sig_edits = class_tag_edits(node, source, program);
                 // A block-typed parameter is lowered to a function pointer
                 // here for the same reason its class names are tagged here:
@@ -5313,14 +5618,35 @@ fn walk_top_level(
                 // `^` reached GCC (#272). A method's equivalent parameter
                 // has always been lowered.
                 sig_edits.extend(block_pointer_edits(node, source, program.root_class()));
-                let mut text = apply_edits(source, node.start_byte(), node.end_byte(), &sig_edits);
+                // A plain C function gets the same leading directive a
+                // method's definition does, on the same reasoning and
+                // needing it just as much: `main()` is `main.m`'s own
+                // `int main(void)` and is exactly where someone types
+                // `break main.m:73` (#305). The Proposal named only
+                // `render_method_definition`, which was an omission --
+                // nothing here is method-specific.
+                //
+                // A signature is *patched* text, not rebuilt, so it has the
+                // author's own line count and one directive at its start
+                // lines up every line of it. The same is true of a body
+                // emitted verbatim, which is why neither verbatim path
+                // below needs a directive of its own.
+                let signature = lines.before(node.start_byte());
+                let mut text = format!(
+                    "{}{}",
+                    signature,
+                    apply_edits(source, node.start_byte(), node.end_byte(), &sig_edits)
+                );
                 let mut c2 = node.walk();
                 if let Some(body) = node.children(&mut c2).find(|c| c.kind() == "compound_statement") {
                     // The signature is tagged either way; the body is
                     // rendered by the ordinary machinery, which already
                     // resolves types properly.
-                    let prefix =
-                        apply_edits(source, node.start_byte(), body.start_byte(), &sig_edits);
+                    let prefix = format!(
+                        "{}{}",
+                        signature,
+                        apply_edits(source, node.start_byte(), body.start_byte(), &sig_edits)
+                    );
                     if needs_translation(body) {
                         // Same scan as the single-file arm above; both
                         // `function_definition` paths need it, and an earlier
@@ -5337,7 +5663,7 @@ fn walk_top_level(
                             collect_function_params(node, &mut ctx);
                             collect_local_decls(body, &mut ctx);
                             let rendered_body = render_body_with_comments(body, &mut ctx);
-                            text = format!("{}{}", prefix, rendered_body);
+                            text = attach_body(&prefix, &rendered_body);
                         }
                     } else {
                         text = format!("{}{}", prefix, node_text(body, source));
@@ -5432,7 +5758,7 @@ fn walk_top_level(
                 edits.extend(block_pointer_edits(node, source, program.root_class()));
                 if contains_block_literal(node) {
                     let mut ctx =
-                        EmitCtx::new(source, program, String::new(), file_vars.clone(), pools);
+                        EmitCtx::new(source, program, String::new(), file_vars.clone(), pools, lines);
                     edits.extend(top_level_block_edits(node, &mut ctx, program));
                     diags.extend(ctx.diags);
                     introspection_used.merge(ctx.introspection_used);
@@ -5535,6 +5861,7 @@ pub fn emit_split(
     pools: &crate::pools::PoolSizes,
     header_ranges: &[Range<usize>],
     repaired_semicolons: &[usize],
+    lines: &LineDirectives,
 ) -> EmitSplitOutput {
     let TopLevel {
         stem_order,
@@ -5551,7 +5878,7 @@ pub fn emit_split(
         class_to_stem,
         introspection_used,
         diags,
-    } = walk_top_level(source, program, pools, origins, header_ranges, repaired_semicolons);
+    } = walk_top_level(source, program, pools, origins, header_ranges, repaired_semicolons, lines);
 
     // The root class's own header may carry file-scope macros (e.g.
     // `OZObject.h`'s `#define nil ((id)0)`) that every class implicitly
@@ -5672,8 +5999,25 @@ pub fn emit_split(
             }
         }
         h.push('\n');
+        /* A `#line` handing attribution back to this generated file, ahead
+         * of every section that is generated code rather than the author's
+         * -- and ahead of *each* section, not just the run of them: a
+         * section can end inside a method body, on a `.m` line, and
+         * without this the next one would inherit it. With directives off
+         * these write nothing and the assembly is the `join` it replaced,
+         * byte for byte. Both files need it: a `static inline` helper
+         * written in a header is rendered with directives too, into the
+         * generated `.h`. */
+        let reset_h = |out: &mut String| lines.reset(out, stem, "h");
+        let reset_c = |out: &mut String| lines.reset(out, stem, "c");
         if let Some(sections) = headers.get(stem) {
-            h.push_str(&sections.join("\n"));
+            for (i, section) in sections.iter().enumerate() {
+                if i > 0 {
+                    h.push('\n');
+                }
+                reset_h(&mut h);
+                h.push_str(section);
+            }
             h.push('\n');
         }
 
@@ -5689,6 +6033,7 @@ pub fn emit_split(
         c.push('\n');
         if let Some(statics) = hoisted_statics_by_stem.get(stem) {
             if !statics.is_empty() {
+                reset_c(&mut c);
                 c.push_str("/* __block-qualified locals, promoted to file scope */\n");
                 for (_, decl) in statics {
                     c.push_str(decl);
@@ -5699,6 +6044,7 @@ pub fn emit_split(
         }
         if let Some(blocks) = hoisted_blocks_by_stem.get(stem) {
             if !blocks.is_empty() {
+                reset_c(&mut c);
                 c.push_str("/* non-capturing blocks, hoisted from block literals -- prototypes (defined below) */\n");
                 for (prototype, _) in blocks {
                     c.push_str(prototype);
@@ -5708,6 +6054,7 @@ pub fn emit_split(
         }
         if let Some(strs) = hoisted_strings_by_stem.get(stem) {
             if !strs.is_empty() {
+                reset_c(&mut c);
                 c.push_str("/* boxed string literals, hoisted -- extern forward declarations (defined below) */\n");
                 for (prototype, _) in strs {
                     c.push_str(prototype);
@@ -5716,12 +6063,20 @@ pub fn emit_split(
             }
         }
         if let Some(sections) = bodies.get(stem) {
-            c.push_str(&sections.join("\n\n"));
+            for (i, section) in sections.iter().enumerate() {
+                if i > 0 {
+                    c.push_str("\n\n");
+                }
+                reset_c(&mut c);
+                c.push_str(section);
+            }
             c.push('\n');
         }
         if let Some(blocks) = hoisted_blocks_by_stem.get(stem) {
             if !blocks.is_empty() {
-                c.push_str("\n/* non-capturing blocks, hoisted from block literals */\n");
+                c.push('\n');
+                reset_c(&mut c);
+                c.push_str("/* non-capturing blocks, hoisted from block literals */\n");
                 for (_, definition) in blocks {
                     c.push_str(definition);
                     c.push('\n');
@@ -5730,7 +6085,9 @@ pub fn emit_split(
         }
         if let Some(strs) = hoisted_strings_by_stem.get(stem) {
             if !strs.is_empty() {
-                c.push_str("\n/* boxed string literals, hoisted -- static struct OZString instances */\n");
+                c.push('\n');
+                reset_c(&mut c);
+                c.push_str("/* boxed string literals, hoisted -- static struct OZString instances */\n");
                 for (_, definition) in strs {
                     c.push_str(definition);
                 }

@@ -17,7 +17,8 @@ fn usage() -> ExitCode {
         "usage: oz2c [-I <dir>]... [--impl-dir <dir>]... [--manifest <path>] \
          [--root-class <name>] [--pool-sizes <Class=N,...>] \
          [--item-pool-size <N>] [--ast <ast.json>]... \
-         [--heap-support] [--timings] [--quiet] \
+         [--heap-support] [--introspection] [--reflection] \
+         [--line-directives] [--timings] [--quiet] \
          [--manifest-only] [--dump-cst] \
          <input.m>... <outdir>\n\
          \x20      oz2c --dump-ast-facts [--ast <ast.json>]..."
@@ -73,6 +74,7 @@ fn main() -> ExitCode {
     let mut introspection = false;
     let mut reflection = false;
     let mut item_pool_size: Option<usize> = None;
+    let mut line_directives = false;
     let mut dump_cst = false;
     let mut dump_ast_facts = false;
     let mut timings = false;
@@ -131,6 +133,25 @@ fn main() -> ExitCode {
             // it emitted for a selector no `@selector(...)` names.
             "--reflection" => {
                 reflection = true;
+                i += 1;
+            }
+            // `CONFIG_OBJZ_DEBUG_LINES`. Put `#line` directives on the code
+            // the author wrote -- method bodies, plain C function bodies and
+            // hoisted blocks -- so a `gdb` breakpoint, a fatal-error
+            // backtrace, `addr2line` and a coverage report all name the
+            // `.m` instead of `oz_static_generated/<Class>.c` (#305).
+            // Synthesized code keeps pointing at the generated file, which
+            // is where it genuinely lives.
+            //
+            // Costs nothing at runtime -- it changes only what the compiler
+            // writes into DWARF -- so the Kconfig default is `y` and this
+            // flag is what supplies it. Off by default *here*, like
+            // `--introspection` and `--reflection`: the flag's absence is
+            // what the option's `n` means, and it keeps the committed
+            // `tests/zephyr/generated/` C (regenerated through this CLI)
+            // free of absolute paths from whoever's machine ran it.
+            "--line-directives" => {
+                line_directives = true;
                 i += 1;
             }
             // Clang resolves types; tree-sitter does not. Supplying the AST
@@ -373,6 +394,32 @@ fn main() -> ExitCode {
     rep.note_ast_inputs(&ast_paths, &ast_sizes);
     rep.header(entry_paths.len(), resolved.origins.len(), resolved.text.len());
 
+    /* Where each stem's generated pair will be written, for the `#line`
+     * directives that hand attribution back to the generated file itself
+     * (#305). The `Foundation/` split is decided here as well as in the
+     * write loop below, because `emit` needs the answer while it is still
+     * assembling the text -- and absolute, so a debugger resolves both
+     * halves from any working directory. Built only when the flag asked
+     * for directives; without it nothing reads this. */
+    let mut generated_dirs: std::collections::HashMap<String, PathBuf> =
+        std::collections::HashMap::new();
+    if line_directives {
+        let outdir_abs = if outdir.is_absolute() {
+            outdir.to_path_buf()
+        } else {
+            std::env::current_dir().unwrap_or_default().join(outdir)
+        };
+        let foundation = outdir_abs.join("Foundation");
+        for (stem, _) in &resolved.origins {
+            let dir = if resolved.foundation_stems.contains(stem) {
+                foundation.clone()
+            } else {
+                outdir_abs.clone()
+            };
+            generated_dirs.insert(stem.clone(), dir);
+        }
+    }
+
     match oz_static::transpile_split_observed(
         &resolved.text,
         &resolved.origins,
@@ -384,6 +431,8 @@ fn main() -> ExitCode {
             introspection,
             reflection,
             item_pool_size,
+            source_map: line_directives.then(|| resolved.source_map.clone()),
+            generated_dirs,
             header_ranges: resolved.header_ranges.clone(),
         },
         &mut rep,

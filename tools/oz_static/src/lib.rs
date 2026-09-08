@@ -99,6 +99,31 @@ pub struct Options {
     /// and OZDictionary draw from one pool -- see
     /// `pools::PoolSizes::item_slots`.
     pub item_pool_size: Option<usize>,
+    /// The merged-offset -> (`.m`/`.h`, line) map from
+    /// `imports::ResolvedSource::source_map`, when the caller wants `#line`
+    /// directives in the generated C (#305).
+    ///
+    /// **Its absence is the off switch**, and the only one: `None` -- the
+    /// default, and what `oz2c` passes without `--line-directives`
+    /// (`CONFIG_OBJZ_DEBUG_LINES=n`) -- emits the same bytes as before the
+    /// feature existed. `transpile()` is `None` by construction: its source
+    /// is a string with no file behind it, so there is nothing a directive
+    /// could truthfully name.
+    ///
+    /// Owned (a clone of the resolution's map) rather than borrowed,
+    /// because a `&SourceMap` here would put a lifetime parameter on
+    /// `Options` -- which derives `Default` and which nearly every test
+    /// constructs literally. It is a few Vecs: ~30 KB for px-keyboard's
+    /// 106 KB buffer, cloned once per run, against a pipeline that reads
+    /// hundreds of megabytes of Clang AST.
+    pub source_map: Option<imports::SourceMap>,
+    /// Directory each origin stem's generated `.h`/`.c` pair will be
+    /// written to, so a `#line` handing attribution *back* to the generated
+    /// file can name it absolutely. Only `main.rs` knows this (it decides
+    /// the `Foundation/` split), and only it fills this in; a caller that
+    /// writes nothing to disk leaves it empty and those directives name a
+    /// bare `<stem>.c`.
+    pub generated_dirs: std::collections::HashMap<String, std::path::PathBuf>,
     /// Byte ranges of the source that came from a header rather than an
     /// implementation file -- `imports::ResolvedSource::header_ranges`.
     /// Pass-through C from a header goes into the generated header, so every
@@ -222,7 +247,13 @@ pub fn transpile_observed(
 ) -> Result<TranspileOutput, Vec<Diagnostic>> {
     let fe = front_end(source, options, obs)?;
     obs.enter(progress::Phase::Emit);
-    let result = emit::emit(&fe.repaired, &fe.program, &fe.pools, &fe.repaired_semicolons);
+    let result = emit::emit(
+        &fe.repaired,
+        &fe.program,
+        &fe.pools,
+        &fe.repaired_semicolons,
+        &line_directives(options),
+    );
     if !result.diagnostics.is_empty() {
         return Err(result.diagnostics);
     }
@@ -292,12 +323,21 @@ pub fn transpile_split_observed(
         &fe.pools,
         &options.header_ranges,
         &fe.repaired_semicolons,
+        &line_directives(options),
     );
     let diagnostics = std::mem::take(&mut result.diagnostics);
     if !diagnostics.is_empty() {
         return Err(diagnostics);
     }
     Ok(result)
+}
+
+/// The `#line` policy these options describe -- a view over
+/// `Options::source_map`/`generated_dirs`, borrowed for the one `emit`
+/// call. Off (nothing emitted) when there is no map, which is every caller
+/// that has no files behind its source. See `emit::LineDirectives`.
+fn line_directives(options: &Options) -> emit::LineDirectives<'_> {
+    emit::LineDirectives::new(options.source_map.as_ref(), Some(&options.generated_dirs))
 }
 
 /// Parse the supplied Clang AST, if any, onto the program.
