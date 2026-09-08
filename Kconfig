@@ -85,8 +85,12 @@ config OBJZ_DEBUG_LINES
 	  resolves them from any working directory.
 
 	  Default y because it is free: #line changes only what the
-	  compiler writes into DWARF, so there is no code, no RAM and no
-	  flash cost -- the generated C is byte-for-byte the same program.
+	  compiler records about the code, not the code, so every
+	  generated .o's instructions are byte-identical with it on. The
+	  one thing that moves is __FILE__, which then expands to the .m
+	  inside generated code, so an __ASSERT failure names the
+	  Objective-C as well -- and the image gets slightly smaller,
+	  since a .m name is shorter than a generated .c path.
 
 	  Covered: method bodies, plain C function bodies and the functions
 	  hoisted from block literals -- the code you actually step

@@ -142,7 +142,8 @@ compilable by GCC alone. The source text is substituted in place rather than reg
 from an AST, which is why unexpanded macros survive into the output.
 
 - **`collect.rs`** — CST → `Program`: classes, ivars, methods, types, protocols
-- **`emit.rs`** — in-place substitution; expression and statement rendering
+- **`emit.rs`** — in-place substitution; expression and statement rendering, plus the
+  `#line` directives that point a debugger back at the `.m` (`LineDirectives`, #305)
 - **`companion.rs`** — shared dispatch header/source, per-class slabs, allocators, boxed-literal builders
 - **`arc.rs`** — scope-based ARC. A Clang JSON AST may be supplied via `--ast` as an
   *optional* secondary oracle for ivar ownership and method definedness; tree-sitter stays
@@ -150,14 +151,18 @@ from an AST, which is why unexpanded macros survive into the output.
 - **`pools.rs`** — slab and element-pool sizing, counted from allocation sites
 - **`staticbar.rs`** — accept/reject scan for the static subset
 - **`imports.rs`** — `#import` resolution and per-origin provenance, plus the merged-offset
-  → (`.m`/`.h`, line) source map a `#line` directive needs
-  (`ResolvedSource::source_location`, #305)
+  → (`.m`/`.h`, line) source map the `#line` directives are resolved through
+  (`ResolvedSource::source_location`/`source_position`, #305)
 - **`generics.rs`** — generic and protocol constraint checking
 - **`model.rs`** — `Program`, `ClassInfo`, `Diagnostic`
 - **`progress.rs`** — pass boundaries the pipeline reports; no printing, no clock
   (`report.rs` is the binary-side half that formats and times)
-- CLI: `--pool-sizes`, `--item-pool-size`, `--heap-support`, `--root-class`, `--ast`, `-I`,
-  `--timings`, `--quiet`, `--manifest-only`, `--dump-cst`, `--dump-ast-facts`
+- CLI: `--pool-sizes`, `--item-pool-size`, `--heap-support`, `--introspection`,
+  `--reflection`, `--line-directives`, `--root-class`, `--ast`, `-I`, `--timings`,
+  `--quiet`, `--manifest-only`, `--dump-cst`, `--dump-ast-facts`. Every feature flag
+  (`--heap-support`, `--introspection`, `--reflection`, `--line-directives`) is off unless
+  passed — its absence is what the matching Kconfig option's `n` means, and
+  `cmake/oz_static.cmake` is what supplies it
 - Progress goes to **stdout**; stderr is diagnostics only, because
   `tests/tools/oz_static_build.py` reports its first line as the reason a transpile failed
 - Tests: `cargo test --manifest-path tools/oz_static/Cargo.toml`
