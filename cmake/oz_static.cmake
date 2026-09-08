@@ -160,6 +160,19 @@ function(objz_transpile_sources_static target)
     if(CONFIG_OBJZ_REFLECTION)
         list(APPEND _oz2c_flags --reflection)
     endif()
+    # CONFIG_OBJZ_DEBUG_LINES puts #line directives on the generated C, so
+    # gdb, addr2line, a fatal-error backtrace and coverage all name the .m
+    # the code was written in instead of oz_static_generated/<Class>.c
+    # (#305). Like --introspection this needs nothing on the C side: the
+    # directives are in the emitted text and change only what the compiler
+    # writes into DWARF, so the program itself is byte-for-byte the same.
+    # Default y in Kconfig, and this flag is what supplies it -- oz2c emits
+    # none without it, which is what keeps a hand-run transpile (and the
+    # committed tests/zephyr/generated C) free of one machine's absolute
+    # paths.
+    if(CONFIG_OBJZ_DEBUG_LINES)
+        list(APPEND _oz2c_flags --line-directives)
+    endif()
     # Ask oz2c for its per-phase table. Off by default because the default
     # output already names the one number that matters (the AST ingest);
     # turn it on with -DOBJZ_OZ2C_TIMINGS=ON when that number needs

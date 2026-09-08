@@ -68,6 +68,35 @@ config OBJZ_REFLECTION
 	  Set n to forbid selectors outright. All four constructs then
 	  become located transpile errors naming this option.
 
+config OBJZ_DEBUG_LINES
+	bool "#line directives back to the Objective-C source"
+	default y
+	help
+	  Put #line directives on the generated C, so the toolchain
+	  resolves a transpiled program's addresses to the .m the code was
+	  written in rather than to oz_static_generated/<Class>.c, the only
+	  file the C compiler is ever handed.
+
+	  With this on, break PXLEDController.m:161, list, step and info
+	  line work in Objective-C terms; a fatal-error backtrace,
+	  addr2line and west debug name the .m; a GCC warning about
+	  generated code quotes the Objective-C that produced it; and
+	  coverage attributes to the .m. Paths are absolute, so a debugger
+	  resolves them from any working directory.
+
+	  Default y because it is free: #line changes only what the
+	  compiler writes into DWARF, so there is no code, no RAM and no
+	  flash cost -- the generated C is byte-for-byte the same program.
+
+	  Covered: method bodies, plain C function bodies and the functions
+	  hoisted from block literals -- the code you actually step
+	  through. Code oz_static synthesizes (slab definitions,
+	  _oz_release_ivars, dispatch thunks, introspection tables) keeps
+	  pointing at the generated .c, which is where it genuinely lives.
+
+	  Set n to read the generated C directly without line markers in
+	  it, or if some tool in the chain mishandles them.
+
 config OBJZ_HEAP
 	bool "Enable heap-based allocation (allocWithHeap:)"
 	depends on HEAP_MEM_POOL_SIZE > 0

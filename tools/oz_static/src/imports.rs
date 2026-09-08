@@ -345,7 +345,12 @@ struct Segment {
 /// gap), so the repaired text `emit` works on has *fewer* lines than the
 /// merged text this map describes while every byte offset still agrees.
 /// Resolving lines against the buffer as spliced removes the question.
-#[derive(Debug, Default)]
+/// `Clone` so a caller can hand the map to the pipeline by value:
+/// `emit`'s `#line` pass reaches it through `Options`, which has no
+/// lifetime parameter (every test in the tree constructs one literally),
+/// and one clone per run is ~30 KB against a 100 KB buffer -- see
+/// `Options::source_map`.
+#[derive(Debug, Default, Clone)]
 pub struct SourceMap {
     files: Vec<PathBuf>,
     /// Ascending by `merged_start`, by construction: a segment is pushed
@@ -378,6 +383,28 @@ impl SourceMap {
          * not a rounding of one. */
         let seg_line = self.merged_line(seg.merged_start)?;
         Some((self.files[seg.file].as_path(), seg.source_line + (merged_line - seg_line)))
+    }
+
+    /// `source_location`, plus the 1-based **column** of the byte -- the
+    /// pair a symbol named after where it was written needs
+    /// (`emit::render_block`'s `oz_block_L<line>_C<col>_<n>`).
+    ///
+    /// The column is counted in the merged buffer, which is the same
+    /// column the source file has: splicing works in whole lines, so it
+    /// can move a line but never a byte within one. Counting it here
+    /// rather than from the *repaired* text is still the difference
+    /// between right and wrong, for the same reason the line is: a repair
+    /// that ate the preceding newline joins two lines, and every column on
+    /// the second of them is then measured from the wrong line start.
+    ///
+    /// Bytes, not characters, matching `parse::line_col` -- the two answer
+    /// the same question about different buffers and must not disagree
+    /// about what a column is.
+    pub fn source_position(&self, merged_offset: usize) -> Option<(&Path, usize, usize)> {
+        let merged_line = self.merged_line(merged_offset)?;
+        let (file, line) = self.source_location(merged_offset)?;
+        let column = merged_offset - self.line_starts[merged_line - 1] + 1;
+        Some((file, line, column))
     }
 
     /// How many segments the map holds. For tests and diagnostics: the
@@ -489,6 +516,12 @@ impl ResolvedSource {
     /// of `text`, or from a resolution that recorded nothing.
     pub fn source_location(&self, merged_offset: usize) -> Option<(&Path, usize)> {
         self.source_map.source_location(merged_offset)
+    }
+
+    /// `source_location` with the column too -- see
+    /// `SourceMap::source_position`.
+    pub fn source_position(&self, merged_offset: usize) -> Option<(&Path, usize, usize)> {
+        self.source_map.source_position(merged_offset)
     }
 }
 
