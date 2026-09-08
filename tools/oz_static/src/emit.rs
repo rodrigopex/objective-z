@@ -1112,6 +1112,20 @@ struct EmitCtx<'a> {
     /// enclosing statement. Mirrors the Python pipeline's `ctx.pre_stmts`
     /// (see `tools/oz_transpile/emit.py`).
     pre_stmts: Vec<String>,
+    /// Expressions already evaluated into a temporary by an enclosing
+    /// renderer, keyed by `Node::id`: rendering one again yields the
+    /// temporary's name and type instead of re-evaluating it.
+    ///
+    /// Populated only by `render_owning_argument_statement` (#328), which
+    /// has to hold an argument's `+1` in a named local so it can release it
+    /// after the send, and then wants the rest of the statement rendered
+    /// *exactly* as it would have been. Substituting at the node rather
+    /// than rewriting the call keeps the emitted argument the same type it
+    /// always was, so nothing downstream -- direct call, dynamic dispatch,
+    /// a cast around the argument -- has to know this happened. Entries are
+    /// removed as soon as that statement is rendered, so the map is empty
+    /// everywhere else.
+    arg_temps: HashMap<usize, (String, String)>,
     /// Cleanup statements owed by the `@synchronized` blocks currently
     /// enclosing the node being rendered, outermost first. A `return` has
     /// to replay them (innermost first) before leaving -- see
@@ -1209,6 +1223,7 @@ impl<'a> EmitCtx<'a> {
             hoisted_statics: Vec::new(),
             block_counter: 0,
             pre_stmts: Vec::new(),
+            arg_temps: HashMap::new(),
             sync_cleanups: Vec::new(),
             // A placeholder, not a default that is ever right: whoever
             // renders a body overwrites it with that body's real return
@@ -1400,6 +1415,16 @@ pub(crate) fn is_protocol_literal_shape(node: Node, src: &str) -> bool {
 /// expression is a bare reference to a known class name (a class-message
 /// receiver), or "struct Name *" / a plain C type otherwise.
 fn render_expr(node: Node, ctx: &mut EmitCtx) -> (String, String) {
+    // An expression an enclosing renderer already evaluated into a
+    // temporary is *this* expression -- naming the temporary is what keeps
+    // the send from evaluating it a second time (#328). Checked ahead of
+    // the match so it holds for every shape, and skipped entirely when the
+    // map is empty, which is everywhere but inside one statement renderer.
+    if !ctx.arg_temps.is_empty() {
+        if let Some((name, ty)) = ctx.arg_temps.get(&node.id()) {
+            return (name.clone(), ty.clone());
+        }
+    }
     match node.kind() {
         "message_expression" => render_message(node, ctx),
         "block_literal" => render_block(node, ctx),
@@ -1601,6 +1626,14 @@ fn render_expr(node: Node, ctx: &mut EmitCtx) -> (String, String) {
         "break_statement" | "continue_statement" if !ctx.arc_scopes.is_empty() => {
             render_loop_jump(node, ctx)
         }
+        // A +1 result passed straight as an argument (#328). Ahead of the
+        // discarded-result arm below, because a statement can be both --
+        // `[[Foo new] take:[Bar new]];` abandons its own result *and*
+        // hands one over -- and this arm renders the statement through the
+        // ordinary dispatch, so that one still gets its turn.
+        "expression_statement" if !owning_message_arguments(node, ctx).is_empty() => {
+            render_owning_argument_statement(node, ctx)
+        }
         // A +1 result bound to nothing (#322).
         "expression_statement" if discards_owning_result(node, ctx) => {
             render_discarded_owning_statement(node, ctx)
@@ -1608,6 +1641,20 @@ fn render_expr(node: Node, ctx: &mut EmitCtx) -> (String, String) {
         "declaration" if is_block_qualified_declaration(node, ctx.src) => {
             hoist_block_var(node, ctx);
             (String::new(), "id".to_string())
+        }
+        // The same +1 argument in a declaration's initialiser --
+        // `int n = [self countOf:[Foo new]];` (#328). A declaration cannot
+        // be wrapped in a block, because that would scope the name it
+        // introduces out of the rest of the body, so this one is a group of
+        // statements rather than a braced one -- which is legal only where
+        // several statements are, hence the parent check. It stays in place
+        // rather than being hoisted, since the emitter substitutes over the
+        // declaration's own byte range.
+        "declaration"
+            if node.parent().is_some_and(|parent| parent.kind() == "compound_statement")
+                && !owning_message_arguments(node, ctx).is_empty() =>
+        {
+            render_owning_argument_statement(node, ctx)
         }
         _ => {
             if !needs_translation(node) {
@@ -4258,6 +4305,159 @@ fn render_discarded_owning_statement(node: Node, ctx: &mut EmitCtx) -> (String, 
         format!("oz_static_release((struct {} *)({}));", root, rendered),
         "void".to_string(),
     )
+}
+
+/// Every +1 argument in this statement's message sends whose reference
+/// nothing else will release, ordered so a nested one comes first (#328).
+///
+/// What comes back are the *values* to release, read out from behind any
+/// casts by `arc::owning_argument_value` -- the same nodes the temporaries
+/// will take their value from, so what is held and what is released cannot
+/// disagree.
+///
+/// Only *message* arguments, and that boundary is the safe half of the
+/// change rather than an omission. A message send reaches transpiled
+/// Objective-Z, where a callee that keeps the argument retains it (a
+/// synthesized setter, `render_strong_ivar_assign`), so dropping the
+/// caller's `+1` afterwards leaves the object held by whoever kept it. A
+/// plain C function has no such obligation and cannot retain: releasing
+/// after `oz_queue_push(q, [Foo new])` would hand the queue a dangling
+/// pointer, which is the direction `arc.rs` exists to avoid. So a C call --
+/// including a variadic one like `OZLog("%@", [Foo new])` -- is left alone
+/// and still leaks.
+fn owning_message_arguments<'a>(stmt: Node<'a>, ctx: &EmitCtx) -> Vec<Node<'a>> {
+    let mut values: Vec<Node<'a>> = Vec::new();
+    collect_owning_arguments(stmt, ctx, &mut values);
+    /* By where each expression *ends*: a nested argument ends before the
+     * one containing it, so it is evaluated into its temporary first and
+     * the outer initialiser names that temporary rather than allocating
+     * again. Siblings end in source order, so they keep it. */
+    values.sort_by_key(|value| value.end_byte());
+    values
+}
+
+fn collect_owning_arguments<'a>(node: Node<'a>, ctx: &EmitCtx, out: &mut Vec<Node<'a>>) {
+    /* A `block_literal`'s body is a separate function that runs later and
+     * however many times it is called. Hoisting an argument out of it
+     * would allocate once, here, where the source allocates per call. */
+    if node.kind() == "block_literal" {
+        return;
+    }
+    if node.kind() == "message_expression" {
+        for arg in parse_message(node, ctx.src).args {
+            let Some(value) = crate::arc::owning_argument_value(
+                arg,
+                ctx.src,
+                ctx.program,
+                &ctx.program.owning_methods,
+            ) else {
+                continue;
+            };
+            /* Already held in a temporary by this same renderer, which is
+             * what lets its recursive render fall through to the ordinary
+             * dispatch instead of back into this arm. */
+            if !ctx.arg_temps.contains_key(&value.id()) {
+                out.push(value);
+            }
+        }
+    }
+    let mut cursor = node.walk();
+    let children: Vec<Node<'a>> = node.children(&mut cursor).collect();
+    for child in children {
+        collect_owning_arguments(child, ctx, out);
+    }
+}
+
+/// Hold each +1 argument in a temporary, send the message, then release --
+/// the call site's own reference given up once the callee has had its
+/// chance to keep it (#328).
+///
+/// This is the shape the issue left open, chosen over the alternative of
+/// having a synthesized strong setter *consume* a `+1` argument instead of
+/// retaining it. Consuming is cheaper -- no temporary, no release -- but it
+/// is only ever correct for a callee that stores the argument, so it does
+/// nothing for `[self doThing:[Foo new]];` where `-doThing:` merely
+/// borrows; it changes that setter's contract, so every call site passing a
+/// *borrowed* value would then owe a retain; and it needs the callee's
+/// identity, which a dynamically dispatched send does not have. Releasing
+/// at the call site needs none of that and is right for any callee, so it
+/// generalises where consuming does not. Consuming stays available later as
+/// an optimisation for the synthesized-setter case specifically.
+///
+/// The counts work out because the setter's retain is left exactly as it
+/// was: `Foo_new()` is +1, the setter's `oz_static_retain` makes it +2, and
+/// the release here brings it back to +1 -- held by the ivar, which is what
+/// releases it at `-dealloc`. A borrowed argument reaches none of this and
+/// keeps the retain it always got.
+///
+/// Emitted as a braced group rather than through `ctx.pre_stmts`, and the
+/// reason is the one `render_strong_local_assign` records: `pre_stmts` are
+/// drained by the enclosing *top-level* statement, so a temporary written
+/// for a send inside a loop is hoisted above it -- and hoisting an
+/// *allocation* out of a loop would run it once and release it once while
+/// the body used it every iteration. A block is self-contained, and legal
+/// wherever a statement is, so an unbraced `if (x) [self setFoo:[Foo
+/// new]];` needs no special case.
+///
+/// The statement itself is then rendered by the ordinary dispatch, with
+/// `ctx.arg_temps` standing in for the arguments (see `render_expr`), so
+/// nothing here has to know how a send is called -- direct, dynamic, or
+/// desugared -- and a statement that *also* discards a +1 result still
+/// reaches the #322 arm.
+///
+/// `oz_static_release` is null-safe, so an allocation that found no free
+/// slab slot needs no guard of its own.
+fn render_owning_argument_statement(node: Node, ctx: &mut EmitCtx) -> (String, String) {
+    let values = owning_message_arguments(node, ctx);
+    let root = ctx.program.root_class().unwrap_or("OZObject").to_string();
+    let mut decls: Vec<String> = Vec::with_capacity(values.len());
+    let mut releases: Vec<String> = Vec::with_capacity(values.len());
+    let mut held: Vec<usize> = Vec::with_capacity(values.len());
+    for value in values {
+        let (text, value_ty) = render_expr(value, ctx);
+        /* The expression's own type, so the argument the send receives is
+         * the type it always was and no caller of `arg_texts` has to be
+         * told anything. `id` is the one spelling that is not a C type;
+         * anything else that is not a pointer cannot be an object at all,
+         * and the root pointer a release needs is the safe reading. */
+        let (ty, init) = if value_ty.ends_with('*') {
+            (value_ty, text)
+        } else {
+            (format!("struct {} *", root), format!("(struct {} *)({})", root, text))
+        };
+        let (line, col) = line_col(ctx.src, value.start_byte());
+        ctx.block_counter += 1;
+        let tmp = format!("_oz_arg_L{}_C{}_{}", line, col, ctx.block_counter);
+        decls.push(format!("{}{} = {};", ty, tmp, init));
+        releases.push(format!("oz_static_release((struct {} *)({}));", root, tmp));
+        ctx.arg_temps.insert(value.id(), (tmp, ty));
+        held.push(value.id());
+    }
+    let (rendered, _) = render_expr(node, ctx);
+    for id in &held {
+        ctx.arg_temps.remove(id);
+    }
+    /* Released in the reverse of the order they were taken, so a nested
+     * argument outlives the one built from it. */
+    releases.reverse();
+    let lines: Vec<&String> =
+        decls.iter().chain(std::iter::once(&rendered)).chain(releases.iter()).collect();
+    /* A declaration is a bare group: bracing it would scope the name it
+     * introduces out of the rest of the body. */
+    if node.kind() == "declaration" {
+        return (
+            lines.iter().map(|line| line.as_str()).collect::<Vec<_>>().join("\n\t"),
+            "void".to_string(),
+        );
+    }
+    let mut out = String::from("{\n");
+    for line in lines {
+        out.push_str("\t\t");
+        out.push_str(line);
+        out.push('\n');
+    }
+    out.push_str("\t}");
+    (out, "void".to_string())
 }
 
 /// A nested block that owns object locals: render its statements, then
