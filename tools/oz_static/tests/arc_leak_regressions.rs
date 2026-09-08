@@ -1932,3 +1932,219 @@ int main(void) {
         out
     );
 }
+
+/// A +1 operand in a `for` **header's initialiser**, which was outside
+/// #328's guard and leaked exactly as it did before #328 (#341).
+///
+/// #328 emits a declaration's initialiser as a *bare* group of statements
+/// rather than a braced one, because bracing would scope the declared name
+/// out of the rest of the body -- and it guards that on the declaration's
+/// parent being a `compound_statement`. A `for` header's declaration has
+/// the `for` statement as its parent, so the guard declined and nothing
+/// released the reference.
+///
+/// The shape here is different from either of #328's two, and it has to be:
+/// a `for` header cannot take a statement group at all. The whole loop is
+/// wrapped in a braced group instead, with the temporary above it and the
+/// release below -- which scopes nothing out, because a header declaration
+/// is already scoped to the `for`. That the temporary outlives the loop is
+/// the deliberate cost: it holds its slab slot for the loop's duration, and
+/// in exchange the release happens exactly once.
+///
+/// Hoisting is correct **here specifically** and nowhere else in a loop: a
+/// header initialiser runs once. `Foo=1` is the assertion -- three loops,
+/// one slot, three teardowns.
+#[test]
+fn an_owning_argument_in_a_for_header_is_released() {
+    let src = format!(
+        "/* oz-pool: Foo=1,Runner=1 */\n{}{}",
+        PREAMBLE(),
+        "\
+static int g_deallocs = 0;
+static int g_iters = 0;
+
+@interface Foo : OZObject
++ (instancetype)new;
+@end
+@implementation Foo
++ (instancetype)new {
+	return [Foo alloc];
+}
+- (void)dealloc {
+	g_deallocs = g_deallocs + 1;
+}
+@end
+
+@interface Runner : OZObject
+- (int)countOf:(Foo *)f;
+- (void)run;
+@end
+@implementation Runner
+- (int)countOf:(Foo *)f {
+	if (f != nil) {
+		return 2;
+	}
+	return 0;
+}
+- (void)run {
+	for (int n = [self countOf:[Foo new]]; n > 0; n--) {
+		g_iters = g_iters + 1;
+	}
+	for (int n = [self countOf:[Foo new]]; n > 0; n--) {
+		g_iters = g_iters + 1;
+	}
+	for (int n = [self countOf:[Foo new]]; n > 0; n--) {
+		g_iters = g_iters + 1;
+	}
+}
+@end
+
+#include <stdio.h>
+int main(void) {
+	Runner *r = [Runner alloc];
+	[r run];
+	printf(\"iters=%d deallocs=%d\\n\", g_iters, g_deallocs);
+	return 0;
+}
+"
+    );
+    let out = compile_and_run(&src, "owning_argument_in_a_for_header");
+    assert_eq!(
+        out, "iters=6 deallocs=3\n",
+        "each header's `+1` is released after its loop, so one slot serves \
+         all three -- and `n` still governs the loop it was declared in: {}",
+        out
+    );
+}
+
+/// The same position, with the `+1` as the send's **receiver** rather than
+/// its argument: `for (int n = [[Foo alloc] tag]; ...)`.
+///
+/// The two changes compose without either knowing about the other, which is
+/// the point of collecting *operands* rather than arguments (#340): the
+/// header arm asks for whatever `+1` operands the initialiser has, and the
+/// receiver is one of them.
+#[test]
+fn an_owning_receiver_in_a_for_header_is_released() {
+    let src = format!(
+        "/* oz-pool: Foo=1,Runner=1 */\n{}{}",
+        PREAMBLE(),
+        "\
+static int g_deallocs = 0;
+static int g_iters = 0;
+
+@interface Foo : OZObject
+- (int)tag;
+@end
+@implementation Foo
+- (int)tag {
+	if (self == nil) {
+		return 0;
+	}
+	return 2;
+}
+- (void)dealloc {
+	g_deallocs = g_deallocs + 1;
+}
+@end
+
+@interface Runner : OZObject
+- (void)run;
+@end
+@implementation Runner
+- (void)run {
+	for (int n = [[Foo alloc] tag]; n > 0; n--) {
+		g_iters = g_iters + 1;
+	}
+	for (int n = [[Foo alloc] tag]; n > 0; n--) {
+		g_iters = g_iters + 1;
+	}
+}
+@end
+
+#include <stdio.h>
+int main(void) {
+	Runner *r = [Runner alloc];
+	[r run];
+	printf(\"iters=%d deallocs=%d\\n\", g_iters, g_deallocs);
+	return 0;
+}
+"
+    );
+    let out = compile_and_run(&src, "owning_receiver_in_a_for_header");
+    assert_eq!(
+        out, "iters=4 deallocs=2\n",
+        "an abandoned receiver in the header is released after the loop too: \
+         {}",
+        out
+    );
+}
+
+/// The **condition and the update are not hoisted**, and this is the guard
+/// that keeps #341 from becoming the bug #328 avoided.
+///
+/// A header initialiser runs once, which is the entire reason hoisting is
+/// correct for it. The condition runs before every iteration and the update
+/// after every one, so lifting an allocation out of either would allocate
+/// once where the source allocates every time round -- handing the same
+/// object to every evaluation and changing what the program does, not just
+/// where it frees. `for_header_owning_operands` reads
+/// `child_by_field_name("initializer")` and nothing else for that reason.
+///
+/// So both of these still leak, deliberately, and the assertion is on the
+/// **emitted C**: no temporary is taken for either. A dealloc count could
+/// not tell the difference between "not hoisted" and "hoisted and released
+/// after the loop" for the condition, since both end with the objects freed
+/// -- only the emitted text says whether the allocation still happens per
+/// evaluation.
+#[test]
+fn a_for_conditions_owning_operand_is_not_hoisted() {
+    let src = format!(
+        "/* oz-pool: Foo=8,Runner=1 */\n{}{}",
+        PREAMBLE(),
+        "\
+@interface Foo : OZObject
++ (instancetype)new;
+@end
+@implementation Foo
++ (instancetype)new {
+	return [Foo alloc];
+}
+@end
+
+@interface Runner : OZObject
+- (int)countOf:(Foo *)f;
+- (void)run;
+@end
+@implementation Runner
+- (int)countOf:(Foo *)f {
+	return f != nil;
+}
+- (void)run {
+	for (int i = 0; i < [self countOf:[Foo new]]; i++) {
+	}
+	int j = 0;
+	for (; j < 1; j = j + [self countOf:[Foo new]]) {
+	}
+}
+@end
+
+int main(void) { return 0; }
+"
+    );
+    let out = oz_static::transpile(&src).expect("should transpile");
+    let body = out
+        .source_c
+        .split("void Runner_run(struct Runner *self)\n{")
+        .nth(1)
+        .unwrap_or_else(|| panic!("no Runner_run definition in:\n{}", out.source_c))
+        .split("\n}\n")
+        .next()
+        .unwrap_or("");
+    assert!(
+        !body.contains("_oz_arg_") && !body.contains("_oz_recv_"),
+        "neither the condition nor the update runs once, so neither may have \
+         its allocation lifted above the loop; got:\n{}",
+        body
+    );
+}
