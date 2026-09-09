@@ -365,6 +365,36 @@ can expose every decision that was made without it. The release path, the
 subscript lowering and the store path were all wrong in the same direction,
 and all three only became *visible* once the extent existed.
 
+### A block literal borrows its enclosing body's context (#339, #342)
+
+The other shape of the same tell, and the more instructive one, because
+here the *cause* was shared rather than the symptom. A `block_literal` is
+rendered on the enclosing body's `EmitCtx` rather than owning a fresh one
+-- block bodies deliberately share the enclosing flat name scope. So
+everything that context holds *pending* on behalf of the enclosing body is
+visible to the block's own statements, and each such thing needs a
+boundary the enclosing method never needed:
+
+- the **return type** a `return` types its temporary from. Left as the
+  enclosing body's, a block returning a `Widget *` inside an `-(int)`
+  method declared its temporary `int` (#339).
+- the **ARC scopes** a `return` unwinds. Walked to the bottom, the block's
+  `return` released the enclosing method's locals from inside the hoisted
+  function -- `error: 'outerKeep' undeclared`, no valid C at all (#342).
+- the **`@synchronized` unlocks** a `return` replays, which had the same
+  defect for the same reason and was found by looking for it once the
+  second case named the cause (#342).
+
+Two of the three were filed as separate bugs three days apart, and the
+third was never filed. Worth stating as the rule the next one falls under:
+when a construct is rendered on someone else's context, every field of
+that context is a boundary question, and finding one wrong is reason to
+enumerate the rest rather than to fix the one. `ArcScope::is_block_body`
+draws the boundary where there is scope structure to mark;
+`ctx.sync_cleanups` is a flat list of text with none, so it is saved and
+cleared instead. Both restore on the way out, since the enclosing body
+still owes what it owed.
+
 ## What the Clang AST oracle costs (#299)
 
 Measured on px-keyboard (8 app sources plus the 10 SDK `src/*.m`), because the
