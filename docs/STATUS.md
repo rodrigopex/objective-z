@@ -486,6 +486,28 @@ that reported success while the thing it named was broken.
   simply never was (#343). A scratch path has to name the checkout, and a
   pid-keyed one has to be removed on `Drop` or it is a leak per run
   instead.
+- **Unused code is not free when the call site is unconditional.** The
+  default `-cDescription:maxLength:` (#354) looked like it would cost only
+  programs that use `%@`, on the reasoning that `--gc-sections` drops the
+  protocol dispatch otherwise. Measured, it costs **~360 B on every program
+  that calls `OZLog` at all** -- `samples/hello_category`, which contains no
+  `%@`, grew 26456 -> 26820 B. `src/OZLog.c:82` calls the dispatch from
+  inside `oz_log`'s body and the format string is parsed at *run time*, so
+  the `%@` branch is always present and the whole chain behind it stays
+  reachable: the dispatch, `OZObject_cDescription_maxLength_` (4 B to
+  176 B, of which 110 is formatting the address), the synthesized
+  `oz_static_class_name` (40 B) and one name string per class.
+
+  "The linker will drop it" is a claim about reachability, and reachability
+  is decided by the call graph rather than by what the program appears to
+  use. The corollary is the useful half: with
+  `CONFIG_OBJZ_DEFAULT_DESCRIPTION=n` the call itself is compiled out, and
+  then the linker does strip all of it -- `oz_static_class_name` is absent
+  from the ELF and the same sample builds to **26456 B, byte for byte the
+  pre-#354 baseline**. So the gate is what makes the cost optional; the
+  original reasoning was not wrong about `--gc-sections`, it was wrong
+  about what was reachable.
+
 - **A detector that answers from memory.** `nrfjprog --ids` reports probe ids
   it *remembers*, so it named a board that was not plugged in. `nrfutil
   device list` plus the VCOM appearing is the honest test.
