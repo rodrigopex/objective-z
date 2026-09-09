@@ -101,6 +101,37 @@ config OBJZ_DEBUG_LINES
 	  Set n to read the generated C directly without line markers in
 	  it, or if some tool in the chain mishandles them.
 
+config OBJZ_DEFAULT_DESCRIPTION
+	bool "Default -cDescription:maxLength: naming the class"
+	default y
+	help
+	  Give every class an inherited description of the form
+	  <ClassName: 0xADDRESS>, so OZLog's %@ names an object rather
+	  than printing nothing. A class that writes its own
+	  -cDescription:maxLength: overrides it either way; this only
+	  decides what the classes that do not write one produce.
+
+	  Costs ~360 bytes of flash, and costs them on every program that
+	  calls OZLog at all -- not only those using %@. The %@ branch
+	  lives in oz_log's body and the format string is a run-time
+	  value, so the linker cannot know the branch is unreachable and
+	  keeps the whole chain behind it: the protocol dispatch,
+	  OZObject's implementation (176 bytes, of which 110 is formatting
+	  the address), the synthesized oz_static_class_name (40 bytes) and
+	  one name string per class. Measured on mps2/an385:
+	  samples/hello_category, which contains no %@ at all, is
+	  26820 bytes with this on and 26456 with it off.
+
+	  Set n to get all of it back -- with the call compiled out the
+	  linker does strip the rest, and that 26456 is byte for byte what
+	  the sample measured before the default existed. The inherited
+	  description then writes nothing, and %@ on a class without its
+	  own description produces an empty field again, which is what this
+	  option was added to fix (#354). That is the trade.
+
+	  Host builds of the test corpora always have this on: it is
+	  guarded on CONFIG_OBJZ, which only a Zephyr build defines.
+
 config OBJZ_HEAP
 	bool "Enable heap-based allocation (allocWithHeap:)"
 	depends on HEAP_MEM_POOL_SIZE > 0

@@ -1265,7 +1265,14 @@ via the PAL. */\nextern oz_mem_blocks_t oz_item_pool;\n\n",
             ));
         }
         if root.as_deref() == Some(name.as_str()) {
-            h.push_str(&format!(
+            h.push_str(
+            "/* The class's own name, for the default `-cDescription:maxLength:`\n * (see `OZObject.m`). A switch rather than a table indexed by class_id:\n * the ids are dense so either would do, but a switch costs no pointer\n * array and the linker drops the whole function when nothing reaches\n * the default -- which is every program that never uses `%@` on a class\n * without its own description (not from source) */\n",
+        );
+        h.push_str(&format!(
+            "const char *oz_static_class_name(struct {root} *self);\n",
+            root = name
+        ));
+        h.push_str(&format!(
                 "struct {root} *oz_static_retain(struct {root} *self);\n\
                  void oz_static_release(struct {root} *self);\n\
                  int oz_static_retain_count(struct {root} *self);\n\
@@ -1355,6 +1362,22 @@ void {root}_dealloc(struct {root} *self)\n{{\n\t(void)self;\n}}\n\n",
 not tied to one (not from source) */\n",
         );
         c.push_str(&render_heap_bridge(program.heap_support));
+        c.push_str(
+            "/* synthesized: the class's own name, read by the default\n * `-cDescription:maxLength:` (not from source) */\n",
+        );
+        c.push_str(&format!(
+            "const char *oz_static_class_name(struct {root} *self)\n{{\n\
+             \tif (!self) {{\n\t\treturn \"nil\";\n\t}}\n\
+             \tswitch (self->_meta.class_id) {{\n",
+            root = root
+        ));
+        for name in &program.class_order {
+            c.push_str(&format!(
+                "\tcase OZ_STATIC_CLASS_{name}: return \"{name}\";\n",
+                name = name
+            ));
+        }
+        c.push_str("\tdefault: return \"?\";\n\t}\n}\n\n");
         c.push_str(&format!(
             "struct {root} *oz_static_retain(struct {root} *self)\n{{\n\
              \tif (self) {{\n\t\toz_atomic_inc(&self->oz_refcount);\n\t}}\n\treturn self;\n}}\n\n",
