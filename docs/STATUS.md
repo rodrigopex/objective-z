@@ -472,6 +472,20 @@ that reported success while the thing it named was broken.
   with no `pop`, so once anything reaches `zephyr/kernel.h` the diagnostics
   stop. Injecting a bare `;` *and* an empty struct produced zero warnings.
   Prove the instrument can fail before trusting it to pass.
+- **A scratch directory two runs share reports a failure that looks
+  entirely local.** `tests/corpus_parity.rs` built its paths from fixed
+  names under `$TMPDIR` and cleared them on entry, so a `cargo test` in a
+  second worktree deleted the directory this one was still writing into.
+  What comes out names a corpus case, a generated file and a missing
+  header -- `fatal error: 'slab_reuse_after_free.h' file not found` -- and
+  suggests nothing external at all. It also fails in the *other*
+  direction, which is worse: a run whose directory is recreated by a
+  neighbour can pass on the neighbour's output. Same collision #315 fixed
+  for twister, where two sweeps shared `/tmp/twister-out`; the justfile's
+  `outdir` has been keyed on the checkout ever since and the Rust suite
+  simply never was (#343). A scratch path has to name the checkout, and a
+  pid-keyed one has to be removed on `Drop` or it is a leak per run
+  instead.
 - **A detector that answers from memory.** `nrfjprog --ids` reports probe ids
   it *remembers*, so it named a board that was not plugged in. `nrfutil
   device list` plus the VCOM appearing is the honest test.
