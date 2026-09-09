@@ -9,7 +9,7 @@
 #![allow(dead_code)]
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// `tools/oz_static/../../include` -- the repo's real platform headers.
@@ -170,7 +170,7 @@ fn compile_and_run_inner(
         )
     });
 
-    let dir = std::env::temp_dir().join(format!("oz_static_test_{}", stem));
+    let dir = test_scratch_dir(stem);
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
 
@@ -658,3 +658,99 @@ pub fn ozheap_src() -> String {
     assemble(&header, include_str!("../../../../src/OZHeap.m"))
 }
 
+/// A short, stable hash of *this checkout's* path, for naming a scratch
+/// directory that no other checkout can be using.
+///
+/// `CARGO_MANIFEST_DIR` is baked in at compile time and is the crate's
+/// own directory, so a second worktree compiles a different constant in
+/// here and lands on a different name. That is the whole point: the
+/// justfile's `outdir` was keyed on `file_name(justfile_directory())` for
+/// exactly this reason after two twister sweeps shared `/tmp/twister-out`
+/// (#315), and the Rust suite never got the same treatment -- two
+/// concurrent `cargo test` runs shared `$TMPDIR/oz_static_corpus_compile`
+/// and each deleted the directory the other was still writing into
+/// (#343). The failure that produces is *convincing*: it names a corpus
+/// case and a missing generated header, and points at nothing external.
+///
+/// Taken as a parameter rather than read from the environment so the
+/// property under test -- two different checkouts, two different keys --
+/// is testable without a second checkout (`scratch_isolation.rs`).
+pub fn checkout_key_of(manifest_dir: &str) -> String {
+    /* FNV-1a, folded to 24 bits. A hash rather than the directory's own
+     * name because two worktrees are routinely named for their branch
+     * and can collide on a leaf name, and because a path is not a legal
+     * path component. Six hex digits is short enough to read in a
+     * compiler error and wide enough that a collision needs thousands of
+     * live checkouts. */
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in manifest_dir.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("{:06x}", hash & 0xff_ffff)
+}
+
+/// This checkout's key.
+pub fn checkout_key() -> String {
+    checkout_key_of(env!("CARGO_MANIFEST_DIR"))
+}
+
+/// A scratch directory owned by *one run of one test binary*, removed
+/// when the guard goes out of scope -- including while a panic unwinds,
+/// which is how a failing assertion leaves nothing behind.
+///
+/// The name carries both the checkout key and the process id, so neither
+/// a second worktree nor a second `cargo test` in this same checkout can
+/// be pointed at it. `Drop` is what keeps that from turning into a leak:
+/// a pid-keyed path is a *new* directory every run, and the fixed-name
+/// ones it replaces are still sitting in `$TMPDIR` on any machine that
+/// has ever run this suite.
+pub struct ScratchDir {
+    path: PathBuf,
+}
+
+impl ScratchDir {
+    /// Create (or re-create) the directory for `label`.
+    ///
+    /// The clear-first is not the sharing hazard the fixed-name version
+    /// had: this path belongs to this process, and the only way to find
+    /// something already in it is a previous run whose pid has since been
+    /// recycled.
+    pub fn new(label: &str) -> ScratchDir {
+        let path = std::env::temp_dir().join(format!(
+            "oz_static_{}_{}_{}",
+            label,
+            checkout_key(),
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&path);
+        fs::create_dir_all(&path).unwrap();
+        ScratchDir { path }
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub fn join(&self, name: &str) -> PathBuf {
+        self.path.join(name)
+    }
+}
+
+impl Drop for ScratchDir {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.path);
+    }
+}
+
+/// The scratch directory for one `compile_and_run` case.
+///
+/// Keyed on the checkout but *not* on the pid, unlike `ScratchDir`: the
+/// path stays stable across runs, so this fixes the cross-worktree
+/// sharing without leaving a fresh directory behind on every run. Two
+/// concurrent runs in the *same* checkout would still share it; within
+/// one run they cannot, since `cargo test` gives each test binary its own
+/// process and each case here its own `stem`.
+pub fn test_scratch_dir(stem: &str) -> PathBuf {
+    std::env::temp_dir().join(format!("oz_static_test_{}_{}", stem, checkout_key()))
+}
