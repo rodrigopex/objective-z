@@ -152,6 +152,19 @@ pub fn expect_reject_with_introspection(source: &str) -> String {
     }
 }
 
+/// Same as `compile_and_run`, with arbitrary extra flags on the two `-c`
+/// compiles. `pub` because a Kconfig-gated code path can only be reached
+/// on a host with no Kconfig by defining its macro on the command line --
+/// see `default_description.rs`, which is the only way the disabled half
+/// of `OZ_DEFAULT_DESCRIPTION` is exercised anywhere.
+pub fn compile_and_run_with_cc_flags(
+    source: &str,
+    stem: &str,
+    extra_cc_flags: &[&str],
+) -> String {
+    compile_and_run_with_flags(source, stem, extra_cc_flags)
+}
+
 fn compile_and_run_with_flags(source: &str, stem: &str, extra_cc_flags: &[&str]) -> String {
     compile_and_run_inner(source, stem, extra_cc_flags, &oz_static::Options::default())
 }
