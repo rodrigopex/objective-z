@@ -2378,7 +2378,13 @@ fn is_super_identifier(node: Node, src: &str) -> bool {
 /// ordinary C member access and must pass through untouched.
 ///
 /// Two things disqualify it. `a->b` is direct ivar access, which is already
-/// valid C against the generated struct and means exactly what it says. And
+/// valid C against the generated struct and means exactly what it says --
+/// true of a *read*, and the reason this returns `None` for it, but not of
+/// a store into an owned object ivar, which carries an ownership
+/// obligation the plain C store does not discharge. `self->_x = value` is
+/// picked up before this by `render_strong_ivar_assign` (see
+/// `assigned_ivar_name`, #352); everything else about `->` still passes
+/// through here. And
 /// `a.b` where `a` is a plain C struct *value* is ordinary member access --
 /// `samples/hello_category`'s `struct color`, or the `struct sensor_msg` in
 /// `tests/behavior/cases/regression/issue_090_header_preservation.m`. Only
@@ -2474,6 +2480,60 @@ fn render_field_expression(node: Node, ctx: &mut EmitCtx) -> (String, String) {
     send_to_resolved_class(ctx, &class, &getter, &obj_text, &[], super_access)
 }
 
+/// The ivar an assignment's left side names, whichever way the author
+/// spelled it: `_x` or `self->_x`.
+///
+/// Both are the same operation, and until #352 only the first reached the
+/// strong-store lowering -- this function opened with
+/// `if left.kind() != "identifier" { return None; }`, and `self->_x` is a
+/// `field_expression`. So the explicit spelling fell through to a plain C
+/// store: no retain of the new value, no release of the old. The ivar was
+/// left holding a reference nothing had accounted for, the local's own
+/// scope-exit release destroyed the object immediately, and the
+/// synthesized dealloc later released the freed block a second time. One
+/// missing retain, three defects, and `-fsanitize=address` reports
+/// `heap-use-after-free` inside `oz_static_release`.
+///
+/// Restricted to `self`. `other->_x = value` is direct ivar access on
+/// *another* object, which needs that object's class to resolve the ivar
+/// and its access path, and nothing in the tree writes it; it still falls
+/// through, as it did before.
+///
+/// The read path is untouched and needs no equivalent: `render_field_expression`
+/// leaves `a->b` alone deliberately, because as a *read* it is already
+/// valid C against the generated struct and means exactly what it says.
+/// Only a store carries an ownership obligation.
+fn assigned_ivar_name(left: Node, ctx: &EmitCtx) -> Option<String> {
+    if left.kind() == "identifier" {
+        let name = node_text(left, ctx.src).to_string();
+        /* A local of the same name shadows the ivar, exactly as in C. */
+        if ctx.locals.contains(&name) {
+            return None;
+        }
+        return Some(name);
+    }
+    if left.kind() != "field_expression" {
+        return None;
+    }
+    let mut cursor = left.walk();
+    let children: Vec<Node> = left.children(&mut cursor).collect();
+    /* `self->_x` only: dot syntax on an object is a property store and is
+     * handled further down `render_assignment_expression`, which sends the
+     * setter -- and a setter already retains. */
+    if !children.iter().any(|c| c.kind() == "->") {
+        return None;
+    }
+    let object = children.first()?;
+    if object.kind() != "identifier" || node_text(*object, ctx.src) != "self" {
+        return None;
+    }
+    let field = children.last()?;
+    if field.kind() != "field_identifier" {
+        return None;
+    }
+    Some(node_text(*field, ctx.src).to_string())
+}
+
 /// `_ivar = value` where `_ivar` is a strong object ivar: takes ownership of
 /// the new value and gives up the old one, the way assigning to a `__strong`
 /// ivar does under ARC. `None` when this is not that.
@@ -2520,13 +2580,7 @@ fn render_strong_ivar_assign(
     right: Node,
     ctx: &mut EmitCtx,
 ) -> Option<(String, String)> {
-    if left.kind() != "identifier" {
-        return None;
-    }
-    let name = node_text(left, ctx.src).to_string();
-    if ctx.locals.contains(&name) {
-        return None;
-    }
+    let name = assigned_ivar_name(left, ctx)?;
     if !ctx.program.owned_object_ivar_names(&ctx.class_name).contains(&name) {
         return None;
     }
