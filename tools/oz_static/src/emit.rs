@@ -3189,11 +3189,41 @@ fn render_return_statement(node: Node, ctx: &mut EmitCtx) -> (String, String) {
         .map(|c| crate::arc::value_behind_casts(*c, ctx.src))
         .filter(|c| c.kind() == "identifier")
         .map(|c| node_text(c, ctx.src).to_string());
-    let arc_releases = releases_for_all_scopes(ctx, returned_name.as_deref());
+    // ...and the returned *name* is not always the name that owns it.
+    //
+    // `Thing *b = a; return b;` hands the caller `a`'s reference, so
+    // releasing `a` here drops the only one there is -- the whole of #351,
+    // and a use-after-free rather than a leak. What must be kept is the
+    // local the returned name *aliases*, which `arc::alias_chain` finds by
+    // following plain-identifier initialisers. `return_hands_back_ownership`
+    // walks the same chain, so the two still agree on which local's
+    // ownership passes to the caller.
+    //
+    // Nothing is retained for this: the alias and the owner are the same
+    // reference, so keeping the owner instead of the alias is exact and
+    // costs no refcount traffic at all. That matters more than it looks --
+    // measured on ARM at -O2, a retain/release pair around this shape is
+    // 8 instructions to 12 with the ops out of line, 62 with them inlined,
+    // and GCC elides none of it even under whole-program LTO: an atomic RMW
+    // may not be removed, and the decrement gates a call to dealloc. Clang
+    // gets away with retain-on-every-binding only because ObjCARCOpt knows
+    // objc_retain/objc_release are refcount intrinsics. Here the eliding
+    // has to happen in oz2c, so an exact answer is the cheap one.
+    let kept = returned_name.as_deref().map(|name| owner_of_returned(node, name, ctx));
+    let arc_releases = releases_for_all_scopes(ctx, kept.as_deref());
+    let needs_retain = enclosing_function_body(node).is_some_and(|body| {
+        crate::arc::return_needs_retain(
+            node,
+            body,
+            ctx.src,
+            ctx.program,
+            &ctx.program.owning_methods,
+        )
+    });
 
     // Outside any @synchronized, behave exactly as the catch-all in
     // `render_expr` would: byte-identical when nothing needs translating.
-    if ctx.sync_cleanups.is_empty() && arc_releases.is_empty() {
+    if ctx.sync_cleanups.is_empty() && arc_releases.is_empty() && !needs_retain {
         if !needs_translation(node) {
             return (node_text(node, ctx.src).to_string(), "id".to_string());
         }
@@ -3223,6 +3253,29 @@ fn render_return_statement(node: Node, ctx: &mut EmitCtx) -> (String, String) {
             let (line, col) = line_col(ctx.src, node.start_byte());
             let tmp = format!("_oz_sync_ret_L{}_C{}_{}", line, col, ctx.block_counter);
             let ret_ty = ctx.method_return_type.clone();
+            // The returned value is retained where its provenance cannot
+            // be established and another local's `+1` is about to be
+            // released against it -- `arc::return_needs_retain` decides,
+            // and `arc::return_hands_back_ownership` reports the same
+            // function as `+1` from the same call, so the caller releases
+            // what is retained here (#351).
+            //
+            // Cast back to the return type because `oz_static_retain`
+            // answers in the root class's pointer type, the same round trip
+            // every other retain-bearing expression here makes.
+            let value_text = if needs_retain && class_name_from_type(&ret_ty).is_some() {
+                match ctx.program.root_class() {
+                    Some(root) => format!(
+                        "({ty})oz_static_retain((struct {root} *)({value}))",
+                        ty = ret_ty,
+                        root = root,
+                        value = value_text
+                    ),
+                    None => value_text,
+                }
+            } else {
+                value_text
+            };
             (
                 format!(
                     "{ty} {tmp} = {value};\n\t{cleanups}\n\treturn {tmp};",
@@ -4298,6 +4351,57 @@ fn release_lines(names: &[String], ctx: &EmitCtx) -> Vec<String> {
         .iter()
         .map(|name| format!("oz_static_release((struct {} *)({}));", root, name))
         .collect()
+}
+
+/// Which local a `return`'s name actually owns: itself, if it is one of
+/// the scopes' owned locals, else the nearest local it aliases that is.
+///
+/// Falls back to the name as written when the chain reaches nothing owned,
+/// which keeps the byte-identical path for every return that was already
+/// correct -- a returned name that owns nothing releases nothing on its
+/// own account either way.
+///
+/// The enclosing body is needed to read declarations from, and a `return`
+/// knows it only by walking up: the nearest `compound_statement` with no
+/// `compound_statement` above it inside this function. `alias_chain` reads
+/// declarations anywhere within, so handing it the outermost body is what
+/// lets `Thing *b = a;` in the body be found from a `return b;` nested in
+/// an `if`.
+fn owner_of_returned(ret: Node, name: &str, ctx: &EmitCtx) -> String {
+    let owned_here = |candidate: &str| {
+        ctx.arc_scopes.iter().any(|scope| scope.owned.iter().any(|owned| owned == candidate))
+    };
+    if owned_here(name) {
+        return name.to_string();
+    }
+    let Some(body) = enclosing_function_body(ret) else {
+        return name.to_string();
+    };
+    crate::arc::alias_chain(body, ctx.src, name)
+        .into_iter()
+        .find(|aliased| owned_here(aliased))
+        .unwrap_or_else(|| name.to_string())
+}
+
+/// The outermost `compound_statement` enclosing `node` within its function
+/// or block literal -- the body every declaration in scope was written in.
+///
+/// Stops at a `block_literal`, for the reason `ArcScope::is_block_body`
+/// carries: a block's body is a separate function, and the enclosing
+/// body's declarations are not its locals (#342).
+fn enclosing_function_body(node: Node) -> Option<Node> {
+    let mut outermost = None;
+    let mut current = node.parent();
+    while let Some(parent) = current {
+        if parent.kind() == "block_literal" {
+            break;
+        }
+        if parent.kind() == "compound_statement" {
+            outermost = Some(parent);
+        }
+        current = parent.parent();
+    }
+    outermost
 }
 
 /// Releases owed by the scopes a `return` leaves, innermost first,
