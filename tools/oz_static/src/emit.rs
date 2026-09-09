@@ -1202,6 +1202,41 @@ struct ArcScope {
     /// scopes up to and including the nearest one of these, and no further:
     /// a local declared *after* the loop is still live once it exits.
     is_loop_body: bool,
+    /// Is this block a block literal's body? A `return` unwinds through
+    /// scopes up to and including the nearest one of these, and no
+    /// further.
+    ///
+    /// The reason is the same shape as `is_loop_body`'s, one level up. A
+    /// `block_literal` is rendered on the *enclosing* body's `EmitCtx`
+    /// (see `render_block`: block bodies deliberately share their
+    /// enclosing body's flat scope), so the enclosing method's ARC scopes
+    /// are still stacked when the block's own `return` is rendered. Left
+    /// unmarked, that `return` released the enclosing method's locals from
+    /// inside the *hoisted* function, where those names do not exist:
+    /// `error: 'outerKeep' undeclared` and no valid C at all (#342).
+    ///
+    /// The enclosing body's locals are released by the enclosing body, on
+    /// its own exit -- and they are still live while the block runs, since
+    /// the block may be called before the enclosing body returns.
+    is_block_body: bool,
+}
+
+impl ArcScope {
+    /// The scope to enter for `body`, marked with whichever unwinding
+    /// boundaries it is.
+    ///
+    /// One constructor because the flags have to be set the same way at
+    /// every push site, and there are two (`arc_enter` and
+    /// `render_body_with_comments`). `is_loop_body` was already spelled
+    /// out at both, so adding a second flag to only one of them was the
+    /// available mistake.
+    fn for_body(body: Node) -> ArcScope {
+        ArcScope {
+            owned: Vec::new(),
+            is_loop_body: is_loop_body(body),
+            is_block_body: is_block_body(body),
+        }
+    }
 }
 
 impl<'a> EmitCtx<'a> {
@@ -4034,16 +4069,41 @@ fn render_block(node: Node, ctx: &mut EmitCtx) -> (String, String) {
     // takes `render_return_statement`'s `None` arm and builds no temporary
     // at all.
     let enclosing_return_type = std::mem::replace(&mut ctx.method_return_type, ret_ty.clone());
+    /* The enclosing body's pending `@synchronized` unlocks are *its* to
+     * run, for the same reason its ARC scopes are (#342): a `return`
+     * inside this literal is rendered while they are still stacked, and
+     * `render_return_statement` would put them in the hoisted function --
+     * whose text names the `struct OZSpinLock *` temporary the enclosing
+     * body declared, and which does not hold the lock in the first place.
+     * The block runs at its call site, which may be inside or outside the
+     * critical section; either way, unlocking on its way out is wrong.
+     *
+     * Cleared rather than boundary-marked like `ArcScope::is_block_body`,
+     * because `ctx.sync_cleanups` is a flat list of *text* with no scope
+     * structure to mark. Restored after, on the same reasoning as
+     * `method_return_type` above: this is the enclosing body's `EmitCtx`,
+     * so a `@synchronized` still open after the literal must keep owing
+     * its unlock. */
+    let enclosing_sync_cleanups = std::mem::take(&mut ctx.sync_cleanups);
     let body_text = match body {
         Some(body) => {
             // Block bodies use the same flat scope as their enclosing
-            // method/function (a known spike simplification).
+            // method/function (a known spike simplification). That is
+            // about *names*: a block body sees the enclosing body's
+            // locals, which is what makes an undeclared-identifier error
+            // impossible to get from the scope map alone. It is no longer
+            // true of anything the enclosing body has left *pending* --
+            // its return type (#339), its ARC scopes and its
+            // `@synchronized` unlocks (#342, both above) each have a
+            // boundary here, because the hoisted function is a different
+            // function and the enclosing body's locals are not its own.
             collect_local_decls(body, ctx);
             render_body_with_comments(body, ctx)
         }
         None => "{\n}".to_string(),
     };
     ctx.method_return_type = enclosing_return_type;
+    ctx.sync_cleanups = enclosing_sync_cleanups;
 
     // `(void)param;` for the block's own unused parameters. This function and
     // its signature are both synthesized here, so unlike a plain C function's
@@ -4240,8 +4300,23 @@ fn release_lines(names: &[String], ctx: &EmitCtx) -> Vec<String> {
         .collect()
 }
 
-/// Releases owed by every live scope, innermost first, skipping `keep` --
-/// the local being returned, whose ownership passes to the caller.
+/// Releases owed by the scopes a `return` leaves, innermost first,
+/// skipping `keep` -- the local being returned, whose ownership passes to
+/// the caller.
+///
+/// "The scopes it leaves" is every live one, out to and *including* the
+/// nearest block literal's body. It stops there because a block literal
+/// is rendered on its enclosing body's `EmitCtx`, so the enclosing body's
+/// scopes are still on the stack while the block's `return` is rendered
+/// -- and releasing them here emitted the enclosing method's locals
+/// inside the hoisted function, naming locals it does not have (#342).
+/// See `ArcScope::is_block_body`.
+///
+/// `releases_up_to_loop` below draws the analogous boundary for
+/// `break`/`continue`. The two are deliberately separate walks rather
+/// than one parameterised by a predicate: a `return` crosses a loop
+/// boundary (it leaves the loop *and* the function) while a `break` does
+/// not, so they stop at different marks and only look alike.
 fn releases_for_all_scopes(ctx: &EmitCtx, keep: Option<&str>) -> Vec<String> {
     let mut names = Vec::new();
     for scope in ctx.arc_scopes.iter().rev() {
@@ -4249,6 +4324,9 @@ fn releases_for_all_scopes(ctx: &EmitCtx, keep: Option<&str>) -> Vec<String> {
             if Some(name.as_str()) != keep {
                 names.push(name.clone());
             }
+        }
+        if scope.is_block_body {
+            break;
         }
     }
     release_lines(&names, ctx)
@@ -4286,6 +4364,16 @@ fn is_loop_body(body: Node) -> bool {
     body.parent().is_some_and(|parent| {
         matches!(parent.kind(), "for_statement" | "while_statement" | "do_statement")
     })
+}
+
+/// Is this compound statement a block literal's body?
+///
+/// Read off the CST, exactly like `is_loop_body`, so no push site has to
+/// be told what it is rendering: `render_body_with_comments` is reached
+/// for a method body, a free function's body and a block literal's body
+/// alike, and only the tree distinguishes them.
+fn is_block_body(body: Node) -> bool {
+    body.parent().is_some_and(|parent| parent.kind() == "block_literal")
 }
 
 /// `break`/`continue`, preceded by the releases owed by every scope the
@@ -4637,7 +4725,7 @@ fn render_owning_operand_statement(
 /// every object it allocated that way -- and it says so in its own expected
 /// output, which no compile or link could have checked.
 fn arc_enter(ctx: &mut EmitCtx, body: Node) {
-    ctx.arc_scopes.push(ArcScope { owned: Vec::new(), is_loop_body: is_loop_body(body) });
+    ctx.arc_scopes.push(ArcScope::for_body(body));
 }
 
 /// Record whatever owned locals `stmt` just declared.
@@ -4713,7 +4801,7 @@ fn render_body_with_comments(body: Node, ctx: &mut EmitCtx) -> String {
     }
     let stmts = &children[1..children.len() - 1];
 
-    ctx.arc_scopes.push(ArcScope { owned: Vec::new(), is_loop_body: is_loop_body(body) });
+    ctx.arc_scopes.push(ArcScope::for_body(body));
     /* (rendered text, the original it came from, its byte offset) -- the
      * offset is what a `#line` directive for this statement is resolved
      * from, and it has to be captured here while the node is in hand. */
