@@ -67,6 +67,13 @@ BOOL OZObject_isEqual_(struct OZObject *self, void * anObject);
 int OZObject_cDescription_maxLength_(struct OZObject *self, char* buf, size_t maxLen);
 struct OZObject *OZObject_oz_alloc(void);
 void OZObject_oz_free(struct OZObject *obj);
+/* The class's own name, for the default `-cDescription:maxLength:`
+ * (see `OZObject.m`). A switch rather than a table indexed by class_id:
+ * the ids are dense so either would do, but a switch costs no pointer
+ * array and the linker drops the whole function when nothing reaches
+ * the default -- which is every program that never uses `%@` on a class
+ * without its own description (not from source) */
+const char *oz_static_class_name(struct OZObject *self);
 struct OZObject *oz_static_retain(struct OZObject *self);
 void oz_static_release(struct OZObject *self);
 int oz_static_retain_count(struct OZObject *self);
