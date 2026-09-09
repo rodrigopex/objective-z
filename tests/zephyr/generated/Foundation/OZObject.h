@@ -85,3 +85,87 @@ BOOL OZObject_isEqual_(struct OZObject *self, void * anObject);
 int OZObject_cDescription_maxLength_(struct OZObject *self, char* buf, size_t maxLen);
 /*========================= end interface: OZObject ==========================*/
 
+/*
+ * Is the inherited `-cDescription:maxLength:` the one that names the class
+ * (#354), or the no-op it used to be?
+ *
+ * Keyed on `CONFIG_OBJZ_DEFAULT_DESCRIPTION`, which only a Zephyr build
+ * defines -- and read through `CONFIG_OBJZ` rather than `__ZEPHYR__` so
+ * that a host build of the test corpora, which defines neither, always
+ * gets the default. Without that asymmetry the host suites would silently
+ * exercise the disabled path and the option's own tests could not tell the
+ * two apart.
+ *
+ * Overridable from the command line, which is how
+ * `tests/default_description.rs` reaches the disabled path on a host
+ * without a Kconfig at all.
+ */
+#ifndef OZ_DEFAULT_DESCRIPTION
+#  if !defined(CONFIG_OBJZ) || defined(CONFIG_OBJZ_DEFAULT_DESCRIPTION)
+#    define OZ_DEFAULT_DESCRIPTION 1
+#  else
+#    define OZ_DEFAULT_DESCRIPTION 0
+#  endif
+#endif
+/**
+ * @brief The receiver's class name, as a string literal.
+ *
+ * Synthesized by the transpiler into the companion source, where the
+ * class-id switch it needs is available (`companion.rs`). Declared here
+ * rather than only in the companion header because `src/OZObject.m` calls
+ * it, and that file is also compiled on its own for the Clang AST dump --
+ * which never sees a generated header.
+ *
+ * Answers `"nil"` for a nil receiver and `"?"` for a class id this program
+ * does not know, so the caller never has to check.
+ */
+const char *oz_static_class_name(struct OZObject *self);
+#if OZ_DEFAULT_DESCRIPTION
+static inline int _oz_write_default_description(const char *class_name, unsigned long address,
+					       char *buf, size_t maxLen)
+{
+	static const char hex[] = "0123456789abcdef";
+	size_t pos = 0;
+	int shift = 0;
+	int leading = 1;
+
+	if (buf == NULL || maxLen == 0) {
+		return 0;
+	}
+	if (pos < maxLen) {
+		buf[pos++] = '<';
+	}
+	while (*class_name != '\0' && pos < maxLen) {
+		buf[pos++] = *class_name++;
+	}
+	if (pos < maxLen) {
+		buf[pos++] = ':';
+	}
+	if (pos < maxLen) {
+		buf[pos++] = ' ';
+	}
+	if (pos < maxLen) {
+		buf[pos++] = '0';
+	}
+	if (pos < maxLen) {
+		buf[pos++] = 'x';
+	}
+	/* Most significant nibble first, skipping leading zeroes -- but
+	 * never all of them, so a null address still prints as `0x0`. */
+	for (shift = (int)(sizeof(unsigned long) * 8) - 4; shift >= 0; shift -= 4) {
+		unsigned long nibble = (address >> shift) & 0xful;
+
+		if (leading && nibble == 0ul && shift > 0) {
+			continue;
+		}
+		leading = 0;
+		if (pos < maxLen) {
+			buf[pos++] = hex[nibble];
+		}
+	}
+	if (pos < maxLen) {
+		buf[pos++] = '>';
+	}
+	return (int)pos;
+}
+#endif

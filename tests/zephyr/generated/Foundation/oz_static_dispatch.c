@@ -33,6 +33,31 @@ void OZObject_oz_free(struct OZObject *obj)
 
 /* synthesized: increments the retain count; shared by every class,
  * not tied to one (not from source) */
+/* synthesized: the class's own name, read by the default
+ * `-cDescription:maxLength:` (not from source) */
+const char *oz_static_class_name(struct OZObject *self)
+{
+	if (!self) {
+		return "nil";
+	}
+	switch (self->_meta.class_id) {
+	case OZ_STATIC_CLASS_OZObject: return "OZObject";
+	case OZ_STATIC_CLASS_Widget: return "Widget";
+	case OZ_STATIC_CLASS_Base: return "Base";
+	case OZ_STATIC_CLASS_Child: return "Child";
+	case OZ_STATIC_CLASS_Node: return "Node";
+	case OZ_STATIC_CLASS_LightSwitch: return "LightSwitch";
+	case OZ_STATIC_CLASS_Fan: return "Fan";
+	case OZ_STATIC_CLASS_Level1: return "Level1";
+	case OZ_STATIC_CLASS_Level2: return "Level2";
+	case OZ_STATIC_CLASS_Level3: return "Level3";
+	case OZ_STATIC_CLASS_Level4: return "Level4";
+	case OZ_STATIC_CLASS_OZQ31: return "OZQ31";
+	case OZ_STATIC_CLASS_BoxedTest: return "BoxedTest";
+	default: return "?";
+	}
+}
+
 struct OZObject *oz_static_retain(struct OZObject *self)
 {
 	if (self) {
