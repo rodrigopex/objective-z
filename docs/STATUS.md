@@ -516,6 +516,81 @@ that reported success while the thing it named was broken.
   else. The old document's "Not verified" section was wrong four times in the
   same direction, each time understating what was already reachable.
 
+## Why this is not Clang's ARC, and what that costs (#351)
+
+Worth writing down because the gap looks like an omission and is mostly a
+constraint, and because the one part that *was* an omission was a
+use-after-free.
+
+Three differences are forced by the target and are correctly decided:
+there is no autorelease pool (`@autoreleasepool` lowers to a plain
+compound statement), so ARC's `objc_autoreleaseReturnValue` /
+`objc_retainAutoreleasedReturnValue` return convention cannot exist and a
+returning function must pick +1-to-caller or borrowed and declare it
+consistently; there is no zeroing `__weak`, which is a hard located error
+because nothing can zero a weak reference without a runtime; and there is
+no `ObjCARCOpt`.
+
+That third one is the load-bearing difference. **Clang emits retain and
+release naively at every binding and deletes the redundant pairs in an
+LLVM pass.** `oz2c` emits C for GCC, and nothing downstream elides
+anything, because `oz_static_retain`/`oz_static_release` are ordinary C
+functions: the counter is an atomic RMW, which may not be removed or
+reordered, and the decrement gates a call to `-dealloc`, which is an
+observable effect. Measured with the Zephyr ARM GCC at `-O2` on a
+three-line aliasing function: **8** instructions as emitted today, **12**
+with a retain/release pair and the ops out of line as they really are, and
+**62** with the ops `static inline` in the same translation unit -- three
+`LDREX`/`STREX` loops and six `dmb ish`, because inlining drags the whole
+release state machine (immortal check, deallocating check, class switch)
+into every call site. Under whole-program `-flto` with a no-op dealloc,
+GCC inlined the allocator and the use and elided **zero** refcount
+traffic. There is no attribute that means "this pair cancels".
+
+So the sparse model is not laziness; it is the only affordable shape. The
+right way to read `arc.rs` is as **ARC's optimizer, hand-written at the
+source level** -- emit the traffic that is necessary, elide the rest.
+
+Which locates the actual defect precisely. The rule the module stated was
+"every local this decides to release must be provably +1", and that is
+*provenance*. It says nothing about **escape**: whether the reference is
+still reachable after the scope under another name. ARC never needs escape
+analysis, because retain-on-binding gives every name its own reference and
+makes the question moot -- so declining to pay that atomic means
+inheriting the analysis, and the analysis had not been written. `Thing *b
+= a; return b;` released `a`, the only reference there was, and handed the
+caller a freed object, while the same module reported the function as
+returning `+0` so nothing owned it either. Both halves have to be asked.
+
+Two mechanisms, because the two shapes are knowable to different degrees,
+and this is the general lesson rather than a detail of one fix:
+
+- A **syntactic** alias is resolvable, and resolving it is free:
+  `alias_chain` follows plain-identifier initialisers to the local that
+  owns the reference, and that local is kept instead of the alias. No
+  refcount traffic, output byte identical.
+- An **opaque call** is not resolvable at any price. Nothing can know
+  whether `passthrough(a)` returns `a`, another object, or nothing, so
+  there is no analysis to write -- the returned value has to be retained,
+  which is exactly what ARC does and what the Clang AST already marks
+  `ARCReclaimReturnedObject`. Confined to that case, it changed nothing
+  across all 118 corpus and adapted cases.
+
+And the reason it reached `main`: the instruments were fine and pointed
+elsewhere. `leak-check` (LSan) and `sanitizers` (ASan) run the whole
+behavior corpus, and on the host PAL `oz_slab_alloc` is real
+`malloc`/`free`, so ASan reports this shape as a `heap-use-after-free`
+immediately. No case in the corpus aliased an owned local. A coverage gap,
+not an instrument gap -- and the reason
+`tests/behavior/cases/arc/return_alias_escape.m` now exists.
+
+One further trap, recorded because it made the bug look benign: the
+use-after-free is **silent unless the use touches the freed memory**. With
+the accessor returning a constant instead of reading an ivar, the same
+defect produced clean ASan output and correct-looking program output. The
+sample that started this printed `Hello, world from object` after
+`Deallocating` and exited 0.
+
 ## Standing design rules
 
 - **Never silently degrade.** Anything outside the supported subset is a hard,
