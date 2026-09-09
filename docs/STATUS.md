@@ -576,6 +576,25 @@ and this is the general lesson rather than a detail of one fix:
   `ARCReclaimReturnedObject`. Confined to that case, it changed nothing
   across all 118 corpus and adapted cases.
 
+The same root cause had a second site, found by looking for it rather than
+by being reported: `render_strong_ivar_assign` matched only the
+bare-identifier spelling of an ivar, so `self->_ivar = value` fell through
+to a plain C store with no retain and no release of the old value, while
+`_ivar = value` -- the identical operation -- was correct (#352). One
+missing retain produced three defects in sequence: the storing method's own
+scope-exit release destroyed the object immediately, the ivar was left
+dangling, and the synthesized dealloc released that freed block a second
+time. Two spellings with opposite ownership behaviour over a choice that
+says nothing about ownership.
+
+Worth stating as the rule both share: **an ownership decision keyed on a
+syntactic form is a decision waiting to be wrong**, because a second
+spelling of the same operation escapes it. #351 keyed on the returned
+*name*, #352 on the shape of the assignment's left side. Both fixes work by
+routing every spelling through one function -- `alias_chain` and
+`assigned_ivar_name` -- rather than by adding a branch for the spelling
+that was missed.
+
 And the reason it reached `main`: the instruments were fine and pointed
 elsewhere. `leak-check` (LSan) and `sanitizers` (ASan) run the whole
 behavior corpus, and on the host PAL `oz_slab_alloc` is real
