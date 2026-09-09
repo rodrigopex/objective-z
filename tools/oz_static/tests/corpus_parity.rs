@@ -44,6 +44,9 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+mod common;
+use common::ScratchDir;
+
 /// Cases whose generated C does not compile yet, each with the reason.
 /// The cause is understood; it is not a mystery.
 ///
@@ -219,7 +222,15 @@ fn compile_generated(dir: &Path) -> Result<(), String> {
 /// cases fail as listed, and on Apple clang they compile and the allowlist
 /// would report them as fixed.
 fn cc_diagnoses_fptr_to_object_pointer() -> bool {
-    let probe = std::env::temp_dir().join("oz_static_fptr_probe.c");
+    /* In this run's own directory, like the two scratch roots below and
+     * for the same reason (#343): the fixed `$TMPDIR` path this used
+     * shared its name with every other checkout, and a neighbouring run
+     * deleting it between the write and the compile makes the probe
+     * answer "does not diagnose" -- which silently turns the
+     * `KNOWN_CC_FAILURES` "these must still fail" assertion off instead
+     * of failing anything. */
+    let scratch = ScratchDir::new("fptr_probe");
+    let probe = scratch.join("probe.c");
     if std::fs::write(&probe, "void f(void);\nvoid *p = (void *)f;\n").is_err() {
         return false;
     }
@@ -228,7 +239,6 @@ fn cc_diagnoses_fptr_to_object_pointer() -> bool {
         .arg(&probe)
         .args(["-o", "/dev/null"])
         .output();
-    let _ = std::fs::remove_file(&probe);
     match out {
         Ok(o) => !o.status.success(),
         Err(_) => false,
@@ -242,12 +252,11 @@ fn every_corpus_case_transpiles() {
     let cases = corpus_cases();
     assert!(cases.len() >= 70, "expected the full corpus, found {} cases", cases.len());
 
-    let tmp = std::env::temp_dir().join("oz_static_corpus_transpile");
-    let _ = std::fs::remove_dir_all(&tmp);
+    let tmp = ScratchDir::new("corpus_transpile");
 
     let mut failures = Vec::new();
     for case in &cases {
-        let outdir = tmp.join(case_id(case).replace('/', "_").replace(".m", ""));
+        let outdir = tmp.join(&case_id(case).replace('/', "_").replace(".m", ""));
         std::fs::create_dir_all(&outdir).unwrap();
         if let Err(why) = transpile_case(case, &outdir) {
             failures.push(format!("{}: {}", case_id(case), why));
@@ -269,8 +278,7 @@ fn every_corpus_case_transpiles() {
 #[test]
 fn corpus_generated_c_compiles() {
     let cases = corpus_cases();
-    let tmp = std::env::temp_dir().join("oz_static_corpus_compile");
-    let _ = std::fs::remove_dir_all(&tmp);
+    let tmp = ScratchDir::new("corpus_compile");
 
     let mut unexpected_failures = Vec::new();
     let mut unexpected_successes = Vec::new();
@@ -285,7 +293,7 @@ fn corpus_generated_c_compiles() {
         let id = case_id(case);
         let expected_to_fail =
             strict && KNOWN_CC_FAILURES.iter().any(|(known, _)| *known == id);
-        let outdir = tmp.join(id.replace('/', "_").replace(".m", ""));
+        let outdir = tmp.join(&id.replace('/', "_").replace(".m", ""));
         std::fs::create_dir_all(&outdir).unwrap();
 
         if transpile_case(case, &outdir).is_err() {
