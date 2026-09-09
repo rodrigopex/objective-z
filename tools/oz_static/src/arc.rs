@@ -7,6 +7,27 @@
 // failing to release an owned one is a leak. So every local this decides to
 // release must be provably +1, and everything else is left alone.
 //
+// That rule is necessary and was for a long time treated as sufficient,
+// which it is not: it establishes *provenance* -- was this name initialised
+// by something recognisable as +1 -- and says nothing about **escape**, or
+// whether the reference is still reachable after the scope through some
+// other name. A `+1` local that is `provably +1` and also aliased is
+// exactly the case where releasing it is wrong, and it was a
+// use-after-free rather than a leak: `Thing *b = a; return b;` released
+// `a`, the only reference there was (#351). Both halves have to be asked,
+// and `alias_chain` / `return_needs_retain` below are the second one.
+//
+// Worth stating plainly, because it is the reason this is not simply
+// Clang's ARC: ARC never asks about escape, because retain-on-binding
+// gives every name its own reference and makes the question moot. That
+// costs an atomic pair per binding, which Clang gets back from the LLVM
+// `ObjCARCOpt` pass and this backend cannot -- `oz_static_retain` and
+// `oz_static_release` are ordinary C functions to GCC, and their pairs
+// survive -O2, inlining and whole-program LTO alike. So what lives here is
+// ARC's *optimizer*, written at the source level: emit the traffic that is
+// necessary and elide the rest. The elision is the whole value, and it has
+// to be sound in the leak direction rather than the corrupting one.
+//
 // Two questions, not one, and they have different answers.
 // `is_owning_expr` asks whether an expression is +1 *by shape* -- may a
 // local holding it be released at scope exit; `discards_ownership` asks
@@ -309,6 +330,14 @@ fn scan_once(root: Node, src: &str, program: &Program, owning: &mut OwningMethod
 /// `emit::render_return_statement` reads the returned *name* through the
 /// same peel, and the two have to agree: whichever local it decides not to
 /// release is the one whose ownership this says passes to the caller.
+///
+/// That agreement was stated here long before it held. A returned name
+/// that *aliases* the owned local is in neither side's set, so emit
+/// released the owner while this reported `+0` -- nothing owned an object
+/// that had already been freed (#351). The two are kept together now by
+/// construction rather than by assertion: both walk `alias_chain` for the
+/// resolvable case, and both call `return_needs_retain` for the case that
+/// is not resolvable at all.
 fn return_hands_back_ownership(
     ret: Node,
     body: Node,
@@ -330,11 +359,237 @@ fn return_hands_back_ownership(
     if is_reassigned(body, src, name) {
         return false;
     }
-    declared_initializer(body, src, name)
+    if declared_initializer(body, src, name)
         .is_some_and(|init| binds_ownership(init, src, program, owning))
+    {
+        return true;
+    }
+    /* The returned name may be an *alias* of the local that owns the
+     * reference rather than that local itself, and the caller is handed
+     * the reference either way (#351). `emit::render_return_statement`
+     * keeps whichever local this finds, so the two answers come from one
+     * walk. */
+    if alias_chain(body, src, name).into_iter().any(|aliased| {
+        declared_initializer(body, src, &aliased)
+            .is_some_and(|init| binds_ownership(init, src, program, owning))
+    }) {
+        return true;
+    }
+    /* And where the emitter retains the returned value because its
+     * provenance cannot be established, the caller is handed that `+1`
+     * and must release it. One predicate, both sides -- see
+     * `return_needs_retain`. */
+    return_needs_retain(ret, body, src, program, owning)
+}
+
+/// Must a `return` of this value retain it before the scope's releases run?
+///
+/// The second half of #351, and the half no alias analysis can reach.
+/// `Thing *b = passthrough(a); return b;` hands back whatever the call
+/// returned, and nothing here can know whether that is `a`, a different
+/// object, or nothing -- so the reference cannot be identified, and the
+/// owned local cannot be safely released against it. Retaining the
+/// returned value is the only sound answer, and it is what ARC does: the
+/// Clang AST for exactly this shape marks the call
+/// `ImplicitCastExpr cast=ARCReclaimReturnedObject`, which is the retain
+/// this emits.
+///
+/// **Both sides must call this, not merely agree with it.**
+/// `emit::render_return_statement` retains when it says yes;
+/// `return_hands_back_ownership` reports the function as `+1` when it says
+/// yes, so callers release what was retained. Two implementations of the
+/// same rule would be one drift away from a double free -- the direction
+/// this whole issue was filed for.
+///
+/// Deliberately narrow, because a retain here is not free (see the
+/// measurements in `emit::render_return_statement`). It fires only for a
+/// **local with an initialiser this cannot classify**:
+///
+///   - a *parameter* is excluded: it carries the caller's own reference, so
+///     releasing our local cannot strand it.
+///   - an *ivar* read is excluded: a strong ivar store already retained,
+///     so the ivar's reference outlives the scope on its own.
+///   - a local that *is* the owner, or aliases one, is excluded: that is
+///     mechanism one, which keeps the owner instead and costs nothing.
+///
+/// What is left is the opaque-call case, and returning `+0` there is what
+/// hands back a freed object.
+pub fn return_needs_retain(
+    ret: Node,
+    body: Node,
+    src: &str,
+    program: &Program,
+    owning: &OwningMethods,
+) -> bool {
+    let Some(value) = value_of_return(ret) else {
+        return false;
+    };
+    if binds_ownership(value, src, program, owning) {
+        return false;
+    }
+    let value = value_behind_casts(value, src);
+    if value.kind() != "identifier" {
+        return false;
+    }
+    let name = node_text(value, src);
+    if is_reassigned(body, src, name) {
+        return false;
+    }
+    /* A local, and one whose initialiser says nothing about ownership.
+     * No declaration at all means a parameter or an ivar, both excluded
+     * above. */
+    let Some(init) = declared_initializer(body, src, name) else {
+        return false;
+    };
+    if binds_ownership(init, src, program, owning) {
+        return false;
+    }
+    if alias_chain(body, src, name).into_iter().any(|aliased| {
+        declared_initializer(body, src, &aliased)
+            .is_some_and(|init| binds_ownership(init, src, program, owning))
+    }) {
+        return false;
+    }
+    owned_local_live_at(ret, body, src, program, owning, name)
+}
+
+/// Is some *other* local holding a `+1` at the point `ret` runs?
+///
+/// With none, there is nothing for the return to release and so nothing to
+/// protect the returned value from -- and no retain is emitted, which is
+/// what keeps every ordinary `return _ivar;` and `return borrowed;` byte
+/// identical.
+///
+/// Read in byte order rather than by walking scope structure. That
+/// over-approximates: a local declared in a sibling block that has already
+/// closed is counted as live when its release has in fact already run. The
+/// consequence is one unnecessary retain, balanced by the caller's release
+/// -- a cost, never a corruption -- and it is the reason both sides call
+/// this one function instead of each deciding for itself.
+fn owned_local_live_at(
+    ret: Node,
+    body: Node,
+    src: &str,
+    program: &Program,
+    owning: &OwningMethods,
+    returned: &str,
+) -> bool {
+    fn walk(
+        node: Node,
+        before: usize,
+        src: &str,
+        program: &Program,
+        owning: &OwningMethods,
+        returned: &str,
+        found: &mut bool,
+    ) {
+        if *found {
+            return;
+        }
+        /* A block literal's body is a separate function; its locals are
+         * not live here and its releases are its own (#342). */
+        if node.kind() == "block_literal" {
+            return;
+        }
+        if node.kind() == "init_declarator" && node.end_byte() <= before {
+            let mut cursor = node.walk();
+            let children: Vec<Node> = node.children(&mut cursor).collect();
+            let declared = children.iter().find(|c| {
+                matches!(c.kind(), "identifier" | "pointer_declarator")
+            });
+            let is_returned = declared
+                .is_some_and(|c| node_text(*c, src).trim_start_matches('*').trim() == returned);
+            if !is_returned {
+                if let Some(equals) = children.iter().position(|c| c.kind() == "=") {
+                    if let Some(init) = children.get(equals + 1) {
+                        if binds_ownership(*init, src, program, owning) {
+                            *found = true;
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            walk(child, before, src, program, owning, returned, found);
+        }
+    }
+
+    let mut found = false;
+    walk(body, ret.start_byte(), src, program, owning, returned, &mut found);
+    found
+}
+
+/// The names `name` aliases, nearest first, following plain-identifier
+/// initialisers out to the local that actually holds the reference.
+///
+/// `Thing *b = a;` makes `b` a second name for whatever `a` holds, so a
+/// `return b` hands back `a`'s reference -- and releasing `a` on the way
+/// out drops the only one there is (#351). Neither side of the release
+/// decision could see that before: both matched the returned *name*
+/// against the set of locals known to be `+1`, and an alias is in neither
+/// set.
+///
+/// Both sides call this, which is what keeps them agreeing.
+/// `emit::render_return_statement` walks the chain to find the local it
+/// must *not* release; `return_hands_back_ownership` walks the same chain
+/// to decide whether the caller is being handed a reference. The doc
+/// comment on that function states the requirement, and it is a real one:
+/// whichever local one of them keeps is the one whose ownership the other
+/// says passes to the caller.
+///
+/// A reassigned name ends the chain. `b = a;` only says what `b` holds if
+/// nothing else was stored into it later, and this walk has no idea which
+/// assignment ran -- the usual bias applies, since guessing that a name
+/// still aliases an owned local when it does not means releasing nothing
+/// (a leak) while guessing the other way means releasing it twice.
+///
+/// Only *plain identifier* initialisers extend the chain, read from behind
+/// casts by the same `value_behind_casts` every other ownership question
+/// uses. A call does not: nothing here can know whether
+/// `Thing *b = passthrough(a);` hands back `a`, a different object, or
+/// nothing at all, so that shape is not an alias question and cannot be
+/// answered by looking at names (see #351's second mechanism).
+pub fn alias_chain(body: Node, src: &str, name: &str) -> Vec<String> {
+    let mut chain = Vec::new();
+    let mut current = name.to_string();
+    /* A bound rather than a visited-set because the chain is short by
+     * construction and a cycle needs a reassignment, which already ends
+     * it: `a = b; b = a;` leaves both reassigned. The bound is what makes
+     * that argument unnecessary to trust. */
+    for _ in 0..8 {
+        if is_reassigned(body, src, &current) {
+            return chain;
+        }
+        let Some(init) = declared_initializer(body, src, &current) else {
+            return chain;
+        };
+        let init = value_behind_casts(init, src);
+        if init.kind() != "identifier" {
+            return chain;
+        }
+        let next = node_text(init, src).to_string();
+        if next == current || chain.contains(&next) {
+            return chain;
+        }
+        chain.push(next.clone());
+        current = next;
+    }
+    chain
 }
 
 /// The initialiser of `name`'s declaration inside `node`, if it has one.
+///
+/// Read *positionally* -- the child after the `=` -- and not as "the last
+/// child that is not a declarator", which is what this did until #351. The
+/// difference is only visible for an initialiser that is itself a plain
+/// identifier: `Thing *b = a;` has `identifier` on both sides of the `=`,
+/// the old filter excluded that kind to avoid returning the declarator, and
+/// so it excluded the initialiser too and answered `None`. An alias was
+/// therefore invisible to every caller here -- which is why
+/// `return_hands_back_ownership` looked like it followed one level of
+/// indirection and structurally could not (#351).
 fn declared_initializer<'a>(node: Node<'a>, src: &str, name: &str) -> Option<Node<'a>> {
     if node.kind() == "init_declarator" {
         let mut cursor = node.walk();
@@ -344,9 +599,8 @@ fn declared_initializer<'a>(node: Node<'a>, src: &str, name: &str) -> Option<Nod
                 && node_text(*c, src).trim_start_matches('*').trim() == name
         });
         if declares {
-            return children.into_iter().rev().find(|c| {
-                !matches!(c.kind(), "=" | "identifier" | "pointer_declarator")
-            });
+            let equals = children.iter().position(|c| c.kind() == "=")?;
+            return children.into_iter().nth(equals + 1);
         }
     }
     let mut cursor = node.walk();
