@@ -60,7 +60,13 @@ const char *oz_static_class_name(struct OZObject *self)
 
 struct OZObject *oz_static_retain(struct OZObject *self)
 {
-	if (self) {
+	/* An immortal object is not refcounted -- the same rule
+	 * oz_static_release applies before its decrement. Retaining one
+	 * used to increment a word nothing would ever decrement, which
+	 * both wasted an atomic and left retainCount climbing without
+	 * bound (#373). It also kept a boxed literal out of .rodata:
+	 * anything that writes an object cannot be const. */
+	if (self && !self->_meta.immortal) {
 		oz_atomic_inc(&self->oz_refcount);
 	}
 	return self;
@@ -79,6 +85,12 @@ int oz_static_retain_count(struct OZObject *self)
 {
 	if (!self) {
 		return 0;
+	}
+	/* Not refcounted, so the stored word is not maintained and
+	 * reporting it would be reporting a stale number. One permanent
+	 * reference is the truthful answer (#373). */
+	if (self->_meta.immortal) {
+		return 1;
 	}
 	return oz_atomic_get(&self->oz_refcount);
 }
