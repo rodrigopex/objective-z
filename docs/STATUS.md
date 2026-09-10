@@ -1090,14 +1090,19 @@ number of evaluations rather than on the number of releases.
 The `for`-header **declaration** belonged to neither half, and the next
 section is about why.
 
-`staticbar` narrowed how much of this was reachable, and that mattered
-for testing it: the **direct** spelling of each loop case is refused
-outright ("allocation of 'Thing' inside a loop escapes the iteration").
-What reaches the emitter is a factory *call*, whose `+1` is created
-inside the callee. Written with `alloc`, the known-defect rows added to
-`ownership_matrix.rs` failed as refusals and hid the real hole — the
-vacuous-test trap that file's own header warns about, walked into while
-writing it.
+`staticbar` narrowed how much of this was reachable **at the time**, and
+that mattered for testing it: the direct `alloc` spelling of each loop
+case was refused outright, while a factory *call* — whose `+1` is created
+inside the callee — reached the emitter and leaked. Written with `alloc`,
+the known-defect rows added to `ownership_matrix.rs` failed as refusals
+and hid the real hole, which is the vacuous-test trap that file's own
+header warns about, walked into while writing it.
+
+**#345 removed both halves of that**, so this paragraph is history rather
+than current behaviour: the bar now asks whether the reference outlives
+the iteration, of any `+1` however produced, and it accepts a bare `alloc`
+in a controlling expression because the temporary is released inside the
+iteration.
 
 ### The half that was neither: a header's own declaration (#376)
 
@@ -1153,13 +1158,19 @@ Worth recording as a defect this uncovered rather than fixed: the
 `owned_locals_of_in` has no type check of its own, which is why the
 header arm has to supply one.
 
-`staticbar` narrows the remaining hole more than it looks: the **direct**
-spelling of each loop case is already refused ("allocation of 'Thing'
-inside a loop escapes the iteration"). What reaches the emitter is a
-factory *call*, whose `+1` is created inside the callee. Written with
-`alloc`, the known-defect rows added to `ownership_matrix.rs` failed as
-refusals and hid the real hole — the vacuous-test trap that file's own
+`staticbar` narrowed how much of this was reachable **at the time**, and
+that mattered for testing it: the direct `alloc` spelling of each loop
+case was refused outright, while a factory *call* — whose `+1` is created
+inside the callee — reached the emitter and leaked. Written with `alloc`,
+the known-defect rows added to `ownership_matrix.rs` failed as refusals
+and hid the real hole, which is the vacuous-test trap that file's own
 header warns about, walked into while writing it.
+
+**#345 removed both halves of that**, so this paragraph is history rather
+than current behaviour: the bar now asks whether the reference outlives
+the iteration, of any `+1` however produced, and it accepts a bare `alloc`
+in a controlling expression because the temporary is released inside the
+iteration.
 
 ### The failure that was not a leak
 
@@ -1229,6 +1240,79 @@ shorter than what it replaced. Worth stating as the general form: when a
 flag has to be set differently for two jumps out of the same construct,
 the flag is standing in for a question about *structure* that can be asked
 directly.
+
+## What bounds an allocation inside a loop (#345)
+
+The slab holds **one slot per allocation site**, not per live object. So
+an allocation reached inside a loop is sound exactly when each iteration's
+instance dies before the next begins — and `staticbar` asked that question
+through three proxies: is the selector literally `alloc`, is the result
+bound to a fresh per-iteration local, is it stored into an ARC-managed
+one.
+
+All three were approximations, and the rule was wrong in **both**
+directions at once.
+
+### Measured, on a one-slot pool, four iterations each
+
+| destination | reused? | previous released *before* the next allocation? | slots | run |
+| --- | --- | --- | --- | --- |
+| managed local | yes | **yes** | 1 | 4/4 objects |
+| ivar, file-scope variable | yes | **no** | **2** | 1/4, then `nil` |
+| array element, varying index | **no** | n/a | loop bound | unbounded |
+| local ARC declined to manage | yes | **no**, nothing releases | loop bound | unbounded |
+
+The ivar overlap is **inherent**, not a defect to fix elsewhere: the new
+value has to be evaluated before the old one is released, or
+`_ivar = [_ivar retain]` would free a live object. That shape is bounded —
+just at two — so the author is told to raise the pool rather than refused
+with no way forward.
+
+### The over-rejection
+
+`[[Foo alloc] poke]` in a loop was refused although nothing escaped: the
+receiver's `+1` is held in a temporary and released after the send, inside
+the loop body (#340), and the same is true of an argument (#328), a
+discarded result (#322) and a controlling expression (#376). Proved by the
+one spelling the old rule could not see — the same shapes through a
+factory ran **8 allocations on a single slot** with every object live.
+
+### The under-rejection, which was the worse half
+
+Because the trigger was the literal selector `alloc`, every other way of
+producing a `+1` went straight past: a class's own `+new`, `-copy`, and
+any analysis-derived factory. So
+
+```objc
+for (i = 0; i < 4; i++) {
+	_arr[i] = [Foo make];      /* accepted */
+}
+```
+
+built, ran, and printed `arr[0] = object` followed by three `nil`s. The
+`alloc` spelling of the identical program was refused. A program that
+silently stores nils is the outcome the rule exists to prevent, and it was
+reachable by writing the allocation one function away.
+
+### The rule now
+
+One question — *does this reference outlive the iteration, and if it is
+kept, is the previous one released before the next is allocated?* —
+answered of any expression `arc::is_owning_expr` calls `+1`, which is
+available because `walk_for_reject` runs from `emit`, after `arc::analyze`.
+
+`emit::LoopEscape` names the three ways the answer is no, and the
+diagnostic says which applies rather than listing workarounds for a reason
+that may not hold. The old message asserted the reference "escapes the
+iteration" even for shapes where it plainly did not.
+
+Two boundaries worth keeping in view. A **constant** subscript names the
+same element every iteration, so it overlaps at two rather than
+accumulating — a rule that called every subscript unbounded would say
+something false about it. And `[[Foo alloc] init]` is **one** object, so it
+is reported at the outer send: `-init` consumes its receiver's reference
+and hands it back, and reporting the inner one would start the escape walk
+from an expression that is not the thing stored.
 
 ## Standing design rules
 
