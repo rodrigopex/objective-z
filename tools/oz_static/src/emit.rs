@@ -5440,7 +5440,7 @@ fn condition_owning_operands<'a>(
 ///   - where nothing hoists, the operand leaks. `while ([makeThing() n] >
 ///     100)` creates a `+1` per iteration and abandons every one of them.
 ///   - where a statement arm *does* hoist, hoisting is **eager**.
-///     `if (x && [makeThing() n] > 0)` was a leak until #378's `if` arm
+///     `if (x && [makeThing() n] > 0)` was a leak until #355's `if` arm
 ///     reached it, and is now balanced but allocates whether `x` is true
 ///     or not -- so the short circuit no longer holds. On a one-slot pool
 ///     that can exhaust the slab from a branch the source never takes,

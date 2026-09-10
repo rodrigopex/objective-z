@@ -156,7 +156,7 @@ def generated_text(outdir: Path) -> str:
 
 
 def transpile(case: Path, outdir: Path, pool_sizes: str, heap_support: bool,
-              ast_path: Path | None) -> str | None:
+              ast_path: Path) -> str | None:
     """Run oz2c over `case` into `outdir`. Returns an error string, or None.
 
     Two passes, and the second is not redundant: oz_static rejects
@@ -190,10 +190,17 @@ def transpile(case: Path, outdir: Path, pool_sizes: str, heap_support: bool,
     args.append("--reflection")
     # Clang resolves types and states ARC ownership; tree-sitter does
     # neither. The dump is the one `compile_and_run` already made for step 1,
-    # so both backends reason about the identical translation unit by
-    # construction rather than by two call sites agreeing on flags.
-    if ast_path is not None:
-        args += ["--ast", str(ast_path)]
+    # so the dump and the transpile reason about the identical translation
+    # unit by construction rather than by two call sites agreeing on flags.
+    #
+    # Not optional, and the parameter is no longer `Path | None` (#378): oz2c
+    # refuses a source that declares a class with no `--ast`, so passing None
+    # here would have produced a confusing transpile failure instead of the
+    # caller's own bug.
+    if ast_path is None:
+        return ("no Clang AST dump was passed to transpile(); --ast is "
+                "required for any source declaring a class")
+    args += ["--ast", str(ast_path)]
 
     first = subprocess.run(args + [str(case), str(outdir)],
                            capture_output=True, text=True)
@@ -211,7 +218,7 @@ def transpile(case: Path, outdir: Path, pool_sizes: str, heap_support: bool,
         # pass. `cross_backend.py` could rmtree because it put the dump in a
         # separate temp dir (see the `python-backend-final` tag); this
         # harness does not.
-        keep = {ast_path.resolve()} if ast_path is not None else set()
+        keep = {ast_path.resolve()}
         for child in sorted(outdir.iterdir(), reverse=True):
             if child.resolve() in keep:
                 continue

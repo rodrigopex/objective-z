@@ -480,6 +480,23 @@ Where it went, and where it is now:
 | AST written per configure | 742 MB | **none** |
 | the ninja transpile edge | 14.9 s, 85% of the build | **2.4 s, 11%** |
 
+**What one dump costs, measured per file rather than inferred from the
+total (#385).** The row above says 2.9 s for 18 dumps, which reads as
+0.161 s each; re-measured by timing `oz_static.cmake`'s own generated
+per-source scripts, `samples/hello_world` on `mps2/an385` produces its 11
+dumps in **2.52 s serial, mean 0.229 s/dump** (0.143 s for `OZSpinLock.m`,
+0.318 s for `OZDefer.m`, 9.1 MB of JSON). So the order of magnitude in the
+table holds and the per-file figure is ~0.2 s. Ninja runs these as
+independent edges, so the wall-clock cost is that divided by the core
+count.
+
+**A dump without Zephyr headers is 15x cheaper**, which is the number that
+decided #385. The behaviour corpus and the Rust suite dump against
+`tests/behavior/include/stubs` rather than `zephyr/kernel.h`: 81 corpus
+cases dump in **1.43 s serial, mean 0.018 s** (min 0.012, max 0.033,
+142 MB). Nearly all of the 0.2 s above is the header closure, not the
+Objective-C.
+
 Three things did that, in order of effect: optimising the *dependencies* in
 `profile.dev` (the hot path was `serde_json`, and oz2c had never been built with
 any optimisation at all); dropping the configure-time transpile, which existed
@@ -819,11 +836,66 @@ Two things measured about it, so the next reader does not have to guess:
   -- but which implementor runs is a runtime fact, and no oracle removes
   the need for unanimity.
 
-The practical constraint on leaning harder on it: the Rust suite's ~485
-tests drive `oz_static::transpile` with no AST at all. Making ownership
-*require* AST facts means giving that harness a clang invocation and a dump
-per case, which is a change to the primary gate and belongs in its own
-piece of work rather than riding along with a fix.
+**Since #385 the dump is required, not optional.** `oz2c` refuses a source
+that declares a class with no `--ast` behind it -- a hard, located error at
+the first class keyword, consistent with the rule that this backend never
+silently degrades. What it used to do instead was print `no AST dumps` and
+carry on, and the consequence of carrying on is not a failed build but a
+leak: without a dump `owned_object_ivars` falls back to a syntactic rule
+that cannot recognise an `id`-typed ivar as an object, so nothing releases
+it.
+
+The practical constraint that used to block this was the Rust suite: ~500
+tests drove `oz_static::transpile` with no AST at all, so the primary gate
+exercised the fall-back while every shipped path exercised Clang's answer.
+`tests/common/mod.rs` now writes each case's source to a real `.m` and
+dumps it, and every other producer was already in place -- so all five
+paths agree:
+
+| path | dumps | which clang |
+|---|---|---|
+| `cmake/oz_static.cmake` (Zephyr) | one per entry `.m` + per `src/*.m` | `objz_find_clang()` |
+| `tests/tools/compile_and_run.py` (behaviour + adapted) | one per case | `scripts/objz_clang.py` |
+| `tools/oz_static/tests/common/mod.rs` (Rust suite) | one per compile-and-run case | `scripts/objz_clang.py` |
+| `tests/smoke/run.py` | one | `scripts/objz_clang.py` |
+| `scripts/regen_zephyr_tests.py` | one per source | `scripts/objz_clang.py` |
+
+`objz_clang.py` exists because the two Python harnesses started their search
+at Homebrew and never looked in the SDK, so on a machine with the SDK's
+LLVM installed they dumped with a *different* clang from every CMake build.
+That is #269 one layer down, and a shared locator is the only thing that
+keeps five call sites agreeing.
+
+Two exemptions, and both are stated rather than discovered:
+
+- **`--manifest-only`**, the configure-time run. It exists to discover the
+  generated *file list*, which no AST fact affects, and CMake calls it
+  before Zephyr's generated headers exist -- so `zephyr/kernel.h` dies on
+  `fatal error: 'zephyr/syscall_list.h' file not found` and a dump is not
+  merely wasteful there but impossible. Requiring one would also reinstate
+  the 742 MB per configure that #299 removed.
+- **`--allow-missing-ast`**, the escape hatch, for a hand transpile whose
+  header closure will not parse where it is being run. Named for what it
+  permits so it cannot read as "skip the AST to go faster": it transpiles
+  with the narrower rule, which leaks every `id`-typed ivar.
+
+`Options::require_ast` is off in `Options::default()`, deliberately:
+`transpile(source)` is a pure function over a string with no file behind
+it, and the ~130 tests that assert on emitted text for one construct have
+no `.m` for Clang to read. `expect_reject` is the same case from the other
+side -- many of those sources are not valid Objective-C at all, so Clang
+has no answer to give and the rejection happens before any ownership
+question arises.
+
+Making the harness dump found a real defect the moment it ran, which is the
+argument for having done it: two `OZDefer` fixtures declared their ivar as
+`struct OZDefer *_cleanup` -- the *generated C* spelling, in Objective-C
+source. tree-sitter's fall-back rule treated that as owned and the tests
+passed; Clang says a `struct` tag is not an object pointer, and it is
+right. The real corpus case those two were ported from
+(`tests/behavior/cases/foundation/defer_basic.m`) writes `OZDefer
+*_cleanup`, so the fixtures were the outlier, and the gate had been
+green on an answer the shipped path never gives.
 
 ### The rule that falls out
 

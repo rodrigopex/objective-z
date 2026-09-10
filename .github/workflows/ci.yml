@@ -49,14 +49,32 @@ jobs:
   # (#266) -- held on a maintainer's machine and were unverified on every
   # PR.
   #
-  # It needs no Zephyr, no west and no SDK: the suite shells out to `cc`
-  # and nothing else, and `ast_facts.rs` deliberately uses a checked-in
-  # dump excerpt rather than running clang. So this is the cheapest job
-  # in the file despite guarding the most.
+  # It needs no Zephyr, no west and no SDK -- but it does now need a
+  # *host* clang. `--ast` is required of any source that declares a class
+  # (#378), so `tests/common/mod.rs` writes each compile-and-run case out
+  # as a real `.m` and dumps it, which means this job produces ~280 Clang
+  # AST dumps of its own. `OZ_CLANG` above names `/usr/bin/clang-19`, and
+  # `scripts/objz_clang.py` fails hard rather than falling back to
+  # whatever else is on PATH, so the install step is not optional: without
+  # it every compile-and-run case fails at the dump.
+  #
+  # `ast_facts.rs`'s own fixtures are still checked-in excerpts, so the
+  # unit-level assertions about `astinfo` remain independent of which
+  # clang is installed.
   rust-tests:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # The AST clang for this job's own dumps. It is the same script the
+      # behaviour jobs run, and for the same reason: `OZ_CLANG` names
+      # clang 19 and Ubuntu's preinstalled clang is not 19.
+      - name: Install host clang 19
+        run: .github/install-host-clang.sh
 
       - name: Cache cargo registry and build
         uses: actions/cache@v4

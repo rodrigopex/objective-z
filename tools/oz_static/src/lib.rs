@@ -130,6 +130,25 @@ pub struct Options {
     /// file that includes it sees it. Empty for the pure `transpile()` form,
     /// which has one output file and no such distinction to make.
     pub header_ranges: Vec<std::ops::Range<usize>>,
+    /// Refuse to transpile a source that declares a class without a Clang
+    /// AST dump to read its ivar ownership from.
+    ///
+    /// This is the build contract, and `oz2c` sets it on every real run.
+    /// The dump is the only authority on whether an `id`-typed ivar is an
+    /// object the class owns; with it absent, `arc` falls back to a
+    /// narrower syntactic rule that skips those ivars, which is a leak
+    /// rather than a failed build -- exactly the silent degradation this
+    /// project forbids everywhere else. Making it required is what lets a
+    /// later change read `Program::ast` as present rather than optional.
+    ///
+    /// Off in `Options::default()`, and that default is deliberate rather
+    /// than laziness. `transpile(source)` is a pure text-in/text-out
+    /// function over a string with no file behind it, so there is nothing
+    /// for Clang to dump; the ~500-case Rust suite is built on it, and the
+    /// cases that go through a real compile-and-run (`tests/common`) turn
+    /// this on and supply a dump. See docs/STATUS.md, "Where tree-sitter
+    /// and the Clang AST each sit".
+    pub require_ast: bool,
 }
 
 /// Full pipeline: parse -> collect -> emit. Returns Ok on success, or the
@@ -202,6 +221,9 @@ fn front_end(
     obs.enter(progress::Phase::AstIngest);
     if let Err(why) = attach_ast(&mut program, options, obs) {
         return Err(vec![Diagnostic::new(why, 1, 1)]);
+    }
+    if let Err(diagnostic) = check_ast_present(text, &program, options) {
+        return Err(vec![diagnostic]);
     }
     obs.enter(progress::Phase::Arc);
     program.owning_methods = arc::analyze(text, &program);
@@ -385,6 +407,57 @@ fn attach_ast(
     }
     program.ast = Some(facts);
     Ok(())
+}
+
+/// Refuse a class with no Clang AST behind it, when the caller asked for
+/// the AST to be required (`Options::require_ast`).
+///
+/// A hard, located error rather than a warning, for the reason every other
+/// check here is: the consequence of proceeding is not a failed build but a
+/// leak. Without a dump, `model::Program::owned_object_ivars` falls back to
+/// a syntactic rule that cannot tell an `id`-typed ivar from an integer, so
+/// it skips every one of them -- no synthesized release, no assignment
+/// retain/release. On px-keyboard that was 4 of 46 generated files silently
+/// different (#299). A warning about a missing oracle is not a check: #269
+/// found the substituted-clang warning had printed on every CI run for the
+/// life of the workflow, unread.
+///
+/// Only classes matter. A source that declares none has no ivar for the
+/// oracle to have an opinion about, and requiring a dump of it would break
+/// the pure-C cases for nothing.
+fn check_ast_present(
+    source: &str,
+    program: &Program,
+    options: &Options,
+) -> Result<(), Diagnostic> {
+    if !options.require_ast || program.ast.is_some() || program.classes.is_empty() {
+        return Ok(());
+    }
+    /* Located at the first `@interface`/`@implementation` in the resolved
+     * text rather than at line 1. `ClassInfo` carries no source offset, and
+     * adding one for a diagnostic would be a wide change for a narrow
+     * gain -- but the first class keyword is where the reader has to look,
+     * and finding it is a substring search. */
+    let first_class = ["@interface", "@implementation"]
+        .iter()
+        .filter_map(|keyword| source.find(keyword))
+        .min()
+        .unwrap_or(0);
+    let (line, col) = parse::line_col(source, first_class);
+    Err(Diagnostic::new(
+        format!(
+            "no Clang AST dump was supplied, and this source declares {} class(es). \
+             Pass --ast <dump.json> once per `.m` in the program, produced with \
+             `clang -Xclang -ast-dump=json -fsyntax-only -fobjc-arc` (see \
+             cmake/oz_static.cmake, which does this per source). The dump is the only \
+             authority on whether an `id`-typed ivar is an object the class owns, so \
+             without it ARC skips those ivars and leaks them rather than failing. \
+             `--allow-missing-ast` states that trade deliberately.",
+            program.classes.len()
+        ),
+        line,
+        col,
+    ))
 }
 
 /// Count allocation sites, apply any overrides, and reject an override

@@ -307,3 +307,94 @@ fn trailing_garbage_after_a_document_is_still_rejected() {
     let bad = r#"{"kind": "ObjCInterfaceDecl", "name": "A"} this is not json"#;
     assert!(oz_static::astinfo::AstFacts::from_json(bad).is_err());
 }
+
+// ---------------------------------------------------------------------------
+// `--ast` as a requirement rather than an option
+// ---------------------------------------------------------------------------
+//
+// `Options::require_ast` is the build contract: a source that declares a
+// class is not transpiled without Clang's answer about its ivars. The tests
+// below are the ones that make it a contract instead of a comment -- one
+// that it fires, one that it says something actionable when it does, and
+// two that bound it, because a check that fires on the wrong input is worse
+// than no check.
+
+/// With `require_ast` and no dump, a class is refused.
+#[test]
+fn a_class_with_no_ast_is_refused_when_the_ast_is_required() {
+    let options = oz_static::Options { require_ast: true, ..Default::default() };
+    let diagnostics = oz_static::transpile_with_options(&source(), &options)
+        .err()
+        .expect("a class with no AST must be refused when the AST is required");
+    let joined = diagnostics.iter().map(|d| d.to_string()).collect::<Vec<_>>().join("\n");
+    assert!(
+        joined.contains("no Clang AST dump was supplied"),
+        "the diagnostic must name the missing dump, got: {}",
+        joined
+    );
+}
+
+/// The refusal is *located*, and at the first class rather than at line 1.
+///
+/// oz_static's standing rule is a hard, located error; a bare "line 1" on a
+/// source assembled from several spliced files points at nothing an author
+/// can act on. `source()` puts the whole of `OZObject` ahead of `Holder`,
+/// so a diagnostic that had defaulted to 1 would be visibly wrong here.
+#[test]
+fn the_refusal_points_at_the_first_class() {
+    let options = oz_static::Options { require_ast: true, ..Default::default() };
+    let diagnostics = oz_static::transpile_with_options(&source(), &options)
+        .err()
+        .expect("a class with no AST must be refused");
+    let first_class_line = source()
+        .lines()
+        .position(|l| l.contains("@interface") || l.contains("@implementation"))
+        .expect("the fixture declares a class")
+        + 1;
+    assert_eq!(
+        diagnostics[0].line, first_class_line,
+        "expected the diagnostic at the first class keyword, got {}",
+        diagnostics[0]
+    );
+    assert!(diagnostics[0].line > 1, "the fixture's first class is not on line 1");
+}
+
+/// A dump satisfies the requirement -- the same source, unchanged, with
+/// `ast_json` supplied.
+#[test]
+fn a_dump_satisfies_the_requirement() {
+    let options = oz_static::Options {
+        require_ast: true,
+        ast_json: vec![ast_json().to_string()],
+        ..Default::default()
+    };
+    assert!(
+        oz_static::transpile_with_options(&source(), &options).is_ok(),
+        "a supplied dump must satisfy require_ast"
+    );
+}
+
+/// A source with no class needs no dump, even under `require_ast`.
+///
+/// Only a class has ivars, so only a class has an ownership question. A
+/// pure-C translation unit has nothing for the oracle to answer and must
+/// not be made to produce a dump that would say nothing.
+#[test]
+fn a_source_with_no_class_needs_no_dump() {
+    let options = oz_static::Options { require_ast: true, ..Default::default() };
+    let source = "#include <stdio.h>\nint main(void) { return 0; }\n";
+    assert!(
+        oz_static::transpile_with_options(source, &options).is_ok(),
+        "a class-free source must transpile with no dump"
+    );
+}
+
+/// Without `require_ast` the same class still transpiles -- the default that
+/// `transpile(source)` and the ~500-case Rust suite are built on.
+#[test]
+fn the_requirement_is_off_by_default() {
+    assert!(
+        oz_static::transpile(&source()).is_ok(),
+        "Options::default() must not require an AST"
+    );
+}

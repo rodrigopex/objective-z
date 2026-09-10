@@ -25,33 +25,23 @@ POOL_RE = re.compile(r"/\*\s*oz-pool:\s*(.+?)\s*\*/")
 HEAP_RE = re.compile(r"/\*\s*oz-heap\s*\*/")
 
 
-LLVM_SEARCH_PATHS = [
-    Path("/opt/homebrew/opt/llvm/bin"),
-    Path("/usr/local/opt/llvm/bin"),
-    Path("/usr/bin"),
-]
-
-
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import oz_static_build  # noqa: E402  (path set up above)
 
+sys.path.insert(0, str(REPO_ROOT / "scripts"))
+import objz_clang  # noqa: E402  (path set up above)
+
 
 def _find_llvm_clang() -> str:
-    """Find LLVM clang for AST dump."""
-    env_clang = os.environ.get("OZ_CLANG")
-    if env_clang and shutil.which(env_clang):
-        return env_clang
-    versioned = [f"clang-{v}" for v in range(23, 18, -1)]
-    for p in LLVM_SEARCH_PATHS:
-        for name in versioned + ["clang"]:
-            candidate = p / name
-            if candidate.exists():
-                return str(candidate)
-    for name in versioned + ["clang"]:
-        if shutil.which(name):
-            return name
-    print("error: cannot find LLVM clang for AST dump", file=sys.stderr)
-    sys.exit(1)
+    """Find LLVM clang for the AST dump.
+
+    Delegated to `scripts/objz_clang.py`, which searches the Zephyr SDK's
+    LLVM before Homebrew and the system -- the order
+    `cmake/ObjcClang.cmake` has always used and this harness did not, so on
+    a machine with the SDK installed the corpus dumped its ASTs with a
+    different clang from every CMake build (#269's shape, one layer down).
+    """
+    return objz_clang.find_clang_or_exit()
 
 
 def _parse_pool_sizes(m_path: Path) -> str:

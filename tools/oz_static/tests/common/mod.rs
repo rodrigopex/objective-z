@@ -11,10 +11,164 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::OnceLock;
 
 /// `tools/oz_static/../../include` -- the repo's real platform headers.
 fn include_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../include")
+}
+
+/// The repo root, from this crate's manifest directory.
+fn repo_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
+}
+
+// ---------------------------------------------------------------------------
+// Clang AST dumps for the corpus
+// ---------------------------------------------------------------------------
+//
+// `--ast` is a hard requirement of any source that declares a class, so this
+// harness produces one. It did not, for as long as it existed: ~500 cases
+// drove `oz_static::transpile` with no AST at all, which meant ARC's
+// `id`-typed-ivar ownership -- the one question the dump exists to answer --
+// was decided here by the fall-back rule and on target by Clang. Two
+// different answers, and the gate ran the one that was not shipped.
+//
+// The cost is measured, not assumed: ~13-30 ms of clang per case on the
+// repo's own fixtures, against a suite that already forks a compiler three
+// times and runs a binary per case. See docs/STATUS.md, "What the Clang AST
+// oracle costs (#299)".
+
+/// Which clang dumps this harness's ASTs, decided once per test binary.
+///
+/// Delegated to `scripts/objz_clang.py` rather than re-implementing the
+/// search order here: it is the same order `cmake/ObjcClang.cmake` uses, and
+/// a second copy of it in Rust is how the host suite and the Zephyr build
+/// come to disagree about which clang produced a transpiler input.
+pub fn ast_clang() -> &'static str {
+    static CLANG: OnceLock<String> = OnceLock::new();
+    CLANG.get_or_init(|| {
+        let script = repo_root().join("scripts/objz_clang.py");
+        let out = Command::new("python3")
+            .arg(&script)
+            .output()
+            .unwrap_or_else(|e| panic!("failed to run {}: {}", script.display(), e));
+        assert!(
+            out.status.success(),
+            "no clang for the AST dumps this harness requires:\n{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8(out.stdout).expect("clang path is utf-8").trim().to_string()
+    })
+}
+
+/// Does this source declare anything the ownership oracle has an opinion
+/// about?
+///
+/// Only a class has ivars, so only a class needs a dump. A pure-C case, a
+/// bare `@protocol` and a source that is only a `main()` have nothing for
+/// Clang to answer, and dumping them would cost a fork to learn nothing.
+fn declares_a_class(source: &str) -> bool {
+    source.contains("@interface") || source.contains("@implementation")
+}
+
+/// Write `source` as a real `.m` in `dir` and dump its Clang AST beside it,
+/// returning the dump's path -- or `None` when the source declares no class.
+///
+/// The flags are `tests/tools/compile_and_run.py`'s, which is the harness
+/// that dumps the behaviour corpus, so the two cannot drift into reasoning
+/// about different translation units. Two additions, and both are about
+/// *this* harness's inputs rather than the corpus's:
+///
+///   * `-ferror-limit=0`. These fixtures are deliberately not valid ARC
+///     Objective-C -- they send `-release` explicitly, reach into
+///     `w->base._meta` and name `OZ_STATIC_CLASS_*` constants that only the
+///     generated C defines. Every one of those is an *ordinary* error, which
+///     Clang reports and carries on past, leaving the declarations intact.
+///     At the default limit of 20, though, the twenty-first becomes
+///     `fatal error: too many errors emitted, stopping now` -- and a fatal
+///     error is where Clang stops, so the dump would be truncated with no
+///     sign of it. That is #274's failure, and the flag is what removes the
+///     possibility rather than making it unlikely.
+///   * `-w`. The dump is transpiler input; warnings on it are noise nothing
+///     reads. `cmake/oz_static.cmake` does the same, for the same reason.
+///
+/// The exit status is deliberately ignored, for the reason the comment in
+/// `cmake/oz_static.cmake` gives at length: Clang exits non-zero for an
+/// ordinary error too and then still writes a complete dump. What is checked
+/// instead is that the dump carries facts -- `AstFacts::is_empty()` -- which
+/// is the property the caller actually depends on.
+fn ast_dump(dir: &Path, source: &str, stem: &str) -> Option<PathBuf> {
+    if !declares_a_class(source) {
+        return None;
+    }
+    let m_path = dir.join(format!("{}.m", stem));
+    fs::write(&m_path, source).unwrap_or_else(|e| {
+        panic!("cannot write {}: {}", m_path.display(), e)
+    });
+    let ast_path = dir.join(format!("{}.ast.json", stem));
+    ast_dump_file(&m_path, &ast_path);
+    Some(ast_path)
+}
+
+/// `ast_dump` for a `.m` that is already on disk, writing the dump to
+/// `ast_path`.
+///
+/// Public because three test binaries drive the `oz2c` *binary* over real
+/// files rather than the library over a string -- `corpus_parity.rs`,
+/// `cli_progress.rs` -- and `--ast` is required of all of them now. One
+/// implementation of the flags, for the same reason there is one
+/// implementation of the clang search: two would drift, and the direction
+/// they drift in is a weaker oracle.
+pub fn ast_dump_file(m_path: &Path, ast_path: &Path) {
+    let root = repo_root();
+    let libc_stubs = root.join("tests/behavior/include/stubs");
+    let zephyr_stubs = root.join("tests/behavior/include/zephyr_stubs");
+    let test_inc = root.join("tests/behavior/include");
+    let sdk_inc = root.join("include/oz_sdk");
+    let sdk_src = root.join("src");
+
+    let out = Command::new(ast_clang())
+        .args(["-Xclang", "-ast-dump=json", "-fsyntax-only"])
+        .args(["-fobjc-runtime=macosx", "-fobjc-arc", "-fblocks"])
+        .arg("--target=x86_64-unknown-linux-gnu")
+        .args(["-ferror-limit=0", "-w"])
+        .arg("-isystem")
+        .arg(&libc_stubs)
+        .arg("-isystem")
+        .arg(&zephyr_stubs)
+        .arg("-I")
+        .arg(&test_inc)
+        .arg("-I")
+        .arg(&sdk_inc)
+        .arg("-I")
+        .arg(&sdk_src)
+        .arg(m_path)
+        .output()
+        .unwrap_or_else(|e| panic!("failed to run {}: {}", ast_clang(), e));
+
+    fs::write(ast_path, &out.stdout)
+        .unwrap_or_else(|e| panic!("cannot write {}: {}", ast_path.display(), e));
+
+    /* A dump that describes nothing is worse than no dump: `attach_ast`
+     * refuses it, and the case would fail with a message about the oracle
+     * rather than about the case. Fail here instead, where Clang's own
+     * stderr is still in hand and can say why. */
+    match oz_static::astinfo::AstFacts::from_path(ast_path) {
+        Ok(facts) if !facts.is_empty() => {}
+        Ok(_) => panic!(
+            "the Clang AST dump of '{}' describes no ivars and no method bodies, so \
+             oz_static would refuse it. Clang said:\n{}",
+            m_path.display(),
+            String::from_utf8_lossy(&out.stderr)
+        ),
+        Err(why) => panic!(
+            "the Clang AST dump of '{}' did not parse: {}\nClang said:\n{}",
+            m_path.display(),
+            why,
+            String::from_utf8_lossy(&out.stderr)
+        ),
+    }
 }
 
 /// Transpile `source`, compile the primary output + companion file against
@@ -92,7 +246,7 @@ pub fn compile_and_run_with_heap(source: &str, stem: &str) -> String {
         source,
         stem,
         &["-DOZ_HEAP_SUPPORT"],
-        &oz_static::Options { heap_support: true, ..Default::default() },
+        oz_static::Options { heap_support: true, ..Default::default() },
     )
 }
 
@@ -108,7 +262,7 @@ pub fn compile_and_run_with_introspection(source: &str, stem: &str) -> String {
         source,
         stem,
         &[],
-        &oz_static::Options { introspection: true, ..Default::default() },
+        oz_static::Options { introspection: true, ..Default::default() },
     )
 }
 
@@ -119,7 +273,7 @@ pub fn compile_and_run_with_reflection(source: &str, stem: &str) -> String {
         source,
         stem,
         &[],
-        &oz_static::Options { reflection: true, ..Default::default() },
+        oz_static::Options { reflection: true, ..Default::default() },
     )
 }
 
@@ -166,26 +320,45 @@ pub fn compile_and_run_with_cc_flags(
 }
 
 fn compile_and_run_with_flags(source: &str, stem: &str, extra_cc_flags: &[&str]) -> String {
-    compile_and_run_inner(source, stem, extra_cc_flags, &oz_static::Options::default())
+    compile_and_run_inner(source, stem, extra_cc_flags, oz_static::Options::default())
 }
 
+/// Transpile, compile, link, run.
+///
+/// `options` by value rather than by reference because this function adds
+/// to it: every case that reaches a real compile gets a Clang AST dump of
+/// its own source and `require_ast`, which is the configuration a build
+/// gets. It used to run with neither, so the primary gate exercised the
+/// no-AST fall-back while every shipped path exercised Clang's answer.
 fn compile_and_run_inner(
     source: &str,
     stem: &str,
     extra_cc_flags: &[&str],
-    options: &oz_static::Options,
+    mut options: oz_static::Options,
 ) -> String {
-    let out = oz_static::transpile_with_options(source, options).unwrap_or_else(|diags| {
+    /* Before the transpile, not after: the dump has to exist to be passed,
+     * and the scratch directory is where it goes. Wiping first keeps a
+     * previous run's dump from being read as this one's. */
+    let dir = test_scratch_dir(stem);
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+
+    /* `require_ast` unconditionally, including for the pure-C cases that
+     * get no dump: with no class declared there is nothing to require, so
+     * the flag costs them nothing and no case can quietly opt out of the
+     * build's contract by not looking like Objective-C. */
+    options.require_ast = true;
+    if let Some(ast) = ast_dump(&dir, source, stem) {
+        options.ast_paths.push(ast);
+    }
+
+    let out = oz_static::transpile_with_options(source, &options).unwrap_or_else(|diags| {
         panic!(
             "transpile('{}') was expected to succeed but produced diagnostics:\n{}",
             stem,
             diags.iter().map(|d| d.to_string()).collect::<Vec<_>>().join("\n")
         )
     });
-
-    let dir = test_scratch_dir(stem);
-    let _ = fs::remove_dir_all(&dir);
-    fs::create_dir_all(&dir).unwrap();
 
     let main_c = dir.join(format!("{}.c", stem));
     fs::write(&main_c, &out.source_c).unwrap();

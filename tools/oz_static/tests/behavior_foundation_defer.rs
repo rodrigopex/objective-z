@@ -19,6 +19,16 @@
 // conversion, so the test is ported below as
 // `block_ivar_declares_valid_function_pointer`.
 //
+// `_cleanup` is declared `OZDefer *`, not `struct OZDefer *`, and the
+// distinction is load-bearing rather than stylistic (#385). Both fixtures
+// here used the `struct` spelling -- which is the *generated C*'s, not
+// Objective-C's -- and passed only because tree-sitter's no-AST fall-back
+// treated it as an owned object. Clang, now that a dump is required, calls
+// a `struct` tag what it is: not an object pointer, so unowned, so no
+// automatic release and the deferred block never fires. The corpus case
+// these were ported from (tests/behavior/cases/foundation/defer_basic.m)
+// always wrote `OZDefer *_cleanup`; these two were the outlier.
+//
 // `DeferTest`'s `_cleanup` ivar is released automatically when the owner is
 // deallocated (`companion::render_release_ivars`), so its `-dealloc` must
 // NOT release it by hand -- doing so is rejected, because the two releases
@@ -37,7 +47,7 @@ static int g_fired = 0;
 static void *g_fired_owner = 0;
 
 @interface DeferTest : OZObject {{
-	struct OZDefer *_cleanup;
+	OZDefer *_cleanup;
 	int _marker;
 }}
 - (instancetype)initWithCleanup;
@@ -94,7 +104,7 @@ static int g_fired = 0;
 static void *g_owner_seen = (void *)1;
 
 @interface OwnerlessTest : OZObject {{
-	struct OZDefer *_cleanup;
+	OZDefer *_cleanup;
 }}
 - (void)setup;
 - (void)dealloc;
