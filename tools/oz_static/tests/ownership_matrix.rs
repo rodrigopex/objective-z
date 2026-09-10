@@ -438,10 +438,10 @@ void cArgument(void)
         ),
         (
             Shape {
-                what: "a +1 result through protocol dispatch is treated as borrowed",
+                what: "a unanimous +1 through protocol dispatch is released (#361)",
                 func: "throughProtocol",
-                expect: (0, 0, 0),
-                known_defect: Some("#361"),
+                expect: (0, 0, 1),
+                known_defect: None,
             },
             "\
 void throughProtocol(id<Supplier> s)
@@ -512,6 +512,75 @@ void intoStructField(void)
 }
 ",
             "C struct field",
+        ),
+        (
+            "a protocol whose implementors disagree about ownership (#361)",
+            "\
+@protocol TwoMinded
+- (Thing *)supply;
+@end
+
+@interface Keeper : OZObject {
+	Thing *_held;
+}
+@end
+@implementation Keeper
+- (Thing *)supply
+{
+	return _held;
+}
+@end
+
+@interface Freshener : OZObject
+@end
+@implementation Freshener
+- (Thing *)supply
+{
+	return [[Thing alloc] init];
+}
+@end
+
+void throughTwoMinded(id<TwoMinded> s)
+{
+	Thing *t = [s supply];
+
+	[t tag];
+}
+",
+            "disagree about ownership",
+        ),
+        (
+            "a subclass override that disagrees with its superclass (#365)",
+            "\
+@interface Sup : OZObject
+- (Thing *)give;
+@end
+@implementation Sup
+- (Thing *)give
+{
+	return [[Thing alloc] init];
+}
+@end
+
+@interface Sub : Sup {
+	Thing *_kept;
+}
+@end
+@implementation Sub
+- (Thing *)give
+{
+	return _kept;
+}
+@end
+
+void throughSuperclassType(Sup *s)
+{
+	Thing *t = [s give];
+
+	[t tag];
+}
+",
+            "disagree about ownership",
         ),
         (
             "an owned reference stored into another object's ivar (#359)",

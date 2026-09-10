@@ -2442,7 +2442,7 @@ fn render_subscript_expression(node: Node, ctx: &mut EmitCtx) -> (String, String
     let (index_text, _) = render_expr(index_node, ctx);
     // `super[i]` has no meaning to reach for: a subscript's receiver is a
     // collection, and `super` is not one.
-    send_to_resolved_class(ctx, &class, selector, &recv_text, &[index_text], false)
+    send_to_resolved_class(node, ctx, &class, selector, &recv_text, &[index_text], false)
 }
 
 /// Is `node` the literal `super`? `render_expr` renders `super` to `self`
@@ -2556,7 +2556,7 @@ fn render_field_expression(node: Node, ctx: &mut EmitCtx) -> (String, String) {
         );
         return (node_text(node, ctx.src).to_string(), "id".to_string());
     }
-    send_to_resolved_class(ctx, &class, &getter, &obj_text, &[], super_access)
+    send_to_resolved_class(node, ctx, &class, &getter, &obj_text, &[], super_access)
 }
 
 /// The ivar an assignment's left side names, whichever way the author
@@ -3172,7 +3172,7 @@ fn render_assignment_expression(node: Node, ctx: &mut EmitCtx) -> (String, Strin
     let super_access = is_super_identifier(object, ctx.src);
     let (right_text, _) = render_expr(right, ctx);
     if operator == "=" {
-        return send_to_resolved_class(ctx, &class, &setter, &obj_text, &[right_text], super_access);
+        return send_to_resolved_class(node, ctx, &class, &setter, &obj_text, &[right_text], super_access);
     }
 
     // Compound: read, combine, write back -- so the receiver appears twice.
@@ -3201,11 +3201,11 @@ fn render_assignment_expression(node: Node, ctx: &mut EmitCtx) -> (String, Strin
         );
         return (node_text(node, ctx.src).to_string(), "id".to_string());
     }
-    let (read, _) = send_to_resolved_class(ctx, &class, &getter, &obj_text, &[], super_access);
+    let (read, _) = send_to_resolved_class(node, ctx, &class, &getter, &obj_text, &[], super_access);
     // `x += y` is `x = x + y`: drop the trailing `=` to get the operator.
     let binary_op = operator.trim_end_matches('=').to_string();
     let combined = format!("{} {} ({})", read, binary_op, right_text);
-    send_to_resolved_class(ctx, &class, &setter, &obj_text, &[combined], super_access)
+    send_to_resolved_class(node, ctx, &class, &setter, &obj_text, &[combined], super_access)
 }
 
 /// One instance send whose receiver's class is already resolved, routed by
@@ -3224,6 +3224,7 @@ fn render_assignment_expression(node: Node, ctx: &mut EmitCtx) -> (String, Strin
 /// it is consulted below; `render_message` applies the same two rules for a
 /// literal `[super sel]`.
 fn send_to_resolved_class(
+    node: Node,
     ctx: &mut EmitCtx,
     class: &str,
     selector: &str,
@@ -3238,9 +3239,11 @@ fn send_to_resolved_class(
     // getter, a subclass override reading `super.thing` would call itself
     // forever.
     if !super_send && ctx.program.has_overriding_subclass(class, selector) {
+        reject_ambiguous_dispatch(node, ctx, Some(class), selector);
         return dynamic_dispatch_call(ctx.program, &root, selector, recv_text, arg_texts);
     }
     let Some(defining) = find_defining_class(ctx.program, class, selector, false) else {
+        reject_ambiguous_dispatch(node, ctx, Some(class), selector);
         return dynamic_dispatch_call(ctx.program, &root, selector, recv_text, arg_texts);
     };
     let (ret_ty, returns_instancetype) = method_return_type(ctx.program, &defining, selector, false)
@@ -3949,7 +3952,10 @@ fn render_message(node: Node, ctx: &mut EmitCtx) -> (String, String) {
             // `Program::is_dynamically_dispatched`). No static type to
             // even attempt a direct call against, so this is the only
             // route available, not a fallback from a failed lookup.
-            dynamic_dispatch_call(ctx.program, &root, &parts.selector, &recv_text, &arg_texts)
+            {
+                reject_ambiguous_dispatch(node, ctx, None, &parts.selector);
+                dynamic_dispatch_call(ctx.program, &root, &parts.selector, &recv_text, &arg_texts)
+            }
         }
         None => {
             ctx.err(
@@ -3978,7 +3984,10 @@ fn render_message(node: Node, ctx: &mut EmitCtx) -> (String, String) {
                 // one, so this needs the runtime class_id switch. Where
                 // no subclass overrides, the direct call below is exact
                 // and stays (see `Program::has_overriding_subclass`).
+                {
+                reject_ambiguous_dispatch(node, ctx, None, &parts.selector);
                 dynamic_dispatch_call(ctx.program, &root, &parts.selector, &recv_text, &arg_texts)
+            }
             }
             Some(defining) => {
                 let (ret_ty, returns_instancetype) =
@@ -4022,7 +4031,10 @@ fn render_message(node: Node, ctx: &mut EmitCtx) -> (String, String) {
                 // class, standing in for "any conforming object"), so
                 // this is the one place besides dealloc that needs a
                 // runtime switch instead of a direct call.
+                {
+                reject_ambiguous_dispatch(node, ctx, None, &parts.selector);
                 dynamic_dispatch_call(ctx.program, &root, &parts.selector, &recv_text, &arg_texts)
+            }
             }
             None => {
                 ctx.err(node, format!("class '{}' has no method matching '{}'", target, parts.selector));
@@ -4039,6 +4051,61 @@ fn render_message(node: Node, ctx: &mut EmitCtx) -> (String, String) {
 /// directly, whether because it's genuinely unresolvable (a bare `id`)
 /// or because it's typed as the root/a protocol, standing in for "any
 /// conforming object."
+/// Refuse a dynamically dispatched send whose reachable implementations
+/// disagree about ownership.
+///
+/// Reached from every site that routes through the `class_id` switch, so
+/// no such send can escape the check. The alternative was to leak -- which
+/// is what the analysis answers for an ambiguous send, and the safe
+/// direction -- but a selector whose ownership depends on which subclass
+/// or conformer turns up cannot be called correctly by anyone, so leaving
+/// it callable only defers the problem to a leak nobody attributes.
+///
+/// Only object-returning selectors are checked. Ownership is meaningless
+/// for a `void` or scalar result, and refusing those would reject ordinary
+/// polymorphism -- `-poke` overridden by three subclasses is exactly what
+/// dynamic dispatch is for.
+fn reject_ambiguous_dispatch(
+    node: Node,
+    ctx: &mut EmitCtx,
+    receiver_class: Option<&str>,
+    selector: &str,
+) {
+    let ret_ty = ctx
+        .program
+        .dynamic_dispatch_methods()
+        .into_iter()
+        .find(|m| m.selector == selector && !m.is_class_method)
+        .map(|m| m.return_type);
+    let returns_object = ret_ty.as_deref().is_some_and(|ty| {
+        class_name_from_type(ty).is_some() || ty.trim() == "id" || ty.trim() == "void *"
+    });
+    if !returns_object {
+        return;
+    }
+    if let crate::arc::DispatchOwnership::Ambiguous { owning, borrowed } =
+        crate::arc::dispatch_ownership(
+            ctx.program,
+            &ctx.program.owning_methods,
+            receiver_class,
+            selector,
+            false,
+        )
+    {
+        ctx.err(
+            node,
+            format!(
+                "'{selector}' is dispatched at run time here, and its reachable \
+                 implementations disagree about ownership: '{owning}' hands back a \
+                 reference the caller must release, '{borrowed}' hands back one it \
+                 keeps owning. No caller can be correct for both -- a `+1` result \
+                 must be released exactly once and a `+0` one never. Make them agree, \
+                 or call through a receiver typed as the class you mean"
+            ),
+        );
+    }
+}
+
 fn dynamic_dispatch_call(
     program: &Program,
     root: &str,

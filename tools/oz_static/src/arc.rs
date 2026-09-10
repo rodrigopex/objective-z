@@ -719,6 +719,34 @@ pub fn is_owning_expr(
             if is_owning_selector(&selector) {
                 return true;
             }
+            /* A send the emitter routes through the class_id switch cannot
+             * be judged from the receiver's static class: the
+             * implementation that runs may be an override with a different
+             * contract (#365), and assuming borrowed instead leaks
+             * whenever it returns +1 (#361). Both are answered by polling
+             * every implementation the send can reach -- see
+             * `dispatch_ownership`, which also explains why a disagreement
+             * has no caller-side remedy.
+             *
+             * `is_dynamically_dispatched` is the same predicate
+             * `emit::render_message` consults before choosing that route,
+             * so the two cannot disagree about which sends this covers.
+             * An `Ambiguous` answer reads as borrowed here -- the leaking
+             * direction, per the standing rule -- and
+             * `emit::dynamic_dispatch_call` refuses the send outright, so
+             * the leak is never actually emitted. */
+            if receiver_class.is_none() || program.is_dynamically_dispatched(&selector, false) {
+                return matches!(
+                    dispatch_ownership(
+                        program,
+                        owning,
+                        receiver_class.as_deref(),
+                        &selector,
+                        false
+                    ),
+                    DispatchOwnership::Owning
+                );
+            }
             receiver_class.is_some_and(|class| owning.contains(&class, &selector))
         }
         // A call to a plain C function that returns +1 -- see
@@ -988,13 +1016,13 @@ fn discards_ownership(
     // not resolve, the selector is a run-time value and no +1 can be seen:
     // borrowed, as ever, is the safe reading.
     if let Some(performed) = statically_performed_selector(node, src) {
-        return created_by(&performed, receiver_class.as_deref(), owning);
+        return created_by(program, &performed, receiver_class.as_deref(), owning);
     }
     if selector.starts_with("init") {
         let parts = crate::emit::parse_message(node, src);
         return discards_ownership(parts.receiver, src, program, owning);
     }
-    created_by(&selector, receiver_class.as_deref(), owning)
+    created_by(program, &selector, receiver_class.as_deref(), owning)
 }
 
 /// The value behind the parentheses and casts an expression may be written
@@ -1088,12 +1116,97 @@ fn is_bridging_cast(node: Node, src: &str) -> bool {
 
 /// Does a send of `selector` to a receiver of `class` create a reference
 /// its caller owns and nothing else accounts for?
-fn created_by(selector: &str, class: Option<&str>, owning: &OwningMethods) -> bool {
+/// What a **dynamically dispatched** send hands its caller.
+///
+/// The ownership of such a send cannot come from the receiver's static
+/// class, because the implementation that runs may be an override with a
+/// different contract (#365), and it cannot be assumed borrowed either,
+/// because that leaks whenever the implementation returns `+1` (#361).
+/// Both are the same question over different sets, so both are answered
+/// here: poll every implementation the send can *reach*
+/// (`Program::reachable_implementors`) and see whether they agree.
+///
+/// Why unanimity and not something cleverer: which implementor runs is a
+/// run-time fact, and no caller-side action can paper over the
+/// disagreement. A `+1` result must be released exactly once and a `+0`
+/// one never, so the two differ by one release -- and adding a retain
+/// shifts *both* by one, leaving the difference intact. That is why the
+/// retain-when-unprovable trick #351 uses at a `return` does not transfer
+/// to a call site: there, retaining creates a new reference the caller can
+/// own; here, the question is whether an existing one was handed over.
+/// Measured against Clang too -- a protocol send, a `+1` class send and a
+/// `+0` class send all carry the identical `ARCReclaimReturnedObject`,
+/// because ARC's callee autoreleases and its caller always reclaims, a
+/// convention that needs the pool this target does not have. So the AST
+/// cannot answer it either.
+#[derive(Debug, PartialEq, Eq)]
+pub enum DispatchOwnership {
+    /// Every reachable implementation hands back `+1`.
+    Owning,
+    /// Every reachable implementation hands back a borrowed reference, or
+    /// the selector reaches nothing at all.
+    Borrowed,
+    /// They disagree, so no answer is right for the caller. Carries one
+    /// owning and one borrowing class, for the diagnostic.
+    Ambiguous { owning: String, borrowed: String },
+}
+
+pub fn dispatch_ownership(
+    program: &Program,
+    owning: &OwningMethods,
+    receiver: Option<&str>,
+    selector: &str,
+    is_class_method: bool,
+) -> DispatchOwnership {
+    /* Convention beats analysis, and applies whatever the class: `alloc`
+     * and the create-rule selectors are +1 from every implementor by
+     * definition, so there is nothing to disagree about. */
+    if creates_reference(selector) {
+        return DispatchOwnership::Owning;
+    }
+    if selector == "retain" || selector.starts_with("init") {
+        return DispatchOwnership::Borrowed;
+    }
+    let reachable = program.reachable_implementors(receiver, selector, is_class_method);
+    let mut first_owning: Option<String> = None;
+    let mut first_borrowed: Option<String> = None;
+    for class in reachable {
+        if owning.contains(&class, selector) {
+            first_owning.get_or_insert(class);
+        } else {
+            first_borrowed.get_or_insert(class);
+        }
+    }
+    match (first_owning, first_borrowed) {
+        (Some(owning), Some(borrowed)) => DispatchOwnership::Ambiguous { owning, borrowed },
+        (Some(_), None) => DispatchOwnership::Owning,
+        _ => DispatchOwnership::Borrowed,
+    }
+}
+
+fn created_by(
+    program: &Program,
+    selector: &str,
+    class: Option<&str>,
+    owning: &OwningMethods,
+) -> bool {
     if creates_reference(selector) {
         return true;
     }
     if selector == "retain" || selector.starts_with("init") {
         return false;
+    }
+    /* A send that the emitter will route through the class_id switch has
+     * to be judged from every implementation it can reach, not from the
+     * receiver's static class (#365) and not as borrowed by default
+     * (#361). `is_dynamically_dispatched` is the same question
+     * `emit::render_message` asks before choosing that route, so the two
+     * cannot disagree about which sends this applies to. */
+    if class.is_none() || program.is_dynamically_dispatched(selector, false) {
+        return matches!(
+            dispatch_ownership(program, owning, class, selector, false),
+            DispatchOwnership::Owning
+        );
     }
     class.is_some_and(|class| owning.contains(class, selector))
 }

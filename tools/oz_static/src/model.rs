@@ -683,6 +683,91 @@ impl Program {
     /// have overridden it. oz_static sees the whole program as one
     /// translation unit, so this analysis is exact rather than
     /// conservative.
+    /// Every class whose implementation of `selector` a send can actually
+    /// reach at run time, given the receiver's *static* type.
+    ///
+    /// The set the ownership of a dynamically dispatched send has to be
+    /// decided from. Deciding it from the static type's own implementation
+    /// alone is #365: `Base` classified as an owning factory, `Derived`
+    /// overriding the selector to hand back a reference it keeps, and a
+    /// caller holding a `Base *` releasing what it does not own -- a
+    /// use-after-free rather than a leak.
+    ///
+    /// `None` means the receiver pins nothing down (a bare `id`, or a
+    /// protocol-qualified one), so every implementor is reachable -- which
+    /// is #361, the same question with a wider set.
+    ///
+    /// Answers *defining* classes, deduplicated, because that is what the
+    /// dispatch calls and what `OwningMethods` is keyed on. Empty when the
+    /// selector resolves nowhere.
+    ///
+    /// `companion::render_protocol_dispatch` builds the same set for its
+    /// `routed` list and both are filtered by `method_is_defined` for the
+    /// same reason: a selector declared and never defined is not a
+    /// callable function, so it can be neither routed to nor polled for
+    /// ownership.
+    pub fn reachable_implementors(
+        &self,
+        receiver: Option<&str>,
+        selector: &str,
+        is_class_method: bool,
+    ) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        let mut push = |defining: String| {
+            if !out.contains(&defining) {
+                out.push(defining);
+            }
+        };
+        let candidates: Vec<&String> = match receiver {
+            /* The receiver's own class, plus every subclass of it -- a
+             * superclass's override is unreachable from here, since the
+             * receiver is at least a `receiver`. */
+            Some(class) => self
+                .class_order
+                .iter()
+                .filter(|name| name.as_str() == class || self.is_descendant_of(name, class))
+                .collect(),
+            None => self.class_order.iter().collect(),
+        };
+        for name in candidates {
+            let Some(defining) = self.find_defining_method_name(name, selector, is_class_method)
+            else {
+                continue;
+            };
+            if !self.method_is_defined(&defining, selector, is_class_method) {
+                continue;
+            }
+            push(defining);
+        }
+        out
+    }
+
+    /// The class in `start`'s chain that declares `selector`, if any.
+    ///
+    /// The same single-inheritance walk `companion::find_defining_method`
+    /// does; here so `reachable_implementors` can answer without reaching
+    /// into that module.
+    pub fn find_defining_method_name(
+        &self,
+        start: &str,
+        selector: &str,
+        is_class_method: bool,
+    ) -> Option<String> {
+        let mut cur = Some(start.to_string());
+        while let Some(name) = cur {
+            let info = self.classes.get(&name)?;
+            if info
+                .methods
+                .iter()
+                .any(|m| m.is_class_method == is_class_method && m.selector == selector)
+            {
+                return Some(name);
+            }
+            cur = info.superclass.clone();
+        }
+        None
+    }
+
     pub fn has_overriding_subclass(&self, class_name: &str, selector: &str) -> bool {
         self.class_order.iter().any(|name| {
             self.is_descendant_of(name, class_name)
