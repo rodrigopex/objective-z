@@ -144,9 +144,28 @@ def sample_names(named):
 
 
 def build(sample, board, build_dir):
-    """Build one sample exactly as an ordinary `west build` would."""
+    """Configure the sample and generate its C -- nothing more.
+
+    `oz_static_transpile_gen` (`cmake/oz_static.cmake`) depends on oz2c's
+    outputs and on `zephyr_generated_headers`, and on nothing else. Those
+    are exactly the two things this sweep consumes: the generated C, and
+    each generated TU's command out of `compile_commands.json`. Zephyr's
+    own objects are never looked at, so building them was the bulk of the
+    runtime and none of the measurement.
+
+    The headers dependency is not incidental -- `recompile` wraps each TU
+    in a file that pulls `zephyr/kernel.h` in first, to get past CMSIS
+    switching `-Wpedantic` off, so a target that skipped Zephyr's
+    generated headers would fail to compile rather than report anything.
+
+    Measured over the whole sweep on mps2/an385, 14 samples: 357s with a
+    full `west build -p` per sample against 91s with this, and the same
+    10 diagnostics in the same 2 samples. What is left is dominated by
+    the recompile pass, which this does not touch.
+    """
     cmd = ["west", "build", "-p", "-b", board,
-           os.path.join(REPO, "samples", sample), "-d", build_dir]
+           os.path.join(REPO, "samples", sample), "-d", build_dir,
+           "-t", "oz_static_transpile_gen"]
     p = subprocess.run(cmd, cwd=REPO, capture_output=True, text=True)
     return p.returncode == 0, p.stdout + p.stderr
 
