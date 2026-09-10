@@ -7201,6 +7201,127 @@ struct TopLevel {
 /// `(stem, byte_range)` covering every byte of `source` (the same stem
 /// may appear more than once, non-contiguously). `emit()` passes a single
 /// synthetic origin covering the whole text.
+/// Replace whole-identifier occurrences of `from` with `to`.
+///
+/// Not `str::replace`: one hoisted name can be a prefix of another --
+/// `_oz_str_L1_C1_1` sits inside `_oz_str_L1_C1_11` -- so a substring
+/// rewrite would corrupt the longer symbol while renaming the shorter.
+fn replace_ident(text: &str, from: &str, to: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out = String::with_capacity(text.len());
+    let mut at = 0;
+    while let Some(rel) = text[at..].find(from) {
+        let start = at + rel;
+        let end = start + from.len();
+        let boundary = |b: u8| !(b.is_ascii_alphanumeric() || b == b'_');
+        let ok = (start == 0 || boundary(bytes[start - 1]))
+            && (end >= bytes.len() || boundary(bytes[end]));
+        out.push_str(&text[at..start]);
+        out.push_str(if ok { to } else { from });
+        at = end;
+    }
+    out.push_str(&text[at..]);
+    out
+}
+
+/// Collapse identical boxed string literals within each origin, so one
+/// `struct OZString` instance serves every occurrence of the same string
+/// in that translation unit (#372).
+///
+/// **Why this is a correctness change and not an optimisation.**
+/// Objective-C guarantees that identical literals in a translation unit
+/// are the same object, and `-isEqual:` opens with
+/// `if (self == anObject) { return YES; }` (`src/OZString.m`). With one
+/// instance per *occurrence* that branch missed for two spellings of the
+/// same string, so the transpiler diverged from the language on a point a
+/// program can reasonably rely on. The bytes are a footnote: measured
+/// across every sample in the tree it is 3 instances, 72 bytes of
+/// `.rodata` -- and px-keyboard, the only real application, contains no
+/// boxed literal at all.
+///
+/// **Scope is the origin, deliberately.** That is exactly what the
+/// language promises, and it is all that is available: the instances live
+/// in per-origin generated files with external linkage, so sharing one
+/// across origins would need an owning file plus `extern` references from
+/// the others. It would also buy nothing measurable -- a cross-origin
+/// duplicate can only occur inside one program built from several `.m`
+/// files, and the only such program in the tree has no literals. Every
+/// sample and every corpus case is a single-file program.
+///
+/// **Why the rename reaches four buckets and not just the bodies.** A
+/// literal's symbol is referenced wherever the expression that produced
+/// it was emitted, and that is not only a method body: a block hoisted
+/// out of a method carries its own text, a `__block` static can be
+/// initialised from one, and a `static inline` helper in the generated
+/// header can contain one too. Renaming only `bodies` would leave a
+/// dangling reference to a definition this function just dropped.
+fn dedup_string_literals(
+    strings: &mut HashMap<String, Vec<(String, String)>>,
+    bodies: &mut HashMap<String, Vec<String>>,
+    headers: &mut HashMap<String, Vec<String>>,
+    blocks: &mut HashMap<String, Vec<(String, String)>>,
+    statics: &mut HashMap<String, Vec<(String, String)>>,
+) {
+    for (stem, lits) in strings.iter_mut() {
+        // Key on the definition with its own symbol name removed: two
+        // literals of the same string differ in nothing else, `._length`
+        // and `._data` both being derived from the content.
+        let mut kept: HashMap<String, String> = HashMap::new();
+        let mut renames: Vec<(String, String)> = Vec::new();
+        let mut survivors: Vec<(String, String)> = Vec::new();
+        for (prototype, definition) in lits.iter() {
+            let Some(name) = literal_symbol(prototype) else {
+                survivors.push((prototype.clone(), definition.clone()));
+                continue;
+            };
+            let key = replace_ident(definition, &name, "@");
+            match kept.get(&key) {
+                Some(first) => renames.push((name, first.clone())),
+                None => {
+                    kept.insert(key, name);
+                    survivors.push((prototype.clone(), definition.clone()));
+                }
+            }
+        }
+        if renames.is_empty() {
+            continue;
+        }
+        *lits = survivors;
+        let apply = |text: &str| {
+            let mut t = text.to_string();
+            for (from, to) in &renames {
+                t = replace_ident(&t, from, to);
+            }
+            t
+        };
+        if let Some(v) = bodies.get_mut(stem) {
+            for b in v.iter_mut() {
+                *b = apply(b);
+            }
+        }
+        if let Some(v) = headers.get_mut(stem) {
+            for b in v.iter_mut() {
+                *b = apply(b);
+            }
+        }
+        for map in [&mut *blocks, &mut *statics] {
+            if let Some(v) = map.get_mut(stem) {
+                for (a, b) in v.iter_mut() {
+                    *a = apply(a);
+                    *b = apply(b);
+                }
+            }
+        }
+    }
+}
+
+/// The symbol a hoisted literal's forward declaration names, or `None` if
+/// the declaration is not the shape this module emits.
+fn literal_symbol(prototype: &str) -> Option<String> {
+    let rest = prototype.trim().strip_prefix("extern const struct OZString ")?;
+    Some(rest.strip_suffix(';')?.trim().to_string())
+}
+
 fn walk_top_level<'a>(
     source: &'a str,
     program: &'a Program,
@@ -7744,6 +7865,19 @@ fn walk_top_level<'a>(
             }
         }
     }
+
+    // One instance per string per origin, not per occurrence (#372).
+    // Placed here, at the end of the shared walk, so both assemblers --
+    // `emit()`'s single-file path and the origin-aware one -- get already
+    // collapsed literals and already-renamed text, with no dedup logic of
+    // their own to keep in step.
+    dedup_string_literals(
+        &mut hoisted_strings_by_stem,
+        &mut bodies,
+        &mut headers,
+        &mut hoisted_blocks_by_stem,
+        &mut hoisted_statics_by_stem,
+    );
 
     TopLevel {
         stem_order,
