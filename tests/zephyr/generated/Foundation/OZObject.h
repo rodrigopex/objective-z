@@ -42,7 +42,7 @@ typedef bool BOOL;
   * @ingroup objc
   */
 #define NO false
-/* `ObjectProtocol`, the protocol this class adopts and that every other
+/* `OZObjectProtocol`, the protocol this class adopts and that every other
   * protocol should adopt in turn (#307). Imported *here*, after `BOOL` and
   * `YES`: that header declares methods returning `BOOL` and `size_t` and
   * deliberately defines neither, since this file importing it makes the
@@ -57,7 +57,7 @@ typedef bool BOOL;
 unsigned int __objc_refcount_get(id obj);
 /* =============================================================================
  * __attribute__((objc_root_class))
- * @interface OZObject <ObjectProtocol>
+ * @interface OZObject <OZObjectProtocol>
  * ========================================================================== */
 /* + (instancetype)alloc; */
 struct OZObject * OZObject_alloc_cls(void);
