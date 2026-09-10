@@ -1380,7 +1380,13 @@ not tied to one (not from source) */\n",
         c.push_str("\tdefault: return \"?\";\n\t}\n}\n\n");
         c.push_str(&format!(
             "struct {root} *oz_static_retain(struct {root} *self)\n{{\n\
-             \tif (self) {{\n\t\toz_atomic_inc(&self->oz_refcount);\n\t}}\n\treturn self;\n}}\n\n",
+             \t/* An immortal object is not refcounted -- the same rule\n\
+             \t * oz_static_release applies before its decrement. Retaining one\n\
+             \t * used to increment a word nothing would ever decrement, which\n\
+             \t * both wasted an atomic and left retainCount climbing without\n\
+             \t * bound (#373). It also kept a boxed literal out of .rodata:\n\
+             \t * anything that writes an object cannot be const. */\n\
+             \tif (self && !self->_meta.immortal) {{\n\t\toz_atomic_inc(&self->oz_refcount);\n\t}}\n\treturn self;\n}}\n\n",
             root = root
         ));
         c.push_str(&format!(
@@ -1397,7 +1403,12 @@ receiver (not from source) */\n",
         );
         c.push_str(&format!(
             "int oz_static_retain_count(struct {root} *self)\n{{\n\
-             \tif (!self) {{\n\t\treturn 0;\n\t}}\n\treturn oz_atomic_get(&self->oz_refcount);\n}}\n\n",
+             \tif (!self) {{\n\t\treturn 0;\n\t}}\n\
+             \t/* Not refcounted, so the stored word is not maintained and\n\
+             \t * reporting it would be reporting a stale number. One permanent\n\
+             \t * reference is the truthful answer (#373). */\n\
+             \tif (self->_meta.immortal) {{\n\t\treturn 1;\n\t}}\n\
+             \treturn oz_atomic_get(&self->oz_refcount);\n}}\n\n",
             root = root
         ));
 
