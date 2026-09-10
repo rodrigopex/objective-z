@@ -1802,6 +1802,22 @@ fn render_expr(node: Node, ctx: &mut EmitCtx) -> (String, String) {
             let values = for_header_owning_operands(node, ctx);
             render_owning_operand_statement(node, ctx, values)
         }
+        /* A `for` header's own `+1` **declaration** (#376). Below the
+         * operand arm above, deliberately: a header whose initialiser
+         * both holds an operand and binds ownership keeps the handling it
+         * already had rather than getting a second, untested wrapper --
+         * and the two do not overlap in practice, since an initialiser
+         * that binds ownership is `+1` at its outermost expression while
+         * an operand is one nested inside it.
+         *
+         * The declaration has to *move* rather than be named by a
+         * temporary, which is why this is its own renderer and not a
+         * widened `for_header_owning_operands`. */
+        "for_statement" if for_header_owned_declaration(node, ctx).is_some() => {
+            let (init, owned) = for_header_owned_declaration(node, ctx)
+                .expect("guarded by the arm above");
+            render_for_header_owned_declaration(node, ctx, init, owned)
+        }
         "synchronized_statement" => render_synchronized_statement(node, ctx),
         "return_statement" => render_return_statement(node, ctx),
         "compound_statement" if is_autoreleasepool_shape(node) => {
@@ -5292,6 +5308,127 @@ fn for_header_owning_operands<'a>(
     values
 }
 
+/// The `for` header **declaration** whose own initialiser is `+1`, and
+/// the names it binds -- `None` for every other header (#376).
+///
+/// This is the one shape in that issue evaluated exactly *once*, so
+/// nothing about when it allocates was ever wrong. What was wrong is
+/// where the name lives: `owned_locals_of` is reached from `arc_note`,
+/// for a `declaration` whose parent is a `compound_statement`, and a
+/// header declaration's parent is the `for_statement`. So no scope could
+/// see `t` in
+///
+/// ```objc
+/// for (Thing *t = makeThing(); i < 1; i++) { [t n]; }
+/// ```
+///
+/// and the reference was created and abandoned, once per execution of the
+/// loop -- measured as `n=1`, `nil`, `nil` against a one-slot slab.
+///
+/// Both guards are load-bearing, and they are the same pair every other
+/// binding position reads:
+///
+///   - `owned_locals_of_in` for provenance, so a **borrowed** initialiser
+///     (`for (Thing *t = [owned itself]; ...)`) is left alone -- releasing
+///     one is a use-after-free on whatever still names the object. It
+///     also brings the three exclusions it makes anywhere else: a
+///     `static` slot, `__unsafe_unretained`, and a name the author
+///     already releases by hand. The search root is the `for_statement`,
+///     so a manual `[t release]` in the loop *body* counts.
+///   - `arc::declares_pointer` for the type, so a plain
+///     `for (int i = 0; ...)` -- by far the most common thing this is
+///     asked about -- comes out byte-identical. The type check is left to
+///     the position that needs it for the reason #351 records: widening
+///     `binds_ownership` instead would have a scope release an `int`.
+fn for_header_owned_declaration<'a>(
+    node: Node<'a>,
+    ctx: &EmitCtx,
+) -> Option<(Node<'a>, Vec<String>)> {
+    let init = node.child_by_field_name("initializer")?;
+    if init.kind() != "declaration" || !crate::arc::declares_pointer(init) {
+        return None;
+    }
+    let owned = owned_locals_of_in(init, init.parent(), ctx);
+    if owned.is_empty() {
+        return None;
+    }
+    Some((init, owned))
+}
+
+/// Lift a `for` header's owning declaration into a wrapping group, so
+/// there is a scope that can see the name and release it (#376).
+///
+/// ```c
+/// {
+///         struct Thing *t = makeThing();
+///         for (; i < 1; i++) { ... }
+///         oz_static_release((struct OZObject *)(t));
+/// }
+/// ```
+///
+/// The header is **rewritten** rather than the statement wrapped, which
+/// is the difference from `render_owning_operand_statement`: an operand
+/// can stay where it is and be named by a temporary, but a declaration's
+/// *name* has to move for anything to be able to release it. Bracing
+/// scopes nothing out -- a header declaration was already scoped to the
+/// loop -- and the empty initialiser it leaves behind is what keeps the
+/// allocation happening exactly once, where the source put it.
+///
+/// Two things it must get right, each with a test of its own in
+/// `tests/for_header_ownership.rs`:
+///
+///   - **The group is a real ARC scope.** Without that a `return` inside
+///     the loop jumps straight past the trailing release, so the leak is
+///     back on exactly the path an early exit takes.
+///   - **Its `start_byte` is the `for_statement`'s own.**
+///     `releases_up_to_jump_target` releases the scopes that began
+///     *strictly inside* the construct being left, so a group starting at
+///     the same byte as the loop is left alone by a `break` out of it --
+///     which is required, since `t` must live until the loop exits and
+///     the trailing release is what frees it. One byte later, or given
+///     the body's offset, and the release would run twice.
+///
+/// The loop itself is rebuilt by `rebuild`, with the initialiser child
+/// replaced by the bare `;` the header still needs, so every other byte
+/// of the header and body -- spacing, comments, an unexpanded macro --
+/// survives exactly as the ordinary `rebuild_or_text` path would have
+/// left it. The lifted declaration goes back through `render_expr`, so
+/// its declared type is lowered by the same code that lowers every other
+/// declaration.
+fn render_for_header_owned_declaration(
+    node: Node,
+    ctx: &mut EmitCtx,
+    init: Node,
+    owned: Vec<String>,
+) -> (String, String) {
+    let (declaration, _) = render_expr(init, ctx);
+    ctx.arc_scopes.push(ArcScope {
+        owned: owned.clone(),
+        start_byte: node.start_byte(),
+        is_block_body: false,
+    });
+    let loop_text = rebuild(node, ctx, &mut |child, ctx| {
+        if child.id() == init.id() {
+            /* The declaration carried the header's first `;` with it, so
+             * the empty initialiser has to put one back. */
+            return Some(";".to_string());
+        }
+        if needs_translation(child) {
+            Some(render_expr(child, ctx).0)
+        } else {
+            None
+        }
+    });
+    ctx.arc_scopes.pop();
+    /* Reverse order, so a later name outlives the ones declared before
+     * it -- the same order `arc_exit` releases a block's locals in. */
+    let releases =
+        release_lines(&owned.iter().rev().cloned().collect::<Vec<_>>(), ctx);
+    let lines: Vec<&String> =
+        std::iter::once(&declaration).chain(std::iter::once(&loop_text)).chain(releases.iter()).collect();
+    (braced_group(&lines), "void".to_string())
+}
+
 fn collect_owning_operands<'a>(
     node: Node<'a>,
     ctx: &EmitCtx,
@@ -5547,21 +5684,33 @@ fn render_owning_operand_statement(
             "void".to_string(),
         );
     }
+    (braced_group(&lines), "void".to_string())
+}
+
+/// Wrap already-rendered statements in a braced group, one level deeper.
+///
+/// Shared by the two renderers that wrap a statement in a scope of their
+/// own -- `render_owning_operand_statement` and
+/// `render_for_header_owned_declaration` -- because getting the
+/// indentation right is subtler than it looks and getting it right twice
+/// is how the two drift apart.
+///
+/// Every line of each entry is indented, not only its first. A
+/// declaration or a release is one line, but the *statement* need not be:
+/// since #341 it can be a whole `for` loop, and prefixing only its
+/// opening line left the loop body at its original depth -- one level
+/// shallower than the brace it now sits inside, which reads as if the
+/// body had escaped the group.
+///
+/// One extra tab on the continuation lines and two on the first, because
+/// the two start from different depths: a rendered statement's opening
+/// line begins at the statement token with no indentation of its own,
+/// while the lines after it are passed through carrying the author's,
+/// already at the depth the statement had before this group was wrapped
+/// around it.
+fn braced_group(lines: &[&String]) -> String {
     let mut out = String::from("{\n");
     for line in lines {
-        /* Every line of the entry, not only its first. A decl and a
-         * release are one line each, but the *statement* need not be: since
-         * #341 it can be a whole `for` loop, and prefixing only its opening
-         * line left the loop body at its original depth -- one level
-         * shallower than the brace it now sits inside, which reads as if
-         * the body had escaped the group.
-         *
-         * One extra tab on the continuation lines and two on the first,
-         * because the two start from different depths: a rendered
-         * statement's opening line begins at the statement token with no
-         * indentation of its own, while the lines after it are passed
-         * through carrying the author's, already at the depth the
-         * statement had before this group was wrapped around it. */
         for (i, text) in line.lines().enumerate() {
             if !text.is_empty() {
                 out.push_str(if i == 0 { "\t\t" } else { "\t" });
@@ -5571,7 +5720,7 @@ fn render_owning_operand_statement(
         }
     }
     out.push_str("\t}");
-    (out, "void".to_string())
+    out
 }
 
 /// A nested block that owns object locals: render its statements, then
@@ -8048,3 +8197,4 @@ fn file_scope_vars(root: Node, ctx_src: &str, program: &Program) -> HashMap<Stri
     }
     out
 }
+

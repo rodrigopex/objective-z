@@ -599,12 +599,16 @@ void breakInSwitch(int i)
         ),
         /* ---- the positions still wrong, asserted wrong ----------------
          *
-         * The first three are evaluated *more than once*, so a hoisted
+         * All three are evaluated *more than once*, so a hoisted
          * temporary would allocate where the source does not; they need
-         * the release inside the expression rather than beside it. The
-         * fourth is evaluated once but declares its name inside the `for`
-         * header, where no scope that could release it can see it -- so
-         * it needs the header rewritten, not wrapped.
+         * the release inside the expression rather than beside it.
+         *
+         * A `for` header's own `+1` declaration was the fourth row here.
+         * It is fixed (#376) and its cases moved to
+         * `tests/for_header_ownership.rs`: evaluated once, it needed only
+         * a scope that could see the name, which is the header rewritten
+         * into a wrapping group rather than a release inside the
+         * expression.
          *
          * The `+1` is `[m supply]` and not `[[Thing alloc] init]` for a
          * reason worth keeping. `staticbar` already **refuses** a bare
@@ -662,24 +666,6 @@ void forCondition(Maker *m)
 
 	for (i = 0; [[m supply] tag] > 100; i++) {
 		keep(g_global);
-	}
-}
-",
-        ),
-        (
-            Shape {
-                what: "a for header's own +1 declaration is never released",
-                func: "forHeaderDecl",
-                expect: (0, 0, 0),
-                known_defect: Some("a for-header declaration is out of every scope's reach"),
-            },
-            "\
-void forHeaderDecl(Maker *m)
-{
-	int i = 0;
-
-	for (Thing *t = [m supply]; i < 1; i++) {
-		[t tag];
 	}
 }
 ",
