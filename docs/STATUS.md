@@ -632,6 +632,115 @@ defect produced clean ASan output and correct-looking program output. The
 sample that started this printed `Hello, world from object` after
 `Deallocating` and exited 0.
 
+## The hybrid model: what this backend's ARC is
+
+The section above says why this is not Clang's ARC. This one says what it
+*is*, because "scope-based ARC" undersells it and invites the wrong kind of
+change.
+
+**It is ARC's optimizer, hand-written at the source level.** Clang emits
+retain and release naively at every binding and deletes the redundant
+pairs in an LLVM pass; that pass is the only reason ARC is cheap. `oz2c`
+emits C for GCC, where `oz_static_retain`/`oz_static_release` are ordinary
+functions whose counter is an atomic RMW and whose decrement gates a call
+to `-dealloc` -- so nothing downstream elides anything, measured at every
+setting including whole-program LTO. The elision therefore has to happen
+here, and it is the whole value of `arc.rs`. Which is also why it has to be
+sound in one direction: a leak is a bug, a double free is corruption, so an
+unrecognised shape is treated as borrowed.
+
+### Two questions, not one
+
+Every release decision answers both, and for a long time only the first was
+asked:
+
+- **Provenance** -- is this reference `+1` by shape? (`is_owning_expr`,
+  `binds_ownership`, `created_by`)
+- **Escape** -- is it still reachable after this scope, under another name
+  or in another slot?
+
+`Thing *b = a; return b;` is provably `+1` in `a`, and releasing `a` is
+still wrong. That omission alone produced #351, #352, #359 and #360.
+
+### The two mechanisms, and the limit on the second
+
+1. **Resolve it statically -- free.** Where the CST says what happened,
+   read it and emit nothing. `alias_chain` follows plain-identifier
+   initialisers to the local that owns the reference, and that local is
+   kept instead of the alias. No refcount traffic; output byte-identical.
+2. **Retain where provenance cannot be established -- one pair, only
+   there.** Nothing can know whether `passthrough(a)` returns `a`, another
+   object, or nothing, so `return_needs_retain` retains the returned value
+   and the caller owns it.
+
+**Mechanism 2 works at a `return` and nowhere else, and the reason is
+worth keeping.** Retaining there creates a *new* reference the caller can
+own, which makes the unknown irrelevant. At a *call* site the question is
+whether an existing reference was transferred to you -- and the `+1` and
+`+0` cases need one release and zero releases, while adding a retain
+shifts both by one. The difference is invariant, so no local action is
+correct for both. That is why #361 is answerable only by mechanism 1, or
+by making the unknown impossible: adopt the implementors' unanimous
+answer, and refuse a genuine disagreement, since a protocol whose
+ownership contract depends on the implementation cannot be used correctly
+by any caller.
+
+### Where tree-sitter and the Clang AST each sit
+
+**tree-sitter is the primary frontend and mechanism 1's source of truth.**
+The CST is syntactic, exact, and available on every run, which is what
+makes static resolution free.
+
+**The Clang AST is the corroborating oracle, and depending on it is now
+sanctioned** -- the Zephyr SDK ships clang, CI pins its version
+(`OZ_CLANG`, `-DOBJZ_REQUIRE_TESTED_CLANG=ON`), and `cmake/oz_static.cmake`
+already dumps one AST per source. It carries precisely the facts ARC
+decides from: `__strong` / `__unsafe_unretained` qualifiers, and the
+transfer points marked `ARCProduceObject`, `ARCConsumeObject` and
+`ARCReclaimReturnedObject`. `astinfo.rs` reads only `ObjCIvarDecl` today,
+so every local qualifier and every cast kind is parsed and discarded --
+that is head-room, not a design limit.
+
+Two things measured about it, so the next reader does not have to guess:
+
+- **It settles questions about ARC that memory gets wrong.** Modern Clang
+  permits `__strong` members in C structs; a `static` local is `__strong`
+  with static storage duration; a file-scope object pointer is `__strong`.
+  All three were asserted incorrectly from recall during the #359 audit and
+  corrected by dumping the AST for the shape.
+- **It cannot answer every question, and one of them looks like it should.**
+  At a call site, a protocol send, a `+1` class send and a `+0` class send
+  are marked *identically* -- `ARCReclaimReturnedObject` on all three --
+  because ARC's callee autoreleases and its caller always reclaims. That
+  convention is sound only because of the pool this target does not have,
+  so the AST distinguishes nothing there. It *does* distinguish the
+  implementors: a method returning an owned reference carries
+  `ARCConsumeObject` inside it, one returning a borrowed ivar does not.
+  So the AST can classify each implementor more reliably than the CST can
+  -- but which implementor runs is a runtime fact, and no oracle removes
+  the need for unanimity.
+
+The practical constraint on leaning harder on it: the Rust suite's ~485
+tests drive `oz_static::transpile` with no AST at all. Making ownership
+*require* AST facts means giving that harness a clang invocation and a dump
+per case, which is a change to the primary gate and belongs in its own
+piece of work rather than riding along with a fix.
+
+### The rule that falls out
+
+**Key ownership on the reference, never on a syntactic form.** Every defect
+in this family was a decision keyed on spelling -- the returned name, an
+assignment's left-hand form, an array store's receiver, the kind of slot.
+Each fix routes every spelling through one function (`alias_chain`,
+`assigned_ivar_name`), and that is the only thing that has stopped the next
+site appearing. When one site is found wrong, enumerate the rest rather
+than fixing the one: that is how #352 was found, and the three defects in
+#359.
+
+`ownership_matrix.rs` is the standing check -- every sink's refcount shape
+asserted, known defects asserted to *stay* defective -- so what is believed
+correct is a claim someone verified rather than one nobody examined.
+
 ## The ownership audit (#359, #360, #361)
 
 Prompted by the question the fixes for #351 and #352 raised and did not
