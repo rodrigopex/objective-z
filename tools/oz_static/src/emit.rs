@@ -5207,11 +5207,77 @@ fn render_discarded_owning_statement(node: Node, ctx: &mut EmitCtx) -> (String, 
         return (node_text(node, ctx.src).to_string(), "void".to_string());
     };
     let root = ctx.program.root_class().unwrap_or("OZObject").to_string();
-    let (rendered, _) = render_expr(value, ctx);
+    /* The type was discarded here until #398. The release still takes the
+     * root cast -- every `oz_static_release` does -- but the expression has
+     * to *be* an object pointer first, and that was never checked. The cast
+     * is precisely why it could not be: it makes any type compile. */
+    let (rendered, rendered_ty) = render_expr(value, ctx);
+    require_object_pointer(value, &rendered_ty, ctx);
     (
         format!("oz_static_release((struct {} *)({}));", root, rendered),
         "void".to_string(),
     )
+}
+
+/// **A release is only ever emitted for an expression that is an object
+/// pointer** (#398). A located error otherwise.
+///
+/// Both operand sites used to read: the expression's own type where it
+/// ends in `*`, and the root pointer otherwise, "since `id` is the one
+/// spelling that is not a C type and nothing else non-pointer can be an
+/// object". The first half is right and the second half was the hole.
+/// `int` is not a pointer either, and it took the same fallback -- so
+/// `[[Thing alloc] initialValue]` cast the integer 42 to
+/// `struct OZObject *` and released it. Signal 11 on the host (#398).
+/// #380 was the same shape reached through a cast rather than a selector,
+/// and was fixed at one binding site; this is the invariant both needed.
+///
+/// So the fallback is now allowed only for the spellings that really are
+/// objects without being C pointers -- `id`, `instancetype`, and a bare
+/// class name -- and anything else is a located error rather than a
+/// silent cast. A hard error and not a skipped release, because reaching
+/// here with a non-object means the ownership analysis decided something
+/// untrue, and the two ways of covering for that are a leak or a wrong
+/// free. Neither should ship quietly.
+fn require_object_pointer(value: Node, value_ty: &str, ctx: &mut EmitCtx) {
+    if value_ty.ends_with('*') {
+        return;
+    }
+    let bare = value_ty.trim();
+    if bare == "id" || bare == "instancetype" || ctx.program.is_class(bare) {
+        return;
+    }
+    ctx.err(
+        value,
+        format!(
+            "internal: a +1 reference was claimed for an expression of type \
+             `{}`, which is not an object pointer, so releasing it would \
+             dereference a non-object. This is an ownership-analysis bug \
+             rather than a problem with this source -- please report it with \
+             the snippet (#398).",
+            bare
+        ),
+    );
+}
+
+/// The type a `+1` operand is held in, and the initialiser for it.
+///
+/// The expression's own type where it has one, so the argument a send
+/// receives is the type it always was and no caller of `arg_texts` has to
+/// be told anything. The root pointer otherwise, which is the only
+/// reading available for `id` -- and, until #398, for `int` as well.
+fn owning_operand_slot(
+    value: Node,
+    text: String,
+    value_ty: String,
+    root: &str,
+    ctx: &mut EmitCtx,
+) -> (String, String) {
+    require_object_pointer(value, &value_ty, ctx);
+    if value_ty.ends_with('*') {
+        return (value_ty, text);
+    }
+    (format!("struct {} *", root), format!("(struct {} *)({})", root, text))
 }
 
 /// Which position a +1 operand was written in.
@@ -5327,15 +5393,7 @@ fn render_comma_operand_expr(
     let mut held: Vec<usize> = Vec::with_capacity(values.len());
     for value in values {
         let (text, value_ty) = render_expr(value, ctx);
-        /* Same reading as `render_owning_operand_statement`: the
-         * expression's own type where it is a pointer, and the root
-         * pointer otherwise, since `id` is the one spelling that is not a
-         * C type and nothing else non-pointer can be an object. */
-        let (ty, init) = if value_ty.ends_with('*') {
-            (value_ty, text)
-        } else {
-            (format!("struct {} *", root), format!("(struct {} *)({})", root, text))
-        };
+        let (ty, init) = owning_operand_slot(value, text, value_ty, &root, ctx);
         let (line, col) = line_col(ctx.src, value.start_byte());
         ctx.block_counter += 1;
         let tmp = format!("_oz_ce_L{}_C{}_{}", line, col, ctx.block_counter);
@@ -5854,16 +5912,10 @@ fn render_owning_operand_statement(
     let mut names: Vec<String> = Vec::with_capacity(values.len());
     for (value, position) in values {
         let (text, value_ty) = render_expr(value, ctx);
-        /* The expression's own type, so the argument the send receives is
-         * the type it always was and no caller of `arg_texts` has to be
-         * told anything. `id` is the one spelling that is not a C type;
-         * anything else that is not a pointer cannot be an object at all,
-         * and the root pointer a release needs is the safe reading. */
-        let (ty, init) = if value_ty.ends_with('*') {
-            (value_ty, text)
-        } else {
-            (format!("struct {} *", root), format!("(struct {} *)({})", root, text))
-        };
+        /* The expression's own type where it has one, so the argument the
+         * send receives is the type it always was and no caller of
+         * `arg_texts` has to be told anything. */
+        let (ty, init) = owning_operand_slot(value, text, value_ty, &root, ctx);
         let (line, col) = line_col(ctx.src, value.start_byte());
         ctx.block_counter += 1;
         let tmp = format!("{}_L{}_C{}_{}", position.prefix(), line, col, ctx.block_counter);
