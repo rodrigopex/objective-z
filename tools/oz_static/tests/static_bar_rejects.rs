@@ -135,7 +135,12 @@ fn escaping_alloc_in_loop_rejected() {
     );
     let diags = expect_reject(&src);
     assert!(diags.contains("Item"), "diagnostics: {}", diags);
-    assert!(diags.contains("escapes the iteration"), "diagnostics: {}", diags);
+    /* #345 replaced the old "escapes the iteration" wording with one
+       that names the destination. An ivar *is* reused each iteration,
+       but its store releases the previous object only after the new one
+       exists, so two are briefly live and one slab slot cannot serve
+       it. */
+    assert!(diags.contains("an ivar"), "diagnostics: {}", diags);
 }
 
 #[test]
@@ -391,7 +396,11 @@ int main(void) { return 0; }
     );
     let diags = expect_reject(&src);
     assert!(diags.contains("boxed array literal"), "diagnostics: {}", diags);
-    assert!(diags.contains("escapes the iteration"), "diagnostics: {}", diags);
+    assert!(
+        diags.contains("an array element chosen per iteration"),
+        "diagnostics: {}",
+        diags
+    );
 }
 
 /// The dictionary counterpart, which names itself distinctly so the
@@ -422,7 +431,11 @@ int main(void) { return 0; }
     );
     let diags = expect_reject(&src);
     assert!(diags.contains("boxed dictionary literal"), "diagnostics: {}", diags);
-    assert!(diags.contains("escapes the iteration"), "diagnostics: {}", diags);
+    assert!(
+        diags.contains("an array element chosen per iteration"),
+        "diagnostics: {}",
+        diags
+    );
 }
 
 /// The contrast that keeps the rule from being over-broad: bound to a

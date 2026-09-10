@@ -348,7 +348,17 @@ int main(void) { return 0; }
 "
     );
     let diags = expect_reject(&src);
-    assert!(diags.contains("escapes the iteration"), "diagnostics: {}", diags);
+    /* The message changed with #345 -- it now names the destination and why
+     * one slab slot cannot serve it, instead of asserting that the
+     * reference "escapes the iteration", which was not true of every shape
+     * the old rule refused. What this case pins is unchanged: `b` is not
+     * managed, so nothing releases the previous object and the allocations
+     * accumulate. */
+    assert!(
+        diags.contains("a local ARC does not manage"),
+        "diagnostics: {}",
+        diags
+    );
 }
 
 /// The same boundedness, for a *collection literal*. This is what justifies

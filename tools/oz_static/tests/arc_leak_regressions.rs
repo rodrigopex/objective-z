@@ -915,9 +915,11 @@ int main(void) {
 /// which is `LocalStore::Unsupported` -- and one unsupported store takes the
 /// whole local out of `managed_object_locals`. Two consequences, both here:
 /// nothing released the overwritten object, and `staticbar` rejected the
-/// ordinary reassign-in-a-loop shape outright ("allocation of 'Thing' inside
-/// a loop escapes the iteration"), because an unmanaged local cannot bound
-/// how many instances are live.
+/// ordinary reassign-in-a-loop shape outright, because an unmanaged local
+/// cannot bound how many instances are live. (The message it gave then,
+/// "escapes the iteration", was retired by #345 for one that names the
+/// destination -- an unmanaged local now reads as "a local ARC does not
+/// manage".)
 ///
 /// One slab slot for a three-iteration loop is the assertion: it can only
 /// hold if each iteration's release comes *before* the next allocation.

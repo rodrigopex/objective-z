@@ -107,7 +107,15 @@ int main(void)
         PREAMBLE()
     );
     let diags = expect_reject(&free_fn);
-    assert!(diags.contains("escapes the iteration"), "diagnostics: {}", diags);
+    /* #345 replaced the old "escapes the iteration" wording with one that
+       names the destination. `kept[i]` is a different element each time,
+       so nothing is released and the instances accumulate -- which is the
+       reason this case exists, now stated. */
+    assert!(
+        diags.contains("an array element chosen per iteration"),
+        "diagnostics: {}",
+        diags
+    );
 
     // The same construct in a method, to show the two positions agree
     // rather than merely that the free function rejected something.
@@ -130,7 +138,11 @@ int main(void) {{ return 0; }}
         PREAMBLE()
     );
     let method_diags = expect_reject(&in_method);
-    assert!(method_diags.contains("escapes the iteration"), "diagnostics: {}", method_diags);
+    assert!(
+        method_diags.contains("an array element chosen per iteration"),
+        "diagnostics: {}",
+        method_diags
+    );
 }
 
 /// The scan must not become over-broad now that it reaches free functions.
