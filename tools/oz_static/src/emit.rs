@@ -1276,15 +1276,41 @@ struct EmitCtx<'a> {
 #[derive(Default)]
 struct ArcScope {
     owned: Vec<String>,
-    /// Is this block a loop's body? `break`/`continue` unwind through
-    /// scopes up to and including the nearest one of these, and no further:
-    /// a local declared *after* the loop is still live once it exits.
-    is_loop_body: bool,
+    /// Where this scope's block begins in the source.
+    ///
+    /// This is how a `break` or `continue` decides which scopes it
+    /// leaves: exactly those that *began inside* the construct being
+    /// jumped out of, i.e. whose `start_byte` is past that construct's
+    /// own (see `releases_up_to_jump_target`).
+    ///
+    /// It replaces an `is_loop_body` flag, and the flag was wrong in a
+    /// way the byte cannot be. `break` inside a **`switch`** exits only
+    /// the switch, but the flag made it unwind as though it were leaving
+    /// the enclosing loop -- so
+    ///
+    /// ```objc
+    /// for (...) {
+    ///     Thing *t = [[Thing alloc] init];
+    ///     switch (i) { case 0: break; }
+    ///     [t n];
+    /// }
+    /// ```
+    ///
+    /// released `t` inside the `case`, read it after the switch, and
+    /// released it again at the end of the iteration: a use-after-free
+    /// and a double free, in a shape with nothing unusual about it. The
+    /// flag could not express the difference because a `switch` body is a
+    /// `break` boundary but not a `continue` one, while a loop body is
+    /// both -- and `continue` inside a switch must still unwind past it.
+    ///
+    /// Asking which construct the jump actually targets, and taking the
+    /// scopes inside it, answers both without a flag per construct.
+    start_byte: usize,
     /// Is this block a block literal's body? A `return` unwinds through
     /// scopes up to and including the nearest one of these, and no
     /// further.
     ///
-    /// The reason is the same shape as `is_loop_body`'s, one level up. A
+    /// The reason is the same shape as `start_byte`'s, one level up. A
     /// `block_literal` is rendered on the *enclosing* body's `EmitCtx`
     /// (see `render_block`: block bodies deliberately share their
     /// enclosing body's flat scope), so the enclosing method's ARC scopes
@@ -1303,15 +1329,15 @@ impl ArcScope {
     /// The scope to enter for `body`, marked with whichever unwinding
     /// boundaries it is.
     ///
-    /// One constructor because the flags have to be set the same way at
+    /// One constructor because every field has to be set the same way at
     /// every push site, and there are two (`arc_enter` and
-    /// `render_body_with_comments`). `is_loop_body` was already spelled
-    /// out at both, so adding a second flag to only one of them was the
-    /// available mistake.
+    /// `render_body_with_comments`). The loop-body flag this replaced was
+    /// already spelled out at both, so adding a second field to only one
+    /// of them was the available mistake.
     fn for_body(body: Node) -> ArcScope {
         ArcScope {
             owned: Vec::new(),
-            is_loop_body: is_loop_body(body),
+            start_byte: body.start_byte(),
             is_block_body: is_block_body(body),
         }
     }
@@ -1751,6 +1777,27 @@ fn render_expr(node: Node, ctx: &mut EmitCtx) -> (String, String) {
         // exactly once.
         //
         // Below the for-in arm, so `for (id x in c)` still claims its own.
+        /* A `return` whose value abandons a `+1` operand had no arm at
+         * all, so `return [h take:makeThing()];` leaked outright. It is
+         * safe to hoist for the same reason a controlling expression is:
+         * evaluated exactly once, and the group the statement is wrapped
+         * in is itself inside whatever loop encloses it.
+         *
+         * The group is an ARC scope (see
+         * `render_owning_operand_statement`), so the `return` inside it
+         * unwinds and releases the temporary on its way out -- after the
+         * retain `render_return_statement` puts on the returned value,
+         * which is the ordering the whole shape depends on. */
+        "return_statement" if !owning_send_operands(node, ctx).is_empty() => {
+            let values = owning_send_operands(node, ctx);
+            render_owning_operand_statement(node, ctx, values)
+        }
+        "if_statement" | "switch_statement"
+            if !condition_owning_operands(node, ctx).is_empty() =>
+        {
+            let values = condition_owning_operands(node, ctx);
+            render_owning_operand_statement(node, ctx, values)
+        }
         "for_statement" if !for_header_owning_operands(node, ctx).is_empty() => {
             let values = for_header_owning_operands(node, ctx);
             render_owning_operand_statement(node, ctx, values)
@@ -1802,21 +1849,74 @@ fn render_expr(node: Node, ctx: &mut EmitCtx) -> (String, String) {
             let values = owning_send_operands(node, ctx);
             render_owning_operand_statement(node, ctx, values)
         }
-        _ => {
-            if !needs_translation(node) {
-                (node_text(node, ctx.src).to_string(), "id".to_string())
-            } else {
-                let rebuilt = rebuild(node, ctx, &mut |child, ctx| {
-                    if needs_translation(child) {
-                        Some(render_expr(child, ctx).0)
-                    } else {
-                        None
-                    }
-                });
-                (rebuilt, "id".to_string())
-            }
+        /* A call's result carries the callee's declared return type, so a
+         * message can be sent straight to it (#355). Until this arm
+         * existed, `makeThing()` fell to the default below and was typed
+         * `id`, which is not a type any receiver resolution can use:
+         * `[makeThing() poke]` was refused -- reporting
+         * `class 'OZObject' has no method matching 'poke'`, naming a class
+         * the source never writes, because a non-pointer type reads as
+         * "some object, cast it to the root pointer" in
+         * `render_owning_operand_statement` -- while binding the result to
+         * a local first compiled. The callee's signature said `Thing *`
+         * the whole time.
+         *
+         * Only a call through a plain identifier that names a function is
+         * answered. A local of the same name shadows the function in C, so
+         * `ctx.locals` is checked first; a call through a function pointer,
+         * a block variable or a member keeps the old `id` rather than being
+         * guessed at.
+         *
+         * The *text* is built exactly as the default arm builds it --
+         * `rebuild_or_text` is that arm's body, factored out -- because
+         * nothing about how a call is written changes here. Only its type
+         * was missing. */
+        "call_expression" => {
+            let text = rebuild_or_text(node, ctx);
+            (text, call_result_type(node, ctx).unwrap_or_else(|| "id".to_string()))
         }
+        _ => (rebuild_or_text(node, ctx), "id".to_string()),
     }
+}
+
+/// An expression's text with every Objective-C construct under it
+/// rendered, and nothing else changed -- `render_expr`'s default
+/// behaviour, factored out so the `call_expression` arm can reuse it
+/// verbatim and differ from the default in the *type* alone.
+fn rebuild_or_text(node: Node, ctx: &mut EmitCtx) -> String {
+    if !needs_translation(node) {
+        return node_text(node, ctx.src).to_string();
+    }
+    rebuild(node, ctx, &mut |child, ctx| {
+        if needs_translation(child) {
+            Some(render_expr(child, ctx).0)
+        } else {
+            None
+        }
+    })
+}
+
+/// The C type a `call_expression` evaluates to, when the callee is a
+/// plain identifier naming a function whose declared return type was
+/// collected (#355).
+///
+/// `None` where that is not so, and the caller keeps `id` -- which is
+/// what every call expression got before this existed.
+fn call_result_type(node: Node, ctx: &EmitCtx) -> Option<String> {
+    let mut cursor = node.walk();
+    let callee = node.children(&mut cursor).next()?;
+    if callee.kind() != "identifier" {
+        return None;
+    }
+    let name = node_text(callee, ctx.src);
+    /* A local shadows a file-scope function of the same name in C, so its
+     * call is not this function's call. Cheap, and it keeps the lookup
+     * from ever being the *wrong* answer rather than merely a missing
+     * one. */
+    if ctx.locals.contains(name) {
+        return None;
+    }
+    ctx.program.function_return_types.get(name).cloned()
 }
 
 pub(crate) struct MessageParts<'a> {
@@ -3497,7 +3597,7 @@ fn render_return_statement(node: Node, ctx: &mut EmitCtx) -> (String, String) {
     // has to happen in oz2c, so an exact answer is the cheap one.
     let kept = returned_name.as_deref().map(|name| owner_of_returned(node, name, ctx));
     let arc_releases = releases_for_all_scopes(ctx, kept.as_deref());
-    let needs_retain = enclosing_function_body(node).is_some_and(|body| {
+    let mut needs_retain = enclosing_function_body(node).is_some_and(|body| {
         crate::arc::return_needs_retain(
             node,
             body,
@@ -3506,6 +3606,29 @@ fn render_return_statement(node: Node, ctx: &mut EmitCtx) -> (String, String) {
             &ctx.program.owning_methods,
         )
     });
+    /* A returned expression whose *evaluation* hoists a `+1` operand is
+     * the same shape one statement earlier: the operand's temporary is
+     * released before the return, and the value may be that temporary
+     * (#355 follow-up). `arc::return_hands_back_ownership` reports the
+     * function `+1` on the same predicate, so the caller releases what is
+     * retained here.
+     *
+     * Guarded on the return type being a pointer, this position's own
+     * check -- `return [h count:makeThing()];` in an `int` method hoists
+     * an operand too, and retaining an `int` is not a thing. */
+    if !needs_retain && ctx.method_return_type.contains('*') {
+        if let Some(value) = returned_children
+            .iter()
+            .find(|c| c.kind() != "return" && c.kind() != ";")
+        {
+            needs_retain = crate::arc::hoists_owning_operand(
+                *value,
+                ctx.src,
+                ctx.program,
+                &ctx.program.owning_methods,
+            );
+        }
+    }
 
     // Outside any @synchronized, behave exactly as the catch-all in
     // `render_expr` would: byte-identical when nothing needs translating.
@@ -4313,7 +4436,7 @@ fn declared_block_pointer_type(node: Node, src: &str) -> Option<(String, usize)>
         return None;
     }
 
-    Some((type_text, declarator_return_stars(init_declarator)))
+    Some((type_text, crate::collect::declarator_return_stars(init_declarator)))
 }
 
 /// A cast expression, which needs handling for two separate reasons:
@@ -4703,6 +4826,102 @@ fn owned_locals_of_in(decl: Node, search_root: Option<Node>, ctx: &EmitCtx) -> V
     out
 }
 
+/// The names this declaration binds that must be **retained** because
+/// their initialiser's value may be one of the `+1` operand temporaries
+/// the same statement is about to release.
+///
+/// This is the use-after-free half of the operand machinery, and it
+/// segfaulted rather than leaked. `Thing *z = [h take:makeThing(1)];`
+/// hoists `makeThing(1)` into a temporary and releases it at the end of
+/// the statement -- but `-take:` hands its argument straight back, so `z`
+/// *is* that temporary, and the release frees the object `z` names. The
+/// next `[z n]` reads freed memory; measured as signal 11 on the host, in
+/// both the argument spelling above and the receiver one
+/// (`Thing *z = [makeThing(1) itself];`). `Thing *s = [[Builder new]
+/// result];` is the same shape in ordinary code.
+///
+/// A retain is what ARC itself emits when a value lands in a `__strong`
+/// slot, and it is the answer here for a reason worth recording: it makes
+/// `z` an *owned local*, so every question about `z` afterwards is
+/// answered by machinery that already exists and is already tested --
+/// scope-exit release, release-on-reassignment, `return` unwinding
+/// (#342), and the return-escape retain (#351). Deferring the
+/// temporary's own release to scope exit was the other candidate and does
+/// not close the escape: `return z;` would still hand back a pointer the
+/// scope frees on its way out, because `arc::owned_local_live_at` reads
+/// the *source* and cannot see a synthesized name.
+///
+/// Restricted to slots that could actually alias:
+///
+///   - an **object pointer** only. `int n = [h sum:makeThing(1)];` cannot
+///     name the temporary, so it keeps the tight statement-end release
+///     and pays nothing. This matters beyond tidiness: a slab holds one
+///     slot per *allocation site* (see `pools`), so holding a value
+///     longer than the statement can exhaust a pool that a
+///     statement-scoped release would have recycled.
+///   - an initialiser that is **not already owning**. One that is has
+///     taken over a `+1` of its own and is an owned local already;
+///     retaining it would be the leak this function exists to avoid.
+///   - not `static`, not `__unsafe_unretained`, and not released by hand
+///     -- the three exclusions `owned_locals_of_in` makes, for its
+///     reasons (#359, and ARC deferring to an author who took control).
+fn retained_bindings(decl: Node, ctx: &EmitCtx) -> Vec<String> {
+    if node_text(decl, ctx.src).contains("__unsafe_unretained") {
+        return Vec::new();
+    }
+    if is_static_declaration(decl, ctx.src) {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    let mut cursor = decl.walk();
+    let children: Vec<Node> = decl.children(&mut cursor).collect();
+    for child in children {
+        if child.kind() != "init_declarator" {
+            continue;
+        }
+        let mut c2 = child.walk();
+        let parts: Vec<Node> = child.children(&mut c2).collect();
+        let eq = parts.iter().position(|n| n.kind() == "=");
+        let Some(value) = eq.and_then(|i| parts.get(i + 1)).copied() else {
+            continue;
+        };
+        if crate::arc::binds_ownership(value, ctx.src, ctx.program, &ctx.program.owning_methods) {
+            continue;
+        }
+        /* The shared predicate, so the emitter's retain and the analysis's
+         * `+1` classification cannot drift apart -- see
+         * `arc::hoists_owning_operand`, which records what that drift
+         * cost. */
+        if !crate::arc::hoists_owning_operand(
+            value,
+            ctx.src,
+            ctx.program,
+            &ctx.program.owning_methods,
+        ) {
+            continue;
+        }
+        let name = crate::collect::find_declared_name(child, ctx.src);
+        if name.is_empty() {
+            continue;
+        }
+        /* This position's own type check: only a class pointer can name
+         * the temporary. `int m = [h sum:makeThing()];` keeps the tight
+         * statement-end release and pays nothing -- which matters beyond
+         * tidiness, since a slab holds one slot per *allocation site*
+         * (see `pools`) and holding a value past its statement can
+         * exhaust a pool a statement-scoped release would have recycled. */
+        let is_object = ctx.scope.get(&name).is_some_and(|ty| class_name_from_type(ty).is_some());
+        if !is_object || !crate::arc::declares_pointer(child) {
+            continue;
+        }
+        if released_by_hand(&name, decl.parent().unwrap_or(decl), ctx.src) {
+            continue;
+        }
+        out.push(name);
+    }
+    out
+}
+
 /// `oz_static_release` for each name, innermost scope first.
 fn release_lines(names: &[String], ctx: &EmitCtx) -> Vec<String> {
     let root = ctx.program.root_class().unwrap_or("OZObject").to_string();
@@ -4775,7 +4994,7 @@ fn enclosing_function_body(node: Node) -> Option<Node> {
 /// inside the hoisted function, naming locals it does not have (#342).
 /// See `ArcScope::is_block_body`.
 ///
-/// `releases_up_to_loop` below draws the analogous boundary for
+/// `releases_up_to_jump_target` below draws the analogous boundary for
 /// `break`/`continue`. The two are deliberately separate walks rather
 /// than one parameterised by a predicate: a `return` crosses a loop
 /// boundary (it leaves the loop *and* the function) while a `break` does
@@ -4798,14 +5017,39 @@ fn releases_for_all_scopes(ctx: &EmitCtx, keep: Option<&str>) -> Vec<String> {
 /// Releases owed by the scopes a `break`/`continue` leaves: from the
 /// innermost out to and including the nearest loop body. Scopes outside the
 /// loop survive it, so their locals must not be touched.
-fn releases_up_to_loop(ctx: &EmitCtx) -> Vec<String> {
+fn releases_up_to_jump_target(node: Node, ctx: &EmitCtx) -> Vec<String> {
+    /* What this jump actually leaves. `break` leaves the nearest
+     * enclosing loop *or switch*, whichever comes first; `continue`
+     * leaves only a loop, and crosses any switch on the way -- which is
+     * the whole distinction an `is_loop_body` flag could not express. */
+    let breaking = node.kind() == "break_statement";
+    let mut target = node.parent();
+    while let Some(candidate) = target {
+        let leaves = match candidate.kind() {
+            "for_statement" | "while_statement" | "do_statement" => true,
+            "switch_statement" => breaking,
+            _ => false,
+        };
+        if leaves {
+            break;
+        }
+        target = candidate.parent();
+    }
+    /* No enclosing loop or switch at all: not valid C, and nothing to
+     * release on the way out of a construct that is not there. */
+    let Some(target) = target else {
+        return Vec::new();
+    };
     let mut names = Vec::new();
     for scope in ctx.arc_scopes.iter().rev() {
+        /* Strictly past the construct's own start, so the scope wrapping
+         * it is left alone while every scope opened inside it is
+         * released. */
+        if scope.start_byte <= target.start_byte() {
+            break;
+        }
         for name in scope.owned.iter().rev() {
             names.push(name.clone());
-        }
-        if scope.is_loop_body {
-            break;
         }
     }
     release_lines(&names, ctx)
@@ -4822,17 +5066,10 @@ fn declares_owned_local(body: Node, ctx: &EmitCtx) -> bool {
         .any(|child| child.kind() == "declaration" && !owned_locals_of(child, ctx).is_empty())
 }
 
-/// Is this compound statement a loop's body?
-fn is_loop_body(body: Node) -> bool {
-    body.parent().is_some_and(|parent| {
-        matches!(parent.kind(), "for_statement" | "while_statement" | "do_statement")
-    })
-}
-
 /// Is this compound statement a block literal's body?
 ///
-/// Read off the CST, exactly like `is_loop_body`, so no push site has to
-/// be told what it is rendering: `render_body_with_comments` is reached
+/// Read off the CST, so no push site has to be told what it is
+/// rendering: `render_body_with_comments` is reached
 /// for a method body, a free function's body and a block literal's body
 /// alike, and only the tree distinguishes them.
 fn is_block_body(body: Node) -> bool {
@@ -4848,7 +5085,7 @@ fn is_block_body(body: Node) -> bool {
 /// out of a loop holding the only block of a one-block slab, then allocates
 /// again and checks the allocation succeeded.
 fn render_loop_jump(node: Node, ctx: &mut EmitCtx) -> (String, String) {
-    let releases = releases_up_to_loop(ctx);
+    let releases = releases_up_to_jump_target(node, ctx);
     let keyword = node_text(node, ctx.src);
     if releases.is_empty() {
         return (keyword.to_string(), "void".to_string());
@@ -4952,6 +5189,42 @@ impl OperandPosition {
 /// and still leaks. A *receiver* has the same obligation for the same
 /// reason: a method that keeps `self` past its own return has to retain it,
 /// exactly as one that keeps an argument does.
+/// The `+1` operands of an `if`'s or `switch`'s **controlling
+/// expression**, and of nothing else in the statement.
+///
+/// These two positions asked the ownership question nowhere, so
+/// `if ([makeThing() n] > 100)` and `switch ([makeThing() n])` leaked
+/// outright (#355 follow-up). They are safe to hoist for the reason a
+/// `for` **initialiser** is and its condition is not: a controlling
+/// expression is evaluated exactly once per execution of the statement,
+/// and the group `render_owning_operand_statement` wraps the statement in
+/// is itself inside whatever loop encloses it -- so the allocation still
+/// happens once per iteration, and the release with it.
+///
+/// The branches are deliberately not read. A `+1` in the *consequence* is
+/// that statement's own business and reaches this machinery through its
+/// own arm; hoisting it here would evaluate it whether the branch is
+/// taken or not, which is the defect `for_header_owning_operands` avoids
+/// by the same restriction and which the ternary arm still has.
+///
+/// `while`, `do`-`while` and the `for` condition/update look identical
+/// and are **not** here, for the one reason that matters: they are
+/// evaluated more than once, so a hoisted temporary would allocate once
+/// where the source allocates every time round. They need a release
+/// inside the expression rather than beside it, and are tracked
+/// separately.
+fn condition_owning_operands<'a>(
+    node: Node<'a>,
+    ctx: &EmitCtx,
+) -> Vec<(Node<'a>, OperandPosition)> {
+    let mut values: Vec<(Node<'a>, OperandPosition)> = Vec::new();
+    if let Some(condition) = node.child_by_field_name("condition") {
+        collect_owning_operands(condition, ctx, &mut values);
+    }
+    values.sort_by_key(|(value, _)| value.end_byte());
+    values
+}
+
 fn owning_send_operands<'a>(
     stmt: Node<'a>,
     ctx: &EmitCtx,
@@ -5041,6 +5314,45 @@ fn collect_owning_operands<'a>(
             }
         }
     }
+    /* A **plain C call**'s arguments, which asked the ownership question
+     * nowhere at all: `keep(makeThing())` handed over a +1 and no one
+     * released it. Measured rather than reasoned -- one slab slot per
+     * allocation site means the second `keep(makeThing(...))` in a
+     * program got `nil` and the third did too, so the consequence on a
+     * device is a program that quietly stops allocating (#355 follow-up).
+     *
+     * The free-function twin of the `message_expression` arm above, and
+     * the same asymmetry as #326, #336 and #367 in a fifth place: a
+     * method's argument list and a function's are two separate walks over
+     * one question, and only one of them was written.
+     *
+     * There is no receiver half here, and no consuming-function half
+     * either: oz_static has no way to say a C function takes ownership,
+     * so every one of them borrows -- which is exactly what ARC assumes
+     * of an unannotated C function too, and what
+     * `ownership_matrix.rs`'s `cArgument` shape pins down. */
+    if node.kind() == "call_expression" {
+        if let Some(args) = node.child_by_field_name("arguments") {
+            let mut cursor = args.walk();
+            let arg_nodes: Vec<Node<'a>> = args
+                .children(&mut cursor)
+                .filter(|c| !matches!(c.kind(), "(" | ")" | ","))
+                .collect();
+            for arg in arg_nodes {
+                let Some(value) = crate::arc::owning_argument_value(
+                    arg,
+                    ctx.src,
+                    ctx.program,
+                    &ctx.program.owning_methods,
+                ) else {
+                    continue;
+                };
+                if !ctx.arg_temps.contains_key(&value.id()) {
+                    out.push((value, OperandPosition::Argument));
+                }
+            }
+        }
+    }
     let mut cursor = node.walk();
     let children: Vec<Node<'a>> = node.children(&mut cursor).collect();
     for child in children {
@@ -5104,6 +5416,7 @@ fn render_owning_operand_statement(
     let mut decls: Vec<String> = Vec::with_capacity(values.len());
     let mut releases: Vec<String> = Vec::with_capacity(values.len());
     let mut held: Vec<usize> = Vec::with_capacity(values.len());
+    let mut names: Vec<String> = Vec::with_capacity(values.len());
     for (value, position) in values {
         let (text, value_ty) = render_expr(value, ctx);
         /* The expression's own type, so the argument the send receives is
@@ -5121,18 +5434,92 @@ fn render_owning_operand_statement(
         let tmp = format!("{}_L{}_C{}_{}", position.prefix(), line, col, ctx.block_counter);
         decls.push(format!("{}{} = {};", ty, tmp, init));
         releases.push(format!("oz_static_release((struct {} *)({}));", root, tmp));
+        names.push(tmp.clone());
         ctx.arg_temps.insert(value.id(), (tmp, ty));
         held.push(value.id());
     }
+    /* The braced form is a scope, so it is registered as one -- otherwise
+     * a `return` inside the statement jumps straight past the releases
+     * below and the temporaries leak. That is not hypothetical: the arm
+     * that brought `if` here makes
+     * `if ([makeThing() n] > 100) { return; }` reachable, which is about
+     * as ordinary as this construct gets, and the same hole was already
+     * open under #341's `for` wrapper.
+     *
+     * Neither boundary flag is set, and both readings are deliberate:
+     *
+     *   - not a loop body, so a `break` or `continue` *inside* a wrapped
+     *     `for` unwinds to the loop's own body scope and stops there,
+     *     leaving these temporaries alone. They belong to the group
+     *     outside the loop, and the trailing releases still run when it
+     *     finishes.
+     *   - not a block body, so a `return` does unwind through them --
+     *     which is the whole point.
+     *
+     * The unbraced `declaration` form needs none of this: no jump can
+     * occur part-way through a single declaration. */
+    let scoped = node.kind() != "declaration";
+    if scoped {
+        ctx.arc_scopes.push(ArcScope {
+            owned: names.clone(),
+            /* The wrapped statement's own start, so a `break` out of a
+             * wrapped `for` or `switch` does *not* reach these: the group
+             * begins at the same byte as the construct being left, not
+             * inside it, which is the boundary
+             * `releases_up_to_jump_target` tests. The trailing releases
+             * still run when the construct finishes. */
+            start_byte: node.start_byte(),
+            is_block_body: false,
+        });
+    }
     let (rendered, _) = render_expr(node, ctx);
+    if scoped {
+        ctx.arc_scopes.pop();
+    }
     for id in &held {
         ctx.arg_temps.remove(id);
     }
     /* Released in the reverse of the order they were taken, so a nested
      * operand outlives the one built from it. */
     releases.reverse();
-    let lines: Vec<&String> =
-        decls.iter().chain(std::iter::once(&rendered)).chain(releases.iter()).collect();
+    /* ...and not at all when the wrapped statement *is* a jump: the
+     * `return` already released them on its way out, through the scope
+     * pushed above, and a second copy after it is unreachable. The test
+     * is deliberately `is_jump_statement` on the statement itself and not
+     * "contains a jump": an `if` whose branch returns still needs these
+     * on the path where the branch is not taken. Same rule as
+     * `arc_exit`'s `ended_with_jump`. */
+    if is_jump_statement(node) {
+        releases.clear();
+    }
+    /* A slot this statement binds may *be* one of the temporaries about to
+     * be released, so it takes a `+1` of its own first -- see
+     * `retained_bindings`, and note the retain has to be emitted ahead of
+     * the releases, not after. The name then becomes an owned local of the
+     * enclosing scope unless something already claims it, which is what
+     * makes every later question about it (scope exit, reassignment,
+     * `return`) fall to machinery that already exists. */
+    let mut retains: Vec<String> = Vec::new();
+    if node.kind() == "declaration" {
+        let already_owned = owned_locals_of(node, ctx);
+        for name in retained_bindings(node, ctx) {
+            retains.push(format!(
+                "oz_static_retain((struct {} *)({}));",
+                root, name
+            ));
+            if !already_owned.contains(&name) {
+                if let Some(scope) = ctx.arc_scopes.last_mut() {
+                    scope.owned.push(name);
+                }
+            }
+        }
+    }
+    let lines: Vec<&String> = decls
+        .iter()
+        .chain(std::iter::once(&rendered))
+        .chain(retains.iter())
+        .chain(releases.iter())
+        .collect();
     /* A declaration is a bare group: bracing it would scope the name it
      * introduces out of the rest of the body. */
     if node.kind() == "declaration" {
@@ -5467,55 +5854,6 @@ fn find_parameter_lists<'a>(node: Node<'a>, out: &mut Vec<Node<'a>>) {
     for child in node.children(&mut cursor) {
         find_parameter_lists(child, out);
     }
-}
-
-/// A top-level `function_definition`'s C return type, rendered the way
-/// every other generated type is -- so a class name arrives with its
-/// `struct` tag (`Thing *` -> `struct Thing *`), an `id` lowers to
-/// `void *`, and a `struct`/`enum` keeps its keyword.
-///
-/// `render_method_definition` records the method equivalent into
-/// `EmitCtx::method_return_type`; this is the free-function half, and its
-/// absence was #336: the `function_definition` arm built a fresh `EmitCtx`
-/// and left the field at `EmitCtx::new`'s placeholder, so the temporary
-/// `render_return_statement` synthesizes on the cleanup path came out
-/// `int` whatever the function actually returned. A returned pointer was
-/// then a constraint violation on any target and a truncation on a 64-bit
-/// one, and a `double` was silently rounded.
-///
-/// Read off the function's *own* declarator rather than guessed from the
-/// returned expression, which is the only thing that can be right for
-/// `return 42;` in a `size_t` function -- there is nothing in the
-/// expression to read.
-///
-/// The type text comes from the whole `function_definition` (the first
-/// type specifier in child order is the return type, and every later one
-/// is ignored -- see `collect::extract_type_and_stars`); the stars do not,
-/// because a `*` inside the `function_declarator` belongs to a parameter.
-/// `declared_block_pointer_type` splits the two for the same reason.
-fn function_return_type(node: Node, src: &str, program: &Program) -> Option<String> {
-    let declarator = node.child_by_field_name("declarator")?;
-    let (type_text, _) = crate::collect::extract_type_and_stars(node, src);
-    if type_text.is_empty() {
-        return None;
-    }
-    let known: std::collections::HashSet<String> = program.classes.keys().cloned().collect();
-    Some(crate::collect::render_type(&type_text, declarator_return_stars(declarator), &known))
-}
-
-/// `*`s belonging to the declared thing itself, i.e. those before the
-/// `function_declarator` that carries the parameter list. A star past it
-/// is a parameter's, and a `block_literal` is a whole nested signature.
-fn declarator_return_stars(node: Node) -> usize {
-    if node.kind() == "function_declarator" || node.kind() == "block_literal" {
-        return 0;
-    }
-    let mut cursor = node.walk();
-    let children: Vec<Node> = node.children(&mut cursor).collect();
-    children
-        .into_iter()
-        .map(|c| if c.kind() == "*" { 1 } else { declarator_return_stars(c) })
-        .sum()
 }
 
 /// Is `node` a bare `id` standing in *type* position?
@@ -6704,7 +7042,11 @@ fn walk_top_level<'a>(
                 // temporary was an `int` (#336). Left at the placeholder
                 // only if the declarator names no type at all, which no
                 // parsed `function_definition` does.
-                if let Some(ret_ty) = function_return_type(node, source, program) {
+                let known: std::collections::HashSet<String> =
+                    program.classes.keys().cloned().collect();
+                if let Some(ret_ty) =
+                    crate::collect::function_return_type(node, source, &known)
+                {
                     ctx.method_return_type = ret_ty;
                 }
                 let mut sig_edits = class_tag_edits(node, source, program);

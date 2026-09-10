@@ -77,13 +77,29 @@ const DECLS: &str = "\
 @implementation Holder
 @end
 
+@interface Passer : OZObject
+@end
+@implementation Passer
+/* Hands its argument straight back, so a caller's slot and a hoisted
+   operand temporary are one object -- the shape behind the operand
+   use-after-free. */
+- (Thing *)pass:(Thing *)t
+{
+	return t;
+}
+- (int)count:(Thing *)t
+{
+	return [t tag];
+}
+@end
+
 static Thing *g_global;
 Thing *factory(void);
 void keep(Thing *t);
 ";
 
 fn program(body: &str) -> String {
-    format!("/* oz-pool: Thing=8,Holder=2,Maker=2 */\n{}{}\n{}", PREAMBLE(), DECLS, body)
+    format!("/* oz-pool: Thing=8,Holder=2,Maker=2,Passer=2 */\n{}{}\n{}", PREAMBLE(), DECLS, body)
 }
 
 /// One generated C function, by brace matching.
@@ -465,6 +481,206 @@ void fromKnownClass(Maker *m)
 	Thing *t = [m supply];
 
 	[t tag];
+}
+",
+        ),
+        /* ---- a `+1` reached as an *operand* rather than as a value ----
+         *
+         * Every row below was missing when this matrix was written, and
+         * every one of them was wrong. The row above named "argument to a
+         * plain C function stays borrowed" is what hid them: it passes an
+         * already-owned *local*, so it exercised the value question and
+         * never the operand one. A fresh `+1` in the same position asked
+         * nobody at all. */
+        (
+            Shape {
+                what: "a fresh +1 as a plain C function's argument is released",
+                func: "cArgumentFresh",
+                expect: (1, 0, 1),
+                known_defect: None,
+            },
+            "\
+void cArgumentFresh(void)
+{
+	keep([[Thing alloc] init]);
+}
+",
+        ),
+        (
+            Shape {
+                what: "a slot bound from a borrowed result over a +1 operand is retained",
+                func: "boundFromBorrowed",
+                expect: (1, 1, 2),
+                known_defect: None,
+            },
+            "\
+void boundFromBorrowed(Passer *p)
+{
+	Thing *t = [p pass:[[Thing alloc] init]];
+
+	[t tag];
+}
+",
+        ),
+        (
+            Shape {
+                what: "an int slot over the same operand keeps the tight release, and no retain",
+                func: "boundFromBorrowedInt",
+                expect: (1, 0, 1),
+                known_defect: None,
+            },
+            "\
+void boundFromBorrowedInt(Passer *p)
+{
+	int n = [p count:[[Thing alloc] init]];
+
+	keep(g_global);
+	(void)n;
+}
+",
+        ),
+        (
+            Shape {
+                what: "an if condition's +1 is released",
+                func: "ifCondition",
+                expect: (1, 0, 1),
+                known_defect: None,
+            },
+            "\
+void ifCondition(Passer *p)
+{
+	if ([p count:[[Thing alloc] init]] > 100) {
+		keep(g_global);
+	}
+}
+",
+        ),
+        (
+            Shape {
+                what: "a switch value's +1 is released",
+                func: "switchValue",
+                expect: (1, 0, 1),
+                known_defect: None,
+            },
+            "\
+void switchValue(Passer *p)
+{
+	switch ([p count:[[Thing alloc] init]]) {
+	case 99:
+		keep(g_global);
+		break;
+	default:
+		break;
+	}
+}
+",
+        ),
+        (
+            Shape {
+                what: "a break inside a switch does not release the enclosing local",
+                func: "breakInSwitch",
+                expect: (1, 0, 1),
+                known_defect: None,
+            },
+            "\
+void breakInSwitch(int i)
+{
+	Thing *t = [[Thing alloc] init];
+
+	switch (i) {
+	case 0:
+		break;
+	default:
+		break;
+	}
+	[t tag];
+}
+",
+        ),
+        /* ---- the positions still wrong, asserted wrong ----------------
+         *
+         * The first three are evaluated *more than once*, so a hoisted
+         * temporary would allocate where the source does not; they need
+         * the release inside the expression rather than beside it. The
+         * fourth is evaluated once but declares its name inside the `for`
+         * header, where no scope that could release it can see it -- so
+         * it needs the header rewritten, not wrapped.
+         *
+         * The `+1` is `[m supply]` and not `[[Thing alloc] init]` for a
+         * reason worth keeping. `staticbar` already **refuses** a bare
+         * allocation inside a loop that escapes the iteration, so the
+         * direct spelling of each of these is a hard error and safe.
+         * What it does not see is a factory *call*, whose `+1` is created
+         * inside the callee -- and that is the spelling that reaches the
+         * emitter and leaks. Written with `alloc` these rows failed as
+         * refusals and hid the real hole, which is the vacuous-test trap
+         * this file's header warns about, walked into while writing the
+         * file. */
+        (
+            Shape {
+                what: "a while condition's +1 leaks, once per iteration",
+                func: "whileCondition",
+                expect: (0, 0, 0),
+                known_defect: Some("operand positions evaluated more than once"),
+            },
+            "\
+void whileCondition(Maker *m)
+{
+	while ([[m supply] tag] > 100) {
+		keep(g_global);
+	}
+}
+",
+        ),
+        (
+            Shape {
+                what: "a do-while condition's +1 leaks, once per iteration",
+                func: "doCondition",
+                expect: (0, 0, 0),
+                known_defect: Some("operand positions evaluated more than once"),
+            },
+            "\
+void doCondition(Maker *m)
+{
+	do {
+		keep(g_global);
+	} while ([[m supply] tag] > 100);
+}
+",
+        ),
+        (
+            Shape {
+                what: "a for condition's +1 leaks, once per iteration",
+                func: "forCondition",
+                expect: (0, 0, 0),
+                known_defect: Some("operand positions evaluated more than once"),
+            },
+            "\
+void forCondition(Maker *m)
+{
+	int i;
+
+	for (i = 0; [[m supply] tag] > 100; i++) {
+		keep(g_global);
+	}
+}
+",
+        ),
+        (
+            Shape {
+                what: "a for header's own +1 declaration is never released",
+                func: "forHeaderDecl",
+                expect: (0, 0, 0),
+                known_defect: Some("a for-header declaration is out of every scope's reach"),
+            },
+            "\
+void forHeaderDecl(Maker *m)
+{
+	int i = 0;
+
+	for (Thing *t = [m supply]; i < 1; i++) {
+		[t tag];
+	}
 }
 ",
         ),

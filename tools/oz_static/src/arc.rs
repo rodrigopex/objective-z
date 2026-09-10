@@ -352,6 +352,16 @@ fn return_hands_back_ownership(
         return true;
     }
     let value = value_behind_casts(value, src);
+    /* The returned expression's *evaluation* abandons a `+1` operand and
+     * `emit::render_return_statement` retains the value against it, so
+     * the caller is handed that reference. One predicate, both sides.
+     * Every caller of this function has already established that the
+     * return type is a pointer (`consider_function`'s `returns_pointer`,
+     * `consider_method`'s `contains('*')`), which is the type check
+     * `hoists_owning_operand` leaves to its callers. */
+    if hoists_owning_operand(value, src, program, owning) {
+        return true;
+    }
     if value.kind() != "identifier" {
         return false;
     }
@@ -375,11 +385,153 @@ fn return_hands_back_ownership(
     }) {
         return true;
     }
+    /* A local the emitter retained because evaluating its initialiser
+     * hoisted a `+1` operand holds that reference, so returning it hands
+     * the caller a `+1`. Reported here or the emitter's retain becomes a
+     * leak instead of a fix -- one predicate, both sides, as above. The
+     * pointer check is this caller's own: `hoists_owning_operand` says
+     * nothing about types. */
+    if let Some(decl) = declaring_declarator(body, src, name) {
+        if declares_pointer(decl) {
+            if let Some(init) = declared_initializer(body, src, name) {
+                if hoists_owning_operand(init, src, program, owning) {
+                    return true;
+                }
+            }
+        }
+    }
     /* And where the emitter retains the returned value because its
      * provenance cannot be established, the caller is handed that `+1`
      * and must release it. One predicate, both sides -- see
      * `return_needs_retain`. */
     return_needs_retain(ret, body, src, program, owning)
+}
+
+/// Does *evaluating* this expression create a `+1` reference that only
+/// the slot it is bound to can account for?
+///
+/// Distinct from `is_owning_expr`, which asks about the expression's
+/// **value**. Here the value is borrowed and the `+1` is a side effect of
+/// getting it: `[h take:makeThing()]` hands back whatever `-take:`
+/// returns -- borrowed -- while `makeThing()`'s `+1` is hoisted into a
+/// temporary the statement would otherwise release. When `-take:` hands
+/// its argument straight back, that release frees the object the slot
+/// now names. Measured as a segfault on the host, in both the argument
+/// spelling and the receiver one (`[makeThing() itself]`).
+///
+/// The emitter answers this by retaining the bound value
+/// (`emit::retained_bindings`), which is what ARC emits for a `__strong`
+/// slot and is correct whether or not the value turns out to alias the
+/// temporary: aliased, the retain covers the release; not aliased, the
+/// retain and the scope-exit release cancel on a different object.
+///
+/// **Both sides must call this, not merely agree with it** -- the same
+/// rule `return_needs_retain` records, and for the same reason. The
+/// emitter retaining while the analysis reported the function `+0` was
+/// not hypothetical: `Thing *z = [h take:makeThing()]; return z;` handed
+/// the caller a `+1` that no caller released, turning the use-after-free
+/// into a leak instead of fixing it.
+///
+/// Not folded into `binds_ownership`, deliberately. That predicate is
+/// consulted about expressions whose value may not be an object at all
+/// --  `int m = [h sum:makeThing()];` is this same shape returning an
+/// `int` -- and `emit::owned_locals_of_in` trusts it without a type
+/// check, so a blanket widening would have had a scope release an `int`.
+/// Each caller adds the pointer check its own position needs.
+pub fn hoists_owning_operand(
+    value: Node,
+    src: &str,
+    program: &Program,
+    owning: &OwningMethods,
+) -> bool {
+    if !matches!(value.kind(), "message_expression" | "call_expression") {
+        return false;
+    }
+    /* An expression that is itself `+1` is already accounted for by the
+     * ordinary owning path, and claiming it twice is the leak this
+     * function exists to prevent. */
+    if is_owning_expr(value, src, program, owning) {
+        return false;
+    }
+    let mut found = false;
+    scan_owning_operands(value, src, program, owning, &mut found);
+    found
+}
+
+/// Is there a `+1` operand anywhere in this expression that the statement
+/// will hoist into a temporary?
+///
+/// Mirrors `emit::collect_owning_operands`' two arms -- a send's receiver
+/// and arguments, and a plain C call's arguments -- because it has to
+/// agree with them about which operands get a temporary at all. A
+/// `block_literal` is skipped for the reason it is there: its body is a
+/// separate function that runs later.
+fn scan_owning_operands(
+    node: Node,
+    src: &str,
+    program: &Program,
+    owning: &OwningMethods,
+    found: &mut bool,
+) {
+    if *found || node.kind() == "block_literal" {
+        return;
+    }
+    if node.kind() == "message_expression" {
+        if receiver_owning_value(node, src, program, owning).is_some() {
+            *found = true;
+            return;
+        }
+        for arg in crate::emit::parse_message(node, src).args {
+            if owning_argument_value(arg, src, program, owning).is_some() {
+                *found = true;
+                return;
+            }
+        }
+    }
+    if node.kind() == "call_expression" {
+        if let Some(args) = node.child_by_field_name("arguments") {
+            let mut cursor = args.walk();
+            let arg_nodes: Vec<Node> = args
+                .children(&mut cursor)
+                .filter(|c| !matches!(c.kind(), "(" | ")" | ","))
+                .collect();
+            for arg in arg_nodes {
+                if owning_argument_value(arg, src, program, owning).is_some() {
+                    *found = true;
+                    return;
+                }
+            }
+        }
+    }
+    let mut cursor = node.walk();
+    let children: Vec<Node> = node.children(&mut cursor).collect();
+    for child in children {
+        scan_owning_operands(child, src, program, owning, found);
+    }
+}
+
+/// Does this declaration (or `init_declarator`) declare a **pointer**?
+///
+/// The type check `hoists_owning_operand` leaves to its callers: only a
+/// pointer slot can hold the reference in question, and without this an
+/// `int` local initialised from the same shape would be reported as
+/// owning an object.
+pub fn declares_pointer(node: Node) -> bool {
+    fn walk(node: Node) -> bool {
+        if node.kind() == "pointer_declarator" {
+            return true;
+        }
+        /* Not into a `parenthesized_declarator`: the `*` in
+         * `Thing *(*fp)(void)` belongs to the function pointer, and the
+         * slot itself is not an object. */
+        if node.kind() == "parenthesized_declarator" {
+            return false;
+        }
+        let mut cursor = node.walk();
+        let children: Vec<Node> = node.children(&mut cursor).collect();
+        children.into_iter().any(walk)
+    }
+    walk(node)
 }
 
 /// Must a `return` of this value retain it before the scope's releases run?
@@ -606,6 +758,36 @@ fn declared_initializer<'a>(node: Node<'a>, src: &str, name: &str) -> Option<Nod
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
         if let Some(found) = declared_initializer(child, src, name) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+/// The `init_declarator` that declares `name` under `node`, so a caller
+/// can ask about the *slot* rather than only about its initialiser.
+///
+/// `declared_initializer` answers the same search's other half; the two
+/// share their matching rule on purpose -- a declarator spelled
+/// `*name` has to be recognised as declaring `name`, and getting that
+/// wrong in one and not the other is how a pointer check silently stops
+/// applying.
+fn declaring_declarator<'a>(node: Node<'a>, src: &str, name: &str) -> Option<Node<'a>> {
+    if node.kind() == "init_declarator" {
+        let mut cursor = node.walk();
+        let children: Vec<Node<'a>> = node.children(&mut cursor).collect();
+        let declares = children.iter().any(|c| {
+            matches!(c.kind(), "identifier" | "pointer_declarator")
+                && node_text(*c, src).trim_start_matches('*').trim() == name
+        });
+        if declares {
+            return Some(node);
+        }
+    }
+    let mut cursor = node.walk();
+    let children: Vec<Node<'a>> = node.children(&mut cursor).collect();
+    for child in children {
+        if let Some(found) = declaring_declarator(child, src, name) {
             return Some(found);
         }
     }
