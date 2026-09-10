@@ -632,6 +632,63 @@ defect produced clean ASan output and correct-looking program output. The
 sample that started this printed `Hello, world from object` after
 `Deallocating` and exited 0.
 
+## The ownership audit (#359, #360, #361)
+
+Prompted by the question the fixes for #351 and #352 raised and did not
+answer: those two were found by report and by enumeration, so what else is
+there? Every **sink** a `+1` reference can reach was walked -- 25 shapes --
+and each checked for both failure directions, released-while-reachable and
+never-released.
+
+Nineteen were correct: an ivar store in either spelling, an owned array
+element in the bare spelling, array elements released when the array dies,
+returning the owner, plain/loop/nested locals, local reassignment, a plain
+C call argument, a variadic argument, a property store through the
+synthesized setter, `@synchronized` on an owned local, a collection-literal
+element, a discarded `+1` method result, a discarded C-factory result, a
+direct global assignment, both #351 shapes, and a statically dispatched
+call judged per class. Two escapes are closed by refusal rather than
+tracking -- a block capturing a local is a located error, and so is a
+struct field as a message receiver -- which is as good as tracking them and
+is now pinned, because if either starts being *accepted* it becomes an
+untracked sink.
+
+Four defects, all one family: **three kinds of strong storage exist outside
+an ivar and none was tracked** (#359). A file-scope global assigned from a
+local was a reachable use-after-free -- reading the slot back compiles. The
+same global reassigned leaked the previous value. A `static` local failed
+twice over, destroyed at scope exit and then released again on the next
+call. A C struct field was the same wrong free. Two more sites of the
+ownership-by-spelling cause remain: `self->_arr[i]` (#360), and a `+1`
+returned through protocol dispatch, which leaks (#361) -- in the safe
+direction, and improvable, since `arc::analyze` can ask whether every
+implementor of the selector agrees.
+
+Three things worth keeping from how the audit went wrong before it went
+right:
+
+- **The measuring tool failed first.** The extractor that pulled one
+  function out of the generated C stopped at the first `}` in column zero,
+  which is not the end of any function containing a nested block -- so
+  `@synchronized` on an owned local looked like a leak. It is balanced, and
+  always was. A false finding from a broken instrument reads exactly like a
+  real one.
+- **Two claims about ARC were wrong from memory and right from the AST.**
+  Modern Clang permits `__strong` members in C structs (non-trivial C
+  structs), and a `static` local is `__strong` with static storage
+  duration. Both were checked by dumping the AST for the shape rather than
+  recalled.
+- **The live application was not affected, and only checking showed why.**
+  `px-keyboard` has five file-scope object globals, all singletons, and
+  every one assigns the `+1` *directly*; the defect needs the reference to
+  pass through a local first.
+
+The audit is now `tools/oz_static/tests/ownership_matrix.rs`, asserting the
+refcount shape of every sink, with the two remaining defects asserted to
+*still* be defective the way `KNOWN_CC_FAILURES` is -- so fixing one fails
+the test and forces the list to change, and everything not listed is
+believed correct rather than merely unexamined.
+
 ## Standing design rules
 
 - **Never silently degrade.** Anything outside the supported subset is a hard,
