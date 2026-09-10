@@ -59,22 +59,22 @@ void BoxedTest_run(struct BoxedTest *self)
 {
 	int val = 7;
 	/* _fromVar = @(val); */
-	struct OZObject *_oz_prev_L1120_C2_1 = (struct OZObject *)(self->_fromVar);
-	(self->_fromVar = OZQ31_fixedWithInt32__cls((val)), oz_static_release(_oz_prev_L1120_C2_1));
+	struct OZObject *_oz_prev_L1117_C2_1 = (struct OZObject *)(self->_fromVar);
+	(self->_fromVar = OZQ31_fixedWithInt32__cls((val)), oz_static_release(_oz_prev_L1117_C2_1));
 	/* _fromExpr = @(val + 3); */
-	struct OZObject *_oz_prev_L1121_C2_2 = (struct OZObject *)(self->_fromExpr);
-	(self->_fromExpr = OZQ31_fixedWithInt32__cls((val + 3)), oz_static_release(_oz_prev_L1121_C2_2));
+	struct OZObject *_oz_prev_L1118_C2_2 = (struct OZObject *)(self->_fromExpr);
+	(self->_fromExpr = OZQ31_fixedWithInt32__cls((val + 3)), oz_static_release(_oz_prev_L1118_C2_2));
 	/* _fromCall = @(triple(val)); */
-	struct OZObject *_oz_prev_L1122_C2_3 = (struct OZObject *)(self->_fromCall);
-	(self->_fromCall = OZQ31_fixedWithInt32__cls((triple(val))), oz_static_release(_oz_prev_L1122_C2_3));
+	struct OZObject *_oz_prev_L1119_C2_3 = (struct OZObject *)(self->_fromCall);
+	(self->_fromCall = OZQ31_fixedWithInt32__cls((triple(val))), oz_static_release(_oz_prev_L1119_C2_3));
 	float f = 2.5f;
 	/* _fromFloat = @(f); */
-	struct OZObject *_oz_prev_L1124_C2_4 = (struct OZObject *)(self->_fromFloat);
-	(self->_fromFloat = OZQ31_fixedWithFloat__cls((f)), oz_static_release(_oz_prev_L1124_C2_4));
+	struct OZObject *_oz_prev_L1121_C2_4 = (struct OZObject *)(self->_fromFloat);
+	(self->_fromFloat = OZQ31_fixedWithFloat__cls((f)), oz_static_release(_oz_prev_L1121_C2_4));
 	unsigned int u = 1000;
 	/* _fromUint = @(u); */
-	struct OZObject *_oz_prev_L1126_C2_5 = (struct OZObject *)(self->_fromUint);
-	(self->_fromUint = OZQ31_fixedWithInt32__cls((u)), oz_static_release(_oz_prev_L1126_C2_5));
+	struct OZObject *_oz_prev_L1123_C2_5 = (struct OZObject *)(self->_fromUint);
+	(self->_fromUint = OZQ31_fixedWithInt32__cls((u)), oz_static_release(_oz_prev_L1123_C2_5));
 }
 
 /* - (OZQ31 *)fromVar */

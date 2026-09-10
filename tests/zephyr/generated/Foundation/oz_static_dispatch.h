@@ -57,7 +57,6 @@ int _oz_get_log_precision(void);
 struct OZObject {
 	struct oz_metadata _meta; /* synthesized: class_id, and the deallocating/heap/immortal flags */
 	oz_atomic_t oz_refcount; /* synthesized: retain count */
-	int _refcount;
 };
 struct OZObject * OZObject_alloc_cls(void);
 struct OZObject * OZObject_allocWithHeap__cls(void * heap);

@@ -58,9 +58,6 @@ unsigned int __objc_refcount_get(id obj);
 /* =============================================================================
  * __attribute__((objc_root_class))
  * @interface OZObject <ObjectProtocol>
- * {
- * 	int _refcount;
- * }
  * ========================================================================== */
 /* + (instancetype)alloc; */
 struct OZObject * OZObject_alloc_cls(void);
