@@ -358,46 +358,9 @@ jobs:
       - name: Install Zephyr SDK (with LLVM)
         run: .github/install-zephyr-sdk.sh
 
-      # `actions/cache` rejects any path containing `..` -- "Invalid
-      # pattern '../.west'. Relative pathing '.' and '..' is not allowed"
-      # -- and it rejects it as a *warning* in the post step, so the
-      # action still reports success and caches nothing. Measured that
-      # way: the first attempt at this looked green and saved no entry at
-      # all. So the workspace root is resolved to an absolute path first.
-      #
-      # It is the parent of the checkout, because `west.yml` says
-      # `self: path: objective-z` -- the manifest repo is a subdirectory
-      # of the workspace, which is why every job reaches Zephyr as
-      # `../zephyr`.
-      - name: Locate the west workspace root
-        run: echo "WEST_ROOT=$(dirname "$GITHUB_WORKSPACE")" >> "$GITHUB_ENV"
-
-      - name: Cache the west workspace
-        uses: actions/cache@v4
-        with:
-          path: |
-            ${{ env.WEST_ROOT }}/.west
-            ${{ env.WEST_ROOT }}/zephyr
-            ${{ env.WEST_ROOT }}/modules
-          key: west-${{ hashFiles('west.yml') }}
-
       - name: Initialize workspace
         run: |
-          # Idempotent: `west init` fails outright on an existing
-          # workspace, and the cache above restores one. `west update`
-          # still runs, and is quick when every project is already at the
-          # manifest revision -- it is what makes a restored cache
-          # correct rather than merely fast.
-          #
-          # The echo is not decoration. A cache that stops working shows
-          # up as nothing worse than a slower job, which is easy to miss
-          # for months; this makes the log say which path was taken.
-          if [ -d ../.west ]; then
-            echo "west workspace restored from cache"
-          else
-            echo "west workspace not cached; cloning"
-            west init -l .
-          fi
+          west init -l .
           west update --fetch-opt=--depth=1
 
       - name: Install Zephyr deps
@@ -511,46 +474,9 @@ jobs:
       - name: Install Zephyr SDK (with LLVM)
         run: .github/install-zephyr-sdk.sh
 
-      # `actions/cache` rejects any path containing `..` -- "Invalid
-      # pattern '../.west'. Relative pathing '.' and '..' is not allowed"
-      # -- and it rejects it as a *warning* in the post step, so the
-      # action still reports success and caches nothing. Measured that
-      # way: the first attempt at this looked green and saved no entry at
-      # all. So the workspace root is resolved to an absolute path first.
-      #
-      # It is the parent of the checkout, because `west.yml` says
-      # `self: path: objective-z` -- the manifest repo is a subdirectory
-      # of the workspace, which is why every job reaches Zephyr as
-      # `../zephyr`.
-      - name: Locate the west workspace root
-        run: echo "WEST_ROOT=$(dirname "$GITHUB_WORKSPACE")" >> "$GITHUB_ENV"
-
-      - name: Cache the west workspace
-        uses: actions/cache@v4
-        with:
-          path: |
-            ${{ env.WEST_ROOT }}/.west
-            ${{ env.WEST_ROOT }}/zephyr
-            ${{ env.WEST_ROOT }}/modules
-          key: west-${{ hashFiles('west.yml') }}
-
       - name: Initialize workspace
         run: |
-          # Idempotent: `west init` fails outright on an existing
-          # workspace, and the cache above restores one. `west update`
-          # still runs, and is quick when every project is already at the
-          # manifest revision -- it is what makes a restored cache
-          # correct rather than merely fast.
-          #
-          # The echo is not decoration. A cache that stops working shows
-          # up as nothing worse than a slower job, which is easy to miss
-          # for months; this makes the log say which path was taken.
-          if [ -d ../.west ]; then
-            echo "west workspace restored from cache"
-          else
-            echo "west workspace not cached; cloning"
-            west init -l .
-          fi
+          west init -l .
           west update --fetch-opt=--depth=1
 
       - name: Install Zephyr deps
@@ -615,46 +541,9 @@ jobs:
       - name: Install Zephyr SDK (with LLVM)
         run: .github/install-zephyr-sdk.sh
 
-      # `actions/cache` rejects any path containing `..` -- "Invalid
-      # pattern '../.west'. Relative pathing '.' and '..' is not allowed"
-      # -- and it rejects it as a *warning* in the post step, so the
-      # action still reports success and caches nothing. Measured that
-      # way: the first attempt at this looked green and saved no entry at
-      # all. So the workspace root is resolved to an absolute path first.
-      #
-      # It is the parent of the checkout, because `west.yml` says
-      # `self: path: objective-z` -- the manifest repo is a subdirectory
-      # of the workspace, which is why every job reaches Zephyr as
-      # `../zephyr`.
-      - name: Locate the west workspace root
-        run: echo "WEST_ROOT=$(dirname "$GITHUB_WORKSPACE")" >> "$GITHUB_ENV"
-
-      - name: Cache the west workspace
-        uses: actions/cache@v4
-        with:
-          path: |
-            ${{ env.WEST_ROOT }}/.west
-            ${{ env.WEST_ROOT }}/zephyr
-            ${{ env.WEST_ROOT }}/modules
-          key: west-${{ hashFiles('west.yml') }}
-
       - name: Initialize workspace
         run: |
-          # Idempotent: `west init` fails outright on an existing
-          # workspace, and the cache above restores one. `west update`
-          # still runs, and is quick when every project is already at the
-          # manifest revision -- it is what makes a restored cache
-          # correct rather than merely fast.
-          #
-          # The echo is not decoration. A cache that stops working shows
-          # up as nothing worse than a slower job, which is easy to miss
-          # for months; this makes the log say which path was taken.
-          if [ -d ../.west ]; then
-            echo "west workspace restored from cache"
-          else
-            echo "west workspace not cached; cloning"
-            west init -l .
-          fi
+          west init -l .
           west update --fetch-opt=--depth=1
 
       - name: Install Zephyr deps
@@ -710,46 +599,9 @@ jobs:
       - name: Install Zephyr SDK (with LLVM)
         run: .github/install-zephyr-sdk.sh
 
-      # `actions/cache` rejects any path containing `..` -- "Invalid
-      # pattern '../.west'. Relative pathing '.' and '..' is not allowed"
-      # -- and it rejects it as a *warning* in the post step, so the
-      # action still reports success and caches nothing. Measured that
-      # way: the first attempt at this looked green and saved no entry at
-      # all. So the workspace root is resolved to an absolute path first.
-      #
-      # It is the parent of the checkout, because `west.yml` says
-      # `self: path: objective-z` -- the manifest repo is a subdirectory
-      # of the workspace, which is why every job reaches Zephyr as
-      # `../zephyr`.
-      - name: Locate the west workspace root
-        run: echo "WEST_ROOT=$(dirname "$GITHUB_WORKSPACE")" >> "$GITHUB_ENV"
-
-      - name: Cache the west workspace
-        uses: actions/cache@v4
-        with:
-          path: |
-            ${{ env.WEST_ROOT }}/.west
-            ${{ env.WEST_ROOT }}/zephyr
-            ${{ env.WEST_ROOT }}/modules
-          key: west-${{ hashFiles('west.yml') }}
-
       - name: Initialize Zephyr workspace
         run: |
-          # Idempotent: `west init` fails outright on an existing
-          # workspace, and the cache above restores one. `west update`
-          # still runs, and is quick when every project is already at the
-          # manifest revision -- it is what makes a restored cache
-          # correct rather than merely fast.
-          #
-          # The echo is not decoration. A cache that stops working shows
-          # up as nothing worse than a slower job, which is easy to miss
-          # for months; this makes the log say which path was taken.
-          if [ -d ../.west ]; then
-            echo "west workspace restored from cache"
-          else
-            echo "west workspace not cached; cloning"
-            west init -l .
-          fi
+          west init -l .
           west update --narrow --fetch-opt=--depth=1
 
       - name: Install Zephyr Python deps
