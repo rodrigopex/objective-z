@@ -553,7 +553,7 @@ pub fn ozarray_src() -> String {
 /// logic already present in the source, unrelated to the object's own
 /// alloc/free machinery oz_static synthesizes -- see #199 for that
 /// separate, Zephyr-only concern). Subclasses `OZString`
-/// (`common::ozstring_src`), inheriting `_data`/`_length`/`_hash` and
+/// (`common::ozstring_src`), inheriting `_data`/`_length` and
 /// overriding `-dealloc` to free `_data` (correct without an explicit
 /// `[super dealloc]`: `OZString` has none of its own to chain to -- only
 /// boxed literals ever produce an `OZString` instance in this port, and
