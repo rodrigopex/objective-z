@@ -124,6 +124,19 @@ pub struct Program {
     /// caller's local holding one must be released at scope exit -- see
     /// `arc`. Empty until `lib::transpile*` fills it in.
     pub owning_methods: crate::arc::OwningMethods,
+    /// Every top-level C function's declared return type, by name, in the
+    /// C spelling the output uses (`Thing *` -> `struct Thing *`).
+    ///
+    /// Collected because a *call result* is a legitimate message receiver
+    /// and had no type at all: `render_expr` had no `call_expression` arm,
+    /// so `[makeThing() poke]` was refused while
+    /// `Thing *t = makeThing(); [t poke];` compiled (#355). See
+    /// `collect::function_return_types`, which also explains why
+    /// prototypes count.
+    ///
+    /// A fact about the source rather than an option, unlike `heap_support`
+    /// and its neighbours below.
+    pub function_return_types: HashMap<String, String>,
     /// Ownership facts read from a Clang AST dump, when one was supplied
     /// (`--ast`). Clang resolves types; tree-sitter does not, so this is the
     /// only authority on whether an `id`-typed ivar is an object the class

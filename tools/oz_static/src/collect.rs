@@ -941,12 +941,14 @@ pub fn collect(source: &str) -> (Program, Vec<crate::model::Diagnostic>) {
     reject_inline_anonymous_aggregates(root, source, &mut diagnostics);
 
     let reflection = prescan_reflection(root, source);
+    let function_return_types = function_return_types(root, source, &known_classes);
 
     (
         Program {
             classes,
             class_order,
             protocols,
+            function_return_types,
             owning_methods: Default::default(),
             ast: None,
             heap_support: false,
@@ -961,6 +963,188 @@ pub fn collect(source: &str) -> (Program, Vec<crate::model::Diagnostic>) {
         },
         diagnostics,
     )
+}
+
+/// A top-level `function_definition`'s C return type, rendered the way
+/// every other generated type is -- so a class name arrives with its
+/// `struct` tag (`Thing *` -> `struct Thing *`), an `id` lowers to
+/// `void *`, and a `struct`/`enum` keeps its keyword.
+///
+/// `render_method_definition` records the method equivalent into
+/// `EmitCtx::method_return_type`; this is the free-function half, and its
+/// absence was #336: the `function_definition` arm built a fresh `EmitCtx`
+/// and left the field at `EmitCtx::new`'s placeholder, so the temporary
+/// `render_return_statement` synthesizes on the cleanup path came out
+/// `int` whatever the function actually returned. A returned pointer was
+/// then a constraint violation on any target and a truncation on a 64-bit
+/// one, and a `double` was silently rounded.
+///
+/// Read off the function's *own* declarator rather than guessed from the
+/// returned expression, which is the only thing that can be right for
+/// `return 42;` in a `size_t` function -- there is nothing in the
+/// expression to read.
+///
+/// The type text comes from the whole `function_definition` (the first
+/// type specifier in child order is the return type, and every later one
+/// is ignored -- see `collect::extract_type_and_stars`); the stars do not,
+/// because a `*` inside the `function_declarator` belongs to a parameter.
+/// `declared_block_pointer_type` splits the two for the same reason.
+pub(crate) fn function_return_type(
+    node: Node,
+    src: &str,
+    known: &HashSet<String>,
+) -> Option<String> {
+    let declarator = node.child_by_field_name("declarator")?;
+    let (type_text, _) = extract_type_and_stars(node, src);
+    if type_text.is_empty() {
+        return None;
+    }
+    Some(render_type(&type_text, declarator_return_stars(declarator), known))
+}
+
+/// `*`s belonging to the declared thing itself, i.e. those before the
+/// `function_declarator` that carries the parameter list. A star past it
+/// is a parameter's, and a `block_literal` is a whole nested signature.
+pub(crate) fn declarator_return_stars(node: Node) -> usize {
+    if node.kind() == "function_declarator" || node.kind() == "block_literal" {
+        return 0;
+    }
+    let mut cursor = node.walk();
+    let children: Vec<Node> = node.children(&mut cursor).collect();
+    children
+        .into_iter()
+        .map(|c| if c.kind() == "*" { 1 } else { declarator_return_stars(c) })
+        .sum()
+}
+
+/// Every top-level C function's declared return type, by name, rendered
+/// as the C the output will use (`Thing *` -> `struct Thing *`).
+///
+/// This is what lets a **call result be a message receiver** (#355).
+/// Without it `render_expr` had no `call_expression` arm at all, so
+/// `makeThing()` fell to the default arm and was typed `id` -- and the
+/// send was then refused, or worse, silently resolved against the root
+/// class, because `render_owning_operand_statement` reads a
+/// non-pointer type as "some object, cast it to the root pointer". So
+/// `[makeThing() poke]` reported `class 'OZObject' has no method
+/// matching 'poke'` -- naming a class the source never mentions -- while
+/// `Thing *t = makeThing(); [t poke];` compiled. The information was
+/// there in the callee's own signature; nothing read it.
+///
+/// **Prototypes are recorded as well as definitions**, and deliberately:
+/// a function declared in a header and defined in a plain `.c` compiled
+/// alongside has no `function_definition` in this translation unit, and
+/// its declared return type is no less definite for that. A definition
+/// wins if both are seen, though a program where they disagree does not
+/// compile anyway.
+///
+/// What is *not* recorded is a call through anything but a plain
+/// identifier -- a function pointer, a block variable, a member. Those
+/// keep the old `id`, so the only behaviour that changes is the one the
+/// declared type answers.
+pub(crate) fn function_return_types(
+    root: Node,
+    src: &str,
+    known: &HashSet<String>,
+) -> HashMap<String, String> {
+    let mut out: HashMap<String, String> = HashMap::new();
+    let mut from_definition: HashSet<String> = HashSet::new();
+    let mut cursor = root.walk();
+    for node in root.children(&mut cursor) {
+        let is_definition = node.kind() == "function_definition";
+        if !is_definition && node.kind() != "declaration" {
+            continue;
+        }
+        /* A `declaration` covers far more than a prototype -- every
+         * file-scope variable is one -- so the presence of a
+         * `function_declarator` is what says this declares a function.
+         * `declares_function` looks only as deep as the declarator
+         * chain, so a variable whose *type* mentions a function
+         * (a function pointer) is not mistaken for one. */
+        if !is_definition && !declares_function(node, src) {
+            continue;
+        }
+        let Some(name) = function_declared_name(node, src) else {
+            continue;
+        };
+        if !is_definition && from_definition.contains(&name) {
+            continue;
+        }
+        let Some(ty) = function_return_type(node, src, known) else {
+            continue;
+        };
+        if is_definition {
+            from_definition.insert(name.clone());
+        }
+        out.insert(name, ty);
+    }
+    out
+}
+
+/// Does this `declaration` declare a function -- i.e. is its outermost
+/// declarator a `function_declarator`, however many pointer layers the
+/// return type wraps it in?
+///
+/// A function *pointer* variable (`Thing *(*fp)(void);`) is not one: its
+/// `function_declarator` sits inside a `parenthesized_declarator`, which
+/// this stops at. That matters because such a variable's *call* result is
+/// exactly what `function_return_types` declines to answer for.
+fn declares_function(decl: Node, src: &str) -> bool {
+    fn walk(node: Node, src: &str) -> bool {
+        match node.kind() {
+            "function_declarator" => true,
+            "parenthesized_declarator" => false,
+            "pointer_declarator" | "init_declarator" => {
+                let mut cursor = node.walk();
+                let children: Vec<Node> = node.children(&mut cursor).collect();
+                children.into_iter().any(|child| walk(child, src))
+            }
+            _ => false,
+        }
+    }
+    let mut cursor = decl.walk();
+    let children: Vec<Node> = decl.children(&mut cursor).collect();
+    children.into_iter().any(|child| walk(child, src))
+}
+
+/// The name a `function_definition` or function `declaration` gives its
+/// function, reached through however many declarator layers its return
+/// type needs.
+///
+/// The identifier taken is the `function_declarator`'s own, not the first
+/// one found anywhere beneath: a parameter is an identifier too, and
+/// `Thing *f(int n)` would otherwise answer `n` about half the time
+/// depending on child order.
+fn function_declared_name(node: Node, src: &str) -> Option<String> {
+    fn walk(node: Node, src: &str) -> Option<String> {
+        if node.kind() == "function_declarator" {
+            let mut cursor = node.walk();
+            let children: Vec<Node> = node.children(&mut cursor).collect();
+            for child in &children {
+                if child.kind() == "identifier" {
+                    return Some(node_text(*child, src).to_string());
+                }
+            }
+            for child in &children {
+                if child.kind() == "parameter_list" {
+                    continue;
+                }
+                if let Some(found) = walk(*child, src) {
+                    return Some(found);
+                }
+            }
+            return None;
+        }
+        let mut cursor = node.walk();
+        let children: Vec<Node> = node.children(&mut cursor).collect();
+        for child in children {
+            if let Some(found) = walk(child, src) {
+                return Some(found);
+            }
+        }
+        None
+    }
+    walk(node, src)
 }
 
 /// The reflection facts the dispatch tables have to know before they are

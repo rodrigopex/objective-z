@@ -234,10 +234,11 @@ int main(void)
     assert_eq!(stdout, "iter=0 per=4\nouter=9 v=3\n");
 }
 
-/// `break` is unaffected. It uses `releases_up_to_loop`, which stops at
-/// the nearest loop body and was already correct -- the block mark must
-/// not reach it, or a `break` would start releasing the block's locals
-/// while the block goes on running.
+/// `break` is unaffected. It uses `releases_up_to_jump_target`, which
+/// releases only the scopes opened inside the construct being left and
+/// was already correct -- the block mark must not reach it, or a `break`
+/// would start releasing the block's locals while the block goes on
+/// running.
 #[test]
 fn a_break_inside_a_blocks_loop_still_stops_at_the_loop() {
     let src = program(
