@@ -7,11 +7,11 @@
  */
 #pragma once
 #import "OZObject.h"
-#import "Iterator+Protocol.h"
+#import "OZIterator+Protocol.h"
 
 struct NSFastEnumerationState;
 
-@interface OZDictionary<__covariant KeyType, __covariant ObjectType> : OZObject <IteratorProtocol> {
+@interface OZDictionary<__covariant KeyType, __covariant ObjectType> : OZObject <OZIteratorProtocol> {
 	__unsafe_unretained id *_keys;
 	__unsafe_unretained id *_values;
 	size_t _count;

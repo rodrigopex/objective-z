@@ -76,7 +76,7 @@ fn extract_protocol_list(node: Node, src: &str) -> Vec<String> {
 
 /// A `class_interface` with both its own generic parameter list *and*
 /// protocol conformance (`@interface OZArray<__covariant ObjectType> :
-/// OZObject <IteratorProtocol>`) has TWO `parameterized_arguments`
+/// OZObject <OZIteratorProtocol>`) has TWO `parameterized_arguments`
 /// children -- the class's own `<...>` right after its name, and the
 /// conformance list `<...>` after the superclass. `child_by_kind` picks
 /// the *first* one unconditionally, which is only ever correct when a

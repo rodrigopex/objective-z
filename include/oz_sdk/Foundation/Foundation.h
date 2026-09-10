@@ -7,7 +7,7 @@
  */
 #pragma once
 
-/* OZObject.h first, and it is what brings in `Object+Protocol.h`: that
+/* OZObject.h first, and it is what brings in `OZObject+Protocol.h`: that
  * header needs `BOOL`, which OZObject.h defines just before importing it
  * (#307). Importing it here, ahead of OZObject.h, trips its own `#error`. */
 #import "OZObject.h"
@@ -21,7 +21,7 @@
 #import "OZMacro.h"
 #import "OZLog.h"
 #import "OZSpinLock.h"
-#import "Singleton+Protocol.h"
+#import "OZSingleton+Protocol.h"
 
 /*
  * `oz_assert` and friends, as `static inline` stubs. Not a Foundation class,

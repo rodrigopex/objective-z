@@ -1,6 +1,6 @@
 /*
  * Adapted from: clang/test/Rewriter/objc-modern-fast-enumeration.mm
- * Verifies for-in lowering to IteratorProtocol produces correct iteration.
+ * Verifies for-in lowering to OZIteratorProtocol produces correct iteration.
  */
 #include "unity.h"
 #include "oz_dispatch.h"

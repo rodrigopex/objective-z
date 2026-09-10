@@ -29,7 +29,7 @@ use common::{
     ozq31_src, ozstring_src, singleton_protocol_src,
 };
 
-/// A class conforming to `SingletonProtocol`, in the shape the three real
+/// A class conforming to `OZSingletonProtocol`, in the shape the three real
 /// singletons use (`samples/arc_demo`'s AppConfig, `samples/heap_alloc`'s
 /// App, `samples/zbus_service`'s TemperatureService): built once and handed
 /// out by `+sharedInstance`.
@@ -46,7 +46,7 @@ fn singleton_decls() -> String {
         "{}\n{}",
         singleton_protocol_src(),
         "\
-@interface Config : OZObject <SingletonProtocol> {
+@interface Config : OZObject <OZSingletonProtocol> {
 	int _rate;
 }
 + (instancetype)sharedInstance;
@@ -392,7 +392,7 @@ fn release_checks_immortal_before_decrementing() {
     );
 }
 
-/// A singleton is immortal too (#228). `Singleton+Protocol.h` states the
+/// A singleton is immortal too (#228). `OZSingleton+Protocol.h` states the
 /// contract -- "Singleton objects are immortal, they are never deallocated"
 /// -- but until now nothing marked them, so it held only because no code
 /// happened to release one. Releasing one must not run `-dealloc`, and must
@@ -456,7 +456,7 @@ fn only_singleton_conformers_are_marked_immortal() {
     let config = alloc_body("Config");
     assert!(
         config.contains("_meta.immortal = 1"),
-        "a SingletonProtocol conformer must be marked immortal; got:\n{}",
+        "a OZSingletonProtocol conformer must be marked immortal; got:\n{}",
         config
     );
     let plain = alloc_body("Plain");

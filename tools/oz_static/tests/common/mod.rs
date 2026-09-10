@@ -566,8 +566,8 @@ fn remove_method_body(src: &str, signature_marker: &str) -> String {
     out.join("\n") + "\n"
 }
 
-/// `ObjectProtocol`, verbatim from
-/// `include/oz_sdk/Foundation/Object+Protocol.h` -- the protocol
+/// `OZObjectProtocol`, verbatim from
+/// `include/oz_sdk/Foundation/OZObject+Protocol.h` -- the protocol
 /// `OZObject` adopts and that every other protocol should adopt in turn
 /// (#307).
 ///
@@ -575,7 +575,7 @@ fn remove_method_body(src: &str, signature_marker: &str) -> String {
 /// point `OZObject.h` imports it.
 pub fn object_protocol_src() -> String {
     strip_import_and_pragma_lines(include_str!(
-        "../../../../include/oz_sdk/Foundation/Object+Protocol.h"
+        "../../../../include/oz_sdk/Foundation/OZObject+Protocol.h"
     ))
 }
 
@@ -585,7 +585,7 @@ pub fn object_protocol_src() -> String {
 /// its one `#import` of a *Foundation* header resolved in place.
 ///
 /// That import cannot just be dropped the way the others are. `OZObject`
-/// declares `<ObjectProtocol>`, so the protocol has to be declared before
+/// declares `<OZObjectProtocol>`, so the protocol has to be declared before
 /// the `@interface` that adopts it -- and it has to come *after* the
 /// `BOOL` typedef its own methods return. Splicing at the import site is
 /// the only position satisfying both, and it is exactly what the
@@ -594,7 +594,7 @@ pub fn ozobject_src() -> String {
     let header = include_str!("../../../../include/oz_sdk/Foundation/OZObject.h");
     let spliced = replace_line_containing(
         header,
-        "#import \"Object+Protocol.h\"",
+        "#import \"OZObject+Protocol.h\"",
         &object_protocol_src(),
     );
     assemble(&spliced, include_str!("../../../../src/OZObject.m"))
@@ -661,7 +661,7 @@ pub fn ozdefer_src() -> String {
 
 /// OZArray, the immutable-array Foundation class -- assembled from
 /// `include/oz_sdk/Foundation/OZArray.h` / `src/OZArray.m`. `-iter`/
-/// `-next` (and `<IteratorProtocol>` conformance, and the `_iterIdx`
+/// `-next` (and `<OZIteratorProtocol>` conformance, and the `_iterIdx`
 /// ivar they need) are kept now -- they used to be cut here too, until
 /// for-in support needed them for real (see `emit::render_forin_statement`)
 /// and the dynamic-dispatch generalization (ported from the Python
@@ -705,7 +705,7 @@ pub fn ozdefer_src() -> String {
 /// Requires `OZObject` (`common::ozobject_src`) in scope as the root
 /// class; a boxed array literal's elements typically also need `OZQ31`
 /// (`common::ozq31_src`) in scope, since `@(42)` desugars to it. For-in
-/// over an `OZArray` also needs `IteratorProtocol`
+/// over an `OZArray` also needs `OZIteratorProtocol`
 /// (`common::iterator_protocol_src`) declared somewhere in scope.
 pub fn ozarray_src() -> String {
     let mut header = include_str!("../../../../include/oz_sdk/Foundation/OZArray.h").to_string();
@@ -742,7 +742,7 @@ pub fn ozmutablestring_src() -> String {
 
 /// OZDictionary, the immutable-dictionary Foundation class -- assembled
 /// from `include/oz_sdk/Foundation/OZDictionary.h` / `src/OZDictionary.m`.
-/// `-iter`/`-next`/`<IteratorProtocol>`/`_iterIdx` are kept (see
+/// `-iter`/`-next`/`<OZIteratorProtocol>`/`_iterIdx` are kept (see
 /// `ozarray_src`'s doc comment -- same reasoning, now that for-in
 /// support exists), and so is the `iterIdx` *property* (distinct from
 /// the ivar), now that OZ-095 added `@property`/`@synthesize` support.
@@ -767,7 +767,7 @@ pub fn ozmutablestring_src() -> String {
 /// class; a boxed dictionary literal's keys/values typically also need
 /// `OZString` (`common::ozstring_src`) and `OZQ31` (`common::ozq31_src`)
 /// in scope, since `@"..."` and `@(42)` desugar to them. For-in over an
-/// `OZDictionary` also needs `IteratorProtocol`
+/// `OZDictionary` also needs `OZIteratorProtocol`
 /// (`common::iterator_protocol_src`) declared somewhere in scope.
 pub fn ozdictionary_src() -> String {
     let mut header = include_str!("../../../../include/oz_sdk/Foundation/OZDictionary.h").to_string();
@@ -782,8 +782,8 @@ pub fn ozdictionary_src() -> String {
     assemble(&header, &implementation)
 }
 
-/// `IteratorProtocol`, the for-in protocol -- assembled from the real
-/// `include/oz_sdk/Foundation/Iterator+Protocol.h` verbatim, no cuts at
+/// `OZIteratorProtocol`, the for-in protocol -- assembled from the real
+/// `include/oz_sdk/Foundation/OZIterator+Protocol.h` verbatim, no cuts at
 /// all needed: its `@property (nonatomic, readonly) uint16_t iterIdx;`
 /// (a *protocol* requirement, not a class one) never reaches the static
 /// bar or a collision with the class-level `@property` ban -- protocol
@@ -799,21 +799,21 @@ pub fn ozdictionary_src() -> String {
 /// conformance to it isn't even checked for that (see
 /// `Program::all_protocol_methods`'s doc comment: dispatch generation
 /// only cares "who implements this selector," not who formally
-/// conforms) -- so a class doesn't strictly need `<IteratorProtocol>`
+/// conforms) -- so a class doesn't strictly need `<OZIteratorProtocol>`
 /// in its own `@interface` line for for-in to work against it, though
 /// `ozarray_src`/`ozdictionary_src` still declare it for the free
 /// conformance validation (#192) and because the real headers do too.
 pub fn iterator_protocol_src() -> String {
-    strip_import_and_pragma_lines(include_str!("../../../../include/oz_sdk/Foundation/Iterator+Protocol.h"))
+    strip_import_and_pragma_lines(include_str!("../../../../include/oz_sdk/Foundation/OZIterator+Protocol.h"))
 }
 
-/// `SingletonProtocol`, verbatim from
-/// `include/oz_sdk/Foundation/Singleton+Protocol.h`. Conformance to it is
+/// `OZSingletonProtocol`, verbatim from
+/// `include/oz_sdk/Foundation/OZSingleton+Protocol.h`. Conformance to it is
 /// what marks a class's instances immortal (#228), so the tests must use
 /// the real declaration rather than a look-alike -- a hand-copied protocol
 /// of the same name would keep passing if the header were renamed.
 pub fn singleton_protocol_src() -> String {
-    strip_import_and_pragma_lines(include_str!("../../../../include/oz_sdk/Foundation/Singleton+Protocol.h"))
+    strip_import_and_pragma_lines(include_str!("../../../../include/oz_sdk/Foundation/OZSingleton+Protocol.h"))
 }
 
 /// OZHeap, the `allocWithHeap:` backing store -- assembled from

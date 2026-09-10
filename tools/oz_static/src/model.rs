@@ -302,7 +302,7 @@ impl Program {
     /// Objective-C and here. `render_interface`'s conformance check read
     /// only the class's own `methods` until #307, which made the base
     /// protocol every other protocol should adopt impossible to adopt --
-    /// `OZArray <IteratorProtocol>` was told it "doesn't implement
+    /// `OZArray <OZIteratorProtocol>` was told it "doesn't implement
     /// 'isEqual:'" for nine methods it inherits from `OZObject` and never
     /// needed to restate.
     pub fn implements_selector(

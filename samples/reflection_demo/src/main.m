@@ -18,7 +18,7 @@
 
 #import <Foundation/Foundation.h>
 
-/* `<ObjectProtocol>` is what lets a receiver *typed as this protocol* be
+/* `<OZObjectProtocol>` is what lets a receiver *typed as this protocol* be
  * introspected at all (#307). Clang resolves a message to an `id<P>`
  * against `P` and its super-protocols and nowhere else, so without the
  * adoption the `switchable` receiver below is
@@ -28,7 +28,7 @@
  * requires nothing of `Light`: every method it declares is defined once,
  * on `OZObject`, and an inherited implementation satisfies a protocol
  * requirement. */
-@protocol Switchable <ObjectProtocol>
+@protocol Switchable <OZObjectProtocol>
 - (void)toggle;
 @end
 

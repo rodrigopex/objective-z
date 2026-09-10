@@ -19,8 +19,8 @@
 // Uses the real `OZObject` (`common::ozobject_src`) as the root class,
 // `OZQ31`/`OZString` (`common::ozq31_src`/`common::ozstring_src`) for
 // the boxed elements, `OZArray` (`common::ozarray_src`) as the
-// collection, and `IteratorProtocol` (`common::iterator_protocol_src`)
-// -- declaring it (not formal `<IteratorProtocol>` conformance) is what
+// collection, and `OZIteratorProtocol` (`common::iterator_protocol_src`)
+// -- declaring it (not formal `<OZIteratorProtocol>` conformance) is what
 // makes `-iter`/`-next` dynamically dispatchable at all.
 
 mod common;

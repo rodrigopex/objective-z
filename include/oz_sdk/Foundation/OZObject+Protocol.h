@@ -1,6 +1,6 @@
 /**
- * @file Object+Protocol.h
- * @brief ObjectProtocol -- what every OZ object answers to.
+ * @file OZObject+Protocol.h
+ * @brief OZObjectProtocol -- what every OZ object answers to.
  *
  * This is oz_sdk's `<NSObject>`: the protocol a *protocol* adopts so that
  * a protocol-qualified receiver can still be introspected.
@@ -21,7 +21,7 @@
  *
  * So a protocol whose receivers might be introspected adopts it:
  *
- *     @protocol PXToggleable <ObjectProtocol>
+ *     @protocol PXToggleable <OZObjectProtocol>
  *     - (void)toggle;
  *     @end
  *
@@ -49,10 +49,10 @@
  * Objective-C-side one. oz2c gives this origin a generated `.h`/`.c` pair
  * like any other, the `@protocol` block is elided from it (protocols are
  * a compile-time contract, never emitted), and the resulting
- * `Object+Protocol.c` is compiled on its own -- including only its own
+ * `OZObject+Protocol.c` is compiled on its own -- including only its own
  * header, where an unguarded `#error` fires every time. */
 #if defined(__OBJC__) && !defined(YES)
-#error "Object+Protocol.h is reached through OZObject.h, which defines BOOL/YES/NO; import that instead"
+#error "OZObject+Protocol.h is reached through OZObject.h, which defines BOOL/YES/NO; import that instead"
 #endif
 
 /**
@@ -63,7 +63,7 @@
  * compares a protocol's declared return type against each implementor's,
  * and a disagreement is a located error.
  */
-@protocol ObjectProtocol
+@protocol OZObjectProtocol
 @required
 - (Class)class;
 - (BOOL)isMemberOfClass:(Class)aClass;

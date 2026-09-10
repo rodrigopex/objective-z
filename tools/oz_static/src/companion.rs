@@ -23,11 +23,11 @@
 use crate::model::Program;
 
 /// The protocol that declares a class's instances immortal
-/// (`include/oz_sdk/Foundation/Singleton+Protocol.h`). Conformance is the
+/// (`include/oz_sdk/Foundation/OZSingleton+Protocol.h`). Conformance is the
 /// signal, rather than a heuristic on the `+sharedInstance` shape: every
 /// singleton in the repository declares it, and a wrong guess here would mark
 /// an ordinary object immortal, which never gets its slab slot back.
-pub(crate) const SINGLETON_PROTOCOL: &str = "SingletonProtocol";
+pub(crate) const SINGLETON_PROTOCOL: &str = "OZSingletonProtocol";
 
 /// Walks `start`'s own superclass chain looking for whichever class
 /// actually implements `selector` -- the same single-inheritance method
@@ -282,7 +282,7 @@ fn render_heap_inner_accessor(name: &str, heap_support: bool) -> String {
 
 /// `_meta.immortal = 1` for a class whose instances are never deallocated.
 ///
-/// Set for a class conforming to `SingletonProtocol`, whose own header states
+/// Set for a class conforming to `OZSingletonProtocol`, whose own header states
 /// the contract outright: "Singleton objects are immortal -- they are never
 /// deallocated." Until #228 nothing marked them, so they relied on nobody ever
 /// releasing one; `oz_static_release` now returns on this bit before it
@@ -300,7 +300,7 @@ fn render_immortal_marker(root: &str, immortal: bool) -> String {
         return String::new();
     }
     format!(
-        "\t/* conforms to SingletonProtocol: immortal, so release never frees it */\n\
+        "\t/* conforms to OZSingletonProtocol: immortal, so release never frees it */\n\
          \t((struct {root} *)obj)->_meta.immortal = 1;\n",
         root = root
     )

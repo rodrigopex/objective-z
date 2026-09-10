@@ -1,4 +1,4 @@
-//! `ObjectProtocol` -- oz_sdk's `<NSObject>` (#307).
+//! `OZObjectProtocol` -- oz_sdk's `<NSObject>` (#307).
 //!
 //! Clang resolves a message sent to `id<P>` against `P` and its
 //! super-protocols and nowhere else, so
@@ -10,7 +10,7 @@
 //!
 //! Two halves, and each of these tests fails without one of them:
 //!
-//!   * the header half -- `Object+Protocol.h` declaring all ten methods
+//!   * the header half -- `OZObject+Protocol.h` declaring all ten methods
 //!     (it declared two), imported by `OZObject.h`, and adopted by
 //!     `OZObject` and by both SDK protocols;
 //!   * the transpiler half -- `Program::implements_selector`, so an
@@ -29,7 +29,7 @@ mod common;
 
 use oz_static::collect;
 
-/// Every method `OZObject` declares, `ObjectProtocol` declares too.
+/// Every method `OZObject` declares, `OZObjectProtocol` declares too.
 ///
 /// The list is not restated here: it is read out of `OZObject`'s own
 /// interface, so a method added to the root class and forgotten in the
@@ -43,7 +43,7 @@ fn object_protocol_declares_what_the_root_class_does() {
     assert!(diags.is_empty(), "OZObject should collect cleanly: {:?}", diags);
 
     let declared: Vec<String> = program
-        .protocol_methods("ObjectProtocol")
+        .protocol_methods("OZObjectProtocol")
         .into_iter()
         .map(|m| m.selector)
         .collect();
@@ -61,7 +61,7 @@ fn object_protocol_declares_what_the_root_class_does() {
     for selector in &expected {
         assert!(
             declared.contains(&selector.to_string()),
-            "ObjectProtocol is missing '{}', which OZObject declares -- \
+            "OZObjectProtocol is missing '{}', which OZObject declares -- \
              a protocol-qualified receiver cannot be sent it",
             selector
         );
@@ -72,7 +72,7 @@ fn object_protocol_declares_what_the_root_class_does() {
     );
 }
 
-/// `OZObject` adopts it, so `conformsToProtocol:@protocol(ObjectProtocol)`
+/// `OZObject` adopts it, so `conformsToProtocol:@protocol(OZObjectProtocol)`
 /// answers YES rather than silently NO -- `class_conforms_to` reads the
 /// declared conformance list, not the method table, so declaring the
 /// methods is not on its own enough.
@@ -80,13 +80,13 @@ fn object_protocol_declares_what_the_root_class_does() {
 fn the_root_class_adopts_it() {
     let (program, _) = collect::collect(&common::ozobject_src());
     assert!(
-        program.class_conforms_to("OZObject", "ObjectProtocol"),
-        "OZObject must declare <ObjectProtocol>, not merely implement its methods"
+        program.class_conforms_to("OZObject", "OZObjectProtocol"),
+        "OZObject must declare <OZObjectProtocol>, not merely implement its methods"
     );
 }
 
-/// Both SDK protocols adopt it, so an `id<SingletonProtocol>` or
-/// `id<IteratorProtocol>` receiver can be introspected too.
+/// Both SDK protocols adopt it, so an `id<OZSingletonProtocol>` or
+/// `id<OZIteratorProtocol>` receiver can be introspected too.
 #[test]
 fn the_sdk_protocols_adopt_it() {
     let src = format!(
@@ -98,7 +98,7 @@ fn the_sdk_protocols_adopt_it() {
     let (program, diags) = collect::collect(&src);
     assert!(diags.is_empty(), "should collect cleanly: {:?}", diags);
 
-    for protocol in ["IteratorProtocol", "SingletonProtocol"] {
+    for protocol in ["OZIteratorProtocol", "OZSingletonProtocol"] {
         let inherited: Vec<String> = program
             .protocol_methods(protocol)
             .into_iter()
@@ -106,7 +106,7 @@ fn the_sdk_protocols_adopt_it() {
             .collect();
         assert!(
             inherited.contains(&"respondsToSelector:".to_string()),
-            "{} should adopt <ObjectProtocol> and so inherit its methods; got {:?}",
+            "{} should adopt <OZObjectProtocol> and so inherit its methods; got {:?}",
             protocol,
             inherited
         );
@@ -116,7 +116,7 @@ fn the_sdk_protocols_adopt_it() {
 /// An inherited implementation satisfies a protocol requirement.
 ///
 /// This is the half that makes the header change usable at all. A class
-/// adopting a protocol that adopts `<ObjectProtocol>` implements none of
+/// adopting a protocol that adopts `<OZObjectProtocol>` implements none of
 /// the ten methods itself -- `OZObject` does, once -- and before #307 the
 /// conformance check read only the class's own method list and rejected
 /// the program ten times over.
@@ -124,7 +124,7 @@ fn the_sdk_protocols_adopt_it() {
 fn conformance_counts_inherited_implementations() {
     let source = format!(
         r#"{}
-@protocol Toggleable <ObjectProtocol>
+@protocol Toggleable <OZObjectProtocol>
 - (void)toggle;
 @end
 
@@ -176,7 +176,7 @@ int main(void)
 fn conforms_to_protocol_through_a_protocol_qualified_receiver() {
     let source = format!(
         r#"{}
-@protocol Toggleable <ObjectProtocol>
+@protocol Toggleable <OZObjectProtocol>
 - (void)toggle;
 @end
 
