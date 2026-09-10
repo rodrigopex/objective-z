@@ -277,7 +277,11 @@ fn header_text(node: Node, src: &str, stop_kinds: &[&str]) -> String {
 fn collect_local_decls(body: Node, ctx: &mut EmitCtx) {
     collect_local_decls_inner(body, ctx);
     let managed = managed_object_locals(body, ctx.src, ctx.program);
-    ctx.arc_managed_locals.extend(managed);
+    /* A `static` object local is a strong slot, not a strong local: it is
+     * stored into the same way and released at scope exit never (#359). */
+    let statics = static_object_locals(body, ctx.src, ctx.program);
+    ctx.arc_managed_locals.extend(managed.difference(&statics).cloned());
+    ctx.arc_managed_slots.extend(statics);
 }
 
 fn collect_local_decls_inner(node: Node, ctx: &mut EmitCtx) {
@@ -652,6 +656,70 @@ fn stores_to_local(
 /// A local the body releases by hand is excluded throughout, keeping the
 /// standing rule that ARC defers to manual retain/release -- see
 /// `released_by_hand`.
+/// Does this `declaration` carry `static` storage?
+///
+/// The distinction ARC draws and oz_static did not: a `static` local is
+/// `__strong` like any other object local -- a store into it retains and
+/// releases what it replaced -- but its storage duration is the
+/// program's, so it must **not** be released when the scope ends. Doing
+/// both destroyed the object on the way out and then released the freed
+/// block again on the next call (#359).
+///
+/// Read off the declaration's own `storage_class_specifier`, so it sees
+/// only the storage class and not a `static` appearing anywhere else in
+/// the text.
+fn is_static_declaration(decl: Node, src: &str) -> bool {
+    let mut cursor = decl.walk();
+    let children: Vec<Node> = decl.children(&mut cursor).collect();
+    children.into_iter().any(|child| {
+        child.kind() == "storage_class_specifier" && node_text(child, src).trim() == "static"
+    })
+}
+
+/// The object locals of `body` that have `static` storage -- strong slots
+/// whose lifetime outlives the scope. See `is_static_declaration`.
+pub(crate) fn static_object_locals(
+    body: Node,
+    src: &str,
+    program: &Program,
+) -> std::collections::HashSet<String> {
+    fn walk(
+        node: Node,
+        src: &str,
+        program: &Program,
+        found: &mut std::collections::HashSet<String>,
+    ) {
+        if node.kind() == "block_literal" {
+            return;
+        }
+        if node.kind() == "declaration" && is_static_declaration(node, src) {
+            let (type_text, stars) = crate::collect::extract_type_and_stars(node, src);
+            if stars == 1
+                && program.is_class(type_text.trim())
+                && !node_text(node, src).contains("__unsafe_unretained")
+            {
+                let mut cursor = node.walk();
+                for child in node.children(&mut cursor) {
+                    if matches!(child.kind(), "pointer_declarator" | "init_declarator") {
+                        let name = crate::collect::find_declared_name(child, src);
+                        if !name.is_empty() {
+                            found.insert(name);
+                        }
+                    }
+                }
+            }
+        }
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            walk(child, src, program, found);
+        }
+    }
+
+    let mut found = std::collections::HashSet::new();
+    walk(body, src, program, &mut found);
+    found
+}
+
 pub(crate) fn managed_object_locals(
     body: Node,
     src: &str,
@@ -1187,6 +1255,16 @@ struct EmitCtx<'a> {
     /// neither, which is why `staticbar` had to reject the loop above
     /// rather than emit it.
     arc_managed_locals: std::collections::HashSet<String>,
+    /// Strong slots whose lifetime outlives the enclosing scope: object
+    /// locals declared `static`. A store into one retains and releases
+    /// what it replaced, exactly like `arc_managed_locals`, but nothing
+    /// here is ever released at scope exit -- that is the whole
+    /// distinction, and conflating the two was #359's double release.
+    ///
+    /// File-scope globals need no set: they are already in `scope` with
+    /// their C type and absent from `locals`, which is what identifies
+    /// them where the store is rendered.
+    arc_managed_slots: std::collections::HashSet<String>,
     /// See `IntrospectionUse`.
     introspection_used: IntrospectionUse,
     /// Where a `#line` directive on this construct's own code points, and
@@ -1285,6 +1363,7 @@ impl<'a> EmitCtx<'a> {
             pools,
             arc_scopes: Vec::new(),
             arc_managed_locals: HashSet::new(),
+            arc_managed_slots: HashSet::new(),
             introspection_used: IntrospectionUse::default(),
             lines,
         }
@@ -2664,6 +2743,26 @@ fn render_strong_ivar_assign(
 /// Takes no `node`, unlike `render_strong_ivar_assign`: that one needs the
 /// assignment's position to name a temporary, and this one deliberately
 /// emits no temporary at all.
+/// Is `name` a file-scope object variable -- a strong slot that no scope
+/// owns?
+///
+/// Identified rather than tabulated: `emit::file_scope_vars` has already
+/// put every one of them into `ctx.scope` with its C type (that is how a
+/// send to one resolves its receiver), and a file-scope name is by
+/// definition absent from `ctx.locals`. An ivar is in `scope` too, so it
+/// has to be excluded explicitly -- an *owned* one never reaches here,
+/// since `render_strong_ivar_assign` runs first, but an
+/// `__unsafe_unretained` one does and must keep its plain store.
+fn is_file_scope_object(name: &str, ctx: &EmitCtx) -> bool {
+    if ctx.locals.contains(name) {
+        return false;
+    }
+    if ctx.program.ivar_access_path(&ctx.class_name, name).is_some() {
+        return false;
+    }
+    ctx.scope.get(name).and_then(|ty| class_name_from_type(ty)).is_some()
+}
+
 fn render_strong_local_assign(
     left: Node,
     right: Node,
@@ -2673,7 +2772,14 @@ fn render_strong_local_assign(
         return None;
     }
     let name = node_text(left, ctx.src).to_string();
-    if !ctx.arc_managed_locals.contains(&name) {
+    /* Three kinds of strong slot, one lowering. A managed *local* is also
+     * released when its scope ends; the other two are not, and that is the
+     * only difference between them -- so the store is identical and lives
+     * here rather than being written twice (#359). */
+    let is_slot = ctx.arc_managed_locals.contains(&name)
+        || ctx.arc_managed_slots.contains(&name)
+        || is_file_scope_object(&name, ctx);
+    if !is_slot {
         return None;
     }
     let root = ctx.program.root_class()?.to_string();
@@ -2860,6 +2966,113 @@ fn render_strong_array_element_assign(
     Some((expr, elem))
 }
 
+/// Refuse to store a reference ARC manages into a plain **C struct**
+/// field, rather than emitting the plain store that silently frees it
+/// (#359).
+///
+/// The three strong slots oz_static tracks -- an ivar, a managed local,
+/// and a file-scope or `static` slot -- all reach the lowerings above. A C
+/// struct's field reaches none of them, so the store was plain C and
+/// whatever ARC was managing on the right-hand side was released when its
+/// scope ended, leaving the field pointing at freed memory.
+///
+/// Supporting it is not a small change: the field's type is not resolved
+/// today -- which is why sending a message *to* one is already a located
+/// error (#355) -- and a strong field would additionally have to be
+/// released when the struct itself dies, which nothing tracks. ARC does
+/// support this (Clang reports such a field as `__strong` and generates
+/// destroy helpers for the struct), so this is a subset boundary rather
+/// than a semantic disagreement, and it belongs on the error side of it:
+/// a located refusal beats a silent wrong free.
+///
+/// Only a reference ARC would release is refused. That is the exact set
+/// that produces the wrong free:
+///
+///   - a `+1` expression (`b.held = [[Thing alloc] init];`), and
+///   - an identifier naming a managed local or slot (`b.held = a;`),
+///     which is the shape the audit actually caught, since a bare
+///     identifier is borrowed *by shape* and passes `binds_ownership`.
+///
+/// A genuinely borrowed store -- a parameter, an unretained ivar -- is
+/// left alone: nothing releases it, so the field is an unowned reference
+/// and that is the author's business, exactly as it is in C.
+fn reject_owning_store_into_c_struct(node: Node, left: Node, right: Node, ctx: &mut EmitCtx) {
+    if left.kind() != "field_expression" {
+        return;
+    }
+    /* Dot syntax on an object is a property store, handled below by the
+     * setter path; `self->_ivar` was taken by the ivar lowering already. */
+    if dot_syntax_parts(left, ctx).is_some() {
+        return;
+    }
+    if assigned_ivar_name(left, ctx).is_some() {
+        return;
+    }
+    let managed = crate::arc::binds_ownership(
+        right,
+        ctx.src,
+        ctx.program,
+        &ctx.program.owning_methods,
+    ) || {
+        let behind = crate::arc::value_behind_casts(right, ctx.src);
+        behind.kind() == "identifier" && {
+            let name = node_text(behind, ctx.src).to_string();
+            ctx.arc_managed_locals.contains(&name) || ctx.arc_managed_slots.contains(&name)
+        }
+    };
+    if !managed {
+        return;
+    }
+    /* Two different targets reach here and they point at different fixes,
+     * so they get different messages: an ivar of *another* object, where
+     * the receiver is object-typed, and a plain C struct's field, where it
+     * is not. */
+    let mut cursor = left.walk();
+    let children: Vec<Node> = left.children(&mut cursor).collect();
+    let receiver_class = children
+        .first()
+        .map(|object| render_expr_type_only(*object, ctx))
+        .and_then(|ty| class_name_from_type(&ty))
+        .filter(|class| ctx.program.is_class(class));
+
+    match receiver_class {
+        Some(class) => ctx.err(
+            node,
+            format!(
+                "storing a reference ARC manages into another object's ivar is not \
+                 supported; `{class}` would have to take ownership of it, and only a \
+                 store through `self` does that. The value is released when its scope \
+                 ends, which would leave the ivar dangling -- assign it through a \
+                 setter or a method on `{class}` instead"
+            ),
+        ),
+        None => ctx.err(
+            node,
+            "storing a reference ARC manages into a plain C struct field is not \
+             supported; the field's ownership cannot be tracked, so the value would be \
+             released when its scope ends and the field left dangling. Store it in an \
+             ivar, or declare the field __unsafe_unretained to say the struct does not \
+             own it"
+                .to_string(),
+        ),
+    }
+}
+
+/// The static type `render_expr` would report for `node`, without keeping
+/// the rendered text.
+///
+/// A separate helper because rendering has side effects on the context
+/// (`pre_stmts`, `block_counter`), and a *diagnostic* must not leave any
+/// behind -- the message is the whole output of this path.
+fn render_expr_type_only(node: Node, ctx: &mut EmitCtx) -> String {
+    let saved_pre = std::mem::take(&mut ctx.pre_stmts);
+    let saved_counter = ctx.block_counter;
+    let (_text, ty) = render_expr(node, ctx);
+    ctx.pre_stmts = saved_pre;
+    ctx.block_counter = saved_counter;
+    ty
+}
+
 /// Assignment, handled here for three reasons: a property dot-syntax *target*
 /// has to become the setter call rather than an assignment to a function
 /// call, a strong object ivar has to take ownership of what it is given
@@ -2904,6 +3117,7 @@ fn render_assignment_expression(node: Node, ctx: &mut EmitCtx) -> (String, Strin
         if let Some(rendered) = render_strong_array_element_assign(node, left, right, ctx) {
             return rendered;
         }
+        reject_owning_store_into_c_struct(node, left, right, ctx);
     }
     if left.kind() != "field_expression" {
         return pass_through(ctx);
@@ -4345,6 +4559,15 @@ fn released_by_hand(name: &str, root: Node, src: &str) -> bool {
 
 fn owned_locals_of_in(decl: Node, search_root: Option<Node>, ctx: &EmitCtx) -> Vec<String> {
     if node_text(decl, ctx.src).contains("__unsafe_unretained") {
+        return Vec::new();
+    }
+    /* A `static` object local is a strong slot that outlives the scope, so
+     * the scope owes it nothing -- the store into it is what manages it
+     * (`arc_managed_slots`). Releasing it here destroyed the object on the
+     * way out of the first call and released the freed block again on the
+     * next one (#359). Checked before the managed-set branch below, which
+     * would otherwise claim it from its initializer's shape. */
+    if is_static_declaration(decl, ctx.src) {
         return Vec::new();
     }
     let mut out = Vec::new();

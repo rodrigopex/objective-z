@@ -311,12 +311,22 @@ fn an_unretained_ivar_stored_through_self_is_untouched() {
     );
 }
 
-/// `other->_x` is direct ivar access on another object, which needs that
-/// object's class to resolve the ivar and its access path. Nothing in the
-/// tree writes it and it still falls through -- recorded as a test so the
-/// limitation is deliberate rather than assumed.
+/// `other->_x = ownedLocal` is now a **located error**, not a
+/// pass-through.
+///
+/// This test asserted the opposite when #352 landed: that the store fell
+/// through unlowered, "recorded as a test so the limitation is deliberate
+/// rather than assumed". The ownership audit behind #359 showed what that
+/// limitation actually produced -- the local is released when its scope
+/// ends, so the ivar is left pointing at freed memory. A silent wrong free
+/// is not a limitation worth pinning, and refusing it is what this
+/// backend's own rule requires: never degrade silently.
+///
+/// Supporting it would mean `other`'s class taking ownership, which only a
+/// store through `self` does today. The message says so, and names the
+/// class, because the fix is to go through a method or setter on it.
 #[test]
-fn another_objects_ivar_stored_directly_is_left_alone() {
+fn another_objects_ivar_stored_directly_is_refused() {
     let src = program(
         "\
 @interface Pair : OZObject {
@@ -334,11 +344,15 @@ fn another_objects_ivar_stored_directly_is_left_alone() {
 ",
     );
 
-    let out = oz_static::transpile(&src).expect("should transpile");
-    let body = function_body(&out.source_c, "Pair_fill_");
+    let diags = common::expect_reject(&src);
     assert!(
-        !body.contains("_oz_prev_"),
-        "an ivar store through another object was lowered; that needs its class resolved first:\n{}",
-        body
+        diags.contains("another object's ivar"),
+        "expected a located refusal naming the shape, got:\n{}",
+        diags
+    );
+    assert!(
+        diags.contains("Pair"),
+        "the message must name the class that would have to own it:\n{}",
+        diags
     );
 }
