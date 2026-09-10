@@ -500,6 +500,32 @@ class parsed with ivars, and hard-error naming the class and the `.m` to add.
 
 ## How measurements mislead
 
+### Two ways the case for literal dedup was overstated (#372)
+
+The issue was filed arguing footprint, and the footprint argument did not
+survive measurement. Both errors are worth keeping, because both look like
+diligence.
+
+**`grep '@"'` counts `%@`.** It reported seven boxed string literals in
+px-keyboard, the only real application. All seven are `%@` format specifiers
+inside plain C strings passed to `OZLog` -- the pattern matches the quote that
+*follows* `%@`. px-keyboard contains no boxed literal at all, so the change
+that was justified by application footprint saves that application nothing. The
+count needs `(?<!%)@"`.
+
+**A duplicate across two files is only a duplicate if they link together.**
+Counting distinct-file occurrences across the behavior corpus suggested another
+96 bytes available from cross-origin dedup. Every corpus case is its own
+program, so those are duplicates across programs that are never linked, and no
+dedup can merge them. The real cross-origin figure is zero: the only
+multi-origin program in the tree is px-keyboard, which has no literals.
+
+What was actually available: 3 instances across every sample, 72 bytes, and
+9 across the behavior corpus. The reason to make the change was that
+`@"a" == @"a"` was false where Objective-C says it is true -- which measurement
+had nothing to say about.
+
+
 ### A substring grep called a dead field live (#371)
 
 `OZObject.h` declared `int _refcount` that nothing read. The live refcount is
@@ -1136,6 +1162,18 @@ directly.
 
 - **Never silently degrade.** Anything outside the supported subset is a hard,
   *located* error. This is deliberate, not a gap someone forgot to fill.
+- **Identical boxed literals in one origin are one object.** That is
+  Objective-C's own guarantee, and `-isEqual:`'s opening
+  `if (self == anObject)` depends on it: with an instance per *occurrence* the
+  fast path missed and `@"a" == @"a"` was false (#372). The collapse happens
+  once, at the end of `walk_top_level`, so both assemblers see collapsed
+  literals rather than each keeping its own copy of the rule. Two things it
+  must not get wrong: the rename has to reach every bucket that can carry the
+  expression's text -- bodies, hoisted blocks, `__block` statics, and the
+  generated header -- because a hoisted block keeps its own copy and renaming
+  only bodies leaves a reference to a definition just dropped; and the rewrite
+  is whole-identifier, since `_oz_str_L1_C1_1` sits inside
+  `_oz_str_L1_C1_11`.
 - **A declared ivar is not free.** It becomes a field in the generated struct
   whether or not anything reads it, and in the root class it becomes a field in
   every object of every class -- `OZObject._refcount` cost 4 bytes per instance
