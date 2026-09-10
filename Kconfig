@@ -7,6 +7,23 @@ menuconfig OBJZ
 	  Abstraction Layer (PAL). The transpiler converts Objective-C
 	  (.m) sources to plain C at build time via Clang AST analysis.
 
+	  Collections need one option this deliberately does not turn on:
+	  CONFIG_SYS_MEM_BLOCKS=y. OZArray, OZDictionary and the @[...]
+	  and @{...} literals draw their element buffers from Zephyr's
+	  contiguous block allocator, which is behind that option and
+	  defaults to n. It stays opt-in because whether a program uses a
+	  collection is a property of its Objective-C, not of its
+	  configuration -- most programs use none, and a select here would
+	  take away their ability to say n. A program that does need it
+	  and has not set it stops at the item pool's definition with a
+	  BUILD_ASSERT naming the option, rather than at the link with
+	  undefined references into the PAL (#366).
+
+	  Leaving it on costs a program that uses no collection nothing:
+	  samples/hello_category is 26808 B flash and 6852 B RAM on
+	  mps2/an385 either way, because --gc-sections drops the whole
+	  library when nothing calls it.
+
 if OBJZ
 
 # The transpiler. There used to be a choice here between the Rust pipeline
