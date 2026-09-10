@@ -2190,8 +2190,11 @@ pub(crate) fn is_boxed_string_literal(node: Node) -> bool {
 /// (`_hash` is always `0` -- the real pipeline never actually computes a
 /// hash for it either) plus a cast-to-pointer expression at the use site.
 /// Each unique literal gets its own instance (no dedup, unlike the Python
-/// oracle -- a spike simplification; duplicates just cost a few more
-/// bytes of `.rodata`, not correctness). A plain (non-`@`) string literal
+/// oracle -- a spike simplification; duplicates cost `sizeof(struct
+/// OZString)` each, 24 bytes on `mps2/an385`, and not correctness). That
+/// cost is `.rodata` only since #373 made the instance `const`; before
+/// that it was `datas`, so a duplicate was charged against RAM as well --
+/// which is what #372 is measured against. A plain (non-`@`) string literal
 /// is left completely untouched -- it's already valid C.
 ///
 /// Placement mirrors `render_block`'s hoisting exactly, and for the same
