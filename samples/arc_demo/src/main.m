@@ -48,7 +48,7 @@ static Sensor *createSensor(int v)
 }
 
 /* Singleton via +initialize — auto-called before main() */
-@interface AppConfig: OZObject <SingletonProtocol> {
+@interface AppConfig: OZObject <OZSingletonProtocol> {
 	int _refreshRate;
 }
 + (instancetype)sharedInstance;

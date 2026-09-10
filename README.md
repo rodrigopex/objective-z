@@ -71,7 +71,7 @@ Built on Zephyr primitives (`k_mem_slab`, `SYS_INIT`, `k_spinlock_t`, `atomic_t`
 - **`@synchronized`** — RAII spinlock via OZSpinLock
 - **Blocks** — non-capturing blocks transpiled to static C functions
 - **`__block` variables** — promoted to file-scope static
-- **Fast enumeration** — `for (id obj in collection)` via IteratorProtocol
+- **Fast enumeration** — `for (id obj in collection)` via OZIteratorProtocol
 - **Boxed literals** — `@42`, `@3.14f`, `@YES`
 - **Collection literals** — `@[a, b, c]`, `@{key: value}`
 - **Subscript syntax** — `array[0]`, `dict[@"key"]`

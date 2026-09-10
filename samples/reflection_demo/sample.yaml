@@ -46,7 +46,7 @@ tests:
         # Through a receiver typed `id<Switchable>` rather than a class
         # (#307). The answers are the object's, so they match the lines
         # above; what these gate is that the shape parses at all -- before
-        # `Switchable` adopted `<ObjectProtocol>`, Clang rejected every
+        # `Switchable` adopted `<OZObjectProtocol>`, Clang rejected every
         # one of these three sends.
         - "proto-recv-conforms=yes"
         - "proto-recv-kind=yes"

@@ -3834,7 +3834,7 @@ fn render_forin_statement(node: Node, ctx: &mut EmitCtx) -> (String, String) {
         ctx.err(
             node,
             format!(
-                "for-in loop at {}:{} needs '-iter'/'-next' to be dispatchable on any collection type, but no protocol in this source declares them (declare an IteratorProtocol-style protocol with both, the same shape as the real Foundation one)",
+                "for-in loop at {}:{} needs '-iter'/'-next' to be dispatchable on any collection type, but no protocol in this source declares them (declare an OZIteratorProtocol-style protocol with both, the same shape as the real Foundation one)",
                 line, col
             ),
         );
@@ -6469,7 +6469,7 @@ fn render_interface(node: Node, ctx: &mut EmitCtx, program: &Program) -> (String
             // The whole superclass chain, not just this class's own
             // methods: an inherited implementation satisfies a protocol
             // requirement (#307). Reading `info.methods` alone made
-            // `ObjectProtocol` unadoptable, since every method it
+            // `OZObjectProtocol` unadoptable, since every method it
             // declares is defined once, on the root class.
             let implemented = program.implements_selector(
                 &name,
