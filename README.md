@@ -472,7 +472,7 @@ Requires [just](https://github.com/casey/just). Default board: `mps2/an385`.
 | `just clean` / `just c`  | Remove build directory               |
 | `just clean-twister`   | Remove every checkout's twister output |
 | `just test` / `just t`   | Run twister on all samples (ARM)    |
-| `just test-riscv`      | Same samples on RISC-V (12 of 13)      |
+| `just test-riscv`      | Same samples on RISC-V (13 of 15)      |
 | `just test-smp`        | Two cores (`qemu_cortex_a53/smp`)      |
 | `just test-boards`     | ARM and RISC-V                         |
 | `just test-all-boards` | All three boards, including SMP        |

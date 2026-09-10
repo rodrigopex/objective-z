@@ -89,7 +89,7 @@ Versions CI pins, and so the ones to match locally: **Zephyr v4.4.2**
 | `just clean` / `just c`   | Remove build dir                   |
 | `just clean-twister`       | Remove every checkout's twister output (~1 GB each); not part of `clean` |
 | `just test` / `just t`    | Run twister on all samples (ARM)   |
-| `just test-riscv`          | Same samples on RISC-V (12 of 13; `gpio_demo` is ARM-only) |
+| `just test-riscv`          | Same samples on RISC-V (13 configurations against ARM's 15; `gpio_demo` and the `CONFIG_DEBUG` scenario are ARM-only) |
 | `just test-smp`            | Two cores, `qemu_cortex_a53/smp` — the only board that exercises real lock contention |
 | `just test-boards`         | ARM + RISC-V, so neither hides an architecture-specific regression |
 | `just test-all-boards`     | All three, including SMP |
@@ -109,7 +109,7 @@ cargo test --manifest-path tools/oz_static/Cargo.toml
 
 Every twister recipe depends on `just oz2c`, so the transpiler is built before
 any sample configures. Driving `west twister` directly skips that: build oz2c
-first, or 13 configure steps each fork their own cargo and a slot can fail to
+first, or 15 configure steps each fork their own cargo and a slot can fail to
 start oz2c at all (#308).
 
 Their output directories derive from `outdir`, which is keyed on the checkout —
@@ -219,7 +219,7 @@ allocation balance.
 - **`oz_static.cmake`** — builds `oz2c`, dumps one Clang AST per source for ARC facts,
   and emits generated sources into `oz_static_generated/`. Defines
   `objz_transpile_sources()`, the entry point every sample calls — the name is
-  unchanged from when it lived in the deleted `oz_transpile.cmake`, because 13 samples,
+  unchanged from when it lived in the deleted `oz_transpile.cmake`, because 15 samples,
   px-app and any out-of-tree user call it
 - **`ObjcClang.cmake`** — Clang detection (`objz_find_clang()`), target triple mapping, AST analysis flags, compile_commands.json generation for clangd IDE support
 
