@@ -109,9 +109,11 @@ test: oz2c
     west twister -T samples/ -p {{ board }} -c -O {{ outdir }}
 
 # Same samples on RISC-V. gpio_demo is filtered out by its own sample.yaml:
-# qemu_riscv32 has no led0/sw0 device-tree aliases, so 12 of 13 run here.
+# qemu_riscv32 has no led0/sw0 device-tree aliases, and hello_category's
+# debug_lines scenario pins mps2/an385, so 13 configurations run here against
+# the 15 on ARM.
 #
-# The same samples on RISC-V (`qemu_riscv32`); 12 of 13 select.
+# The same samples on RISC-V (`qemu_riscv32`); 13 configurations select.
 test-riscv: oz2c
     west twister -T samples/ -p {{ riscv_board }} -c -O {{ outdir }}-riscv
 
@@ -197,7 +199,7 @@ test-all-boards:
 # Both once wrote to the same path, which was survivable while twister rotated
 # -- the loser's output became `.1` -- and is not once `-c` deletes instead.
 # Running this would then silently discard the sample results, and the two
-# suites test different things (13 samples vs the ztest cases over committed C),
+# suites test different things (15 samples vs the ztest cases over committed C),
 # so neither is a stand-in for the other.
 #
 # The ztest cases over committed C, not the samples -- see tests/zephyr/.
