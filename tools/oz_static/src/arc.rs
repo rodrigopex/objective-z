@@ -126,10 +126,77 @@ impl OwningMethods {
     }
 }
 
+/// Does this method hand back an object pointer at all?
+///
+/// One function for a question two places were answering separately:
+/// `consider_method` open-coded `!sig.return_type.contains('*')` right
+/// beside its convention check, and `is_initialiser` needs the same
+/// notion. `return_type` has already resolved `instancetype` to
+/// `struct {declaring_class} *` (`collect::extract_method_sig`), so the
+/// flag is belt-and-braces rather than a second case.
+fn returns_object_pointer(sig: &crate::model::MethodSig) -> bool {
+    sig.returns_instancetype || sig.return_type.contains('*')
+}
+
+/// Is `selector` an initialiser -- a send that consumes its receiver's
+/// `+1` and hands that same reference back?
+///
+/// Asked of what the method *returns*, not of how it is spelled. Five
+/// places used to ask `selector.starts_with("init")`, and that matches
+/// every ordinary method whose name merely begins with those four
+/// letters: `-initialValue`, `-initialCount`, `-initialised`,
+/// `-initializeCache`, `-initialState`. None of them is an initialiser
+/// and none returns `self`.
+///
+/// What that cost, measured on the host: `[[Thing alloc] initialValue]`
+/// treated the *`int`* as the reference the allocation handed back, so
+/// `oz_static_release` was passed the integer 42 and dereferenced it.
+/// Signal 11 (#398). The allocated `Thing` leaked too, but the fault is
+/// the part that mattered.
+///
+/// The rule:
+///
+///   - `init` itself is always an initialiser. It is *the* initialiser,
+///     every root class declares one (`OZObject.h`: `- (instancetype)
+///     init`), and a program whose SDK headers were not collected must
+///     not lose the `alloc`/`init` pairing and start double-accounting.
+///   - anything else beginning with `init` qualifies only if **every**
+///     declaration of that selector in the program returns an object
+///     pointer.
+///   - a selector no declaration matches is **not** an initialiser.
+///
+/// Unanimity across the program rather than a lookup on the receiver's
+/// static class, and deliberately: #365 is the standing lesson that the
+/// implementation which runs may be an override with a different
+/// contract, so the static class is not what a send can be judged by. If
+/// two classes disagree about what an `init`-prefixed selector returns,
+/// the answer here is "not an initialiser", which leaks rather than
+/// corrupts -- the direction this project fails in on purpose.
+fn is_initialiser(program: &Program, _class: Option<&str>, selector: &str) -> bool {
+    if !selector.starts_with("init") {
+        return false;
+    }
+    if selector == "init" {
+        return true;
+    }
+    let mut declared = false;
+    for class in program.classes.values() {
+        for sig in &class.methods {
+            if sig.selector == selector {
+                declared = true;
+                if !returns_object_pointer(sig) {
+                    return false;
+                }
+            }
+        }
+    }
+    declared
+}
+
 /// Selectors that are +1 by convention rather than by analysis, matching
 /// Objective-C's own naming rule (the "create rule"): these transfer
 /// ownership whatever their body does.
-fn is_owning_selector(selector: &str) -> bool {
+fn is_owning_selector(program: &Program, class: Option<&str>, selector: &str) -> bool {
     selector == "alloc"
         // `+allocWithHeap:` is `+alloc` with the storage coming from an
         // OZHeap, so it hands back +1 just the same. Missing from this list,
@@ -143,7 +210,7 @@ fn is_owning_selector(selector: &str) -> bool {
         || selector == "copy"
         || selector == "mutableCopy"
         || selector == "retain"
-        || selector.starts_with("init")
+        || is_initialiser(program, class, selector)
 }
 
 /// Find every method that returns +1, iterating until the set stops growing.
@@ -266,10 +333,10 @@ fn scan_once(root: Node, src: &str, program: &Program, owning: &mut OwningMethod
         let sig = crate::collect::extract_method_sig(method, src, class, &known);
         // Only an object-returning method can hand back ownership, and the
         // convention-named ones are already owning without analysis.
-        if is_owning_selector(&sig.selector) {
+        if is_owning_selector(program, Some(class), &sig.selector) {
             return;
         }
-        if !sig.return_type.contains('*') {
+        if !returns_object_pointer(&sig) {
             return;
         }
         let mut cursor = method.walk();
@@ -898,7 +965,7 @@ pub fn is_owning_expr(
         }
         "message_expression" => {
             let (receiver_class, selector) = message_target(node, src, program);
-            if is_owning_selector(&selector) {
+            if is_owning_selector(program, receiver_class.as_deref(), &selector) {
                 return true;
             }
             /* A send the emitter routes through the class_id switch cannot
@@ -1133,7 +1200,8 @@ pub fn receiver_owning_value<'a>(
     }
     let parts = crate::emit::parse_message(send, src);
     let selector = statically_performed_selector(send, src).unwrap_or(parts.selector);
-    if accounts_for_its_receiver(&selector) {
+    let (receiver_class, _) = message_target(send, src, program);
+    if accounts_for_its_receiver(program, receiver_class.as_deref(), &selector) {
         return None;
     }
     discarded_owning_value(parts.receiver, src, program, owning)
@@ -1156,8 +1224,9 @@ pub fn receiver_owning_value<'a>(
 /// added would corrupt, so the list is a reading of the four selectors
 /// `emit::render_message` and `staticbar` already treat specially rather
 /// than a guess at which methods might keep their receiver.
-fn accounts_for_its_receiver(selector: &str) -> bool {
-    matches!(selector, "retain" | "release" | "dealloc") || selector.starts_with("init")
+fn accounts_for_its_receiver(program: &Program, class: Option<&str>, selector: &str) -> bool {
+    matches!(selector, "retain" | "release" | "dealloc")
+        || is_initialiser(program, class, selector)
 }
 
 /// Does throwing this expression's value away abandon a +1 reference that
@@ -1200,7 +1269,7 @@ fn discards_ownership(
     if let Some(performed) = statically_performed_selector(node, src) {
         return created_by(program, &performed, receiver_class.as_deref(), owning);
     }
-    if selector.starts_with("init") {
+    if is_initialiser(program, receiver_class.as_deref(), &selector) {
         let parts = crate::emit::parse_message(node, src);
         return discards_ownership(parts.receiver, src, program, owning);
     }
@@ -1346,7 +1415,7 @@ pub fn dispatch_ownership(
     if creates_reference(selector) {
         return DispatchOwnership::Owning;
     }
-    if selector == "retain" || selector.starts_with("init") {
+    if selector == "retain" || is_initialiser(program, receiver, selector) {
         return DispatchOwnership::Borrowed;
     }
     let reachable = program.reachable_implementors(receiver, selector, is_class_method);
@@ -1375,7 +1444,7 @@ fn created_by(
     if creates_reference(selector) {
         return true;
     }
-    if selector == "retain" || selector.starts_with("init") {
+    if selector == "retain" || is_initialiser(program, class, selector) {
         return false;
     }
     /* A send that the emitter will route through the class_id switch has
