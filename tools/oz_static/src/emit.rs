@@ -4863,6 +4863,26 @@ fn owned_locals_of_in(decl: Node, search_root: Option<Node>, ctx: &EmitCtx) -> V
         if !crate::arc::binds_ownership(value, ctx.src, ctx.program, &ctx.program.owning_methods) {
             continue;
         }
+        /* Only a pointer slot can hold the reference, and without this the
+         * scope released through an **integer** (#380). `binds_ownership`
+         * looks through a non-bridging cast (#332), deliberately, so
+         * `int n = (int)makeThing();` reached here and emitted
+         * `oz_static_release((struct OZObject *)(n))` -- the cast in the
+         * release is what let it compile, and then the decrement landed
+         * at whatever address the integer held. On a 64-bit host the
+         * pointer is truncated to 32 bits first, so it is a wrong store;
+         * on the 32-bit targets that ship the integer happens to hold the
+         * whole pointer, which is why no board gate saw it.
+         *
+         * The third position to need this check locally rather than by
+         * widening `binds_ownership` -- `arc::hoists_owning_operand`'s
+         * callers (#375) and the `for`-header arm (#376) were the first
+         * two. Widening that predicate is still wrong for the reason it
+         * always was: it is asked about expressions whose value may not
+         * be an object at all. */
+        if !crate::arc::declares_pointer(child) {
+            continue;
+        }
         let name = crate::collect::find_declared_name(child, ctx.src);
         if name.is_empty() {
             continue;
