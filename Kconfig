@@ -70,7 +70,7 @@ config OBJZ_REFLECTION
 
 config OBJZ_DEBUG_LINES
 	bool "#line directives back to the Objective-C source"
-	default y
+	default y if DEBUG
 	help
 	  Put #line directives on the generated C, so the toolchain
 	  resolves a transpiled program's addresses to the .m the code was
@@ -84,13 +84,31 @@ config OBJZ_DEBUG_LINES
 	  coverage attributes to the .m. Paths are absolute, so a debugger
 	  resolves them from any working directory.
 
-	  Default y because it is free: #line changes only what the
-	  compiler records about the code, not the code, so every
+	  Free of image, and not free of source. #line changes only what
+	  the compiler records about the code, not the code, so every
 	  generated .o's instructions are byte-identical with it on. The
 	  one thing that moves is __FILE__, which then expands to the .m
 	  inside generated code, so an __ASSERT failure names the
 	  Objective-C as well -- and the image gets slightly smaller,
-	  since a .m name is shorter than a generated .c path.
+	  since a .m name is shorter than a generated .c path: 26848 bytes
+	  against 26932 for samples/hello_category on mps2/an385.
+
+	  What it costs is the generated C itself, which is what a
+	  maintainer reads when the transpiler is the thing under
+	  suspicion. Every directive carries an absolute path, so the text
+	  roughly doubles: that sample's main.c goes from 2658 bytes to
+	  5766, and #line accounts for 38% of the bytes in px-keyboard's
+	  whole generated tree, 31% to 55% file by file. Those figures
+	  track how deep the build directory sits, the paths being
+	  absolute, so they are a shape rather than a constant.
+
+	  So the default follows CONFIG_DEBUG rather than being y outright
+	  (#358). A debugging build gets .m attribution; a release build
+	  gets generated C worth reading, and hands back that ~100 bytes of
+	  flash. Only the default moved -- both directions are still
+	  reachable by hand, and y in a release build is the one worth
+	  remembering, since a field fault is exactly what has to be
+	  resolved against the .m.
 
 	  Covered: method bodies, plain C function bodies and the functions
 	  hoisted from block literals -- the code you actually step
