@@ -969,6 +969,37 @@ refcount shape of every sink, with the two remaining defects asserted to
 the test and forces the list to change, and everything not listed is
 believed correct rather than merely unexamined.
 
+## A sixth decision keyed on spelling (#398)
+
+`arc.rs` asked `selector.starts_with("init")` in **five** places, and that
+prefix matches every ordinary method whose name merely begins with those four
+letters: `-initialValue`, `-initialCount`, `-initialised`, `-initializeCache`,
+`-initialState`. Three of the five then read the receiver's `+1` as handed back
+through the return value, so `[[Thing alloc] initialValue]` treated the *`int`*
+as the reference and released it. Signal 11 on the host.
+
+This is the sixth ARC defect in a row keyed on a syntactic form rather than on
+the reference -- after the returned name (#351), a scalar ivar store's left side
+(#352), an array store's receiver (#360), the kind of slot (#359), and the
+receiver's static class (#365). The fix has the same shape every time: one
+function that every spelling routes through. Here that is `is_initialiser`,
+which asks what the method *returns* rather than how it is spelled.
+
+Two details worth keeping:
+
+**The rule was already written down two lines away.** `consider_method` reads
+"Only an object-returning method can hand back ownership" and tests
+`return_type.contains('*')` -- but `is_owning_selector` returned early above it,
+so `-initialValue` never reached the test that would have rejected it. Both now
+share one `returns_object_pointer`. A correct rule sitting next to a check that
+short-circuits past it is not a rule.
+
+**Unanimity across the program, not a lookup on the receiver's class.** #365 is
+the standing lesson that the implementation which runs may be an override with a
+different contract. So an `init`-prefixed selector qualifies only if *every*
+declaration of it returns an object pointer; disagreement answers "not an
+initialiser", which leaks rather than corrupts.
+
 ## Where the same fix twice was the tell, again (#361, #365)
 
 The ownership audit found the protocol-dispatch leak (#361) and stopped
@@ -1318,6 +1349,21 @@ from an expression that is not the thing stored.
 
 - **Never silently degrade.** Anything outside the supported subset is a hard,
   *located* error. This is deliberate, not a gap someone forgot to fill.
+- **A release is only ever emitted for an expression that is an object
+  pointer.** Both operand sites used to take the expression's own type where it
+  ended in `*` and the root pointer otherwise, reasoning that "`id` is the one
+  spelling that is not a C type and nothing else non-pointer can be an object".
+  The first half is right and the second was a hole wide enough for `int`: the
+  root cast made any type compile, so a `+1` wrongly claimed for
+  `[[Thing alloc] initialValue]` released the integer 42 and dereferenced it
+  (#398). The fallback is now allowed only for `id`, `instancetype` and a bare
+  class name, and anything else is a located error naming the type -- a hard
+  error rather than a skipped release, because reaching there with a non-object
+  means the analysis decided something untrue, and covering for that means
+  either a leak or a wrong free. Verified to bite on its own: with the
+  selector fix reverted and only this check in place, the same program stops
+  faulting and fails to transpile instead. It would have caught #380, which is
+  the same shape reached through a cast.
 - **Identical boxed literals in one origin are one object.** That is
   Objective-C's own guarantee, and `-isEqual:`'s opening
   `if (self == anObject)` depends on it: with an instance per *occurrence* the
