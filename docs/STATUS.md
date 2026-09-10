@@ -1026,6 +1026,23 @@ directly.
 
 - **Never silently degrade.** Anything outside the supported subset is a hard,
   *located* error. This is deliberate, not a gap someone forgot to fill.
+- **An invariant about an object's header has to hold on every side that
+  touches it.** `oz_static_release` checked `_meta.immortal` before its
+  decrement and its comment stated the rule -- "their refcount is not tracked
+  either". `oz_static_retain` incremented with no check at all, so the rule
+  held in one direction and the count of every immortal object climbed for the
+  life of the program (#373). Nothing caught it for two reasons worth
+  remembering. The nine tests in `behavior_immortal_literals.rs` all exercised
+  *release*, and all nine pass with the fix reverted -- a suite named after the
+  invariant tested one half of it. And the wrong value was invisible: an
+  immortal object's lifetime does not depend on its refcount, so the drift
+  changed no behaviour and surfaced only through `retainCount`, which nothing
+  asserted on an immortal receiver. **When a check is added to one side of a
+  header field, enumerate every function that touches that field** -- there
+  were seven, and reading all seven is what showed `retain_count` reporting a
+  word nobody maintained. The payoff was not the wasted atomic: a writer is
+  what makes an object non-`const`, so removing the last one is what let a
+  boxed literal move from `datas` to `.rodata` and stop costing RAM at all.
 - **A leak is a bug; a double free is memory corruption.** ARC therefore fails
   toward leaking: an unrecognised shape is treated as borrowed. Widening what
   counts as owning is the dangerous direction and must be exact rather than
