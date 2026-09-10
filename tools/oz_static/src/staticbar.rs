@@ -289,7 +289,7 @@ impl LoopEscape {
 /// Walk outward from a `+1` expression to whatever finally keeps it.
 ///
 /// The climb through a `message_expression` **only when the expression is
-/// its receiver** is the same rule `stored_into_managed_local` used, and
+/// its receiver** is the same rule the helper this replaced used, and
 /// for the same reason: `-init` and friends hand the receiver's own
 /// reference back, so the send's value is still the object in question.
 /// As an *argument* it is borrowed and the statement's group releases it,

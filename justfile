@@ -85,6 +85,14 @@ monitor:
 # reports a blend of two versions.
 #
 # Build the transpiler once, before anything configures a sample (#308).
+#
+# Every recipe that drives `oz2c` depends on this, including the host
+# corpora -- which did not, and so only worked when something else had
+# happened to build it first (#344). In a fresh checkout
+# `just test-behavior` failed all 81 cases with "oz2c not built", and
+# `just test-all` with it, since none of the four recipes it calls built
+# the binary either. The twister recipes had always declared it; the host
+# ones were the omission.
 oz2c:
     cargo build --manifest-path tools/oz_static/Cargo.toml
 
@@ -244,21 +252,21 @@ bench-all:
 ast-dump file *includes:
     clang -Xclang -ast-dump=json -fsyntax-only {{includes}} {{file}} 2>/dev/null
 
-# The 78-case behavior corpus through oz_static, the default backend. This
+# The 81-case behavior corpus through oz_static, the default backend. This
 # harness carries the compiler/-O matrix, the sanitizers, leak detection and
 # gcov, so it is where those reach the *generated* C -- `cargo test`'s
 # corpus_parity only transpiles and compiles each case, never runs it.
 #
-# The 78-case behavior corpus through oz_static (gcc/clang, -O0/-O2, ASan, LSan).
-test-behavior *args:
+# The 81-case behavior corpus through oz_static (gcc/clang, -O0/-O2, ASan, LSan).
+test-behavior *args: oz2c
     python3 -m pytest tests/behavior/ -v {{args}}
 
 # 40 tests adapted from LLVM, GNUstep, Apple, ObjFW and mulle-objc.
-test-adapted *args:
+test-adapted *args: oz2c
     python3 -m pytest tests/adapted/ -v {{args}}
 
 
-test-pal:
+test-pal: oz2c
     python3 -m pytest tests/pal/ -v
 
 
@@ -277,12 +285,12 @@ test-all:
 
 test-ci-local:
     just test-all
-    just test-behavior -- --compiler=clang
-    just test-behavior -- --opt=O2
-    just test-behavior -- --sanitize=address,undefined
+    just test-behavior --compiler=clang
+    just test-behavior --opt=O2
+    just test-behavior --sanitize=address,undefined
 
-test-regression:
+test-regression: oz2c
     python3 -m pytest tests/behavior/ -v -k regression
 
-smoke:
+smoke: oz2c
     python3 tests/smoke/run.py
