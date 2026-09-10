@@ -42,6 +42,28 @@ env:
   OZ_CLANG: /usr/bin/clang-19
 
 jobs:
+  # Whether the four ARM/Zephyr jobs below need to run at all. See
+  # .github/ci-affects-target.sh for what counts as relevant, and for why
+  # only those four are gated and not the eight the ruleset requires.
+  #
+  # A job rather than a `paths:` filter because GitHub has no per-job
+  # path filtering -- `paths` gates the whole workflow. So the answer is
+  # computed once here and the heavy jobs depend on it. The cost is one
+  # short job ahead of them; the saving on a docs-only pull request is
+  # the ~805s they would otherwise spend building samples that no changed
+  # file affects (#387). `docs/STATUS.md` travels with every code change
+  # in this repo, so docs-only changes are ordinary rather than rare.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      target: ${{ steps.check.outputs.affects }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Does this change reach a target build?
+        id: check
+        run: .github/ci-affects-target.sh >> "$GITHUB_OUTPUT"
+
   # The primary gate for the static backend, and until #269 it never ran
   # here at all: this workflow built oz2c only indirectly, through
   # oz_static.cmake, and never invoked `cargo test`. So all 262 tests --
@@ -307,6 +329,8 @@ jobs:
   # remove: the last ten runs had every step succeed on both boards.
   hw-build-check:
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.target == 'true'
     strategy:
       matrix:
         board: [mps2/an385, qemu_riscv32]
@@ -334,9 +358,23 @@ jobs:
       - name: Install Zephyr SDK (with LLVM)
         run: .github/install-zephyr-sdk.sh
 
+      - name: Cache the west workspace
+        uses: actions/cache@v4
+        with:
+          path: |
+            ../.west
+            ../zephyr
+            ../modules
+          key: west-${{ hashFiles('west.yml') }}
+
       - name: Initialize workspace
         run: |
-          west init -l .
+          # Idempotent: `west init` fails outright on an existing
+          # workspace, and the cache above restores one. `west update`
+          # still runs, and is quick when every project is already at the
+          # manifest revision -- it is what makes a restored cache
+          # correct rather than merely fast.
+          [ -d ../.west ] || west init -l .
           west update --fetch-opt=--depth=1
 
       - name: Install Zephyr deps
@@ -424,6 +462,8 @@ jobs:
   # not run is a check that holds nowhere.
   pedantic-gate:
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.target == 'true'
     steps:
       - uses: actions/checkout@v4
 
@@ -448,9 +488,23 @@ jobs:
       - name: Install Zephyr SDK (with LLVM)
         run: .github/install-zephyr-sdk.sh
 
+      - name: Cache the west workspace
+        uses: actions/cache@v4
+        with:
+          path: |
+            ../.west
+            ../zephyr
+            ../modules
+          key: west-${{ hashFiles('west.yml') }}
+
       - name: Initialize workspace
         run: |
-          west init -l .
+          # Idempotent: `west init` fails outright on an existing
+          # workspace, and the cache above restores one. `west update`
+          # still runs, and is quick when every project is already at the
+          # manifest revision -- it is what makes a restored cache
+          # correct rather than merely fast.
+          [ -d ../.west ] || west init -l .
           west update --fetch-opt=--depth=1
 
       - name: Install Zephyr deps
@@ -489,6 +543,8 @@ jobs:
   # it, disabling that guard fails here too -- checked, not assumed.
   spin-validate:
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.target == 'true'
     steps:
       - uses: actions/checkout@v4
 
@@ -513,9 +569,23 @@ jobs:
       - name: Install Zephyr SDK (with LLVM)
         run: .github/install-zephyr-sdk.sh
 
+      - name: Cache the west workspace
+        uses: actions/cache@v4
+        with:
+          path: |
+            ../.west
+            ../zephyr
+            ../modules
+          key: west-${{ hashFiles('west.yml') }}
+
       - name: Initialize workspace
         run: |
-          west init -l .
+          # Idempotent: `west init` fails outright on an existing
+          # workspace, and the cache above restores one. `west update`
+          # still runs, and is quick when every project is already at the
+          # manifest revision -- it is what makes a restored cache
+          # correct rather than merely fast.
+          [ -d ../.west ] || west init -l .
           west update --fetch-opt=--depth=1
 
       - name: Install Zephyr deps
@@ -545,6 +615,8 @@ jobs:
   # what `generated-freshness` below exists to tie back to the transpiler.
   zephyr-integration:
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.target == 'true'
     steps:
       - uses: actions/checkout@v4
 
@@ -569,9 +641,23 @@ jobs:
       - name: Install Zephyr SDK (with LLVM)
         run: .github/install-zephyr-sdk.sh
 
+      - name: Cache the west workspace
+        uses: actions/cache@v4
+        with:
+          path: |
+            ../.west
+            ../zephyr
+            ../modules
+          key: west-${{ hashFiles('west.yml') }}
+
       - name: Initialize Zephyr workspace
         run: |
-          west init -l .
+          # Idempotent: `west init` fails outright on an existing
+          # workspace, and the cache above restores one. `west update`
+          # still runs, and is quick when every project is already at the
+          # manifest revision -- it is what makes a restored cache
+          # correct rather than merely fast.
+          [ -d ../.west ] || west init -l .
           west update --narrow --fetch-opt=--depth=1
 
       - name: Install Zephyr Python deps
