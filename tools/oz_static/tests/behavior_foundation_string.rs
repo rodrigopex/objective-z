@@ -11,7 +11,7 @@
 // pipeline (`tools/oz_transpile/emit.py`'s `ObjCStringLiteral` handling)
 // desugars a boxed string literal directly to a static, immortal `struct
 // OZString` instance -- no `alloc`/`init` at all, since every ivar
-// (`_length`, `_hash`, `_data`) is compile-time-computable and `dealloc`
+// (`_length`, `_data`) is compile-time-computable and `dealloc`
 // is a no-op. `emit::render_boxed_string_literal` replicates that design
 // (a real bug fix in this same PR -- it previously desugared to a
 // nonexistent `[OZString stringWithCString:]` class-method call instead).

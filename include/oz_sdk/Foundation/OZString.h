@@ -10,7 +10,6 @@
 
 @interface OZString : OZObject {
 	size_t _length;
-	unsigned int _hash;
 	const char *_data;
 }
 - (const char *)cString;

@@ -2184,11 +2184,13 @@ pub(crate) fn is_boxed_string_literal(node: Node) -> bool {
 /// Desugars a boxed string literal `@"..."` the same way the Python
 /// pipeline's oracle does (see `tools/oz_transpile/emit.py`'s
 /// `ObjCStringLiteral` handling): NOT a class-method call -- OZString's
-/// ivars (`_length`/`_hash`/`_data`) are all compile-time-computable and
-/// its `dealloc` is a no-op (see `src/OZString.m`), so the literal
-/// desugars directly to a static, immortal `struct OZString` instance
-/// (`_hash` is always `0` -- the real pipeline never actually computes a
-/// hash for it either) plus a cast-to-pointer expression at the use site.
+/// ivars (`_length`/`_data`) are all compile-time-computable and its
+/// `dealloc` is a no-op (see `src/OZString.m`), so the literal desugars
+/// directly to a static, immortal `struct OZString` instance plus a
+/// cast-to-pointer expression at the use site. There was a third ivar,
+/// `_hash`, which this initializer set to `0` and nothing ever read --
+/// removed in #371 along with the `int _refcount` in `OZObject` that was
+/// dead the same way.
 /// Each unique literal gets its own instance (no dedup, unlike the Python
 /// oracle -- a spike simplification; duplicates cost `sizeof(struct
 /// OZString)` each, 24 bytes on `mps2/an385`, and not correctness). That
@@ -2273,7 +2275,7 @@ fn render_boxed_string_literal(node: Node, ctx: &mut EmitCtx) -> (String, String
     // serve literals and heap strings alike, which is the same reason the
     // refcount field survives at all.
     let definition = format!(
-        "const struct OZString {} = {{ .base = {{ ._meta = {{ .class_id = OZ_STATIC_CLASS_OZString, .immortal = 1 }}, .oz_refcount = 1 }}, ._length = {}, ._hash = 0, ._data = {} }};\n",
+        "const struct OZString {} = {{ .base = {{ ._meta = {{ .class_id = OZ_STATIC_CLASS_OZString, .immortal = 1 }}, .oz_refcount = 1 }}, ._length = {}, ._data = {} }};\n",
         name, byte_len, c_literal
     );
     ctx.hoisted_string_literals.push((prototype, definition));
@@ -6076,9 +6078,12 @@ fn render_interface(node: Node, ctx: &mut EmitCtx, program: &Program) -> (String
             // names are separate tokens joined by `.`. They were
             // unbuildable purely because of the spelling.
             //
-            // `_refcount` stays a sibling, exactly as in the oracle's own
-            // root struct: it is `oz_atomic_t`, not a bitfield, and every
-            // driver reaches it through `__objc_refcount_get` anyway.
+            // `oz_refcount` stays a sibling, exactly as in the oracle's
+            // own root struct: it is `oz_atomic_t`, not a bitfield, and
+            // every driver reaches it through `__objc_refcount_get` anyway.
+            // Spelled in full here because `OZObject.h` used to declare an
+            // `int _refcount` beside it that nothing read, and this comment
+            // was easy to mistake for a defence of that one (#371).
             let mut f = String::from(
                 "\tstruct oz_metadata _meta; /* synthesized: class_id, and the deallocating/heap/immortal flags */\n\
                  \toz_atomic_t oz_refcount; /* synthesized: retain count */\n",
