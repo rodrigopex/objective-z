@@ -395,6 +395,61 @@ draws the boundary where there is scope structure to mark;
 cleared instead. Both restore on the way out, since the enclosing body
 still owes what it owed.
 
+### Every position that carries a type through (#326, #336, #367)
+
+The third family, and the one that has now produced four bugs with a
+single sentence behind all of them: **a method's signature and a free
+function's, a block literal's, and a C struct's field list are four
+separate walks over the same question**, and lowering a type was
+implemented in one of them at a time.
+
+There is nothing shared to fix. `render_method_definition` lowers a
+parameter and a return type; the `function_definition` arm builds a fresh
+`EmitCtx` and does its own; `render_block` computes the hoisted function's
+signature itself; and the `struct_specifier` arm pushed the author's bytes
+verbatim into the companion header. So each defect is real work, and each
+one looks like an isolated oversight from the outside:
+
+| Position | Spelling it did not lower | Issue |
+| --- | --- | --- |
+| a block literal's parameter | a class name needing a `struct` tag | #326 |
+| a free function's return type | the same, plus the return temporary's type | #336 |
+| a C struct's field | a class name -- `unknown type name 'Thing'` | #367 |
+| a free function's parameter | `id<Proto>` -- `expected ')'` | #367 |
+
+The rule worth keeping is the one that would have found the last two from
+the first two: **when a construct's type is lowered somewhere, ask which
+other syntactic positions hold a type, and check each of them** -- not
+because the code is shared, but precisely because it is not.
+
+Two properties of this family make it slow to find and easy to
+mis-diagnose:
+
+- **The transpile succeeds.** Nothing is unsupported and nothing is
+  rejected; the type simply arrives in the output as written, and the *C
+  compiler* is what refuses it. That is the one outcome this backend is
+  supposed to have designed out -- anything outside the subset is a hard,
+  located error -- so a test that only asserts on emitted text is blind to
+  it. Every case in `unlowered_spellings.rs` compiles the generated C for
+  that reason.
+- **The grammar's filing is not the obvious one.** `id<Marker>` is a
+  `typedefed_specifier` holding an `id` node beside a
+  `protocol_reference_list`, not a `generic_specifier`, so a predicate that
+  compared the whole node text to `"id"` saw `id<Marker>` and said no. A
+  file-scope `struct box { ... };` is a bare `struct_specifier` rather than
+  a `declaration`, and an *earlier* arm claims it -- so the first attempted
+  fix was dead code. Three guesses preceded each of those, and each was
+  settled by parsing the fragment and dumping the tree rather than by
+  reading the grammar.
+
+Fixing #367's second half in the shared predicate, rather than at the call
+site that reported it, immediately made two lowerings reach the same bytes:
+`block_pointer_edits` already lowered the `id` inside `void (^cb)(id)`, and
+the signature-wide pass now did too. `apply_edits` refuses overlapping
+edits, which is correct -- that is how a genuine conflict is caught -- so
+exact duplicates are dropped at the call site instead of by weakening the
+assertion.
+
 ## What the Clang AST oracle costs (#299)
 
 Measured on px-keyboard (8 app sources plus the 10 SDK `src/*.m`), because the
