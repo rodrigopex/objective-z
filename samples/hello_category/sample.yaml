@@ -13,3 +13,30 @@ tests:
       - mps2/an385
       - qemu_riscv32
       - nrf52833dk/nrf52833
+
+  # The same sample with CONFIG_OBJZ_DEBUG_LINES on, which since #358 is
+  # what CONFIG_DEBUG=y gets you. No sample enables CONFIG_DEBUG, so
+  # without this scenario every configuration in every sweep would build
+  # the directive-free half and nothing would build the other one.
+  #
+  # Worth a configuration of its own rather than trusting the Rust suite:
+  # tests/line_directives.rs proves oz2c emits the directives, and
+  # cmake/oz_static.cmake is what decides whether they are asked for. Only
+  # a real build exercises that seam, and only a real run proves a
+  # generated .c full of #line still compiles and behaves -- the one
+  # failure mode here is a directive landing somewhere the C compiler
+  # rejects, which is what #305 hit with `for (...) #line 29 "main.m"`.
+  #
+  # One board, not three: the seam is the build system's, not an
+  # architecture's, and this costs a build per sweep.
+  sample.hello_category.debug_lines:
+    tags: transpiled category
+    harness: console
+    extra_configs:
+      - CONFIG_DEBUG=y
+    harness_config:
+      type: one_line
+      regex:
+        - "All assertions passed"
+    platform_allow:
+      - mps2/an385
