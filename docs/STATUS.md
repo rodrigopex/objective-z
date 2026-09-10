@@ -948,7 +948,7 @@ nothing at all. Fourteen probed, **nine wrong**:
 | `while` / `do` condition | **leak per iteration** | still wrong |
 | `for` condition / update | **leak per iteration** | still wrong |
 | `&&` right operand | **leak** | still wrong |
-| `for` header declaration | **leak** | still wrong |
+| `for` header declaration | **leak** | released after the loop (#376) |
 | ternary arm | eager allocation | unchanged |
 
 ### The two halves, and why they split there
@@ -962,6 +962,60 @@ Those need the release *inside* the expression, a comma form over a
 scope-level temporary, which moves ownership from the statement renderer
 to the value's consumer. That is a redesign of the path every send goes
 through, so it is tracked separately rather than folded in.
+
+### The half that was neither: a header's own declaration (#376)
+
+The `for` header declaration sat on the wrong side of that split, and
+saying why is the useful part. It *is* evaluated exactly once, so nothing
+about when it allocates was ever wrong and it needed no comma form. What
+it needed was somewhere for the **name** to live: `owned_locals_of` is
+reached from `arc_note`, for a `declaration` whose parent is a
+`compound_statement`, and a header declaration's parent is the
+`for_statement`. No scope could see `t`, so the reference was created and
+abandoned.
+
+So the header is **rewritten** rather than the statement wrapped —
+`emit::render_for_header_owned_declaration`:
+
+```c
+{
+	struct Thing *t = makeThing();
+	for (; i < 1; i++) { ... }
+	oz_static_release((struct OZObject *)(t));
+}
+```
+
+That is the general shape of the difference: an *operand* can stay where
+it is and be named by a temporary beside the statement, but a
+*declaration's* name has to move for anything to be able to release it.
+Wrapping and rewriting are not the same tool, and the split above reads
+as though they were.
+
+Two details carry the correctness, and each was disabled in turn to see
+which test failed. The group is a real `ArcScope`, or a `return` inside
+the loop jumps straight past the trailing release and the leak returns on
+exactly the path an early exit takes. And its `ArcScope::start_byte` is
+the `for_statement`'s **own**, so `releases_up_to_jump_target` — which
+releases the scopes that began strictly *inside* the construct being left
+— leaves it alone for a `break` or `continue`, while the trailing release
+still runs when the loop finishes. Given the loop body's offset instead,
+both jumps segfault: a double free and a use-after-free.
+
+Its two guards turned out to be complementary rather than defensive, and
+only measuring said so. `owned_locals_of_in` answers **provenance**, so
+`for (Thing *t = [owned itself]; ...)` is left alone — without it, that
+frees what `owned` still names. `arc::declares_pointer` answers the
+**type**, so `for (long n = (long)makeThing(); ...)` is left alone —
+without it the emitted release casts a `long` to an object pointer, since
+`binds_ownership` looks through a non-bridging cast (#332). A plain
+`for (int i = 0; ...)` is declined by both and comes out byte-identical.
+Removing either broke exactly one test, and a different one each time.
+
+Worth recording as a defect this uncovered rather than fixed: the
+**statement-level** twin, `long n = (long)makeThing();`, emits
+`oz_static_release((struct OZObject *)(n))` against a `long` today —
+`owned_locals_of_in` has no type check of its own, which is why the
+header arm has to supply one.
 
 `staticbar` narrows the remaining hole more than it looks: the **direct**
 spelling of each loop case is already refused ("allocation of 'Thing'
