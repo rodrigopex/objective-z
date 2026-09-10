@@ -5526,8 +5526,34 @@ fn declarator_return_stars(node: Node) -> usize {
 /// the CST rather than the text is what keeps a parameter *typed* `id`
 /// distinct from one merely *named* it (#317).
 fn is_bare_id_type(node: Node, src: &str) -> bool {
-    matches!(node.kind(), "type_identifier" | "typedefed_specifier")
+    if matches!(node.kind(), "type_identifier" | "typedefed_specifier")
         && node_text(node, src).trim() == "id"
+    {
+        return true;
+    }
+    /* `id<Proto>` is the same type for lowering purposes -- a protocol
+     * qualification constrains what may be assigned to it and says nothing
+     * about its representation, so it lowers to the root class pointer
+     * exactly as a bare `id` does. The grammar files it as a
+     * `generic_specifier` with `id` as the base, so the strict text test
+     * above missed it and `void f(id<Marker> m)` reached GCC verbatim:
+     * `expected ')'` (#367).
+     *
+     * Answered here rather than at the one call site that reported it,
+     * because every position that lowers an `id` should lower both
+     * spellings -- a block literal's parameter list asks this same
+     * predicate, and would otherwise have kept the same hole. */
+    if node.kind() == "typedefed_specifier" {
+        /* The grammar gives `id<Marker>` a `typedefed_specifier` holding an
+         * `id` node and a `protocol_reference_list`, so the whole-text
+         * comparison above sees `id<Marker>` and not `id`. Ask for the `id`
+         * child instead. */
+        let mut cursor = node.walk();
+        let children: Vec<Node> = node.children(&mut cursor).collect();
+        return children.iter().any(|child| child.kind() == "id")
+            && children.iter().any(|child| child.kind() == "protocol_reference_list");
+    }
+    false
 }
 
 /// Does a bare `id` type appear anywhere at or under `node`?
@@ -6627,7 +6653,35 @@ fn walk_top_level<'a>(
                     // source order survives: a struct may have a union
                     // field by value, or the reverse, and the source had
                     // to declare them in a working order already.
-                    hoisted_c_structs.push(node_text(node, source).to_string());
+                    /* Patched, not copied. This pushed `node_text` --
+                     * the author's bytes -- so a class-typed field arrived
+                     * in the companion header with no `struct` tag and the
+                     * build failed with `unknown type name 'Thing'`, from a
+                     * declaration needing no store and no read to break
+                     * (#367). Every other position that carries a type
+                     * through to the output tags it; this one did not, which
+                     * is the same methods-vs-free-functions asymmetry as
+                     * #326 and #336 in a third place.
+                     *
+                     * `id` is lowered here too, for the same reason: a field
+                     * typed `id` or `id<Proto>` is as unrepresentable in C
+                     * as an untagged class name. */
+                    let mut field_edits = class_tag_edits(node, source, program);
+                    if let Some(root) = program.root_class() {
+                        rewrite_id_types(
+                            node,
+                            source,
+                            0,
+                            &format!("struct {} *", root),
+                            &mut field_edits,
+                        );
+                    }
+                    hoisted_c_structs.push(apply_edits(
+                        source,
+                        node.start_byte(),
+                        node.end_byte(),
+                        &field_edits,
+                    ));
                     headers.entry(stem.clone()).or_default().push(format!(
                         "/* {} definition hoisted to the companion header -- named by generated prototypes there, and by other origins' code */",
                         if node.kind() == "union_specifier" { "union" } else { "struct" }
@@ -6661,6 +6715,28 @@ fn walk_top_level<'a>(
                 // `^` reached GCC (#272). A method's equivalent parameter
                 // has always been lowered.
                 sig_edits.extend(block_pointer_edits(node, source, program.root_class()));
+                // And `id` -- bare or protocol-qualified -- lowered the way
+                // a method's parameter and a block literal's already are.
+                // Missing here, `void f(id<Marker> m)` was copied through
+                // verbatim and GCC answered `expected ')'`, while the same
+                // parameter on a method lowered to `void *` (#367). Third
+                // instance of this asymmetry in the same signature: the
+                // class tags above were #326's, the block pointers #272's,
+                // and each was a lowering methods had and free functions
+                // did not.
+                if let Some(root) = program.root_class() {
+                    rewrite_id_types(node, source, 0, &format!("struct {} *", root), &mut sig_edits);
+                }
+                /* `block_pointer_edits` already lowers an `id` *inside* a
+                 * block-typed parameter, so `void (^cb)(id)` now has two
+                 * lowerings reaching the same bytes with the same
+                 * replacement. `apply_edits` refuses overlaps -- rightly,
+                 * that is how a real conflict is caught -- but two edits
+                 * that agree byte for byte are idempotent, not conflicting.
+                 * Dropped here rather than by relaxing `apply_edits`, so
+                 * the assertion keeps its teeth everywhere else. */
+                sig_edits.sort_by_key(|(range, _)| (range.start, range.end));
+                sig_edits.dedup();
                 // A plain C function gets the same leading directive a
                 // method's definition does, on the same reasoning and
                 // needing it just as much: `main()` is `main.m`'s own
@@ -7191,9 +7267,35 @@ fn class_tag_edits(node: Node, src: &str, program: &Program) -> Vec<(Range<usize
         program: &Program,
         out: &mut Vec<(Range<usize>, String)>,
     ) {
-        // Inside a struct_specifier the tag is already present, and a
-        // generic_specifier's arguments are erased rather than tagged.
-        if matches!(node.kind(), "struct_specifier" | "generic_specifier") {
+        // A `generic_specifier`'s arguments are erased rather than tagged.
+        if node.kind() == "generic_specifier" {
+            return;
+        }
+        // A `struct_specifier` used as a *type* already carries its tag --
+        // `struct Widget *w` needs nothing -- but one that *defines* a
+        // struct has a body, and the field types inside it are ordinary
+        // type positions that need tagging like any other. This used to
+        // return for both, on the claim that "inside a struct_specifier the
+        // tag is already present": true of the reference, false of the
+        // definition, so
+        //
+        //     struct box { Thing *held; };
+        //
+        // reached the companion header verbatim and the build failed with
+        // `unknown type name 'Thing'` -- accepted by the transpiler,
+        // rejected by the compiler, from a declaration that needs no store
+        // and no read to break (#367).
+        //
+        // The tag itself is still skipped: only the body is descended into,
+        // so `struct box` does not become `struct struct box`.
+        if node.kind() == "struct_specifier" {
+            let mut cursor = node.walk();
+            let children: Vec<Node> = node.children(&mut cursor).collect();
+            for child in children {
+                if child.kind() == "field_declaration_list" {
+                    walk(child, src, program, out);
+                }
+            }
             return;
         }
         // A `block_literal` is skipped for the same reason
