@@ -689,6 +689,57 @@ refcount shape of every sink, with the two remaining defects asserted to
 the test and forces the list to change, and everything not listed is
 believed correct rather than merely unexamined.
 
+## Where the same fix twice was the tell, again (#361, #365)
+
+The ownership audit found the protocol-dispatch leak (#361) and stopped
+there. Implementing it turned up a second defect in the same function --
+worse, and unreported -- which is the same lesson the array-ivar entry
+above records, arrived at a different way.
+
+`emit::dynamic_dispatch_call` routes a send through the `class_id` switch
+for **two** reasons, and only one of them had been examined:
+
+- the receiver pins nothing down (a bare `id`, or protocol-qualified).
+  Ownership was `+0`, so a `+1` from the implementation that ran leaked
+  (#361).
+- the receiver's class is known but a subclass overrides the selector. The
+  call is correctly dynamic; ownership came from the **static** class, so
+  a caller holding a `Base *` released what a `Derived` override still
+  owned (#365) -- heap-use-after-free, the corrupting direction, against
+  this document's own standing rule.
+
+Both are one question -- *which implementations can this send reach?* --
+over different sets, and one answer covers both: poll them and require
+agreement. What makes it worth recording is the argument for why there is
+nothing better available:
+
+**No caller-side action resolves a disagreement.** A `+1` result must be
+released exactly once and a `+0` one never, so the two cases differ by one
+release. Adding a retain shifts *both* by one and leaves the difference
+exactly where it was. That is why the retain-when-unprovable mechanism
+#351 uses at a `return` does not generalise: retaining there creates a
+*new* reference the caller can own, which makes the unknown irrelevant,
+whereas at a call site the question is whether an *existing* reference was
+handed over. The choice is therefore static resolution, or making the
+unknown impossible -- and a contract that depends on which subclass turns
+up cannot be satisfied by anyone, so refusing it is the honest answer
+rather than the aggressive one.
+
+**Clang cannot answer it either**, which is worth knowing before anyone
+reaches for the AST here. A protocol send, a `+1` class send and a `+0`
+class send all carry the identical `ARCReclaimReturnedObject`: ARC's callee
+autoreleases and its caller always reclaims, a convention that is sound
+only with the pool this target does not have. The AST *does* distinguish
+the implementors -- a method handing over an owned reference carries
+`ARCConsumeObject` inside it -- but which implementor runs is a run-time
+fact, and no oracle removes the need for unanimity.
+
+One more thing the fix had to get right, and it is the reason the emitted C
+did not move at all: the refusal is scoped to **object-returning**
+selectors. Ownership is meaningless for a `void` or scalar result, and
+refusing those would reject ordinary polymorphism -- `-poke` overridden by
+three subclasses is what dynamic dispatch is *for*.
+
 ## Standing design rules
 
 - **Never silently degrade.** Anything outside the supported subset is a hard,
