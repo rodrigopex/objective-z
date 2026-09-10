@@ -147,8 +147,8 @@ fn main() -> ExitCode {
             // Costs nothing at runtime -- it changes only what the compiler
             // writes into DWARF -- but it roughly doubles the generated C,
             // since every directive carries an absolute path. So the Kconfig
-            // default is `y` in a `CONFIG_DEBUG` build and `n` otherwise
-            // (#358), and this flag is what supplies it. Off by default
+            // option depends on `CONFIG_DEBUG` and is `y` within it (#395),
+            // and this flag is what supplies it. Off by default
             // *here*, like `--introspection` and `--reflection`: the flag's
             // absence is what the option's `n` means, and it keeps the committed
             // `tests/zephyr/generated/` C (regenerated through this CLI)

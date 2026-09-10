@@ -87,7 +87,8 @@ config OBJZ_REFLECTION
 
 config OBJZ_DEBUG_LINES
 	bool "#line directives back to the Objective-C source"
-	default y if DEBUG
+	depends on DEBUG
+	default y
 	help
 	  Put #line directives on the generated C, so the toolchain
 	  resolves a transpiled program's addresses to the .m the code was
@@ -119,13 +120,20 @@ config OBJZ_DEBUG_LINES
 	  track how deep the build directory sits, the paths being
 	  absolute, so they are a shape rather than a constant.
 
-	  So the default follows CONFIG_DEBUG rather than being y outright
-	  (#358). A debugging build gets .m attribution; a release build
-	  gets generated C worth reading, and hands back that ~100 bytes of
-	  flash. Only the default moved -- both directions are still
-	  reachable by hand, and y in a release build is the one worth
-	  remembering, since a field fault is exactly what has to be
-	  resolved against the .m.
+	  So this depends on CONFIG_DEBUG and is y within it (#395). A
+	  debugging build gets .m attribution; a release build gets
+	  generated C worth reading, and hands back that ~100 bytes of
+	  flash.
+
+	  #358 made only the default follow CONFIG_DEBUG, leaving y
+	  reachable by hand in a release build on the grounds that a field
+	  fault is what has to be resolved against the .m. That does not
+	  survive: reading a release image's addresses in .m terms needs the
+	  directives to have been in the build that shipped, and a build
+	  that sets CONFIG_DEBUG to get them is at -Og with asserts on --
+	  a different image, so the hatch answers a different question than
+	  the one it was kept for. What it did leave reachable was y in a
+	  configuration where the directives are pure cost.
 
 	  Covered: method bodies, plain C function bodies and the functions
 	  hoisted from block literals -- the code you actually step
