@@ -904,6 +904,124 @@ selectors. Ownership is meaningless for a `void` or scalar result, and
 refusing those would reject ordinary polymorphism -- `-poke` overridden by
 three subclasses is what dynamic dispatch is *for*.
 
+## Which positions ask the ownership question (#355 and after)
+
+The audit behind #359 walked every **sink** a `+1` reference can reach —
+a local, an ivar, an array element, a global, a `return`. This one walked
+every **position a `+1` expression can appear in**, which turned out to be
+a different question with a worse answer.
+
+Only two arms of `render_expr` ever reached
+`emit::collect_owning_operands`: `expression_statement` and
+`declaration`, plus `for_header_owning_operands` for a loop
+initialiser. Every other position that can hold an expression asked
+nothing at all. Fourteen probed, **nine wrong**:
+
+| Position | Was | Now |
+| --- | --- | --- |
+| strong-ivar setter argument | correct | unchanged |
+| discarded result | correct | unchanged |
+| unbraced `if` body | correct | unchanged |
+| declaration binding a borrowed result | **use-after-free** | retained |
+| plain C call argument | **leak** | released |
+| `return` of a borrowed result | **leak** | retained, caller owns |
+| `if` condition | **leak** | released |
+| `switch` value | **leak** | released |
+| `while` / `do` condition | **leak per iteration** | still wrong |
+| `for` condition / update | **leak per iteration** | still wrong |
+| `&&` right operand | **leak** | still wrong |
+| `for` header declaration | **leak** | still wrong |
+| ternary arm | eager allocation | unchanged |
+
+### The two halves, and why they split there
+
+Everything fixed above is a position **evaluated exactly once**, so the
+operand can be hoisted into a temporary beside the statement and the
+existing group machinery covers it. Everything still wrong is evaluated
+**more than once** — or, for the ternary, on a branch the source may not
+take — where a hoisted temporary allocates where the source does not.
+Those need the release *inside* the expression, a comma form over a
+scope-level temporary, which moves ownership from the statement renderer
+to the value's consumer. That is a redesign of the path every send goes
+through, so it is tracked separately rather than folded in.
+
+`staticbar` narrows the remaining hole more than it looks: the **direct**
+spelling of each loop case is already refused ("allocation of 'Thing'
+inside a loop escapes the iteration"). What reaches the emitter is a
+factory *call*, whose `+1` is created inside the callee. Written with
+`alloc`, the known-defect rows added to `ownership_matrix.rs` failed as
+refusals and hid the real hole — the vacuous-test trap that file's own
+header warns about, walked into while writing it.
+
+### The failure that was not a leak
+
+`Thing *z = [h take:makeThing()];` where `-take:` hands its argument back
+is the one shape here that **frees a live object** rather than keeping a
+dead one. The operand goes into a statement-scoped temporary released at
+the end of the statement; `z` is not owned, correctly, because `-take:`
+is borrowing; so nothing retains it and the release drops the only
+reference. `[z n]` then segfaults, measured on the host, in the argument
+spelling and the receiver one (`[makeThing() itself]`) alike.
+`Thing *s = [[Builder new] result];` is the same shape in ordinary code.
+
+The fix is a retain on the bound slot — what ARC emits for a `__strong`
+slot, and correct whether or not the value aliases: aliased, the retain
+covers the release; not aliased, the retain and the scope-exit release
+cancel on a different object. What makes it the right answer rather than
+merely a working one is that `z` becomes an **owned local**, so every
+later question about it falls to machinery that already exists and is
+already tested.
+
+Two things had to be true for that not to make things worse:
+
+- **The retain is narrow.** `int m = [h count:makeThing()];` keeps the
+  tight statement-end release. This is not tidiness: a slab holds one
+  slot per *allocation site*, so holding a value past its statement can
+  exhaust a pool a statement-scoped release would have recycled. An
+  earlier draft of this work claimed site-based sizing made deferral
+  free, and the measurement that disproved it was the leak probe —
+  `keep(makeThing(1)); keep(makeThing(2));` printed "an object", then
+  "nil".
+- **The emitter and the analysis read one predicate.** Retaining while
+  `arc::return_hands_back_ownership` still reported the function `+0`
+  turned the use-after-free into a leak: the caller was handed a `+1`
+  nobody released. `arc::hoists_owning_operand` is called by both sides
+  for the same reason `return_needs_retain` is (#351), and the type check
+  each position needs is left to that position — a blanket widening of
+  `binds_ownership` would have had a scope release an `int`.
+
+### `break` inside a `switch` (found by the above, older than it)
+
+Adding an `if`/`switch` arm made a `switch` get wrapped in an operand
+group, and the group's release ran twice. The cause had nothing to do with
+operands and was live on `main`:
+
+```c
+struct Thing *t = ...;
+switch (i) {
+case 0:
+	oz_static_release(t);   /* break only exits the switch */
+	break;
+}
+Thing_n(t);                 /* freed */
+oz_static_release(t);       /* and again */
+```
+
+`ArcScope::is_loop_body` conflated "a `break` stops here" with "this is a
+loop body". A `switch` body is a `break` boundary but **not** a
+`continue` one, and a loop body is both, so no single flag could express
+it. A use-after-free *and* a double free, in a `switch` inside a loop with
+an owned local.
+
+The flag is gone. A jump now releases exactly the scopes that **began
+inside the construct it leaves**, which is a byte comparison against that
+construct's own start offset — `ArcScope::start_byte`. It gets `break`,
+`continue` and the operand group's own boundary right at once, and it is
+shorter than what it replaced. Worth stating as the general form: when a
+flag has to be set differently for two jumps out of the same construct,
+the flag is standing in for a question about *structure* that can be asked
+directly.
+
 ## Standing design rules
 
 - **Never silently degrade.** Anything outside the supported subset is a hard,
