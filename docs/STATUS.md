@@ -945,23 +945,61 @@ nothing at all. Fourteen probed, **nine wrong**:
 | `return` of a borrowed result | **leak** | retained, caller owns |
 | `if` condition | **leak** | released |
 | `switch` value | **leak** | released |
-| `while` / `do` condition | **leak per iteration** | still wrong |
-| `for` condition / update | **leak per iteration** | still wrong |
-| `&&` right operand | **leak** | still wrong |
+| `while` / `do` condition | **leak per iteration** | released in-expression (#376) |
+| `for` condition / update | **leak per iteration** | released in-expression (#376) |
+| `&&` / `||` right operand | **leak**, then eager | released, and only when reached (#376) |
+| ternary arm | eager allocation | released, and only when taken (#376) |
+| `+1` in a C call in a loop condition | **leak per iteration** | released in-expression (#376) |
 | `for` header declaration | **leak** | released after the loop (#376) |
-| ternary arm | eager allocation | unchanged |
 
 ### The two halves, and why they split there
 
-Everything fixed above is a position **evaluated exactly once**, so the
-operand can be hoisted into a temporary beside the statement and the
-existing group machinery covers it. Everything still wrong is evaluated
-**more than once** — or, for the ternary, on a branch the source may not
-take — where a hoisted temporary allocates where the source does not.
-Those need the release *inside* the expression, a comma form over a
-scope-level temporary, which moves ownership from the statement renderer
-to the value's consumer. That is a redesign of the path every send goes
-through, so it is tracked separately rather than folded in.
+The split is not by syntax but by **how often the operand is evaluated**.
+
+A position evaluated exactly once can have its operand hoisted into a
+temporary beside the statement, which is what the group machinery does.
+A position evaluated conditionally or repeatedly cannot: hoisting *moves
+the allocation*, so it runs once where the source runs it per iteration,
+or on a branch the source never takes. The fix for those is not a
+different release site but a different shape — a comma expression over a
+**declaration-only** temporary:
+
+    (tmp = makeThing(), v = Thing_n(tmp), oz_static_release(tmp), v)
+
+The declaration is hoisted through `ctx.pre_stmts` and only the
+assignment and the release stay inside. That split is why this needed no
+new hoisting machinery at all: a declaration with no initialiser
+evaluates nothing, so lifting it above a statement — even above a loop —
+costs nothing and reorders nothing.
+
+One predicate decides which shape a position gets
+(`emit::conditionally_evaluated`), and it is needed in **both**
+directions. Where nothing hoists, the operand leaks. Where a statement
+arm does hoist, hoisting is eager: `if (x && [makeThing() n] > 0)` was a
+leak until the `if`-condition arm reached it, and then became balanced
+but allocating whether `x` held or not. So the same question that adds
+the comma form also has to *decline* the hoist, and the two mechanisms
+are exclusive by construction —
+`emit::collect_owning_operands_in` skips exactly what
+`emit::unhoisted_owning_operands` picks up.
+
+Eager allocation is the failure that survives a refcount audit: the
+counts balance, so nothing in `ownership_matrix.rs` could see it. Only
+observing the side effect catches it, which is why
+`operand_comma_expr.rs` has a factory that prints and asserts on the
+number of evaluations rather than on the number of releases.
+
+The `for`-header **declaration** belonged to neither half, and the next
+section is about why.
+
+`staticbar` narrowed how much of this was reachable, and that mattered
+for testing it: the **direct** spelling of each loop case is refused
+outright ("allocation of 'Thing' inside a loop escapes the iteration").
+What reaches the emitter is a factory *call*, whose `+1` is created
+inside the callee. Written with `alloc`, the known-defect rows added to
+`ownership_matrix.rs` failed as refusals and hid the real hole — the
+vacuous-test trap that file's own header warns about, walked into while
+writing it.
 
 ### The half that was neither: a header's own declaration (#376)
 
