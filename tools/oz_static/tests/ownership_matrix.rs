@@ -224,10 +224,10 @@ fn strong_slots_retain_what_they_are_given() {
         ),
         (
             Shape {
-                what: "owned array element, explicit self-> spelling",
+                what: "owned array element, explicit self-> spelling (#360)",
                 func: "Sink4_arraySelf",
-                expect: (1, 0, 1),
-                known_defect: Some("#360"),
+                expect: (1, 1, 2),
+                known_defect: None,
             },
             "\
 @interface Sink4 : OZObject {
