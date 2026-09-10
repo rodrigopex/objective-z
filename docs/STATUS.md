@@ -161,11 +161,11 @@ Measured on the linked `samples/reflection_demo` image for
 for all of it, plus 42 bytes for the two `OZ_PROTOCOL_SEND_*` functions the
 reflected selectors forced into existence. 1.4% of that sample's flash.
 
-**A protocol-typed receiver needs `<ObjectProtocol>` (#307).** None of the
+**A protocol-typed receiver needs `<OZObjectProtocol>` (#307).** None of the
 above can be sent to an `id<P>` unless `P` adopts oz_sdk's base protocol:
 
 ```objc
-@protocol PXToggleable <ObjectProtocol>
+@protocol PXToggleable <OZObjectProtocol>
 - (void)toggle;
 @end
 ```
@@ -175,10 +175,10 @@ nowhere else — the root class is unreachable from such a type — so without t
 adoption `[indicator conformsToProtocol:...]` is
 `error: no known instance method for selector 'conformsToProtocol:'` however
 plainly `OZObject` declares it. Real Objective-C has the same rule and
-`<NSObject>` is the same answer. `ObjectProtocol` lives in
-`include/oz_sdk/Foundation/Object+Protocol.h`, is reached through `OZObject.h`
+`<NSObject>` is the same answer. `OZObjectProtocol` lives in
+`include/oz_sdk/Foundation/OZObject+Protocol.h`, is reached through `OZObject.h`
 (which defines the `BOOL` its methods return), and is adopted by `OZObject`,
-`IteratorProtocol` and `SingletonProtocol`. Adopting it demands nothing of a
+`OZIteratorProtocol` and `OZSingletonProtocol`. Adopting it demands nothing of a
 conforming class: every method it declares is defined once, on the root class,
 and an inherited implementation satisfies a protocol requirement.
 
@@ -1446,5 +1446,31 @@ from an expression that is not the thing stored.
   runs. The image, as documented, moves the *other* way: 26816 bytes with
   directives against 26904 without, a `.m` name being shorter than a
   generated `.c` path.
+- **Every public name the SDK exports carries the `OZ` prefix — protocols
+  included.** The three protocols were `ObjectProtocol`, `IteratorProtocol` and
+  `SingletonProtocol` until #401, which made them `OZObjectProtocol`,
+  `OZIteratorProtocol` and `OZSingletonProtocol` in headers named to match. They
+  were the one family a *user* writes into their own declarations
+  (`@interface Foo: OZObject <OZSingletonProtocol>`), so they were also the one
+  family that told a reader nothing about where it came from. A new protocol is
+  named `OZ…Protocol` from the start; there is no deprecation path to fall back
+  on, because `@compatibility_alias` covers classes and not protocols.
+
+  What made the rename safe to do mechanically is that the fixtures read the
+  real headers through `include_str!` rather than retyping them
+  (`tests/common/mod.rs`, whose own doc says a hand-copied protocol of the same
+  name would keep passing if the header were renamed). An incomplete rename is
+  then a compile error, or the `assert!` inside `replace_line_containing` when
+  the `OZObject.h` splice marker stops matching — not a green run against a
+  fixture with no protocol in it.
+
+  One site was neither: `companion.rs`'s `SINGLETON_PROTOCOL` string, compared
+  through `class_conforms_to` to set `_meta.immortal`. A missed literal there
+  makes the comparison return false and singletons mortal, with no diagnostic
+  at all — the failure mode a rename has that a rename is not supposed to have.
+  **When a rename touches a name the compiler compares as data rather than
+  resolves as an identifier, find the comparison and prove a stale one fails**;
+  three tests in `behavior_immortal_literals.rs` do, which was established by
+  restoring the old spelling and watching them go red rather than by assuming.
 - **The version is `tools/oz_static/Cargo.toml`**, bumped in the same commit
   as the change it describes. The repo-level `VERSION` file is retired.
