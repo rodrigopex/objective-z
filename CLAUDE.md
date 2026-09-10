@@ -145,9 +145,22 @@ from an AST, which is why unexpanded macros survive into the output.
 - **`emit.rs`** — in-place substitution; expression and statement rendering, plus the
   `#line` directives that point a debugger back at the `.m` (`LineDirectives`, #305)
 - **`companion.rs`** — shared dispatch header/source, per-class slabs, allocators, boxed-literal builders
-- **`arc.rs`** — scope-based ARC. A Clang JSON AST may be supplied via `--ast` as an
-  *optional* secondary oracle for ivar ownership and method definedness; tree-sitter stays
-  the primary frontend
+- **`arc.rs`** — ARC. Read it as **ARC's optimizer written at the source level**, not as
+  a reimplementation: Clang emits retain/release naively and deletes the redundant pairs
+  in an LLVM pass, and nothing downstream of `oz2c` will ever do that, so the eliding is
+  this module's whole job. Every release decision answers two questions — **provenance**
+  (is this `+1` by shape?) and **escape** (is it reachable after this scope under another
+  name?); asking only the first produced #351, #352, #359 and #360. Two mechanisms:
+  resolve statically from the CST where possible (free), and retain where provenance
+  cannot be established (one pair, and only sound at a `return` — see
+  [docs/STATUS.md](docs/STATUS.md), "The hybrid model"). **Key ownership on the reference,
+  never on a syntactic form**, and route every spelling through one function.
+  A Clang JSON AST is supplied via `--ast` as the corroborating oracle — depending on it
+  is sanctioned (the SDK ships clang and CI pins it), it carries the `__strong` qualifiers
+  and the `ARCProduceObject`/`ARCConsumeObject`/`ARCReclaimReturnedObject` marks, and
+  `astinfo.rs` currently reads only `ObjCIvarDecl` of all that. tree-sitter stays the
+  primary frontend, and the Rust suite runs with no AST, so ownership must still decide
+  without one
 - **`pools.rs`** — slab and element-pool sizing, counted from allocation sites
 - **`staticbar.rs`** — accept/reject scan for the static subset
 - **`imports.rs`** — `#import` resolution and per-origin provenance, plus the merged-offset
