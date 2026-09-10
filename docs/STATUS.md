@@ -1424,5 +1424,27 @@ from an expression that is not the thing stored.
   hoisting out of a loop **body** would run an allocation once instead of
   per iteration -- and it is why #341 is a separate arm rather than a
   widened guard on #328's.
+- **An escape hatch is only real in the configuration it was kept for.**
+  `CONFIG_OBJZ_DEBUG_LINES` was made `default y if DEBUG` rather than
+  `depends on DEBUG` so that `y` stayed reachable by hand in a release build,
+  on the argument that a field fault is exactly what has to be resolved
+  against the `.m` (#358). The hatch could not answer that: resolving a
+  shipped image's addresses in `.m` terms needs the directives to have been
+  in the build that shipped, and a build that turns `CONFIG_DEBUG` on to get
+  them is at `-Og` with asserts -- a different image. What the soft default
+  did leave reachable was `y` in the one configuration where the directives
+  are pure cost, 38% of the bytes of generated C nobody will step through
+  (#395). So it is `depends on DEBUG` now, and the reasoning on both sides
+  sits in the Kconfig help rather than only the half that survived.
+
+  The general form, since a Kconfig default is cheap to argue about and hard
+  to measure: **state which build the option is for, then check that build
+  can actually reach it.** Both directions were measured here rather than
+  reasoned about -- forced `=y` without `CONFIG_DEBUG` transpiled 20 `#line`
+  directives before the change and zero after, where Kconfig now refuses the
+  symbol with an unmet-dependency warning; `CONFIG_DEBUG=y` gets all 20 and
+  runs. The image, as documented, moves the *other* way: 26816 bytes with
+  directives against 26904 without, a `.m` name being shorter than a
+  generated `.c` path.
 - **The version is `tools/oz_static/Cargo.toml`**, bumped in the same commit
   as the change it describes. The repo-level `VERSION` file is retired.
