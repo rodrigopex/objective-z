@@ -168,10 +168,60 @@ fn check_synchronized_body(sync_node: Node, src: &str, diags: &mut Vec<Diagnosti
     }
 }
 
-/// Is this allocation's result stored straight into a strong local that ARC
-/// manages?
+/// Is this owning expression merely the **receiver** of another owning
+/// send, so that the outer one carries the same reference?
 ///
-/// This is what separates the two shapes the loop rule used to conflate:
+/// `[[Foo alloc] init]` creates one object, not two: `-init` consumes its
+/// receiver's `+1` and hands it back. Reporting both would give two
+/// diagnostics for one allocation, and reporting only the inner one would
+/// start the escape walk from an expression that is not the thing stored.
+/// So the inner is skipped and the outer carries it.
+///
+/// A *non*-owning outer send is a different matter and must not skip:
+/// `[[Foo alloc] poke]` abandons the receiver's reference after the send,
+/// which is precisely the shape the group machinery releases inside the
+/// iteration -- and precisely the shape this rule used to refuse.
+fn is_owning_receiver_of_owning_send(node: Node, src: &str, program: &Program) -> bool {
+    let Some(parent) = node.parent() else {
+        return false;
+    };
+    if parent.kind() != "message_expression" {
+        return false;
+    }
+    let mut c = parent.walk();
+    let parts: Vec<Node> = parent
+        .children(&mut c)
+        .filter(|n| n.kind() != "[" && n.kind() != "]")
+        .collect();
+    if parts.first().map(|n| n.id()) != Some(node.id()) {
+        return false;
+    }
+    crate::arc::is_owning_expr(parent, src, program, &program.owning_methods)
+}
+
+/// Why a `+1` reference created inside a loop cannot be served by the
+/// slab's **one slot per allocation site**, or `None` when it can.
+///
+/// This replaces two proxies and a selector-name test, and the whole point
+/// is that all three were standing in for one question: *does this
+/// reference outlive the iteration, and if it is kept, is the previous one
+/// released before the next is allocated?*
+///
+/// Measured, on a deliberately one-slot pool, four iterations each:
+///
+/// | destination | reused? | released before next alloc? | slots | run |
+/// | --- | --- | --- | --- | --- |
+/// | managed local | yes | **yes** | 1 | 4/4 objects |
+/// | ivar / global | yes | **no** | **2** | 1/4, then nil |
+/// | array element, varying index | **no** | n/a | loop bound | unbounded |
+///
+/// The ivar overlap is *inherent*, not a defect to fix elsewhere: the new
+/// value has to be evaluated before the old one is released, or
+/// `_ivar = [_ivar retain]` would free a live object. So that shape needs
+/// two slots and the author has to say so.
+///
+/// The two shapes the old rule conflated, kept from the helper this
+/// replaced:
 ///
 /// ```objc
 /// /* reassignment -- bounded at one live instance */
@@ -182,62 +232,187 @@ fn check_synchronized_body(sync_node: Node, src: &str, diags: &mut Vec<Diagnosti
 /// for (...) { [arr addObject:[Counter alloc]]; }
 /// ```
 ///
-/// In the first, `emit::render_strong_local_assign` releases the previous
-/// object *before* allocating the next, so the slab slot is returned and
-/// immediately reusable -- one slot serves the whole loop, and the
-/// occurrence count `pools::count_sites` produced is right. In the second,
-/// nothing releases anything and the count is a floor the program walks
-/// straight through, so it stays a hard error.
+/// The second is `Accumulates`: the array keeps every one and nothing
+/// releases anything, so the per-site count is a floor the program walks
+/// straight through.
 ///
-/// The climb only follows a *receiver* position, never an argument.
-/// `[[Counter alloc] init]` keeps the allocation's identity, so the store
-/// that matters is the outer send's; `[arr addObject:[Counter alloc]]` does
-/// not, and treating its enclosing assignment as the destination would
-/// accept exactly the accumulating shape this rule exists for.
-fn stored_into_managed_local(node: Node, src: &str, scope: &MethodScope) -> bool {
+/// `None` covers every position where the reference dies with the
+/// statement, which is now every operand position -- a send's receiver or
+/// argument (#340, #328), a discarded result (#322), and a controlling
+/// expression (#376). Those were refused before this change even though
+/// the emitter released them inside the iteration: proved by the same
+/// shape spelled through a factory, which the old selector-name test
+/// could not see, running 8 allocations on one slot with every object
+/// live.
+enum LoopEscape {
+    /// Kept in a slot that *is* reused, but whose previous value is
+    /// released only after the new one exists. Bounded at two, not one.
+    OverlappingStore(&'static str),
+    /// Kept in a destination that differs per iteration, so nothing is
+    /// released and live instances accumulate to the loop's own bound.
+    Accumulates(&'static str),
+    /// Handed to the caller, so the iteration does not end its life at
+    /// all.
+    Returned,
+}
+
+impl LoopEscape {
+    /// The located message. It names the destination and why one slot
+    /// cannot serve it, rather than listing workarounds for a reason that
+    /// may not apply -- the old wording claimed the reference "escapes the
+    /// iteration" even for the shapes that were being refused wrongly.
+    fn describe(&self, what: &str) -> String {
+        match self {
+            LoopEscape::OverlappingStore(dest) => format!(
+                "{what} inside a loop is stored into {dest}, which needs **two** slab slots \
+                 rather than one: the store releases the previous object only after the new \
+                 one exists, so both are briefly live. Raise this class's pool (a \
+                 `/* oz-pool: <Class>=2 */` directive, or --pool-sizes) or bind it to a local \
+                 declared before the loop -- a local's previous value is released *before* the \
+                 next allocation, so one slot serves it"
+            ),
+            LoopEscape::Accumulates(dest) => format!(
+                "{what} inside a loop is stored into {dest}, so each iteration keeps its own \
+                 instance and nothing is released; the static subset sizes one slab slot per \
+                 allocation site and cannot bound how many the loop needs. Store it in a local \
+                 that each iteration overwrites, or size the pool for the loop's own bound"
+            ),
+            LoopEscape::Returned => format!(
+                "{what} inside a loop is returned, so the iteration does not end its life and \
+                 one slab slot cannot serve the next one. Allocate it outside the loop, or \
+                 return on the first iteration that produces a value"
+            ),
+        }
+    }
+}
+
+/// Walk outward from a `+1` expression to whatever finally keeps it.
+///
+/// The climb through a `message_expression` **only when the expression is
+/// its receiver** is the same rule `stored_into_managed_local` used, and
+/// for the same reason: `-init` and friends hand the receiver's own
+/// reference back, so the send's value is still the object in question.
+/// As an *argument* it is borrowed and the statement's group releases it,
+/// which is why that direction stops with `None`.
+///
+/// Reaching the enclosing block without passing a store or a `return` is
+/// the confined case: nothing kept the reference, so it dies with the
+/// statement.
+fn loop_escape(node: Node, src: &str, scope: &MethodScope) -> Option<LoopEscape> {
     let mut cur = node;
     loop {
         let Some(parent) = cur.parent() else {
-            return false;
+            return None;
         };
         match parent.kind() {
-            "parenthesized_expression" | "cast_expression" => {
+            "parenthesized_expression" | "cast_expression" | "unary_expression"
+            | "binary_expression" | "conditional_expression" => {
                 cur = parent;
             }
             "message_expression" => {
-                // Only climb when `cur` is the receiver.
                 let mut c = parent.walk();
                 let parts: Vec<Node> = parent
                     .children(&mut c)
                     .filter(|n| n.kind() != "[" && n.kind() != "]")
                     .collect();
                 match parts.first() {
-                    Some(receiver) if receiver.id() == cur.id() => {
-                        cur = parent;
-                    }
-                    _ => return false,
+                    /* The receiver: the send hands this same reference on,
+                     * so keep climbing to find who ends up with it. */
+                    Some(receiver) if receiver.id() == cur.id() => cur = parent,
+                    /* An argument: borrowed, and released by the group the
+                     * statement is wrapped in. */
+                    _ => return None,
                 }
             }
-            "assignment_expression" => {
-                let mut c = parent.walk();
-                let parts: Vec<Node> = parent.children(&mut c).collect();
-                if parts.len() >= 3
-                    && parts[0].kind() == "identifier"
-                    && node_text(parts[1], src) == "="
-                    && parts.last().map(|n| n.id()) == Some(cur.id())
-                {
-                    return scope.arc_managed_locals.contains(node_text(parts[0], src));
-                }
-                return false;
-            }
-            _ => return false,
+            /* A plain C call's argument -- same reasoning as a send's. */
+            "argument_list" => return None,
+            /* A local declaration. Fresh per iteration, or ARC-managed and
+             * overwritten with the previous released first; both are one
+             * slot (measured). */
+            "init_declarator" | "declaration" => return None,
+            "assignment_expression" => return assignment_escape(parent, cur, src, scope),
+            "return_statement" => return Some(LoopEscape::Returned),
+            /* Nothing kept it: it dies with the statement. */
+            "expression_statement" | "compound_statement" => return None,
+            /* A controlling expression: released per evaluation, inside the
+             * iteration (#376). */
+            "if_statement" | "while_statement" | "do_statement" | "for_statement"
+            | "switch_statement" => return None,
+            _ => cur = parent,
         }
     }
 }
 
+/// Which slot an assignment keeps the reference in, and whether one slab
+/// slot can serve it.
+fn assignment_escape(
+    assignment: Node,
+    value: Node,
+    src: &str,
+    scope: &MethodScope,
+) -> Option<LoopEscape> {
+    let mut c = assignment.walk();
+    let parts: Vec<Node> = assignment.children(&mut c).collect();
+    /* Only the value side keeps it; reaching here from the *left* means
+     * the expression was part of the destination, not the thing stored. */
+    if parts.last().map(|n| n.id()) != Some(value.id()) {
+        return None;
+    }
+    let Some(lhs) = parts.first() else {
+        return None;
+    };
+    match lhs.kind() {
+        "identifier" => {
+            let name = node_text(*lhs, src);
+            if scope.arc_managed_locals.contains(name) {
+                /* Overwritten each iteration, previous released *first* --
+                 * one slot, measured at 4/4 on a one-slot pool. */
+                return None;
+            }
+            /* A local ARC declined to manage -- one whose store shape it
+             * could not support (see `arc_strong_locals`). Nothing
+             * releases the previous value, so this accumulates rather than
+             * overlapping at two. */
+            if scope.locals.contains(name) {
+                return Some(LoopEscape::Accumulates("a local ARC does not manage"));
+            }
+            if scope.class_ivars.contains(name) {
+                return Some(LoopEscape::OverlappingStore("an ivar"));
+            }
+            /* A file-scope variable, which ARC manages as a strong slot
+             * the same way an ivar is (#359), so it has the same two-slot
+             * overlap. */
+            Some(LoopEscape::OverlappingStore("a file-scope variable"))
+        }
+        /* `self->_x`, and any other struct-field spelling. */
+        "field_expression" => Some(LoopEscape::OverlappingStore("an ivar")),
+        "subscript_expression" => {
+            /* A constant index names the same element every iteration, so
+             * it behaves like an ivar; anything else varies, and varying is
+             * what accumulates. */
+            let mut sc = lhs.walk();
+            let index = lhs
+                .children(&mut sc)
+                .filter(|n| !matches!(n.kind(), "[" | "]"))
+                .nth(1);
+            match index {
+                Some(i) if i.kind() == "number_literal" => {
+                    Some(LoopEscape::OverlappingStore("one element of an array ivar"))
+                }
+                _ => Some(LoopEscape::Accumulates(
+                    "an array element chosen per iteration",
+                )),
+            }
+        }
+        _ => Some(LoopEscape::Accumulates("a destination this pass cannot bound")),
+    }
+}
+
+
 fn walk_for_reject(
     node: Node,
     src: &str,
+    program: &Program,
     scope: &mut MethodScope,
     in_loop: bool,
     fresh_decl: bool,
@@ -252,20 +427,36 @@ fn walk_for_reject(
             check_synchronized_body(node, src, diags);
         }
         "message_expression" => {
-            let selector = message_selector(node, src);
-            if selector == "alloc"
-                && in_loop
-                && !fresh_decl
-                && !stored_into_managed_local(node, src, scope)
-            {
-                let class_name = node_text(node, src)
-                    .trim_start_matches('[')
-                    .split_whitespace()
-                    .next()
-                    .unwrap_or("?");
-                err(diags, src, node, format!(
-                    "allocation of '{}' inside a loop escapes the iteration — the static subset cannot bound how many live instances this may need; store it in a fresh per-iteration local, or in a local declared before the loop (ARC then releases the previous one each time), or hoist the allocation out of the loop",
-                    class_name));
+            /* Any expression that *creates* a `+1`, not the literal
+             * `alloc` spelling. Keying on the selector name let every
+             * other way of producing one through untouched -- a class's
+             * own `+new`, `-copy`, and any analysis-derived factory -- so
+             * `_arr[i] = [Foo make];` in a loop was accepted and silently
+             * yielded `nil` from the second iteration on, which is exactly
+             * what this rule exists to prevent. `walk_for_reject` runs
+             * from `emit`, after `arc::analyze`, so
+             * `program.owning_methods` is populated and the question can
+             * be asked properly. */
+            let creates_plus_one = crate::arc::is_owning_expr(
+                node,
+                src,
+                program,
+                &program.owning_methods,
+            ) && !is_owning_receiver_of_owning_send(node, src, program);
+            if creates_plus_one && in_loop {
+                if let Some(escape) = loop_escape(node, src, scope) {
+                    let class_name = node_text(node, src)
+                        .trim_start_matches('[')
+                        .split_whitespace()
+                        .next()
+                        .unwrap_or("?");
+                    err(
+                        diags,
+                        src,
+                        node,
+                        escape.describe(&format!("an allocation of '{}'", class_name)),
+                    );
+                }
             }
         }
         "block_literal" => {
@@ -289,17 +480,15 @@ fn walk_for_reject(
         // child nodes (elements; key/value pairs) still get walked by the
         // default descent below, so an unsupported construct nested
         // inside one of them is still caught.
-        "array_literal" | "dictionary_literal"
-            if in_loop && !fresh_decl && !stored_into_managed_local(node, src, scope) =>
-        {
+        "array_literal" | "dictionary_literal" if in_loop => {
             let what = if node.kind() == "array_literal" {
-                "boxed array literal"
+                "a boxed array literal"
             } else {
-                "boxed dictionary literal"
+                "a boxed dictionary literal"
             };
-            err(diags, src, node, format!(
-                "a {} inside a loop escapes the iteration — the static subset cannot bound how many live instances this may need; store it in a fresh per-iteration local, or in a local declared before the loop (ARC then releases the previous one each time), or hoist it out of the loop",
-                what));
+            if let Some(escape) = loop_escape(node, src, scope) {
+                err(diags, src, node, escape.describe(what));
+            }
         }
         //
         // `selector_expression` (`@selector(...)`) is a real node kind
@@ -413,10 +602,10 @@ fn walk_for_reject(
                 }
                 let mut c2 = child.walk();
                 for gc in child.children(&mut c2) {
-                    walk_for_reject(gc, src, scope, child_in_loop, true, diags);
+                    walk_for_reject(gc, src, program, scope, child_in_loop, true, diags);
                 }
             } else {
-                walk_for_reject(child, src, scope, child_in_loop, fresh_decl, diags);
+                walk_for_reject(child, src, program, scope, child_in_loop, fresh_decl, diags);
             }
         }
         return;
@@ -424,7 +613,7 @@ fn walk_for_reject(
 
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        walk_for_reject(child, src, scope, child_in_loop, fresh_decl, diags);
+        walk_for_reject(child, src, program, scope, child_in_loop, fresh_decl, diags);
     }
 }
 
@@ -954,7 +1143,7 @@ pub fn check_method_body(
     for (name, _) in params {
         scope.locals.insert(name.clone());
     }
-    walk_for_reject(body, src, &mut scope, false, false, &mut diags);
+    walk_for_reject(body, src, program, &mut scope, false, false, &mut diags);
     diags
 }
 
@@ -993,6 +1182,6 @@ pub fn check_function_body(body: Node, src: &str, program: &Program) -> Vec<Diag
         locals: HashSet::new(),
         block_locals: HashSet::new(),
     };
-    walk_for_reject(body, src, &mut scope, false, false, &mut diags);
+    walk_for_reject(body, src, program, &mut scope, false, false, &mut diags);
     diags
 }

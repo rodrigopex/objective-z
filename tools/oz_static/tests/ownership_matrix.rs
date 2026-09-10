@@ -613,16 +613,26 @@ void breakInSwitch(int i)
          * which is the header rewritten into a wrapping group rather than
          * a release inside the expression.
          *
-         * The `+1` is `[m supply]` and not `[[Thing alloc] init]` for a
-         * reason worth keeping. `staticbar` already **refuses** a bare
-         * allocation inside a loop that escapes the iteration, so the
-         * direct spelling of each of these is a hard error and safe.
-         * What it does not see is a factory *call*, whose `+1` is created
-         * inside the callee -- and that is the spelling that reaches the
-         * emitter and leaks. Written with `alloc` these rows failed as
-         * refusals and hid the real hole, which is the vacuous-test trap
-         * this file's header warns about, walked into while writing the
-         * file. */
+         * The `+1` is `[m supply]` rather than `[[Thing alloc] init]`
+         * because that is how these rows were first written, and the
+         * reason has since changed twice -- worth recording, because the
+         * *original* reason was the vacuous-test trap this file's header
+         * warns about, walked into while writing the file.
+         *
+         * At the time, `staticbar` refused a bare allocation in a loop
+         * and could not see a factory *call* at all (it matched the
+         * literal selector `alloc`), so writing these with `alloc` made
+         * them fail as refusals and hid the hole, while the factory
+         * spelling reached the emitter and leaked.
+         *
+         * #345 removed both halves of that: the bar now asks whether the
+         * reference outlives the iteration, of any `+1` however
+         * produced -- so it sees `[m supply]`, and it *accepts* a bare
+         * `alloc` in these positions, since a controlling expression's
+         * temporary is released inside the iteration. Either spelling
+         * would do now. They stay as they are because the rows are about
+         * the emitter's release, not the bar's, and rewriting them would
+         * churn a file whose value is that it does not change. */
         (
             Shape {
                 what: "a while condition's +1 is released once per iteration",
