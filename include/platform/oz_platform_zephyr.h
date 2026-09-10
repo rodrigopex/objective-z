@@ -41,8 +41,35 @@ typedef struct sys_mem_blocks oz_mem_blocks_t;
  * at file scope -- an empty declaration, which ISO C does not allow, and
  * which no host build can see because the host backend's macro used to
  * need the `;` that this one supplies (#266). The two now agree.
+ *
+ * The BUILD_ASSERT keeps its own `;` and stays *ahead* of that trailing
+ * macro, so the whole expansion still ends in exactly one.
+ *
+ * Why the assert is here and nowhere else (#366). `sys/mem_blocks.h`
+ * declares `sys_mem_blocks_alloc_contiguous` and its `_free_` twin
+ * unconditionally, but `lib/mem_blocks/mem_blocks.c` is compiled only
+ * when CONFIG_SYS_MEM_BLOCKS is set -- and it defaults to `n`. So a
+ * program that writes `@[ ... ]` compiled clean and then failed to link
+ * with four undefined references into this header, naming neither the
+ * option nor the Objective-C that needed it.
+ *
+ * This macro is the right home because oz_static emits it only when the
+ * item pool is non-empty: `item_slots()` returns zero for a program with
+ * no array or dictionary literal, and zero means "emit neither the pool
+ * nor the builders that draw from it" (`tools/oz_static/src/pools.rs`).
+ * A program that uses no collection is therefore never asked for the
+ * option. The assert deliberately does *not* go in the two accessors
+ * below: a `static inline`'s body is compiled whether or not anything
+ * calls it, so an assert there would fire on every Zephyr build that
+ * includes this header, collection or not.
  */
 #define OZ_MEM_BLOCKS_DEFINE(name, blk_size, n_blocks, alignment)              \
+        BUILD_ASSERT(IS_ENABLED(CONFIG_SYS_MEM_BLOCKS),                        \
+                     "Objective-Z collections need CONFIG_SYS_MEM_BLOCKS=y: "  \
+                     "add it to prj.conf. This program builds an item pool "   \
+                     "because it uses OZArray, OZDictionary, an @[...] or an " \
+                     "@{...} literal, and Zephyr's contiguous block "          \
+                     "allocator is behind that option (default n).");          \
         SYS_MEM_BLOCKS_DEFINE(name, blk_size, n_blocks, alignment)
 
 static inline int oz_mem_blocks_alloc_contiguous(oz_mem_blocks_t *pool,
