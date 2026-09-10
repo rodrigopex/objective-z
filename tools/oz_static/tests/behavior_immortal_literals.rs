@@ -164,8 +164,14 @@ int main(void) {
 /// `deallocating = 1` from birth also prevented the crash, so every test
 /// above it passes either way -- but that guard sits *after* the decrement,
 /// so the refcount really did sink to 0 and then below on each release. The
-/// `immortal` check comes before the decrement, so an immortal object's
-/// refcount never moves at all.
+/// `immortal` check comes before the decrement, so release never moves an
+/// immortal object's refcount.
+///
+/// This test covers releases only. It said "never moves at all" until #373,
+/// which was false in the other direction -- `oz_static_retain` incremented
+/// the word with no immortal check, so the count climbed and nothing brought
+/// it back. `retaining_a_literal_does_not_move_its_refcount` below is the
+/// mirror that would have caught it.
 ///
 /// Without the fix this reports `rc_after=0`.
 #[test]
@@ -191,6 +197,156 @@ int main(void) {
     );
     let stdout = compile_and_run(&src, "releasing_a_literal_does_not_consume_its_refcount");
     assert_eq!(stdout, "rc_before=1\nrc_after=1\nrc_settled=1\nstill=hello\n");
+}
+
+/// The mirror of the test above, on the side that was missing (#373).
+///
+/// `oz_static_release` checked the immortal bit before its decrement;
+/// `oz_static_retain` checked nothing and incremented unconditionally. So a
+/// retain moved an immortal object's refcount and no release ever moved it
+/// back: the count ratcheted upward for the life of the program, and
+/// `retainCount` reported a number that meant nothing.
+///
+/// Three retains and three releases, which is balanced and must therefore
+/// leave the count exactly where it started. Without the fix this reports
+/// `rc_retained=4` and `rc_settled=4`.
+#[test]
+fn retaining_a_literal_does_not_move_its_refcount() {
+    let src = format!(
+        "{}{}\n{}",
+        ozobject_src(),
+        ozstring_src(),
+        "\
+#include <stdio.h>
+int main(void) {
+	OZString *s = @\"hello\";
+	printf(\"rc_before=%d\\n\", [s retainCount]);
+	[s retain];
+	[s retain];
+	[s retain];
+	printf(\"rc_retained=%d\\n\", [s retainCount]);
+	[s release];
+	[s release];
+	[s release];
+	printf(\"rc_settled=%d\\n\", [s retainCount]);
+	printf(\"still=%s\\n\", [s cString]);
+	return 0;
+}
+"
+    );
+    let stdout = compile_and_run(&src, "retaining_a_literal_does_not_move_its_refcount");
+    assert_eq!(stdout, "rc_before=1\nrc_retained=1\nrc_settled=1\nstill=hello\n");
+}
+
+/// A singleton is immortal by the same bit, so it gains the same thing: a
+/// retain no longer costs an atomic, and its count no longer drifts (#373).
+///
+/// Without the fix this reports `rc=3`.
+#[test]
+fn retaining_a_singleton_does_not_move_its_refcount() {
+    let src = format!(
+        "{}{}\n{}",
+        ozobject_src(),
+        singleton_decls(),
+        "\
+int main(void) {
+	Config *c = [Config sharedInstance];
+	[c retain];
+	[c retain];
+	printf(\"rc=%d\\n\", [c retainCount]);
+	printf(\"rate=%d\\n\", [c rate]);
+	return 0;
+}
+"
+    );
+    let stdout = compile_and_run(&src, "retaining_a_singleton_does_not_move_its_refcount");
+    assert_eq!(stdout, "rc=1\nrate=60\n");
+}
+
+/// The same ordering claim as `release_checks_immortal_before_decrementing`,
+/// for retain. Stated as an ordering rather than mere presence because a
+/// check placed after the increment would satisfy a `contains` and still
+/// move the word (#373).
+#[test]
+fn retain_checks_immortal_before_incrementing() {
+    let src = format!("{}\n{}", ozobject_src(), "int main(void) { return 0; }\n");
+    let c = oz_static::transpile(&src).expect("should transpile").companion_c;
+    let start = c
+        .find("*oz_static_retain(")
+        .unwrap_or_else(|| panic!("no oz_static_retain in:\n{}", c));
+    let body = &c[start..];
+    let end = body.find("\n}").unwrap_or(body.len());
+    let body = &body[..end];
+    let immortal = body
+        .find("_meta.immortal")
+        .unwrap_or_else(|| panic!("retain must check immortal; got:\n{}", body));
+    let inc = body
+        .find("oz_atomic_inc")
+        .unwrap_or_else(|| panic!("retain must increment; got:\n{}", body));
+    assert!(
+        immortal < inc,
+        "immortal check must come before the increment; got:\n{}",
+        body
+    );
+}
+
+/// `retainCount` must not report the stored word for an immortal object:
+/// nothing maintains it, so the honest answer is the one permanent
+/// reference the object has (#373).
+#[test]
+fn retain_count_reports_one_for_an_immortal_object() {
+    let src = format!("{}\n{}", ozobject_src(), "int main(void) { return 0; }\n");
+    let c = oz_static::transpile(&src).expect("should transpile").companion_c;
+    let start = c
+        .find("int oz_static_retain_count(")
+        .unwrap_or_else(|| panic!("no oz_static_retain_count in:\n{}", c));
+    let body = &c[start..];
+    let end = body.find("\n}").unwrap_or(body.len());
+    let body = &body[..end];
+    let immortal = body
+        .find("_meta.immortal")
+        .unwrap_or_else(|| panic!("retain_count must check immortal; got:\n{}", body));
+    let get = body
+        .find("oz_atomic_get")
+        .unwrap_or_else(|| panic!("retain_count must read the word; got:\n{}", body));
+    assert!(
+        immortal < get,
+        "the immortal answer must come before the read; got:\n{}",
+        body
+    );
+}
+
+/// A literal is `const`, which is what puts it in `.rodata` rather than
+/// `datas` -- flash only, no RAM (#373). It is only sound because neither
+/// retain nor release writes an immortal object any more, so this assertion
+/// and the two ordering tests above stand or fall together.
+#[test]
+fn literal_is_emitted_const() {
+    let src = format!(
+        "{}{}\n{}",
+        ozobject_src(),
+        ozstring_src(),
+        "int main(void) { OZString *s = @\"hi\"; return [s length]; }\n"
+    );
+    let out = oz_static::transpile(&src).expect("should transpile").source_c;
+    let def = out
+        .lines()
+        .find(|l| l.contains("struct OZString _oz_str_") && l.contains("._meta"))
+        .unwrap_or_else(|| panic!("no hoisted literal definition in:\n{}", out));
+    assert!(
+        def.starts_with("const struct OZString"),
+        "a literal must be const so it lands in .rodata; got:\n{}",
+        def
+    );
+    let proto = out
+        .lines()
+        .find(|l| l.contains("extern") && l.contains("struct OZString _oz_str_"))
+        .unwrap_or_else(|| panic!("no hoisted literal prototype in:\n{}", out));
+    assert!(
+        proto.contains("extern const struct OZString"),
+        "the prototype must agree with the definition; got:\n{}",
+        proto
+    );
 }
 
 /// The literal carries `immortal`, and no longer lies with `deallocating`.
