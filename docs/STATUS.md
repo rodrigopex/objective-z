@@ -500,6 +500,24 @@ class parsed with ivars, and hard-error naming the class and the `.m` to add.
 
 ## How measurements mislead
 
+### A substring grep called a dead field live (#371)
+
+`OZObject.h` declared `int _refcount` that nothing read. The live refcount is
+`oz_refcount`, synthesized by `companion.rs` into the same struct, so
+`grep -rn _refcount` matched the live field and reported the dead one as used.
+An ivar audit built on that grep cleared both fields; the same audit matching
+whole identifier tokens flagged them immediately.
+
+The field was hard to see by reading, too. In the header it sits where the
+refcount belongs and is named what the refcount would be named, and
+`emit.rs`'s "`_refcount` stays a sibling" comment -- written about
+`oz_refcount` -- reads as a defence of it. Two independent things had to be
+misread the same way, which is why it survived to be found by a size
+measurement rather than by review.
+
+`tests/no_dead_ivars.rs` is the standing check, and it matches tokens.
+
+
 The most reusable thing the old document held. Every entry below is something
 that reported success while the thing it named was broken.
 
@@ -1026,6 +1044,17 @@ directly.
 
 - **Never silently degrade.** Anything outside the supported subset is a hard,
   *located* error. This is deliberate, not a gap someone forgot to fill.
+- **A declared ivar is not free.** It becomes a field in the generated struct
+  whether or not anything reads it, and in the root class it becomes a field in
+  every object of every class -- `OZObject._refcount` cost 4 bytes per instance
+  program-wide while being unreachable. Removing it and `OZString._hash` took
+  `struct OZObject` from 12 bytes to 8 and `struct OZString` from 24 to 16, a
+  third of every string (#371). Note the second edit each removal needs: the
+  boxed-literal initializer in `emit.rs` named `._hash = 0`, so deleting the
+  header line alone would have failed every program containing a string
+  literal, on an initializer for a member that no longer exists.
+  `tests/no_dead_ivars.rs` now fails on any Foundation ivar the SDK's own
+  sources never touch, so this is enforced rather than remembered.
 - **An invariant about an object's header has to hold on every side that
   touches it.** `oz_static_release` checked `_meta.immortal` before its
   decrement and its comment stated the rule -- "their refcount is not tracked
