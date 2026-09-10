@@ -96,6 +96,7 @@ const DECLS: &str = "\
 static Thing *g_global;
 Thing *factory(void);
 void keep(Thing *t);
+int tagOf(Thing *t);
 ";
 
 fn program(body: &str) -> String {
@@ -597,18 +598,20 @@ void breakInSwitch(int i)
 }
 ",
         ),
-        /* ---- the positions still wrong, asserted wrong ----------------
+        /* ---- operands evaluated more than once, or conditionally -----
          *
-         * All three are evaluated *more than once*, so a hoisted
-         * temporary would allocate where the source does not; they need
-         * the release inside the expression rather than beside it.
+         * These are the shapes a hoisted temporary cannot serve: hoisting
+         * allocates once where the source allocates per iteration, or on
+         * a branch the source never takes. They carry the release
+         * *inside* the expression instead, as a comma form over a
+         * declaration-only temporary (`emit::render_comma_operand_expr`).
          *
-         * A `for` header's own `+1` declaration was the fourth row here.
-         * It is fixed (#376) and its cases moved to
-         * `tests/for_header_ownership.rs`: evaluated once, it needed only
-         * a scope that could see the name, which is the header rewritten
-         * into a wrapping group rather than a release inside the
-         * expression.
+         * A `for` header's own `+1` declaration was a fourth row here and
+         * is fixed separately, its cases now in
+         * `tests/for_header_ownership.rs`. It was never one of these:
+         * evaluated once, it needed only a scope that could see the name,
+         * which is the header rewritten into a wrapping group rather than
+         * a release inside the expression.
          *
          * The `+1` is `[m supply]` and not `[[Thing alloc] init]` for a
          * reason worth keeping. `staticbar` already **refuses** a bare
@@ -622,10 +625,10 @@ void breakInSwitch(int i)
          * file. */
         (
             Shape {
-                what: "a while condition's +1 leaks, once per iteration",
+                what: "a while condition's +1 is released once per iteration",
                 func: "whileCondition",
-                expect: (0, 0, 0),
-                known_defect: Some("operand positions evaluated more than once"),
+                expect: (0, 0, 1),
+                known_defect: None,
             },
             "\
 void whileCondition(Maker *m)
@@ -638,10 +641,10 @@ void whileCondition(Maker *m)
         ),
         (
             Shape {
-                what: "a do-while condition's +1 leaks, once per iteration",
+                what: "a do-while condition's +1 is released once per iteration",
                 func: "doCondition",
-                expect: (0, 0, 0),
-                known_defect: Some("operand positions evaluated more than once"),
+                expect: (0, 0, 1),
+                known_defect: None,
             },
             "\
 void doCondition(Maker *m)
@@ -654,10 +657,10 @@ void doCondition(Maker *m)
         ),
         (
             Shape {
-                what: "a for condition's +1 leaks, once per iteration",
+                what: "a for condition's +1 is released once per iteration",
                 func: "forCondition",
-                expect: (0, 0, 0),
-                known_defect: Some("operand positions evaluated more than once"),
+                expect: (0, 0, 1),
+                known_defect: None,
             },
             "\
 void forCondition(Maker *m)
@@ -665,6 +668,89 @@ void forCondition(Maker *m)
 	int i;
 
 	for (i = 0; [[m supply] tag] > 100; i++) {
+		keep(g_global);
+	}
+}
+",
+        ),
+        (
+            Shape {
+                what: "a for update's +1 is released once per iteration",
+                func: "forUpdate",
+                expect: (0, 0, 1),
+                known_defect: None,
+            },
+            "\
+void forUpdate(Maker *m)
+{
+	int i;
+
+	for (i = 0; i < 1; i++, [[m supply] tag]) {
+		keep(g_global);
+	}
+}
+",
+        ),
+        (
+            Shape {
+                what: "a && right operand's +1 is released, and only allocated when reached",
+                func: "shortCircuitAnd",
+                expect: (0, 0, 1),
+                known_defect: None,
+            },
+            "\
+void shortCircuitAnd(Maker *m, int x)
+{
+	if (x && [[m supply] tag] > 100) {
+		keep(g_global);
+	}
+}
+",
+        ),
+        (
+            Shape {
+                what: "a || right operand's +1 is released, and only allocated when reached",
+                func: "shortCircuitOr",
+                expect: (0, 0, 1),
+                known_defect: None,
+            },
+            "\
+void shortCircuitOr(Maker *m, int x)
+{
+	if (x || [[m supply] tag] > 100) {
+		keep(g_global);
+	}
+}
+",
+        ),
+        (
+            Shape {
+                what: "a ternary arm's +1 is released, and only allocated when that arm is taken",
+                func: "ternaryArm",
+                expect: (0, 0, 1),
+                known_defect: None,
+            },
+            "\
+void ternaryArm(Maker *m, int x)
+{
+	int n = x ? [[m supply] tag] : 0;
+
+	(void)n;
+	keep(g_global);
+}
+",
+        ),
+        (
+            Shape {
+                what: "a +1 in a C call inside a loop condition is released per iteration",
+                func: "cCallInCondition",
+                expect: (0, 0, 1),
+                known_defect: None,
+            },
+            "\
+void cCallInCondition(Maker *m)
+{
+	while (tagOf([m supply]) > 100) {
 		keep(g_global);
 	}
 }

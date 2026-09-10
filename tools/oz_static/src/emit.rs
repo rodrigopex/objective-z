@@ -1579,6 +1579,16 @@ fn render_expr(node: Node, ctx: &mut EmitCtx) -> (String, String) {
         }
     }
     match node.kind() {
+        /* A send whose `+1` operand nothing will hoist accounts for it
+         * inside the expression instead -- see
+         * `render_comma_operand_expr` and `conditionally_evaluated`.
+         * Ahead of the plain arm because it *is* the plain arm with the
+         * operands held, and it calls `render_message` directly rather
+         * than recursing back through here. */
+        "message_expression" if !unhoisted_owning_operands(node, ctx).is_empty() => {
+            let values = unhoisted_owning_operands(node, ctx);
+            render_comma_operand_expr(node, ctx, values)
+        }
         "message_expression" => render_message(node, ctx),
         "block_literal" => render_block(node, ctx),
         "identifier" => {
@@ -1887,6 +1897,10 @@ fn render_expr(node: Node, ctx: &mut EmitCtx) -> (String, String) {
          * `rebuild_or_text` is that arm's body, factored out -- because
          * nothing about how a call is written changes here. Only its type
          * was missing. */
+        "call_expression" if !unhoisted_owning_operands(node, ctx).is_empty() => {
+            let values = unhoisted_owning_operands(node, ctx);
+            render_comma_operand_expr(node, ctx, values)
+        }
         "call_expression" => {
             let text = rebuild_or_text(node, ctx);
             (text, call_result_type(node, ctx).unwrap_or_else(|| "id".to_string()))
@@ -5202,6 +5216,142 @@ impl OperandPosition {
         }
     }
 }
+/// The `+1` operands of this send or call that **nothing will hoist**, so
+/// the expression itself has to account for them.
+///
+/// Empty for every shape a statement arm already took: `arg_temps` holds
+/// what `render_owning_operand_statement` evaluated, and
+/// `collect_owning_operands_in` declines exactly what this picks up, so an
+/// operand is claimed by one mechanism or the other and never both.
+fn unhoisted_owning_operands<'a>(node: Node<'a>, ctx: &EmitCtx) -> Vec<Node<'a>> {
+    let mut out: Vec<Node<'a>> = Vec::new();
+    if node.kind() == "message_expression" {
+        if let Some(value) = crate::arc::receiver_owning_value(
+            node,
+            ctx.src,
+            ctx.program,
+            &ctx.program.owning_methods,
+        ) {
+            out.push(value);
+        }
+        for arg in parse_message(node, ctx.src).args {
+            if let Some(value) = crate::arc::owning_argument_value(
+                arg,
+                ctx.src,
+                ctx.program,
+                &ctx.program.owning_methods,
+            ) {
+                out.push(value);
+            }
+        }
+    }
+    if node.kind() == "call_expression" {
+        if let Some(args) = node.child_by_field_name("arguments") {
+            let mut cursor = args.walk();
+            let arg_nodes: Vec<Node<'a>> = args
+                .children(&mut cursor)
+                .filter(|c| !matches!(c.kind(), "(" | ")" | ","))
+                .collect();
+            for arg in arg_nodes {
+                if let Some(value) = crate::arc::owning_argument_value(
+                    arg,
+                    ctx.src,
+                    ctx.program,
+                    &ctx.program.owning_methods,
+                ) {
+                    out.push(value);
+                }
+            }
+        }
+    }
+    out.retain(|value| !ctx.arg_temps.contains_key(&value.id()));
+    out
+}
+
+/// Render a send or call whose `+1` operands cannot be hoisted, holding
+/// and releasing each one **inside the expression**:
+///
+/// ```c
+/// (_oz_ce_1 = makeThing(), _oz_cv_2 = Thing_n(_oz_ce_1),
+///  oz_static_release((struct OZObject *)(_oz_ce_1)), _oz_cv_2)
+/// ```
+///
+/// A comma expression is the only shape that puts the release where the
+/// source puts the evaluation, which is what every position in #376
+/// needs: hoisting a temporary beside the statement allocates once where
+/// the source allocates per iteration, or on a branch the source never
+/// takes.
+///
+/// The temporaries are **declared** through `ctx.pre_stmts` and assigned
+/// here. That split is the whole trick, and it is why this needs no new
+/// hoisting machinery: a declaration without an initialiser evaluates
+/// nothing, so lifting it above the statement -- even above a loop --
+/// costs nothing and reorders nothing. Only the assignment and the
+/// release have to stay inside the expression, and a comma expression
+/// keeps them there.
+///
+/// A `void`-valued send yields no value temporary, and the comma
+/// expression's own value is then the release, which is `void`. Legal C,
+/// and correct: nothing consumes it.
+///
+/// Operands are released in reverse, so a nested one outlives the operand
+/// built from it -- the order `render_owning_operand_statement` uses.
+fn render_comma_operand_expr(
+    node: Node,
+    ctx: &mut EmitCtx,
+    values: Vec<Node>,
+) -> (String, String) {
+    let root = ctx.program.root_class().unwrap_or("OZObject").to_string();
+    let mut assigns: Vec<String> = Vec::with_capacity(values.len());
+    let mut releases: Vec<String> = Vec::with_capacity(values.len());
+    let mut held: Vec<usize> = Vec::with_capacity(values.len());
+    for value in values {
+        let (text, value_ty) = render_expr(value, ctx);
+        /* Same reading as `render_owning_operand_statement`: the
+         * expression's own type where it is a pointer, and the root
+         * pointer otherwise, since `id` is the one spelling that is not a
+         * C type and nothing else non-pointer can be an object. */
+        let (ty, init) = if value_ty.ends_with('*') {
+            (value_ty, text)
+        } else {
+            (format!("struct {} *", root), format!("(struct {} *)({})", root, text))
+        };
+        let (line, col) = line_col(ctx.src, value.start_byte());
+        ctx.block_counter += 1;
+        let tmp = format!("_oz_ce_L{}_C{}_{}", line, col, ctx.block_counter);
+        ctx.pre_stmts.push(format!("{}{};", ty, tmp));
+        assigns.push(format!("{} = {}", tmp, init));
+        releases.push(format!("oz_static_release((struct {} *)({}))", root, tmp));
+        ctx.arg_temps.insert(value.id(), (tmp, ty));
+        held.push(value.id());
+    }
+    let (rendered, rendered_ty) = if node.kind() == "message_expression" {
+        render_message(node, ctx)
+    } else {
+        let text = rebuild_or_text(node, ctx);
+        (text, call_result_type(node, ctx).unwrap_or_else(|| "id".to_string()))
+    };
+    for id in &held {
+        ctx.arg_temps.remove(id);
+    }
+    releases.reverse();
+
+    let mut parts = assigns;
+    if rendered_ty == "void" {
+        parts.push(rendered);
+        parts.extend(releases);
+        return (format!("({})", parts.join(", ")), "void".to_string());
+    }
+    let (line, col) = line_col(ctx.src, node.start_byte());
+    ctx.block_counter += 1;
+    let value_tmp = format!("_oz_cv_L{}_C{}_{}", line, col, ctx.block_counter);
+    ctx.pre_stmts.push(format!("{} {};", rendered_ty.trim_end(), value_tmp));
+    parts.push(format!("{} = {}", value_tmp, rendered));
+    parts.extend(releases);
+    parts.push(value_tmp.clone());
+    (format!("({})", parts.join(", ")), rendered_ty)
+}
+
 
 /// Every +1 operand of this statement's message sends whose reference
 /// nothing else will release, ordered so a nested one comes first (#328,
@@ -5240,14 +5390,15 @@ impl OperandPosition {
 /// that statement's own business and reaches this machinery through its
 /// own arm; hoisting it here would evaluate it whether the branch is
 /// taken or not, which is the defect `for_header_owning_operands` avoids
-/// by the same restriction and which the ternary arm still has.
+/// by the same restriction.
 ///
 /// `while`, `do`-`while` and the `for` condition/update look identical
 /// and are **not** here, for the one reason that matters: they are
 /// evaluated more than once, so a hoisted temporary would allocate once
-/// where the source allocates every time round. They need a release
-/// inside the expression rather than beside it, and are tracked
-/// separately.
+/// where the source allocates every time round. They carry the release
+/// inside the expression instead -- see `render_comma_operand_expr`, and
+/// `conditionally_evaluated` for the predicate that separates them from
+/// the two positions above.
 fn condition_owning_operands<'a>(
     node: Node<'a>,
     ctx: &EmitCtx,
@@ -5258,6 +5409,91 @@ fn condition_owning_operands<'a>(
     }
     values.sort_by_key(|(value, _)| value.end_byte());
     values
+}
+
+/// Is this `+1` operand evaluated **conditionally or repeatedly** relative
+/// to the statement that would otherwise hoist it into a temporary?
+///
+/// The single question behind every remaining shape in #376, and it is
+/// needed in both directions:
+///
+///   - where nothing hoists, the operand leaks. `while ([makeThing() n] >
+///     100)` creates a `+1` per iteration and abandons every one of them.
+///   - where a statement arm *does* hoist, hoisting is **eager**.
+///     `if (x && [makeThing() n] > 0)` was a leak until #378's `if` arm
+///     reached it, and is now balanced but allocates whether `x` is true
+///     or not -- so the short circuit no longer holds. On a one-slot pool
+///     that can exhaust the slab from a branch the source never takes,
+///     and it is observable outright whenever the factory has side
+///     effects.
+///
+/// Both are answered by declining to hoist and emitting the release
+/// *inside* the expression instead (`render_comma_operand_expr`), so the
+/// allocation happens exactly where the source evaluates it and the
+/// release goes with it.
+///
+/// What counts is only what lies between the operand and its statement:
+///
+///   - the right operand of `&&` or `||` -- evaluated only if the left
+///     permits it;
+///   - either arm of a `? :` -- one of the two is not evaluated;
+///   - a `while`/`do` condition, and a `for` condition or **update** --
+///     evaluated once per iteration.
+///
+/// A `for` **initialiser** is deliberately absent: it runs exactly once,
+/// which is why `for_header_owning_operands` hoists it and is right to.
+/// A loop *body* is absent for a different reason -- the walk stops at the
+/// enclosing statement, and a statement inside the body is itself hoisted
+/// per iteration, which is already correct.
+fn conditionally_evaluated(operand: Node, stmt: Node) -> bool {
+    let mut child = operand;
+    while let Some(parent) = child.parent() {
+        let crossed = match parent.kind() {
+            /* Only the *right* operand short-circuits; the left is always
+             * evaluated, so an operand under it is not conditional. */
+            "binary_expression" => {
+                matches!(operator_text(parent), Some("&&") | Some("||"))
+                    && parent
+                        .child_by_field_name("right")
+                        .is_some_and(|right| covers(right, child))
+            }
+            "conditional_expression" => !parent
+                .child_by_field_name("condition")
+                .is_some_and(|cond| covers(cond, child)),
+            "while_statement" | "do_statement" => parent
+                .child_by_field_name("condition")
+                .is_some_and(|cond| covers(cond, child)),
+            "for_statement" => {
+                let in_initializer = parent
+                    .child_by_field_name("initializer")
+                    .is_some_and(|init| covers(init, child));
+                !in_initializer
+                    && parent
+                        .child_by_field_name("body")
+                        .is_none_or(|body| !covers(body, child))
+            }
+            _ => false,
+        };
+        if crossed {
+            return true;
+        }
+        if parent.id() == stmt.id() {
+            return false;
+        }
+        child = parent;
+    }
+    false
+}
+
+/// Does `outer` contain `inner`, or is it `inner`?
+fn covers(outer: Node, inner: Node) -> bool {
+    outer.id() == inner.id()
+        || (outer.start_byte() <= inner.start_byte() && inner.end_byte() <= outer.end_byte())
+}
+
+/// A binary expression's operator, as written.
+fn operator_text<'a>(node: Node<'a>) -> Option<&'a str> {
+    node.child_by_field_name("operator").map(|op| op.kind())
 }
 
 fn owning_send_operands<'a>(
@@ -5434,6 +5670,23 @@ fn collect_owning_operands<'a>(
     ctx: &EmitCtx,
     out: &mut Vec<(Node<'a>, OperandPosition)>,
 ) {
+    collect_owning_operands_in(node, node, ctx, out)
+}
+
+/// The recursive half, carrying the statement the hoist would attach to so
+/// that `conditionally_evaluated` has something to measure against.
+///
+/// An operand it declines is not forgotten -- `render_expr` picks it up and
+/// emits the release inside the expression instead
+/// (`render_comma_operand_expr`). Declining here is what makes the two
+/// mechanisms exclusive: whichever one takes an operand, the other must not
+/// also.
+fn collect_owning_operands_in<'a>(
+    stmt: Node<'a>,
+    node: Node<'a>,
+    ctx: &EmitCtx,
+    out: &mut Vec<(Node<'a>, OperandPosition)>,
+) {
     /* A `block_literal`'s body is a separate function that runs later and
      * however many times it is called. Hoisting an operand out of it
      * would allocate once, here, where the source allocates per call. */
@@ -5449,7 +5702,9 @@ fn collect_owning_operands<'a>(
             ctx.program,
             &ctx.program.owning_methods,
         ) {
-            if !ctx.arg_temps.contains_key(&value.id()) {
+            if !ctx.arg_temps.contains_key(&value.id())
+                && !conditionally_evaluated(value, stmt)
+            {
                 out.push((value, OperandPosition::Receiver));
             }
         }
@@ -5465,7 +5720,9 @@ fn collect_owning_operands<'a>(
             /* Already held in a temporary by this same renderer, which is
              * what lets its recursive render fall through to the ordinary
              * dispatch instead of back into this arm. */
-            if !ctx.arg_temps.contains_key(&value.id()) {
+            if !ctx.arg_temps.contains_key(&value.id())
+                && !conditionally_evaluated(value, stmt)
+            {
                 out.push((value, OperandPosition::Argument));
             }
         }
@@ -5503,7 +5760,9 @@ fn collect_owning_operands<'a>(
                 ) else {
                     continue;
                 };
-                if !ctx.arg_temps.contains_key(&value.id()) {
+                if !ctx.arg_temps.contains_key(&value.id())
+                    && !conditionally_evaluated(value, stmt)
+                {
                     out.push((value, OperandPosition::Argument));
                 }
             }
@@ -5512,7 +5771,7 @@ fn collect_owning_operands<'a>(
     let mut cursor = node.walk();
     let children: Vec<Node<'a>> = node.children(&mut cursor).collect();
     for child in children {
-        collect_owning_operands(child, ctx, out);
+        collect_owning_operands_in(stmt, child, ctx, out);
     }
 }
 
