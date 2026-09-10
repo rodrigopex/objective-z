@@ -26,6 +26,14 @@
 // shape: one extractor (`assigned_ivar_name`) that both spellings go
 // through, rather than a second lowering for the second spelling.
 //
+// The array-element store had the identical gate and was fixed the same
+// way in #360: `render_strong_array_element_assign` required the
+// subscript's receiver to be an `identifier`, so `self->_arr[i] = v` fell
+// through to a plain C store while `_arr[i] = v` retained. Three sites of
+// one cause now (#351, #352, #360), each fixed by routing every spelling
+// through one function -- which is the only thing that has stopped a
+// fourth appearing.
+//
 // The cases that must *not* change are half this file. Dot syntax
 // (`self.x = value`) is a property store and must keep going through the
 // setter, which retains on its own; a scalar ivar has no ownership to
@@ -354,5 +362,122 @@ fn another_objects_ivar_stored_directly_is_refused() {
         diags.contains("Pair"),
         "the message must name the class that would have to own it:\n{}",
         diags
+    );
+}
+
+/* ---- the array-element store, same gate, same fix (#360) ------------ */
+
+/// `self->_arr[i] = value` lowers exactly like `_arr[i] = value`.
+///
+/// The emitted target is rebuilt from `ivar_access_path` either way, so
+/// the two are byte-identical apart from the provenance comment quoting
+/// the author's own line -- which is exactly what this compares.
+#[test]
+fn both_spellings_of_an_owned_array_element_store_lower_identically() {
+    let src = program(
+        "\
+@interface Slots : OZObject {
+	Thing *_arr[2];
+}
+- (void)bare;
+- (void)viaSelf;
+@end
+@implementation Slots
+- (void)bare
+{
+	Thing *t = [[Thing alloc] init];
+
+	_arr[0] = t;
+}
+- (void)viaSelf
+{
+	Thing *t = [[Thing alloc] init];
+
+	self->_arr[0] = t;
+}
+@end
+",
+    );
+
+    let out = oz_static::transpile(&src).expect("should transpile");
+    let bare = function_body(&out.source_c, "Slots_bare");
+    let via_self = function_body(&out.source_c, "Slots_viaSelf");
+
+    for (label, body) in [("bare", &bare), ("self->", &via_self)] {
+        assert!(
+            body.contains("oz_static_retain"),
+            "the {} array store takes no retain, so the element dangles:\n{}",
+            label,
+            body
+        );
+    }
+
+    let code = |body: &str, name: &str| {
+        body.lines()
+            .filter(|l| !l.trim_start().starts_with("/*"))
+            .collect::<Vec<_>>()
+            .join("\n")
+            .replace(name, "STORE")
+    };
+    assert_eq!(
+        code(&bare, "bare"),
+        code(&via_self, "viaSelf"),
+        "the two spellings still lower differently"
+    );
+}
+
+/// And the element outlives the storing method, then dies exactly once
+/// when the slot is overwritten -- the lifetime the text cannot prove.
+#[test]
+fn an_array_element_stored_through_self_outlives_the_method() {
+    let src = program(
+        "\
+@interface Slots : OZObject {
+	Thing *_arr[2];
+}
+- (void)store:(int)which;
+- (int)tagAt:(int)which;
+@end
+@implementation Slots
+- (void)store:(int)which
+{
+	Thing *t = [[Thing alloc] init];
+
+	self->_arr[which] = t;
+}
+- (int)tagAt:(int)which
+{
+	return [_arr[which] tag];
+}
+@end
+
+#include <stdio.h>
+static void useSlots(void)
+{
+	Slots *s = [[Slots alloc] init];
+	int i = 0;
+
+	[s store:i];
+	printf(\"after store deallocs=%d tag=%d\\n\", g_deallocs, [s tagAt:i]);
+	/* Overwriting the slot must release exactly what it held. */
+	[s store:i];
+	printf(\"after overwrite deallocs=%d\\n\", g_deallocs);
+}
+
+int main(void)
+{
+	useSlots();
+	printf(\"after owner died deallocs=%d\\n\", g_deallocs);
+	return 0;
+}
+",
+    );
+
+    let stdout = compile_and_run(&src, "array_element_through_self_lifetime");
+    assert_eq!(
+        stdout,
+        "after store deallocs=0 tag=7\nafter overwrite deallocs=1\nafter owner died deallocs=2\n",
+        "the element must survive the storing method, be released when overwritten, \
+         and be released again with its owner"
     );
 }

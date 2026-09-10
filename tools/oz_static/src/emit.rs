@@ -2874,12 +2874,27 @@ fn render_strong_array_element_assign(
 
     /* Only an *ivar* array is owned. A local array of objects has no
      * scope-exit release to pair with, and a parameter's storage belongs to
-     * the caller. */
-    let ivar = if recv_node.kind() == "identifier" {
-        node_text(recv_node, ctx.src).to_string()
-    } else {
-        return None;
-    };
+     * the caller.
+     *
+     * Both spellings of the ivar reach this, through the same extractor
+     * `render_strong_ivar_assign` uses: `_arr[i] = v` and
+     * `self->_arr[i] = v`. Only the bare one did until #360, because this
+     * required the subscript's receiver to be an `identifier` and
+     * `self->_arr` is a `field_expression` -- so the explicit spelling
+     * fell through to a plain C store, took no retain, and released
+     * nothing, leaving the element dangling once the local's scope ended.
+     *
+     * Third site of one cause: #351 keyed on the returned name, #352 on
+     * the shape of a scalar ivar store's left side, this on the shape of
+     * an array store's receiver. The lesson each time is that routing
+     * every spelling through one function is what stops the next site
+     * appearing, so this reuses `assigned_ivar_name` rather than adding a
+     * `field_expression` arm of its own.
+     *
+     * The emitted target is unaffected either way: it is rebuilt from
+     * `ivar_access_path` below, so both spellings produce the identical
+     * `self->_arr[i]`. */
+    let ivar = assigned_ivar_name(recv_node, ctx)?;
     let recv_type = ctx.scope.get(&ivar)?.clone();
     if !is_array_type(&recv_type) {
         return None;
