@@ -166,8 +166,12 @@ function(objz_transpile_sources_static target)
     # (#305). Like --introspection this needs nothing on the C side: the
     # directives are in the emitted text and change only what the compiler
     # writes into DWARF, so the program itself is byte-for-byte the same.
-    # Default y in Kconfig, and this flag is what supplies it -- oz2c emits
-    # none without it, which is what keeps a hand-run transpile (and the
+    #
+    # Default y in a CONFIG_DEBUG build and n otherwise (#358): the image is
+    # unaffected either way, but each directive carries an absolute path and
+    # they roughly double the generated C, which a release build has no use
+    # for. This flag is what supplies the option -- oz2c emits no directive
+    # without it, which is also what keeps a hand-run transpile (and the
     # committed tests/zephyr/generated C) free of one machine's absolute
     # paths.
     if(CONFIG_OBJZ_DEBUG_LINES)
