@@ -57,10 +57,30 @@ if [ -z "$base" ]; then
 	exit 0
 fi
 
-git fetch --quiet --depth=1 origin "$base" 2>/dev/null || {
-	say true "could not fetch the base ref"
+# Fetch only where a shallow repository is already expected. `git`
+# applies `--depth=1` to the *repository*, not just to the transfer, so
+# running this by hand against a full clone truncates its history --
+# and the symptoms point away from the cause. Measured in the shared
+# checkout during #387: `origin/main` showed three commits, a
+# `main:main` update was refused as non-fast-forward, and a merge from
+# twenty minutes earlier could not be found by `--grep`. `git fetch
+# --unshallow origin` repairs it; nothing announces it (#389).
+#
+# Several worktrees share one object store here, so one hand-run
+# degrades every session in the repository.
+#
+# Being runnable by hand is the point of this being a script rather
+# than inline YAML, so a full clone falls through to the
+# `origin/<base>` ref it already has instead of refusing to answer.
+if [ "${CI:-}" = "true" ] || [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
+	git fetch --quiet --depth=1 origin "$base" 2>/dev/null || {
+		say true "could not fetch the base ref"
+		exit 0
+	}
+elif ! git rev-parse --verify --quiet "origin/${base}" >/dev/null; then
+	say true "no local origin/${base}, and fetching would shallow this clone"
 	exit 0
-}
+fi
 
 # `...` compares against the merge base, so commits that landed on main
 # after this branch started are not counted as this change's.
