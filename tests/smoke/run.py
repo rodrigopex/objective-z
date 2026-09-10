@@ -10,10 +10,15 @@ pipeline is wired up wrong.
 
 It used to feed the Python pipeline a *committed AST fixture*
 (`tools/oz_transpile/tests/fixtures/simple_led.ast.json`), which does not
-port: oz_static parses source and takes a Clang AST only as an optional
-oracle, so "AST in" is not a shape it has. Pointing it at the source instead
+port: oz_static parses the source itself. Pointing it at the source instead
 makes it a stricter test than it was -- the parse is now part of what is
 being smoke-tested, where before it was pre-baked into the fixture.
+
+The AST is back, produced rather than committed. `--ast` is no longer
+optional for a source that declares a class, so this dumps one first -- and
+that is the right shape for a smoke test anyway: dumping and transpiling is
+what every real build path does, and this now fails fast if either half is
+wired up wrong.
 """
 
 import glob
@@ -30,6 +35,11 @@ PAL_INC = REPO_ROOT / "include"
 SDK_INC = REPO_ROOT / "include" / "oz_sdk"
 TEST_INC = REPO_ROOT / "tests" / "behavior" / "include"
 OZ_SRC = REPO_ROOT / "src"
+LIBC_STUBS = REPO_ROOT / "tests" / "behavior" / "include" / "stubs"
+ZEPHYR_STUBS = REPO_ROOT / "tests" / "behavior" / "include" / "zephyr_stubs"
+
+sys.path.insert(0, str(REPO_ROOT / "scripts"))
+import objz_clang  # noqa: E402  (path set up above)
 
 
 def main() -> int:
@@ -38,7 +48,33 @@ def main() -> int:
         print("  cargo build --manifest-path tools/oz_static/Cargo.toml")
         return 1
 
+    clang = objz_clang.find_clang_or_exit()
+
     with tempfile.TemporaryDirectory() as outdir:
+        print("=== Clang AST dump ===")
+        print(f"  {clang}")
+        ast_json = os.path.join(outdir, "smoke.ast.json")
+        # The same flags `tests/tools/compile_and_run.py` dumps the whole
+        # behaviour corpus with, and this source is one of its cases -- so
+        # the two harnesses cannot disagree about the translation unit.
+        dump = subprocess.run(
+            [clang, "-Xclang", "-ast-dump=json", "-fsyntax-only",
+             "-fobjc-runtime=macosx", "-fobjc-arc", "-fblocks",
+             "--target=x86_64-unknown-linux-gnu",
+             "-isystem", str(LIBC_STUBS),
+             "-isystem", str(ZEPHYR_STUBS),
+             "-I", str(TEST_INC),
+             "-I", str(SDK_INC),
+             "-I", str(OZ_SRC),
+             str(SOURCE)],
+            capture_output=True, text=True)
+        if dump.returncode != 0:
+            print("FAILED: clang AST dump returned", dump.returncode)
+            print(dump.stderr)
+            return 1
+        with open(ast_json, "w") as handle:
+            handle.write(dump.stdout)
+
         print("=== Transpiling (oz2c) ===")
         print(f"  {SOURCE.relative_to(REPO_ROOT)}")
         result = subprocess.run(
@@ -46,6 +82,7 @@ def main() -> int:
              "-I", str(SDK_INC),
              "-I", str(TEST_INC),
              "--impl-dir", str(OZ_SRC),
+             "--ast", ast_json,
              str(SOURCE), outdir],
             capture_output=True, text=True)
         if result.returncode != 0:

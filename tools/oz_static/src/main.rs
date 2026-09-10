@@ -16,7 +16,7 @@ fn usage() -> ExitCode {
     eprintln!(
         "usage: oz2c [-I <dir>]... [--impl-dir <dir>]... [--manifest <path>] \
          [--root-class <name>] [--pool-sizes <Class=N,...>] \
-         [--item-pool-size <N>] [--ast <ast.json>]... \
+         [--item-pool-size <N>] [--ast <ast.json>]... [--allow-missing-ast] \
          [--heap-support] [--introspection] [--reflection] \
          [--line-directives] [--timings] [--quiet] \
          [--manifest-only] [--dump-cst] \
@@ -80,6 +80,7 @@ fn main() -> ExitCode {
     let mut timings = false;
     let mut quiet = false;
     let mut manifest_only = false;
+    let mut allow_missing_ast = false;
     let mut positional: Vec<String> = Vec::new();
 
     let mut i = 0;
@@ -165,6 +166,26 @@ fn main() -> ExitCode {
                 let Some(path) = args.get(i + 1) else { return usage() };
                 ast_paths.push(PathBuf::from(path));
                 i += 2;
+            }
+            // The escape hatch for `--ast` now being *required* of any
+            // source that declares a class. Transpile anyway, with `arc`
+            // falling back to the syntactic rule that skips every
+            // `id`-typed ivar -- correct, and a leak.
+            //
+            // It exists because one caller genuinely cannot produce a
+            // dump, and only one: a hand transpile of a source whose
+            // header closure will not parse where it is being run. The
+            // configure-time `--manifest-only` run is the in-tree example
+            // and needs no flag, because it implies this (see below):
+            // Zephyr's generated headers do not exist yet at that point,
+            // so `zephyr/kernel.h` dies on
+            // `fatal error: 'zephyr/syscall_list.h' file not found`.
+            //
+            // Named for what it permits rather than what it disables, so
+            // it cannot be mistaken for "skip the AST to go faster".
+            "--allow-missing-ast" => {
+                allow_missing_ast = true;
+                i += 1;
             }
             // Same spelling and meaning as the Python backend's flag, so a
             // sample's CMakeLists.txt needs no per-backend variant. Also
@@ -436,6 +457,19 @@ fn main() -> ExitCode {
             source_map: line_directives.then(|| resolved.source_map.clone()),
             generated_dirs,
             header_ranges: resolved.header_ranges.clone(),
+            // The build contract: a source declaring a class is not
+            // transpiled without Clang's answer about its ivars.
+            //
+            // `--manifest-only` is exempt by construction rather than by
+            // permission. That run exists to discover the *file list*, and
+            // no AST fact affects which files exist -- the names come from
+            // top-level node origins (#299). It is also the one run that
+            // could not have a dump if it wanted one: CMake calls it
+            // before Zephyr's generated headers exist. Requiring `--ast`
+            // there would mean producing 742 MB of JSON to answer a
+            // question about filenames, which is precisely the cost #299
+            // removed.
+            require_ast: !allow_missing_ast && !manifest_only,
         },
         &mut rep,
     ) {

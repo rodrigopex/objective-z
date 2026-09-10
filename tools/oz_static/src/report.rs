@@ -106,7 +106,13 @@ impl Reporter {
         let out = std::io::stdout();
         let mut out = out.lock();
         let ast = if self.ast_labels.is_empty() {
-            "no AST dumps".to_string()
+            /* A run with no dumps is now either `--manifest-only` or an
+             * explicit `--allow-missing-ast`, since anything else
+             * declaring a class is refused (#385). Saying so keeps the
+             * line from reading as a silently degraded transpile, which
+             * is what "no AST dumps" meant for as long as `--ast` was
+             * optional. */
+            "no AST dumps (--manifest-only or --allow-missing-ast)".to_string()
         } else {
             format!("{} AST dumps, {}", self.ast_labels.len(), human_bytes(self.ast_total_bytes))
         };

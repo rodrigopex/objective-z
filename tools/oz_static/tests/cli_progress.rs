@@ -17,6 +17,8 @@
 use std::path::PathBuf;
 use std::process::Command;
 
+mod common;
+
 fn oz2c_binary() -> PathBuf {
     // The test binary lives in target/<profile>/deps/, so the CLI binary
     // is two levels up. Built by the same `cargo test` invocation.
@@ -81,12 +83,25 @@ struct beta { long b; };
 @end
 ";
 
+/// Run oz2c over a fixture, with the Clang AST dump every real invocation
+/// now has to carry.
+///
+/// The dump goes next to the source rather than into `out`, which oz2c
+/// creates and writes the generated pair into. Dumping here also means
+/// these tests cover the required path end to end at the CLI, which is
+/// where the build contract actually lives: the `ast-read` and `ast-ingest`
+/// rows `timings_prints_the_phase_rows_in_pipeline_order` asserts on now
+/// describe real work rather than an empty list.
 fn run(args: &[&str], src: &PathBuf, out: &PathBuf) -> std::process::Output {
     let sdk = repo_root().join("include/oz_sdk");
+    let ast = src.with_extension("ast.json");
+    common::ast_dump_file(src, &ast);
     Command::new(oz2c_binary())
         .args(args)
         .arg("-I")
         .arg(&sdk)
+        .arg("--ast")
+        .arg(&ast)
         .arg(src)
         .arg(out)
         .output()

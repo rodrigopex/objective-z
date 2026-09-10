@@ -121,6 +121,15 @@ fn case_id(case: &Path) -> String {
 
 fn transpile_case(case: &Path, outdir: &Path) -> Result<(), String> {
     let root = repo_root();
+    /* `--ast` is required of any source that declares a class, so the
+     * corpus is dumped here exactly as `tests/tools/compile_and_run.py`
+     * dumps it when it *runs* these same files -- one dump per case, with
+     * the flags in `common::ast_dump_file`. This check used to transpile
+     * with no AST while the harness that ran the corpus transpiled with
+     * one, so the two disagreed about ivar ownership on every `id`-typed
+     * ivar in the set. */
+    let ast = outdir.join("case.ast.json");
+    common::ast_dump_file(case, &ast);
     let output = Command::new(oz2c_binary())
         .arg("-I")
         .arg(root.join("include/oz_sdk"))
@@ -128,6 +137,8 @@ fn transpile_case(case: &Path, outdir: &Path) -> Result<(), String> {
         .arg(root.join("tests/behavior/include"))
         .arg("--impl-dir")
         .arg(root.join("src"))
+        .arg("--ast")
+        .arg(&ast)
         // The same pair `tests/tools/oz_static_build.py` passes, which is
         // in turn what `CONFIG_OBJZ_INTROSPECTION` and
         // `CONFIG_OBJZ_REFLECTION` default to. Without them a case using
@@ -245,6 +256,39 @@ fn cc_diagnoses_fptr_to_object_pointer() -> bool {
     }
 }
 
+/// Map `f` over the corpus with one thread per core, results in case order.
+///
+/// Each case in this file now forks twice -- Clang for the AST dump `--ast`
+/// requires, then oz2c -- and 81 cases done one after another is a serial
+/// stretch that dominates the whole Rust suite's wall clock. The work is
+/// embarrassingly parallel: every case has its own output directory and
+/// both forks are separate processes, so nothing here shares state.
+///
+/// Order is preserved by writing into a pre-sized slot per case rather than
+/// pushing, so a failure list reads the same on every run regardless of
+/// which thread finished first.
+fn par_over_cases<T: Send>(
+    cases: &[PathBuf],
+    f: impl Fn(&PathBuf) -> T + Sync,
+) -> Vec<T> {
+    let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let slots: Vec<std::sync::Mutex<Option<T>>> =
+        (0..cases.len()).map(|_| std::sync::Mutex::new(None)).collect();
+    std::thread::scope(|scope| {
+        for _ in 0..threads.min(cases.len().max(1)) {
+            scope.spawn(|| loop {
+                let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                if i >= cases.len() {
+                    break;
+                }
+                *slots[i].lock().unwrap() = Some(f(&cases[i]));
+            });
+        }
+    });
+    slots.into_iter().map(|slot| slot.into_inner().unwrap().unwrap()).collect()
+}
+
 /// Every case in the shared corpus must transpile. No allowlist: a case
 /// oz_static cannot even read is a parity gap, not a known limitation.
 #[test]
@@ -254,14 +298,16 @@ fn every_corpus_case_transpiles() {
 
     let tmp = ScratchDir::new("corpus_transpile");
 
-    let mut failures = Vec::new();
-    for case in &cases {
+    let failures: Vec<String> = par_over_cases(&cases, |case| {
         let outdir = tmp.join(&case_id(case).replace('/', "_").replace(".m", ""));
         std::fs::create_dir_all(&outdir).unwrap();
-        if let Err(why) = transpile_case(case, &outdir) {
-            failures.push(format!("{}: {}", case_id(case), why));
-        }
-    }
+        transpile_case(case, &outdir)
+            .err()
+            .map(|why| format!("{}: {}", case_id(case), why))
+    })
+    .into_iter()
+    .flatten()
+    .collect();
     assert!(
         failures.is_empty(),
         "{} of {} corpus cases failed to transpile:\n{}",
@@ -289,7 +335,12 @@ fn corpus_generated_c_compiles() {
     // assertion has nothing to say.
     let strict = cc_diagnoses_fptr_to_object_pointer();
 
-    for case in &cases {
+    enum Verdict {
+        Nothing,
+        Failed(String),
+        UnexpectedlyCompiled(String),
+    }
+    for verdict in par_over_cases(&cases, |case| {
         let id = case_id(case);
         let expected_to_fail =
             strict && KNOWN_CC_FAILURES.iter().any(|(known, _)| *known == id);
@@ -298,12 +349,18 @@ fn corpus_generated_c_compiles() {
 
         if transpile_case(case, &outdir).is_err() {
             // Covered by `every_corpus_case_transpiles`; nothing to add.
-            continue;
+            return Verdict::Nothing;
         }
         match (compile_generated(&outdir), expected_to_fail) {
-            (Err(why), false) => unexpected_failures.push(format!("{}: {}", id, why)),
-            (Ok(()), true) => unexpected_successes.push(id),
-            _ => {}
+            (Err(why), false) => Verdict::Failed(format!("{}: {}", id, why)),
+            (Ok(()), true) => Verdict::UnexpectedlyCompiled(id),
+            _ => Verdict::Nothing,
+        }
+    }) {
+        match verdict {
+            Verdict::Failed(why) => unexpected_failures.push(why),
+            Verdict::UnexpectedlyCompiled(id) => unexpected_successes.push(id),
+            Verdict::Nothing => {}
         }
     }
 

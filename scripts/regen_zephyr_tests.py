@@ -10,9 +10,7 @@ Zephyr build has no Python dependency.
 
 from __future__ import annotations
 
-import os
 import re
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -20,6 +18,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tests" / "tools"))
 import oz_static_build  # noqa: E402  (path set up above)
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import objz_clang  # noqa: E402  (path set up above)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CASES_DIR = REPO_ROOT / "tests" / "behavior" / "cases"
@@ -29,11 +30,6 @@ OZ_SRC = REPO_ROOT / "src"
 ZEPHYR_STUBS = REPO_ROOT / "tests" / "behavior" / "include" / "zephyr_stubs"
 OUT_DIR = REPO_ROOT / "tests" / "zephyr" / "generated"
 
-LLVM_SEARCH_PATHS = [
-    Path("/opt/homebrew/opt/llvm/bin"),
-    Path("/usr/local/opt/llvm/bin"),
-    Path("/usr/bin"),
-]
 
 SOURCES = [
     "lifecycle/alloc_returns_valid.m",
@@ -46,21 +42,14 @@ SOURCES = [
 
 
 def _find_llvm_clang() -> str:
-    """Find LLVM clang for AST dump."""
-    env_clang = os.environ.get("OZ_CLANG")
-    if env_clang and shutil.which(env_clang):
-        return env_clang
-    versioned = [f"clang-{v}" for v in range(23, 18, -1)]
-    for p in LLVM_SEARCH_PATHS:
-        for name in versioned + ["clang"]:
-            candidate = p / name
-            if candidate.exists():
-                return str(candidate)
-    for name in versioned + ["clang"]:
-        if shutil.which(name):
-            return name
-    print("error: cannot find LLVM clang for AST dump", file=sys.stderr)
-    sys.exit(1)
+    """Find LLVM clang for the AST dump.
+
+    Shared with `tests/tools/compile_and_run.py` and the Rust harness via
+    `objz_clang`, so the committed `tests/zephyr/generated/` C is produced
+    by the same clang every other path uses -- the SDK's, ahead of Homebrew
+    and the system.
+    """
+    return objz_clang.find_clang_or_exit()
 
 
 def _collect_pool_sizes(m_paths: list[Path]) -> str:

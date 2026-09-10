@@ -155,12 +155,23 @@ from an AST, which is why unexpanded macros survive into the output.
   cannot be established (one pair, and only sound at a `return` — see
   [docs/STATUS.md](docs/STATUS.md), "The hybrid model"). **Key ownership on the reference,
   never on a syntactic form**, and route every spelling through one function.
-  A Clang JSON AST is supplied via `--ast` as the corroborating oracle — depending on it
-  is sanctioned (the SDK ships clang and CI pins it), it carries the `__strong` qualifiers
-  and the `ARCProduceObject`/`ARCConsumeObject`/`ARCReclaimReturnedObject` marks, and
+  A Clang JSON AST is supplied via `--ast`, and since #385 it is **required**, not
+  optional: `oz2c` refuses a source that declares a class with no dump behind it, as a
+  hard located error. It carries the `__strong` qualifiers and the
+  `ARCProduceObject`/`ARCConsumeObject`/`ARCReclaimReturnedObject` marks, and
   `astinfo.rs` currently reads only `ObjCIvarDecl` of all that. tree-sitter stays the
-  primary frontend, and the Rust suite runs with no AST, so ownership must still decide
-  without one
+  primary frontend for *syntax*; the ownership oracle is Clang's. Every path that
+  transpiles a program now produces one dump per source — `cmake/oz_static.cmake`,
+  `tests/tools/compile_and_run.py`, `tests/smoke/run.py`,
+  `scripts/regen_zephyr_tests.py` and the Rust harness (`tests/common/mod.rs`) — and
+  `scripts/objz_clang.py` is the single place that decides *which* clang, mirroring
+  `objz_find_clang()`. Two exemptions, both stated rather than assumed:
+  `--manifest-only` (the configure-time run that discovers a file list, which no AST
+  fact affects, and which runs before Zephyr's generated headers exist) and
+  `--allow-missing-ast` (the escape hatch, which transpiles with the narrower rule that
+  skips every `id`-typed ivar — correct, and a leak). `Options::require_ast` is off in
+  `Options::default()`, so the pure `transpile(source)` form still works on a string
+  with no file behind it
 - **`pools.rs`** — slab and element-pool sizing, counted from allocation sites
 - **`staticbar.rs`** — accept/reject scan for the static subset
 - **`imports.rs`** — `#import` resolution and per-origin provenance, plus the merged-offset
@@ -171,8 +182,9 @@ from an AST, which is why unexpanded macros survive into the output.
 - **`progress.rs`** — pass boundaries the pipeline reports; no printing, no clock
   (`report.rs` is the binary-side half that formats and times)
 - CLI: `--pool-sizes`, `--item-pool-size`, `--heap-support`, `--introspection`,
-  `--reflection`, `--line-directives`, `--root-class`, `--ast`, `-I`, `--timings`,
-  `--quiet`, `--manifest-only`, `--dump-cst`, `--dump-ast-facts`. Every feature flag
+  `--reflection`, `--line-directives`, `--root-class`, `--ast`, `--allow-missing-ast`,
+  `-I`, `--timings`, `--quiet`, `--manifest-only`, `--dump-cst`, `--dump-ast-facts`.
+  `--ast` is required of any source declaring a class; every other feature flag
   (`--heap-support`, `--introspection`, `--reflection`, `--line-directives`) is off unless
   passed — its absence is what the matching Kconfig option's `n` means, and
   `cmake/oz_static.cmake` is what supplies it
@@ -235,6 +247,11 @@ allocation balance.
   unchanged from when it lived in the deleted `oz_transpile.cmake`, because 15 samples,
   px-app and any out-of-tree user call it
 - **`ObjcClang.cmake`** — Clang detection (`objz_find_clang()`), target triple mapping, AST analysis flags, compile_commands.json generation for clangd IDE support
+- **`scripts/objz_clang.py`** — the same search order for everything outside CMake: the
+  two pytest harnesses, the smoke test, `regen_zephyr_tests.py` and the Rust suite all
+  ask it which clang to dump with. `OZ_CLANG` → `$ZEPHYR_SDK_INSTALL_DIR/llvm/bin` →
+  `~/.local/zephyr-sdk-*/llvm/bin` → Homebrew → PATH, and a hard error naming
+  `west sdk install --llvm` if none of them has one
 
 ### Platform Abstraction Layer (`include/platform/`)
 

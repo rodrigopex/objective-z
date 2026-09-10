@@ -68,8 +68,14 @@ static int g_owner_dealloc_ran = 0;
 /* `struct OZHeap *`, not `OZHeap *`: oz_static copies an ivar
  * declaration's type text through as written (only ARC qualifiers and
  * block declarators are lowered), so a bare class name in ivar position
- * stays a bare class name and C rejects it. Same spelling the existing
- * OZDefer test uses for its `struct OZDefer *_cleanup` ivar. */
+ * stays a bare class name and C rejects it.
+ *
+ * The OZDefer test used to spell its own ivar the same way and no longer
+ * does (#385): that spelling is a `struct` tag to Clang, not an object
+ * pointer, so the AST -- now required -- reports it unowned and the
+ * automatic release disappears. `OZHeap` is unaffected because nothing
+ * here depends on the ivar being released as an object; the owner frees
+ * the heap explicitly. */
 @interface Pool : OZObject {{
 	struct OZHeap *_heap;
 }}
