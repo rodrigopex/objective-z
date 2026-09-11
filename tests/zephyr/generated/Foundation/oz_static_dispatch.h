@@ -76,13 +76,16 @@ void OZObject_oz_free(struct OZObject *obj);
 const char *oz_static_class_name(struct OZObject *self);
 struct OZObject *oz_static_retain(struct OZObject *self);
 void oz_static_release(struct OZObject *self);
-int oz_static_retain_count(struct OZObject *self);
-/* Refcount introspection under the name the legacy runtime used, so
- * source written against it keeps compiling (samples/mem_demo). A
- * function rather than the oracle's macro, because the real
- * src/OZObject.m already declares it as one -- a macro of the same
- * name would be expanded in that declaration and break it. */
-unsigned int __objc_refcount_get(id obj);
+/* `id`, not `struct OZObject *`, and alone among the three in that.
+ * This is the only one Objective-C source may call -- ARC forbids
+ * '[obj retainCount]' and owns the retain/release pair -- so
+ * 'include/oz_sdk/Foundation/OZObject.h' declares it too, for
+ * Clang's AST dump, and that header cannot name a generated
+ * struct. The two declarations have to agree: the SDK header is
+ * spliced into this program's C, so a differing parameter type
+ * would be a conflicting declaration rather than a redundant one.
+ * It replaced a separate reserved-prefix forwarder in #418. */
+int oz_static_retain_count(id obj);
 
 /* -- Widget (id 1, extends OZObject) -- */
 #define OZ_STATIC_CLASS_Widget 1

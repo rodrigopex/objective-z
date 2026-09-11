@@ -70,7 +70,7 @@
 #define OZObject_retain oz_static_retain
 #define OZObject_release oz_static_release
 #define OZObject_retainCount oz_static_retain_count
-#define __objc_refcount_get(o) oz_static_retain_count((struct OZObject *)(o))
+#define __objc_refcount_get(o) oz_static_retain_count(o)
 #define OZNumber_cls_numberWithBool_ OZNumber_numberWithBool__cls
 #define OZNumber_cls_numberWithFloat_ OZNumber_numberWithFloat__cls
 #define OZNumber_cls_numberWithInt16_ OZNumber_numberWithInt16__cls
