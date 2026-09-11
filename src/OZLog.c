@@ -17,9 +17,9 @@
 #include "oz_dispatch.h"
 #include "OZObject_ozh.h"
 
-#ifndef CONFIG_OBJZ_LOG_BUFFER_SIZE
-#define CONFIG_OBJZ_LOG_BUFFER_SIZE 128
-#endif
+/* CONFIG_OBJZ_LOG_BUFFER_SIZE is a Kconfig option (int, range 32 1024,
+ * default 128) and has no #ifndef fallback on purpose: a fallback is what
+ * let it be documented and undeclared for as long as it was (#420). */
 
 static int _oz_log_precision = -1;
 
