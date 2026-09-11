@@ -72,17 +72,13 @@ struct OZObject *oz_static_retain(struct OZObject *self)
 	return self;
 }
 
-/* Refcount introspection under the legacy runtime's name -- see the
- * declaration in the companion header for why this is a function. */
-unsigned int __objc_refcount_get(id obj)
-{
-	return (unsigned int)oz_static_retain_count((struct OZObject *)obj);
-}
-
 /* synthesized: reads the current retain count; 0 for a nil
- * receiver (not from source) */
-int oz_static_retain_count(struct OZObject *self)
+ * receiver. Takes 'id' because Objective-C source calls this one directly
+ * and 'include/oz_sdk/Foundation/OZObject.h' has to declare it without
+ * naming a generated struct (not from source) */
+int oz_static_retain_count(id obj)
 {
+	struct OZObject *self = (struct OZObject *)obj;
 	if (!self) {
 		return 0;
 	}

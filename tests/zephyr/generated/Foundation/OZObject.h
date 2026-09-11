@@ -49,12 +49,31 @@ typedef bool BOOL;
   * reverse edge a cycle. It says so with an `#error` if reached first.
   */
 /**
- * @brief Read the reference count of an object.
+ * @brief Read the reference count of @p obj; 0 for nil.
  *
- * Declared here so Clang can resolve calls during AST dump.
- * The transpiler emits a macro in the generated OZObject.h.
+ * **The only refcount entry point Objective-C source may spell.** ARC
+ * forbids `[obj retainCount]` outright, and the retain/release pair is
+ * ARC's to insert, so this is a plain C function rather than a method.
+ *
+ * Declared here so Clang can resolve calls to it while dumping the AST,
+ * which runs before any generated header exists. The companion
+ * (`companion.rs`) emits the definition, with this exact signature so the
+ * two declarations are redundant rather than conflicting once this header
+ * is spliced into the generated C.
+ *
+ * Takes `id` for the same reason: the parameter type has to be spellable
+ * *here*, and the root struct the companion casts to is generated. That is
+ * why this is the one of the three synthesized refcount functions that
+ * does not take `struct <root> *`.
+ *
+ * #418 collapsed a second, separately named forwarder into this one. That
+ * name carried the reserved double-underscore prefix the project documents
+ * as *internal*, gave one concept two public spellings, and was the SDK's
+ * last `get`-prefixed getter -- `get` marks a method writing through a
+ * caller's pointer (see `-getDescription:maxLength:` below), which reading
+ * a count does not do.
  */
-unsigned int __objc_refcount_get(id obj);
+int oz_static_retain_count(id obj);
 /* =============================================================================
  * __attribute__((objc_root_class))
  * @interface OZObject <OZObjectProtocol>
