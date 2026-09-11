@@ -99,6 +99,17 @@ __attribute__((objc_root_class))
  * The hook `OZLog`'s `%@` dispatches to. Returns the number of
  * characters written, never more than @p maxLen.
  *
+ * **The `get` prefix is the buffer rule, not decoration.** Objective-C
+ * reserves `get` for a method that writes through a caller-supplied
+ * pointer -- `-getBytes:length:range:`, `-getCharacters:range:` -- and
+ * that is exactly what this does. Methods that *return* a value take no
+ * prefix, which is why `OZHeap`'s `-usedBytes` has none, and why
+ * `OZString`'s `-cString` keeps its own spelling: it hands back a pointer
+ * to storage that already exists, so nothing is written and `get` would
+ * be a lie. That asymmetry is deliberate (#413); this was
+ * `-cDescription:maxLength:` until then, which abbreviated half of one
+ * selector and left the buffer contract unsaid.
+ *
  * `OZObject`'s own implementation is the **default** every class
  * inherits until it overrides this, and it writes
  * `<ClassName: 0xADDRESS>` -- the shape Objective-C's `-description`
@@ -112,11 +123,11 @@ __attribute__((objc_root_class))
  * links `OZLog`, not only those using `%@`. See the option's help text
  * and `docs/STATUS.md` for why the linker cannot drop it.
  */
-- (int)cDescription:(char *)buf maxLength:(size_t)maxLen;
+- (int)getDescription:(char *)buf maxLength:(size_t)maxLen;
 @end
 
 /*
- * Is the inherited `-cDescription:maxLength:` the one that names the class
+ * Is the inherited `-getDescription:maxLength:` the one that names the class
  * (#354), or the no-op it used to be?
  *
  * Keyed on `CONFIG_OBJZ_DEFAULT_DESCRIPTION`, which only a Zephyr build

@@ -113,8 +113,8 @@ int main(void) {{
     assert_eq!(stdout, "count=3\nfirst=100\n");
 }
 
-/// `-cDescription:maxLength:` used to be cut from the fixture because its
-/// body recurses `[elem cDescription:...]` on a bare `id` element. That
+/// `-getDescription:maxLength:` used to be cut from the fixture because its
+/// body recurses `[elem getDescription:...]` on a bare `id` element. That
 /// resolves now (the selector is always dynamically dispatched, so the
 /// element's real class picks the implementation at runtime), and this
 /// exercises it end to end: the rendering is OZArray's own parenthesised
@@ -131,7 +131,7 @@ fn array_cdescription_recurses_into_elements() {
 int main(void) {
 	OZArray *nums = @[ @1, @2, @3 ];
 	char buf[64];
-	int n = [nums cDescription:buf maxLength:63];
+	int n = [nums getDescription:buf maxLength:63];
 	buf[n] = 0;
 	printf(\"desc=%s\\n\", buf);
 	printf(\"len=%d\\n\", n);

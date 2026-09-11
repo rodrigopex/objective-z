@@ -18,7 +18,7 @@
 - (BOOL)isEqualToString:(OZString *)aString;
 - (BOOL)hasPrefix:(OZString *)prefix;
 - (BOOL)hasSuffix:(OZString *)suffix;
-- (int)cDescription:(char *)buf maxLength:(size_t)maxLen;
+- (int)getDescription:(char *)buf maxLength:(size_t)maxLen;
 @end
 
 #ifdef __clang__

@@ -4,7 +4,7 @@
 
 /*
  * `<ClassName: 0xADDRESS>` into `buf`, the default every class inherits
- * from `-cDescription:maxLength:` until it writes its own (#354).
+ * from `-getDescription:maxLength:` until it writes its own (#354).
  *
  * Hand-rolled rather than `snprintf`: this runs on targets with no stdio
  * linked, and the existing descriptions in this SDK all write bytes
@@ -94,7 +94,7 @@ static inline int _oz_write_default_description(const char *class_name, unsigned
 {
 	return self == anObject;
 }
-- (int)cDescription:(char *)buf maxLength:(size_t)maxLen
+- (int)getDescription:(char *)buf maxLength:(size_t)maxLen
 {
 #if OZ_DEFAULT_DESCRIPTION
 	return _oz_write_default_description(oz_static_class_name(self),

@@ -29,7 +29,7 @@ struct NSFastEnumerationState;
 - (unsigned long)countByEnumeratingWithState:(struct NSFastEnumerationState *)state
 				     objects:(__unsafe_unretained id *)stackbuf
 				       count:(unsigned long)len;
-- (int)cDescription:(char *)buf maxLength:(size_t)maxLen;
+- (int)getDescription:(char *)buf maxLength:(size_t)maxLen;
 - (instancetype)iter;
 - (id)next;
 @end

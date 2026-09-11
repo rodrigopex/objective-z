@@ -1,4 +1,4 @@
-/* Behavior test: the inherited `-cDescription:maxLength:` default (#354).
+/* Behavior test: the inherited `-getDescription:maxLength:` default (#354).
  *
  * See the `.m` for why this sends the selector directly rather than going
  * through `OZLog`, and why the address is never asserted.

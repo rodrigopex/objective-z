@@ -43,7 +43,7 @@
 	return [self objectForKey:key];
 }
 
-- (int)cDescription:(char *)buf maxLength:(size_t)maxLen
+- (int)getDescription:(char *)buf maxLength:(size_t)maxLen
 {
 	/* Unsigned alongside `maxLen`. `pos` can reach `maxLen` but never
 	 * pass it -- every multi-byte write is guarded by `pos + n < maxLen`
@@ -58,7 +58,7 @@
 			buf[pos++] = ' ';
 		}
 		id k = _keys[i];
-		int written_k = [k cDescription:buf + pos maxLength:maxLen - pos];
+		int written_k = [k getDescription:buf + pos maxLength:maxLen - pos];
 		if (written_k > 0) {
 			pos += (size_t)written_k;
 		}
@@ -68,7 +68,7 @@
 			buf[pos++] = ' ';
 		}
 		id v = _values[i];
-		int written_v = [v cDescription:buf + pos maxLength:maxLen - pos];
+		int written_v = [v getDescription:buf + pos maxLength:maxLen - pos];
 		if (written_v > 0) {
 			pos += (size_t)written_v;
 		}

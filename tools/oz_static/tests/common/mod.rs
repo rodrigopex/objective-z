@@ -604,11 +604,11 @@ pub fn ozobject_src() -> String {
 /// `include/oz_sdk/Foundation/OZQ31.h` / `src/OZQ31.m` verbatim (same
 /// helper function bodies and method bodies, including `other->_raw`
 /// cross-instance ivar access and `[[OZQ31 alloc] init]` chaining), with
-/// one addition: the real `-cDescription:maxLength:` calls
+/// one addition: the real `-getDescription:maxLength:` calls
 /// `_oz_get_log_precision()`, defined in `src/OZLog.c` -- which needs
 /// Zephyr's `printk` and the Python pipeline's own generated dispatch
 /// headers, neither available on host. A small stub supplies it (always
-/// -1, i.e. `-cDescription:maxLength:`'s default 14-digit precision), so
+/// -1, i.e. `-getDescription:maxLength:`'s default 14-digit precision), so
 /// log-precision-specific behavior (`%.N@` format specifiers) isn't
 /// exercised by any test here. Requires `OZObject` (`common::ozobject_src`)
 /// in scope as the root class.
@@ -680,13 +680,13 @@ pub fn ozdefer_src() -> String {
 /// to always grab the first -- the generic param list here, misreading
 /// `__covariant`/`ObjectType` as bogus protocol names) now exercise it
 /// directly, so dropping it is no longer "changes nothing observable".
-/// `cDescription:maxLength:` and `enumerateObjectsUsingBlock:` are kept
+/// `getDescription:maxLength:` and `enumerateObjectsUsingBlock:` are kept
 /// now as well, so the only thing still cut is
 /// `countByEnumeratingWithState:` -- it backs Foundation's own
 /// `NSFastEnumeration`-style for-in, which neither pipeline uses (the
 /// Python oracle's for-in desugar is `-iter`/`-next`-based too, see
 /// `_emit_forin_stmt`) and has no body in the real `OZArray.m` to begin
-/// with. `cDescription:maxLength:` recurses `[elem cDescription:...]` on
+/// with. `getDescription:maxLength:` recurses `[elem getDescription:...]` on
 /// a bare `id`, which the dynamic-dispatch generalization made work;
 /// `enumerateObjectsUsingBlock:` needs a block-typed parameter lowered to
 /// a plain function pointer (`collect::detect_block_param_type`). Both are
@@ -750,9 +750,9 @@ pub fn ozmutablestring_src() -> String {
 /// ObjectType>`) are kept too now, same reasoning as `ozarray_src`.
 /// Still cut: `countByEnumeratingWithState:` (for-in here is
 /// `-iter`/`-next`-based,
-/// matching the Python oracle's own desugar). `cDescription:maxLength:`
+/// matching the Python oracle's own desugar). `getDescription:maxLength:`
 /// is kept, unlike `ozarray_src`: its body message-sends
-/// `cDescription:maxLength:` back onto bare `id`-typed locals (each
+/// `getDescription:maxLength:` back onto bare `id`-typed locals (each
 /// key/value), which is exactly the dynamic-dispatch case
 /// `model.rs`/`companion.rs`/`emit.rs` were generalized for while
 /// building this class in the first place (`-objectForKey:`'s

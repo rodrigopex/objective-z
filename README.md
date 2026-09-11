@@ -450,7 +450,7 @@ objz_transpile_sources(<target> <source1.m> [source2.m ...]
 | `CONFIG_OBJZ_HEAP` | `n` | `+dynamicAllocWithHeap:` and the heap-aware free path |
 | `CONFIG_OBJZ_INTROSPECTION` | `y` | `-isKindOfClass:` and `-conformsToProtocol:` |
 | `CONFIG_OBJZ_REFLECTION` | `y` | `@selector`, `SEL`, `-respondsToSelector:`, `-performSelector:` |
-| `CONFIG_OBJZ_DEFAULT_DESCRIPTION` | `y` | An inherited `-cDescription:maxLength:` of the form `<ClassName: 0xADDRESS>`, so `%@` names an object |
+| `CONFIG_OBJZ_DEFAULT_DESCRIPTION` | `y` | An inherited `-getDescription:maxLength:` of the form `<ClassName: 0xADDRESS>`, so `%@` names an object |
 | `CONFIG_OBJZ_DEBUG_LINES` | `y`, and only under `CONFIG_DEBUG` | `#line` directives back to the `.m`, so a debugger names it |
 
 The two introspection options generate `const` tables only for the constructs a program actually uses, so leaving them on costs nothing until something introspects. Set either to `n` to forbid its constructs outright: they then become located transpile errors naming the option, never silently unavailable.

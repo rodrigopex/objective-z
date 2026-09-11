@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// default_description.rs -- `-cDescription:maxLength:` has a useful default
+// default_description.rs -- `-getDescription:maxLength:` has a useful default
 // (#354).
 //
 // `OZObject`'s implementation is the one every class inherits until it
@@ -13,7 +13,7 @@
 //
 // Put in `OZObject`'s own method rather than injected into the protocol
 // dispatch, deliberately: routing only the dispatch would leave a direct
-// `[obj cDescription:buf maxLength:n]` send still answering 0, so the two
+// `[obj getDescription:buf maxLength:n]` send still answering 0, so the two
 // spellings of one question would disagree. That is the same defect shape
 // as #351 and #352, and the point of both fixes was to stop keying
 // behaviour on which spelling the author used.
@@ -62,7 +62,7 @@ int main(void)
 	Plain *p = [[Plain alloc] init];
 
 	memset(buf, 0, sizeof(buf));
-	n = [p cDescription:buf maxLength:sizeof(buf) - 1];
+	n = [p getDescription:buf maxLength:sizeof(buf) - 1];
 
 	/* Split so the assertions can be exact about everything except the
 	 * address, which is not reproducible. */
@@ -91,7 +91,7 @@ fn a_class_with_its_own_description_is_unaffected() {
 @interface Custom : OZObject
 @end
 @implementation Custom
-- (int)cDescription:(char *)buf maxLength:(size_t)maxLen
+- (int)getDescription:(char *)buf maxLength:(size_t)maxLen
 {
 	const char *s = \"custom!\";
 	size_t n = strlen(s);
@@ -114,7 +114,7 @@ int main(void)
 	Custom *c = [[Custom alloc] init];
 
 	memset(buf, 0, sizeof(buf));
-	n = [c cDescription:buf maxLength:sizeof(buf) - 1];
+	n = [c getDescription:buf maxLength:sizeof(buf) - 1];
 	printf(\"n=%d text=%s\\n\", n, buf);
 	return 0;
 }
@@ -157,7 +157,7 @@ int main(void)
 		int n = 0;
 
 		memset(buf, '#', sizeof(buf));
-		n = [p cDescription:buf maxLength:limit];
+		n = [p getDescription:buf maxLength:limit];
 		if (n < 0 || (size_t)n > limit) {
 			printf(\"overran at limit=%zu with n=%d\\n\", limit, n);
 			return 1;
@@ -247,7 +247,7 @@ int main(void)
 	Plain *p = [[Plain alloc] init];
 
 	memset(buf, '#', sizeof(buf));
-	n = [p cDescription:buf maxLength:sizeof(buf) - 1];
+	n = [p getDescription:buf maxLength:sizeof(buf) - 1];
 
 	/* Nothing written, nothing reported, and the buffer untouched. */
 	printf(\"n=%d untouched=%d\\n\", n, buf[0] == '#');

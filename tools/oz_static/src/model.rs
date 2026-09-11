@@ -467,7 +467,7 @@ impl Program {
     /// protocol-declared, when it's one of a fixed set of selectors that
     /// are always polymorphic by design (meaningful only via whatever the
     /// receiver's *actual* class overrides -- an object's own
-    /// `-isEqual:`/`-cDescription:maxLength:`), or when more than one
+    /// `-isEqual:`/`-getDescription:maxLength:`), or when more than one
     /// class in the program implements it. Class methods never qualify --
     /// a class-method receiver is always a literal class name, always
     /// statically known.
@@ -487,7 +487,7 @@ impl Program {
     /// mechanism, and an overridden `init` is caught by the same
     /// hierarchy analysis as any other selector.
     pub fn is_dynamically_dispatched(&self, selector: &str, is_class_method: bool) -> bool {
-        const ALWAYS_DYNAMIC: &[&str] = &["isEqual:", "cDescription:maxLength:"];
+        const ALWAYS_DYNAMIC: &[&str] = &["isEqual:", "getDescription:maxLength:"];
         if is_class_method {
             return false;
         }

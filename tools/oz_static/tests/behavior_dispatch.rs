@@ -251,7 +251,7 @@ int main(void) {
 /// the wrong method instead of failing loudly.
 ///
 /// The Python pipeline forces `{dealloc, init, isEqual:,
-/// cDescription:maxLength:}` to protocol dispatch and otherwise
+/// getDescription:maxLength:}` to protocol dispatch and otherwise
 /// devirtualizes only when it can infer the receiver's *concrete* class
 /// (`_try_infer_concrete_class`). oz_static decides by class hierarchy
 /// analysis instead (`Program::has_overriding_subclass`): it sees the
@@ -326,5 +326,65 @@ int main(void) {
     assert_eq!(
         stdout,
         "speak_through_base=2\ntag_through_base=20\nspeak_plain=1\ntag_plain=10\n"
+    );
+}
+
+/// `-getDescription:maxLength:` gets a dispatcher even when nothing in the
+/// program declares it as a protocol requirement.
+///
+/// This is the test that makes `model.rs`'s `ALWAYS_DYNAMIC` literal
+/// load-bearing, and it did not exist before #413. That constant compares
+/// a selector **as data**, which `docs/STATUS.md` singles out as the
+/// rename hazard with no diagnostic -- and it fails *conditionally*, which
+/// is why the rest of the suite could not see it: every other fixture
+/// builds on the real `OZObject`, which adopts `OZObjectProtocol`, so
+/// `is_protocol_selector` already answers yes and returns before
+/// `ALWAYS_DYNAMIC` is consulted at all. Restoring the old spelling in
+/// that list left all 568 other tests green.
+///
+/// So the root class here is hand-rolled and adopts nothing, and exactly
+/// one class implements the selector -- otherwise the "more than one
+/// implementor" arm would answer yes for its own reasons. Under those two
+/// conditions `ALWAYS_DYNAMIC` is the only thing that can produce the
+/// dispatcher, and a stale literal means `OZLog`'s `%@` has nothing to
+/// call: `src/OZLog.c` names `OZ_PROTOCOL_SEND_getDescription_maxLength_`
+/// directly, so the failure lands as a link error in a file that is
+/// deliberately outside the pipeline.
+#[test]
+fn description_dispatches_dynamically_without_a_protocol_declaring_it() {
+    let src = "\
+#define nil ((id)0)
+typedef bool BOOL;
+
+__attribute__((objc_root_class))
+@interface Root
++ (instancetype)alloc;
+- (instancetype)init;
+- (void)dealloc;
+- (int)getDescription:(char *)buf maxLength:(size_t)maxLen;
+@end
+@implementation Root
++ (instancetype)alloc {
+	return nil;
+}
+- (instancetype)init {
+	return self;
+}
+- (void)dealloc {
+}
+- (int)getDescription:(char *)buf maxLength:(size_t)maxLen {
+	(void)buf;
+	(void)maxLen;
+	return 0;
+}
+@end
+";
+    let out = oz_static::transpile(src).expect("hand-rolled root should transpile");
+    let all = format!("{}{}{}", out.companion_h, out.companion_c, out.source_c);
+    assert!(
+        all.contains("OZ_PROTOCOL_SEND_getDescription_maxLength_"),
+        "no dispatcher generated for -getDescription:maxLength: -- ALWAYS_DYNAMIC \
+         in model.rs no longer names the selector this program spells:\n{}",
+        all
     );
 }
