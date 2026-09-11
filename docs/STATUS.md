@@ -863,6 +863,36 @@ What was actually available: 3 instances across every sample, 72 bytes, and
 had nothing to say about.
 
 
+### A "BSS win" that was 61% not in BSS (#419)
+
+#419 asked for the BSS saved on `samples/heap_alloc` for `mps2/an385` by no
+longer reserving a slab for a class nothing slab-allocates. Measured with
+`arm-zephyr-eabi-size` on the two ELFs, built from committed binaries and
+with no rebuild between them:
+
+| | text | data | bss | dec |
+|---|---|---|---|---|
+| before | 18536 | 520 | 14487 | 33543 |
+| after | 18448 | 324 | 14363 | 33135 |
+
+**124 bytes of BSS, and 196 bytes of `.data`.** A `k_mem_slab` is two
+objects, and they land in different sections: the block buffer is
+uninitialised (`_k_mem_slab_buf_oz_slab_X`, `B`) and the control structure
+is initialised (`oz_slab_X`, `D`, 28 bytes each). Seven slabs went, so the
+`.data` half is 7 x 28 and is the *larger* half. Answering the question as
+asked -- reading the `bss` column -- would have reported 124 bytes and
+understated the RAM saved by more than half.
+
+`nm -S --size-sort` is what makes this checkable rather than inferred: it
+names both symbols per slab and their sizes, and 8+16+16+20+20+20+24 = 124
+accounts for the BSS column exactly, 7 x 28 = 196 for the data column
+exactly. A total that decomposes is a measurement; one that only matches in
+aggregate is a coincidence waiting to be found out.
+
+The general form: **a section name in a question is a hypothesis, not a
+specification.** Where the bytes went is a property of the linker, not of
+the issue text, so measure every section and say which ones moved.
+
 ### A substring grep called a dead field live (#371)
 
 `OZObject.h` declared `int _refcount` that nothing read. The live refcount is
@@ -2263,5 +2293,69 @@ from an expression that is not the thing stored.
   (#413). `__objc_refcount_get` was the SDK's last `get`-prefixed *reader*, and
   retiring it is what made the rule true of every name the SDK exports rather
   than of selectors alone (#418).
+- **"How many?" and "any at all?" are two questions, and a floor is where the
+  second one goes to hide.** `PoolSizes::for_class` ended `.unwrap_or(0).max(1)`
+  because `K_MEM_SLAB_DEFINE(..., 0, ...)` is not a usable slab -- so the size
+  question had no way to say "none", and every program reserved a `k_mem_slab`
+  plus one instance of static storage for every Foundation class it never
+  allocates. The fix was not a better count but a second question,
+  `ever_slab_allocated`, which the emitters read the way `item_slots` of zero
+  has always been read: emit nothing (#419).
+
+  **Key it on site *presence*, never on the count.** `Scan::resolve` gives a
+  site inside an uncalled *class-method* body a multiplicity of zero, and that
+  is correct -- it is what stopped every program sizing `OZNumber` at 16 for
+  seventeen uncalled factories. So `counted` is 0 for a class whose
+  `[X alloc]` is right there in the source, and keying the elision on `counted`
+  drops that class's slab while leaving its emitted, externally callable
+  factory allocating from a slab that does not exist. The two readings agree on
+  every program in the corpus and disagree on exactly that one shape, which is
+  why `a_site_in_an_uncalled_class_method_still_gets_a_slab` exists.
+
+  What the floor was really covering for, found by removing it: **a
+  hand-written C caller the transpiler cannot see.** Eight behaviour cases
+  broke, all of them Unity drivers calling `X_alloc()` for a class their `.m`
+  never allocates. The floor paid for that everywhere to serve those eight, and
+  the right place is the harness, which *can* see the driver --
+  `tests/tools/compile_and_run.py` now scans the `_test.c` and passes
+  `--pool-sizes`, which is what that flag is for. Worth noting how the eight
+  presented: the emitted trap named the class, the selector and the flag that
+  fixes it, and the diagnosis took one line of output. That is the whole case
+  for a named trap over a returned nil.
+
+  Two of the eight were a separate defect the floor had been hiding since long
+  before: the harness read `_parse_pool_sizes(m) or _default_pool_sizes(m)`, so
+  a case carrying `/* oz-pool: OZObject=1 */` -- meaning "size OZObject at one"
+  -- silently dropped the default for every *other* class in the file. It is
+  merged now, directive winning per class.
+
+  Measured, `samples/heap_alloc` on `mps2/an385`: 11 slabs to 4, 320 bytes of
+  RAM back (124 BSS in block buffers, 196 `.data` in seven 28-byte
+  `struct k_mem_slab` control blocks) and 88 bytes of flash. The `.data` half
+  is the larger one and is easy to miss by measuring `bss` alone.
+- **An allocator that can fail must name the failure, and one switch must cover
+  every allocator that can.** The slab path has had
+  `OZ_STATIC_TRAP_POOL_EXHAUSTION` since the pools work; the heap path had a
+  bare `return (struct {name} *)0;`, so heap exhaustion travelled exactly the
+  way slab exhaustion used to -- `EXC_BAD_ACCESS` inside a function with
+  nothing to do with the cause. #419 gave it the same trap, under the same
+  macro, with two arms so the message can say *which* heap ran out.
+
+  **It is opt-in, and the argument for default-on was the interesting half.**
+  Heap exhaustion is a runtime condition rather than a sizing mistake, so
+  unlike a pool there is no number to go and fix, which is a real reason to
+  treat the two differently. Three reasons it still loses. Nil-on-failure is
+  *one* contract across both allocators: a build that wants to keep it has to
+  keep it on both, and that is also the only way the failure path stays
+  testable -- `alloc_failure_enomem` tests the slab's, and a default-on heap
+  trap would leave the heap's untestable. `[Cls dynamicAlloc]` behaving
+  differently from `[Cls alloc]` on the identical failure is two spellings of
+  one concept disagreeing, which is the defect #418 was about. And the
+  complaint is that the failure is *unnamed*, not that it is survivable;
+  naming it is the fix, a second policy is not.
+
+  The macro's name now covers a heap as well as a pool, which is a small lie in
+  a name accepted deliberately: renaming it breaks every build already passing
+  it, and a `-D` flag is the one interface here with no deprecation path.
 - **The version is `tools/oz_static/Cargo.toml`**, bumped in the same commit
   as the change it describes. The repo-level `VERSION` file is retired.
