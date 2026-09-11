@@ -169,7 +169,82 @@ fn render_exhaustion_trap(name: &str) -> String {
     )
 }
 
+/// The same trap for the *heap* path, and under the same macro (#419).
+///
+/// The heap allocator had nothing at all: a bare `return (struct {name}
+/// *)0;`, so heap exhaustion travelled exactly the way slab exhaustion
+/// used to, and a heap can be exhausted far more easily than a statically
+/// sized slab. Two arms rather than one message, because "which heap" is
+/// half the diagnosis and a nil `heap_obj` means the system heap --
+/// `+dynamicAlloc`, which #413 made the ordinary way to reach it -- while
+/// a non-nil one is the `OZHeap` the caller passed.
+///
+/// **Considered and rejected: on by default for the heap.** The argument
+/// for it is real -- heap exhaustion is a runtime condition rather than a
+/// sizing mistake, so there is no `--pool-sizes` number to go and fix, and
+/// the failure is the kind a shipped image hits rather than a developer.
+/// It loses on three counts:
+///
+///   - The two failures are *one* contract to a caller: an allocator
+///     returned nil. A build that wants that contract kept -- to implement
+///     a fallback, or to test the failure path the way
+///     `alloc_failure_enomem` tests the slab's -- has to be able to keep it
+///     on both paths, and a default-on heap trap makes the heap path the
+///     one that cannot be tested for failure at all.
+///   - It would make `[Cls dynamicAlloc]` and `[Cls alloc]` behave
+///     differently on the identical failure, one release after
+///     `+dynamicAlloc` was introduced. Two spellings of one concept
+///     disagreeing is what #418 was about.
+///   - The complaint in the issue is that the failure is *unnamed*, not
+///     that it is survivable. One switch that names both is the fix; a
+///     second policy is not.
+///
+/// So the macro's name now covers a heap as well as a pool. Renaming it
+/// would be a break for every build that already passes it, and `-D` flags
+/// are the one interface with no deprecation path.
+fn render_heap_exhaustion_trap(name: &str) -> String {
+    format!(
+        "#ifdef OZ_STATIC_TRAP_POOL_EXHAUSTION\n\
+         \t\tif (heap_obj) {{\n\
+         \t\t\toz_assert_msg(0, \"{name} heap allocation failed -- the OZHeap passed \
+to '[{name} dynamicAllocWithHeap:]' is exhausted; give it a larger buffer\");\n\
+         \t\t}} else {{\n\
+         \t\t\toz_assert_msg(0, \"{name} heap allocation failed -- the system heap is \
+exhausted; raise CONFIG_HEAP_MEM_POOL_SIZE\");\n\
+         \t\t}}\n\
+         #endif\n",
+        name = name
+    )
+}
+
+/// The class's `k_mem_slab`, or **nothing at all** when `slots` is zero.
+///
+/// Zero means `pools::PoolSizes::ever_slab_allocated` said no: this
+/// program contains no `[{name} alloc]` site and no override claiming one,
+/// so every instance it can have comes from a heap
+/// (`+dynamicAlloc`/`+dynamicAllocWithHeap:`) or there are none. Emitting
+/// a slab anyway is what #419 was filed about -- `K_MEM_SLAB_DEFINE` with
+/// a count of one costs a `struct k_mem_slab` plus `sizeof(struct {name})`
+/// of BSS in every program, for every Foundation class it never allocates.
+/// A zero *count* is not the alternative: `K_MEM_SLAB_DEFINE(..., 0, ...)`
+/// is not a usable slab, which is why the size question was floored at one
+/// and why the presence question had to be asked separately.
+///
+/// Same convention as the shared item pool, which has always treated zero
+/// as "emit neither the pool nor the builders that draw from it"
+/// (`pools::PoolSizes::item_slots`).
 fn render_slab_define(name: &str, slots: usize) -> String {
+    if slots == 0 {
+        return format!(
+            "/* synthesized: no slab for {name} -- nothing in this program sends\n * \
+'[{name} alloc]', so no k_mem_slab and no static storage is reserved for\n * \
+it. An instance can still exist: '[{name} dynamicAlloc]' takes its\n * \
+storage from a heap and is not a slab site. Force one with\n * \
+--pool-sizes {name}=N or an oz-pool comment, which is what a caller\n * \
+outside the transpiled sources needs (not from source) */\n\n",
+            name = name
+        );
+    }
     format!(
         "/* synthesized: backing storage for every {name} instance -- {slots} slot(s), \
          sized from this translation unit's allocation sites, each counted once per call \
@@ -179,6 +254,82 @@ fn render_slab_define(name: &str, slots: usize) -> String {
         slots = slots,
         align = crate::pools::SLAB_ALIGNMENT
     )
+}
+
+/// The body of `{name}_oz_alloc` for a class with no slab.
+///
+/// The prototype and the definition both stay, rather than being omitted
+/// with the slab. Two callers would otherwise reference a symbol that does
+/// not exist: a hand-written C caller the transpiler cannot see (the
+/// reason the old floor of one existed at all), and -- unconditionally --
+/// `OZArray_oz_initWithItems`/`OZDictionary_oz_initWithKeysValues`, which
+/// `emit.rs` declares and defines for every program whether or not it has
+/// a collection literal. An undefined symbol referenced from a function
+/// nothing calls is still a link error, so a missing definition would fail
+/// every program with no `@[...]` in it.
+///
+/// So it traps instead, named, and **not** behind
+/// `OZ_STATIC_TRAP_POOL_EXHAUSTION`: this is not exhaustion, which is a
+/// runtime condition a caller may legitimately handle by checking for nil.
+/// There is no storage here *by construction*, so reaching this function
+/// is a build-time mistake -- the sizing question was answered wrong, or a
+/// caller the transpiler cannot see needs an override -- and the message
+/// says which flag fixes it.
+fn render_no_slab_alloc(name: &str) -> String {
+    format!(
+        "/* synthesized: {name} has no slab (see above), so this cannot hand back\n * \
+storage. It is still defined, because a caller outside the transpiled\n * \
+sources references it and so does the collection-literal builder (not\n * \
+from source) */\n\
+         struct {name} *{name}_oz_alloc(void)\n{{\n\
+         \toz_assert_msg(0, \"{name} has no slab -- nothing in this program sends \
+'[{name} alloc]'. Use '[{name} dynamicAlloc]', or reserve a slab with \
+--pool-sizes {name}=N or an oz-pool comment\");\n\
+         \treturn (struct {name} *)0;\n}}\n\n",
+        name = name
+    )
+}
+
+/// The banner over `{name}_oz_free`. It used to say the function "returns
+/// {name}'s slot to its slab" unconditionally, which is false for a
+/// slab-less class -- and a comment asserting the opposite of the code it
+/// sits on is worse than no comment (#419).
+fn render_free_banner(name: &str, slots: usize) -> String {
+    if slots == 0 {
+        return format!(
+            "/* synthesized: releases {name}'s storage -- called only from\n * \
+oz_static_release, once the refcount reaches zero. There is no slab here,\n * \
+so a heap is the only place an instance can go back to (not from\n * \
+source) */\n",
+            name = name
+        );
+    }
+    format!(
+        "/* synthesized: returns {name}'s slot to its slab -- called only from\n * \
+oz_static_release, once the refcount reaches zero (not from source) */\n",
+        name = name
+    )
+}
+
+/// The `oz_slab_free` line every `{name}_oz_free` ends with, or a comment
+/// where there is no slab to return a slot to.
+///
+/// A slab-less class still needs `{name}_oz_free`: `oz_static_release`'s
+/// class_id switch calls it for every class in the program. What it must
+/// not do is name `oz_slab_{name}`, which no longer exists. Anything that
+/// reaches here came from a heap and was already returned by
+/// `render_heap_free_check` above it; without heap support, nothing can
+/// reach it at all.
+fn render_slab_free(name: &str, slots: usize) -> String {
+    if slots == 0 {
+        return "\t/* No slab, so no slot to return. With heap support on, the check\n\
+                \t * above has already given a heap-allocated instance back to its\n\
+                \t * heap; without it, nothing in this program can have allocated\n\
+                \t * one at all. */\n\
+                \t(void)obj;\n"
+            .to_string();
+    }
+    format!("\toz_slab_free(&oz_slab_{name}, (void *)obj);\n", name = name)
 }
 
 /// `{name}_oz_alloc`/`{name}_oz_free`, backed by the PAL slab allocator
@@ -318,7 +469,9 @@ backs '[{name} dynamicAllocWithHeap:h]' (not from source) */\n\
          struct {name} *{name}_oz_dynamic_alloc_with_heap(struct {root} *heap_obj)\n{{\n\
          \tstruct {name} *obj = (struct {name} *)oz_heap_obj_alloc(\n\
          \t\t(struct OZHeap *)heap_obj, sizeof(struct {name}));\n\
-         \tif (!obj) {{\n\t\treturn (struct {name} *)0;\n\t}}\n\
+         \tif (!obj) {{\n\
+         {trap}\
+         \t\treturn (struct {name} *)0;\n\t}}\n\
          \tmemset(obj, 0, sizeof(struct {name}));\n\
          \t((struct {root} *)obj)->_meta.class_id = OZ_STATIC_CLASS_{name};\n\
          \t((struct {root} *)obj)->_meta.heap_allocated = 1;\n\
@@ -328,6 +481,7 @@ backs '[{name} dynamicAllocWithHeap:h]' (not from source) */\n\
          #endif\n\n",
         name = name,
         root = root,
+        trap = render_heap_exhaustion_trap(name),
         immortal = render_immortal_marker(root, immortal)
     )
 }
@@ -392,42 +546,43 @@ pub(crate) fn render_alloc_free(
 ) -> String {
     let mut c = render_slab_define(name, slots);
     c.push_str(&render_release_ivars(name, root, owned_ivars));
-    c.push_str(&format!(
-        "/* synthesized: allocates and zero-initializes a new {name} (not from source) */\n",
-        name = name
-    ));
-    c.push_str(&format!("struct {name} *{name}_oz_alloc(void)\n{{\n", name = name));
-    c.push_str(&format!(
-        "\tstruct {name} *obj;\n\
-         \tif (oz_slab_alloc(&oz_slab_{name}, (void **)&obj) != 0) {{\n\
-         {trap}\
-         \t\treturn (struct {name} *)0;\n\t}}\n\
-         \tmemset(obj, 0, sizeof(struct {name}));\n",
-        name = name,
-        trap = render_exhaustion_trap(name)
-    ));
-    c.push_str(&format!(
-        "\t((struct {root} *)obj)->_meta.class_id = OZ_STATIC_CLASS_{name};\n\
-         {immortal}\
-         \toz_atomic_init(&((struct {root} *)obj)->oz_refcount, 1);\n",
-        root = root,
-        name = name,
-        immortal = render_immortal_marker(root, immortal)
-    ));
-    c.push_str("\treturn obj;\n}\n\n");
+    if slots == 0 {
+        c.push_str(&render_no_slab_alloc(name));
+    } else {
+        c.push_str(&format!(
+            "/* synthesized: allocates and zero-initializes a new {name} (not from source) */\n",
+            name = name
+        ));
+        c.push_str(&format!("struct {name} *{name}_oz_alloc(void)\n{{\n", name = name));
+        c.push_str(&format!(
+            "\tstruct {name} *obj;\n\
+             \tif (oz_slab_alloc(&oz_slab_{name}, (void **)&obj) != 0) {{\n\
+             {trap}\
+             \t\treturn (struct {name} *)0;\n\t}}\n\
+             \tmemset(obj, 0, sizeof(struct {name}));\n",
+            name = name,
+            trap = render_exhaustion_trap(name)
+        ));
+        c.push_str(&format!(
+            "\t((struct {root} *)obj)->_meta.class_id = OZ_STATIC_CLASS_{name};\n\
+             {immortal}\
+             \toz_atomic_init(&((struct {root} *)obj)->oz_refcount, 1);\n",
+            root = root,
+            name = name,
+            immortal = render_immortal_marker(root, immortal)
+        ));
+        c.push_str("\treturn obj;\n}\n\n");
+    }
     c.push_str(&render_heap_alloc(name, root, heap_support, immortal));
     c.push_str(&render_heap_inner_accessor(name, heap_support));
-    c.push_str(&format!(
-        "/* synthesized: returns {name}'s slot to its slab -- called only from\n * \
-oz_static_release, once the refcount reaches zero (not from source) */\n",
-        name = name
-    ));
+    c.push_str(&render_free_banner(name, slots));
     c.push_str(&format!(
         "void {name}_oz_free(struct {name} *obj)\n{{\n\
          {heap_check}\
-         \toz_slab_free(&oz_slab_{name}, (void *)obj);\n}}\n\n",
+         {slab_free}}}\n\n",
         name = name,
-        heap_check = render_heap_free_check(root, heap_support)
+        heap_check = render_heap_free_check(root, heap_support),
+        slab_free = render_slab_free(name, slots)
     ));
     c
 }
@@ -452,27 +607,31 @@ pub(crate) fn render_array_support(
 ) -> String {
     let mut c = render_slab_define(name, slots);
     c.push_str(&render_release_ivars(name, root, owned_ivars));
-    c.push_str(&format!(
-        "/* synthesized: allocates and zero-initializes a new {name} (not from source) */\n",
-        name = name
-    ));
-    c.push_str(&format!("struct {name} *{name}_oz_alloc(void)\n{{\n", name = name));
-    c.push_str(&format!(
-        "\tstruct {name} *obj;\n\
-         \tif (oz_slab_alloc(&oz_slab_{name}, (void **)&obj) != 0) {{\n\
-         {trap}\
-         \t\treturn (struct {name} *)0;\n\t}}\n\
-         \tmemset(obj, 0, sizeof(struct {name}));\n",
-        name = name,
-        trap = render_exhaustion_trap(name)
-    ));
-    c.push_str(&format!(
-        "\t((struct {root} *)obj)->_meta.class_id = OZ_STATIC_CLASS_{name};\n\
-         \toz_atomic_init(&((struct {root} *)obj)->oz_refcount, 1);\n",
-        root = root,
-        name = name
-    ));
-    c.push_str("\treturn obj;\n}\n\n");
+    if slots == 0 {
+        c.push_str(&render_no_slab_alloc(name));
+    } else {
+        c.push_str(&format!(
+            "/* synthesized: allocates and zero-initializes a new {name} (not from source) */\n",
+            name = name
+        ));
+        c.push_str(&format!("struct {name} *{name}_oz_alloc(void)\n{{\n", name = name));
+        c.push_str(&format!(
+            "\tstruct {name} *obj;\n\
+             \tif (oz_slab_alloc(&oz_slab_{name}, (void **)&obj) != 0) {{\n\
+             {trap}\
+             \t\treturn (struct {name} *)0;\n\t}}\n\
+             \tmemset(obj, 0, sizeof(struct {name}));\n",
+            name = name,
+            trap = render_exhaustion_trap(name)
+        ));
+        c.push_str(&format!(
+            "\t((struct {root} *)obj)->_meta.class_id = OZ_STATIC_CLASS_{name};\n\
+             \toz_atomic_init(&((struct {root} *)obj)->oz_refcount, 1);\n",
+            root = root,
+            name = name
+        ));
+        c.push_str("\treturn obj;\n}\n\n");
+    }
 
     /* OZArray/OZDictionary are Foundation collections, never singletons. */
     c.push_str(&render_heap_alloc(name, root, heap_support, false));
@@ -489,12 +648,13 @@ zero (not from source; OZArray.m has no -dealloc of its own) */\n",
          \t}}\n\
          {items_free}\
          {heap_check}\
-         \toz_slab_free(&oz_slab_{name}, (void *)obj);\n\
+         {slab_free}\
          }}\n\n",
         root = root,
         name = name,
         items_free = render_item_buffer_free("_items", "obj->_count", item_slots),
-        heap_check = render_heap_free_check(root, heap_support)
+        heap_check = render_heap_free_check(root, heap_support),
+        slab_free = render_slab_free(name, slots)
     ));
 
     c.push_str(&format!(
@@ -602,27 +762,31 @@ pub(crate) fn render_dict_support(
 ) -> String {
     let mut c = render_slab_define(name, slots);
     c.push_str(&render_release_ivars(name, root, owned_ivars));
-    c.push_str(&format!(
-        "/* synthesized: allocates and zero-initializes a new {name} (not from source) */\n",
-        name = name
-    ));
-    c.push_str(&format!("struct {name} *{name}_oz_alloc(void)\n{{\n", name = name));
-    c.push_str(&format!(
-        "\tstruct {name} *obj;\n\
-         \tif (oz_slab_alloc(&oz_slab_{name}, (void **)&obj) != 0) {{\n\
-         {trap}\
-         \t\treturn (struct {name} *)0;\n\t}}\n\
-         \tmemset(obj, 0, sizeof(struct {name}));\n",
-        name = name,
-        trap = render_exhaustion_trap(name)
-    ));
-    c.push_str(&format!(
-        "\t((struct {root} *)obj)->_meta.class_id = OZ_STATIC_CLASS_{name};\n\
-         \toz_atomic_init(&((struct {root} *)obj)->oz_refcount, 1);\n",
-        root = root,
-        name = name
-    ));
-    c.push_str("\treturn obj;\n}\n\n");
+    if slots == 0 {
+        c.push_str(&render_no_slab_alloc(name));
+    } else {
+        c.push_str(&format!(
+            "/* synthesized: allocates and zero-initializes a new {name} (not from source) */\n",
+            name = name
+        ));
+        c.push_str(&format!("struct {name} *{name}_oz_alloc(void)\n{{\n", name = name));
+        c.push_str(&format!(
+            "\tstruct {name} *obj;\n\
+             \tif (oz_slab_alloc(&oz_slab_{name}, (void **)&obj) != 0) {{\n\
+             {trap}\
+             \t\treturn (struct {name} *)0;\n\t}}\n\
+             \tmemset(obj, 0, sizeof(struct {name}));\n",
+            name = name,
+            trap = render_exhaustion_trap(name)
+        ));
+        c.push_str(&format!(
+            "\t((struct {root} *)obj)->_meta.class_id = OZ_STATIC_CLASS_{name};\n\
+             \toz_atomic_init(&((struct {root} *)obj)->oz_refcount, 1);\n",
+            root = root,
+            name = name
+        ));
+        c.push_str("\treturn obj;\n}\n\n");
+    }
 
     /* OZArray/OZDictionary are Foundation collections, never singletons. */
     c.push_str(&render_heap_alloc(name, root, heap_support, false));
@@ -641,12 +805,13 @@ the refcount reaches zero (not from source; OZDictionary.m has no\n * \
          \t}}\n\
          {keys_free}\
          {heap_check}\
-         \toz_slab_free(&oz_slab_{name}, (void *)obj);\n\
+         {slab_free}\
          }}\n\n",
         root = root,
         name = name,
         keys_free = render_item_buffer_free("_keys", "obj->_count * 2", item_slots),
-        heap_check = render_heap_free_check(root, heap_support)
+        heap_check = render_heap_free_check(root, heap_support),
+        slab_free = render_slab_free(name, slots)
     ));
 
     c.push_str(&format!(

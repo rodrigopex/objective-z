@@ -75,6 +75,23 @@ pub const SLAB_ALIGNMENT: u32 = 4;
 
 pub struct PoolSizes {
     counted: HashMap<String, usize>,
+    /// Every class with at least one `[Class alloc]` site *in the program
+    /// text*, desugars included -- the "was this class ever slab-allocated"
+    /// question, which is not the same question as "how many slots"
+    /// (#419).
+    ///
+    /// It has to be kept separately because `counted` cannot answer it.
+    /// `Scan::resolve` gives a site in an uncalled *class-method* body a
+    /// multiplicity of zero (see the module header: a class method not
+    /// called here is genuinely not called), so `src/OZNumber.m`'s
+    /// factories count 0 in a program that calls none of them -- yet the
+    /// site is right there in the text and `OZNumber_oz_alloc` really is
+    /// emitted and really can be reached by a hand-written caller the
+    /// transpiler cannot see, which is exactly what the old floor of one
+    /// protected. Keyed on presence rather than multiplicity, that class
+    /// keeps its slab and only a class nothing allocates from a slab
+    /// anywhere loses one.
+    slab_sites: std::collections::HashSet<String>,
     /// From the source's own `/* oz-pool: ... */`. Kept apart from `cli`
     /// because the two are held to different standards -- see
     /// `unknown_overrides`.
@@ -100,11 +117,16 @@ impl PoolSizes {
         let tree = crate::parse::parse(source);
         let mut scan = Scan::default();
         walk_sites(tree.root_node(), source, program, None, None, None, &mut scan);
+        /* Before `resolve`, which folds the sites into per-class counts and
+         * loses the presence/multiplicity distinction #419 needs. */
+        let slab_sites: std::collections::HashSet<String> =
+            scan.sites.iter().map(|s| s.class.clone()).collect();
         let (counted, item_slots_counted, diagnostics) = scan.resolve(program);
         let directive = parse_pool_directive(source).unwrap_or_default();
         (
             PoolSizes {
                 counted,
+                slab_sites,
                 directive,
                 cli: HashMap::new(),
                 item_slots_counted,
@@ -134,14 +156,23 @@ impl PoolSizes {
 
     /// Slots the shared item pool needs.
     ///
-    /// Unlike `for_class`, zero is meaningful and is *not* floored to one:
-    /// a program with no array or dictionary literal needs no pool, and
+    /// Zero is meaningful and is *not* floored to one: a program with no
+    /// array or dictionary literal needs no pool, and
     /// `OZ_MEM_BLOCKS_DEFINE(..., 0, ...)` reaches
     /// `SYS_MEM_BLOCKS_DEFINE` with a zero block count on Zephyr. The
     /// emitters therefore treat zero as "emit neither the pool nor the
     /// builders that draw from it", which is what the oracle's
     /// `{% if item_pool_count > 0 %}` guards do
     /// (`templates/oz_dispatch.c.j2`, `templates/class_header.h.j2`).
+    ///
+    /// This used to read "unlike `for_class`", which stopped being true in
+    /// #419: `for_class` returns zero for a class this program never
+    /// slab-allocates, and `companion::render_slab_define` reads it the
+    /// same way. The two now share one convention rather than one being
+    /// the exception -- with the difference that the *count* question
+    /// there is still floored at one once the *presence* question has
+    /// said yes, because a zero-block `K_MEM_SLAB_DEFINE` is not a slab
+    /// while a zero-block `SYS_MEM_BLOCKS_DEFINE` is merely empty.
     pub fn item_slots(&self) -> usize {
         self.item_slots_cli
             .or(self.item_slots_directive)
@@ -167,12 +198,59 @@ impl PoolSizes {
         unknown
     }
 
-    /// Slots to reserve for `name`. Never zero: a class with no
-    /// allocation site still gets one slot, because
+    /// Does anything in this program take a slab slot for `name`?
+    ///
+    /// A **different question from `for_class`**, and the reason a
+    /// heap-only class no longer reserves a `k_mem_slab` it never uses
+    /// (#419). `for_class` asks *how many* slots; this asks *whether* --
+    /// and only the second one can answer zero, because
+    /// `K_MEM_SLAB_DEFINE(..., 0, ...)` is not a usable slab, so a count
+    /// of zero has to mean "emit no slab" rather than "emit an empty one".
+    ///
+    /// Three inputs, in the order the overrides already establish:
+    ///
+    ///   - an explicit `--pool-sizes Class=N` or `/* oz-pool: Class=N */`
+    ///     is the author speaking, and settles it either way: `N > 0` is a
+    ///     slab even with no visible site (the flag exists precisely for
+    ///     bounds the static count cannot see -- a hand-written C caller of
+    ///     `{Class}_oz_alloc`, which is how `tests/behavior/cases/memory/
+    ///     heap_alloc_test.c` reaches `OZHeap`), and `N == 0` is an
+    ///     instruction not to reserve one;
+    ///   - otherwise, whether the program text contains a slab-allocation
+    ///     site for the class at all -- `slab_sites`, not `counted`, for
+    ///     the reason stated on that field;
+    ///   - and nothing else. `+dynamicAlloc`/`+dynamicAllocWithHeap:` are
+    ///     deliberately not slab sites (`alloc_receiver_class` compares the
+    ///     selector whole-string, see #413), so a class allocated only from
+    ///     a heap reaches here with no site and gets no slab. That is the
+    ///     whole point of the question.
+    pub fn ever_slab_allocated(&self, name: &str) -> bool {
+        if let Some(&n) = self.cli.get(name) {
+            return n > 0;
+        }
+        if let Some(&n) = self.directive.get(name) {
+            return n > 0;
+        }
+        self.slab_sites.contains(name)
+    }
+
+    /// Slots to reserve for `name`, or **zero for a class this program
+    /// never slab-allocates** -- which the emitters read as "emit no slab
+    /// at all", the same way `item_slots` of zero means "emit no item
+    /// pool" (`companion::render_slab_define`).
+    ///
+    /// It used to end `.unwrap_or(0).max(1)`, floored because
     /// `K_MEM_SLAB_DEFINE(..., 0, ...)` is not a usable slab and the
     /// class's alloc function is emitted regardless of whether this
-    /// translation unit happens to call it.
+    /// translation unit happens to call it. The floor is still what a
+    /// class with a site gets -- a site counted at zero multiplicity is
+    /// still a site -- but it no longer applies to a class with none, which
+    /// was costing a `k_mem_slab` plus one instance of static storage in
+    /// every program for every Foundation class it never allocates (#419).
     pub fn for_class(&self, name: &str) -> usize {
+        if !self.ever_slab_allocated(name) {
+            return 0;
+        }
         self.cli
             .get(name)
             .copied()
@@ -579,7 +657,13 @@ fn alloc_receiver_class(node: Node, src: &str, program: &Program) -> Option<Stri
      * objects carry `_meta.heap_allocated` and go back to their heap in
      * `{Class}_oz_free`, never touching the slab (`companion.rs`). The
      * omission of `dynamicAlloc` from this comparison is the point, not an
-     * oversight. */
+     * oversight.
+     *
+     * Since #419 it decides more than a count. This function is the sole
+     * source of `PoolSizes::slab_sites`, which `ever_slab_allocated` reads
+     * to answer whether the class gets a `k_mem_slab` *at all* -- so
+     * widening the comparison to a prefix would now reinstate a whole slab
+     * for every heap-only class, not just one wasted slot. */
     if selector != "alloc" {
         return None;
     }
