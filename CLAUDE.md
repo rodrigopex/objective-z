@@ -154,7 +154,18 @@ from an AST, which is why unexpanded macros survive into the output.
   resolve statically from the CST where possible (free), and retain where provenance
   cannot be established (one pair, and only sound at a `return` — see
   [docs/STATUS.md](docs/STATUS.md), "The hybrid model"). **Key ownership on the reference,
-  never on a syntactic form**, and route every spelling through one function.
+  never on a syntactic form**, and route every spelling through one function. Seven
+  defects in a row came from keying on a form instead: the returned name (#351), a scalar
+  ivar store's left side (#352), an array store's receiver (#360), the kind of slot
+  (#359), the receiver's static class (#365), a selector's `init` prefix (#398) and a
+  local's declared-type spelling (#400). Two of those — #398 and #400 — had the *correct*
+  rule written down a few lines away in the same file, behind a check that returned
+  before reaching it, which is worth looking for directly. The standing records are
+  `tools/oz_static/tests/ownership_matrix.rs` (every sink a `+1` reaches, by refcount
+  count) and `selector_ownership_matrix.rs` (every selector and construct that creates or
+  consumes one, by observed output — counting cannot see *which* pointer a release names,
+  which is what #398 got wrong). Everything not in those two files is believed correct,
+  so a new sink, selector or construct needs a row.
   A Clang JSON AST is supplied via `--ast`, and since #385 it is **required**, not
   optional: `oz2c` refuses a source that declares a class with no dump behind it, as a
   hard located error. It carries the `__strong` qualifiers and the
@@ -288,8 +299,15 @@ Retained as reference for transpiler development. Not compiled — the runtime c
 
 ### Test Infrastructure (`tests/`)
 
-- **`tests/behavior/`** — 78 compiled behavior tests across 17 categories (Unity framework, host-side)
-- **`tests/adapted/`** — 40 adapted upstream tests across 6 sources (LLVM, GNUstep, Apple, Bucket B, ObjFW, mulle-objc)
+- **`tests/behavior/`** — 81 compiled behavior tests across 17 categories (Unity
+  framework, host-side), under `tests/behavior/cases/<category>/*.m`
+- **`tests/adapted/`** — 40 adapted upstream tests across 6 sources (LLVM, GNUstep,
+  Apple, Bucket B, ObjFW, mulle-objc), under `tests/adapted/<source>/*.m` — **note the
+  shape: there is no `cases/` level here**, unlike `tests/behavior/`. A blast-radius
+  sweep that globs `tests/adapted/cases/*/*.m` matches nothing, reports a clean number
+  for the 81 behaviour cases alone, and calls it "both corpora" (#400's PR did exactly
+  that). Glob `tests/adapted/**/*.m`, and assert the count is 40 before trusting the
+  result
 - **`tests/zephyr/`** — 18 Zephyr integration cases in 5 ztest suites (`native_sim` +
   `ztest` + `twister`), over C committed under `tests/zephyr/generated/`. That C is
   **oz_static's output** since the port, so a green run says something about the

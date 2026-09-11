@@ -517,6 +517,41 @@ class parsed with ivars, and hard-error naming the class and the `.m` to add.
 
 ## How measurements mislead
 
+### A blast-radius sweep that covered two thirds of what it claimed (#400)
+
+Every codegen PR of 2026-09-11 quoted "81 of 81 corpus cases byte-identical" and
+described it as both corpora. It was the behaviour corpus alone. The sweep globbed
+
+```python
+glob('tests/behavior/cases/*/*.m') + glob('tests/adapted/cases/*/*.m')
+```
+
+and the adapted corpus has **no `cases/` level** -- its 40 files live at
+`tests/adapted/<source>/*.m`. The second glob matched nothing, contributed nothing,
+and said nothing about it. 81 is exactly the behaviour count, so the total looked
+right and the wrong number was the one that agreed with expectations.
+
+Worse than the omission: had the sweep covered them, the answer would not have
+been "all identical" either. `tests/adapted/gnustep/nil_msgSend_types.m:22` reads
+`id result = [nilObj init];`, and `-init` is an owning send, so #400's fix makes
+that local ARC-managed and emits `oz_static_release((struct OZObject *)(result))`
+at scope exit -- correct, safe on nil, and a real difference. The honest figure
+was 120 of 121 with one expected change, not 81 of 81 with none.
+
+Two rules fall out, both cheap:
+
+- **Assert the corpus size before trusting a corpus result.** A glob that returns
+  the number you expected from one half is indistinguishable from a glob that
+  worked.
+- **A byte-identical result is a claim about what you globbed**, so state the
+  populations by path, not by the word "corpora".
+
+Related in kind, and found the same day: the selector survey in #400 first
+counted sends across `tests/*/cases/*.m` and samples only, missing the ~50 Rust
+test files whose ObjC is inline. `-release` has 1 send in the first population
+and **142** in the one that was skipped.
+
+
 ### Two ways the case for literal dedup was overstated (#372)
 
 The issue was filed arguing footprint, and the footprint argument did not
