@@ -353,9 +353,30 @@ fn render_heap_free_check(root: &str, heap_support: bool) -> String {
 /// `platform/oz_platform_{zephyr,host}.h` declare and deliberately leave to
 /// generated code: both need `struct OZHeap` to be a complete type, and the
 /// PAL cannot see it. Same division as the oracle's `oz_dispatch.c.j2`.
-fn render_heap_bridge(heap_support: bool) -> String {
+///
+/// **Two shapes, because a program can want a heap without wanting an
+/// `OZHeap`.** The named-heap arms call `OZHeap_oz_inner`, which
+/// `render_heap_inner_accessor` emits only into `OZHeap`'s own file -- so a
+/// program that enables heap support and never declares `OZHeap` referenced
+/// an undeclared function and failed to compile, on
+/// `-Wimplicit-function-declaration` and `-Wint-conversion`, in generated
+/// code rather than in anything the author wrote.
+///
+/// That was reachable before `+dynamicAlloc` existed (`[Cls
+/// allocWithHeap:nil]` needed the same flag) but it was obscure, because
+/// wanting the system heap meant writing `nil` where an `OZHeap` belonged.
+/// `+dynamicAlloc` (#413) makes it the *ordinary* case: the whole point of
+/// that selector is allocating without an `OZHeap` anywhere. So when the
+/// program has no `OZHeap`, the named-heap arms are dead by construction --
+/// `heap` and `hdr->heap` can only ever be null -- and emitting them is
+/// emitting a call that cannot resolve.
+fn render_heap_bridge(heap_support: bool, has_ozheap: bool) -> String {
     if !heap_support {
         return String::new();
+    }
+    if !has_ozheap {
+        return "/* synthesized: the two heap entry points the PAL declares but leaves to\n * generated code. This program declares no OZHeap, so every allocation\n * comes from the system heap and the named-heap arms would call an\n * accessor that is never generated (not from source) */\n#ifdef OZ_HEAP_SUPPORT\nvoid *oz_heap_obj_alloc(struct OZHeap *heap, size_t size)\n{\n\t(void)heap;\n\treturn oz_sys_heap_alloc(size);\n}\n\nvoid oz_heap_obj_free(void *obj)\n{\n\toz_sys_heap_free(obj);\n}\n#endif\n\n"
+            .to_string();
     }
     "/* synthesized: the two heap entry points the PAL declares but leaves to\n * generated code -- both need 'struct OZHeap' complete, which only this\n * file has (not from source) */\n#ifdef OZ_HEAP_SUPPORT\nvoid *oz_heap_obj_alloc(struct OZHeap *heap, size_t size)\n{\n\tif (heap) {\n\t\treturn oz_heap_alloc_obj(OZHeap_oz_inner(heap), heap, size);\n\t}\n\treturn oz_sys_heap_alloc(size);\n}\n\nvoid oz_heap_obj_free(void *obj)\n{\n\tstruct oz_heap_hdr *hdr = (struct oz_heap_hdr *)\n\t\t((char *)obj - offsetof(struct oz_heap_hdr, obj));\n\tif (hdr->heap) {\n\t\toz_heap_free_obj(OZHeap_oz_inner(hdr->heap), obj);\n\t} else {\n\t\toz_sys_heap_free(obj);\n\t}\n}\n#endif\n\n"
         .to_string()
@@ -1362,7 +1383,7 @@ void {root}_dealloc(struct {root} *self)\n{{\n\t(void)self;\n}}\n\n",
             "/* synthesized: increments the retain count; shared by every class,\n * \
 not tied to one (not from source) */\n",
         );
-        c.push_str(&render_heap_bridge(program.heap_support));
+        c.push_str(&render_heap_bridge(program.heap_support, program.is_class("OZHeap")));
         c.push_str(
             "/* synthesized: the class's own name, read by the default\n * `-getDescription:maxLength:` (not from source) */\n",
         );

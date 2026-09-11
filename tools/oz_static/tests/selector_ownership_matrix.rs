@@ -26,7 +26,10 @@
 
 mod common;
 
-use common::{compile_and_run, compile_and_run_with_reflection, ozobject_src};
+use common::{
+        compile_and_run, compile_and_run_with_heap, compile_and_run_with_reflection,
+        ozobject_src,
+};
 
 /// One cell: what it exercises, the program body, and the exact output
 /// that program must produce.
@@ -40,6 +43,11 @@ struct Cell {
         expect: &'static str,
         /// Set when reflection is needed (`@selector`, `-performSelector:`).
         needs_reflection: bool,
+        /// Set when heap support is needed (`+dynamicAlloc`), which is off
+        /// unless asked for -- without it the selector is a located error
+        /// rather than a wrong answer, and the row would pass for the
+        /// wrong reason.
+        needs_heap: bool,
         /// `Some(issue)` when the expectation is the *defect* rather than
         /// the correct answer -- asserted so that fixing it fails here.
         known_defect: Option<&'static str>,
@@ -101,6 +109,8 @@ fn run(cell: &Cell) {
         let stem = format!("som_{}", &stem[..stem.len().min(60)]);
         let got = if cell.needs_reflection {
                 compile_and_run_with_reflection(&src, &stem)
+        } else if cell.needs_heap {
+                compile_and_run_with_heap(&src, &stem)
         } else {
                 compile_and_run(&src, &stem)
         };
@@ -127,6 +137,7 @@ fn the_owning_set() {
                         body: "\tThing *t = [[Thing alloc] init];\n\tprintf(\"ok %d\\n\", t != 0);\n",
                         expect: "ok 1\nd\n",
                         needs_reflection: false,
+                        needs_heap: false,
                         known_defect: None,
                 },
                 Cell {
@@ -134,6 +145,25 @@ fn the_owning_set() {
                         body: "\tThing *t = [Thing new];\n\tprintf(\"ok %d\\n\", t != 0);\n",
                         expect: "ok 1\nd\n",
                         needs_reflection: false,
+                        needs_heap: false,
+                        known_defect: None,
+                },
+                Cell {
+                        what: "+dynamicAlloc",
+                        /* The heap counterpart of `+alloc`, and bound
+                         * *bare* on purpose: `[[Thing dynamicAlloc] init]`
+                         * is `+1` through the outer `-init` whatever the
+                         * receiver's provenance was, so it would pass with
+                         * the selector missing from
+                         * `arc::CREATE_RULE_SELECTORS`. Verified red with
+                         * it removed. `+dynamicAllocWithHeap:` needs an
+                         * `OZHeap` instance this file's shared preamble
+                         * does not carry, and is covered end to end in
+                         * `behavior_foundation_heap.rs` instead. */
+                        body: "\tThing *t = [Thing dynamicAlloc];\n\tprintf(\"ok %d\\n\", t != 0);\n",
+                        expect: "ok 1\nd\n",
+                        needs_reflection: false,
+                        needs_heap: true,
                         known_defect: None,
                 },
                 Cell {
@@ -141,6 +171,7 @@ fn the_owning_set() {
                         body: "\tThing *t = [[Thing alloc] init];\n\tThing *c = [t copy];\n\tprintf(\"ok %d\\n\", c != 0);\n",
                         expect: "ok 1\nd\nd\n",
                         needs_reflection: false,
+                        needs_heap: false,
                         known_defect: None,
                 },
                 Cell {
@@ -149,6 +180,7 @@ fn the_owning_set() {
                         body: "\tThing *t = [[Thing alloc] init];\n\tThing *m = [t mutableCopy];\n\tprintf(\"ok %d\\n\", m != 0);\n",
                         expect: "ok 1\nd\nd\n",
                         needs_reflection: false,
+                        needs_heap: false,
                         known_defect: None,
                 },
         ] {
@@ -184,6 +216,7 @@ fn the_consume_set() {
                         body: "\tThing *t = [[Thing alloc] init];\n\tprintf(\"live %d\\n\", t != 0);\n\t[t retain];\n\t[t release];\n\tprintf(\"ok\\n\");\n",
                         expect: "live 1\nok\n",
                         needs_reflection: false,
+                        needs_heap: false,
                         known_defect: None,
                 },
                 Cell {
@@ -192,6 +225,7 @@ fn the_consume_set() {
                         body: "\tThing *t = [[Thing alloc] init];\n\t[t release];\n\tprintf(\"ok\\n\");\n",
                         expect: "d\nok\n",
                         needs_reflection: false,
+                        needs_heap: false,
                         known_defect: None,
                 },
                 Cell {
@@ -200,6 +234,7 @@ fn the_consume_set() {
                         body: "\tThing *t = [[[Thing alloc] init] autorelease];\n\tprintf(\"ok %d\\n\", t != 0);\n",
                         expect: "ok 1\nd\n",
                         needs_reflection: false,
+                        needs_heap: false,
                         known_defect: None,
                 },
                 Cell {
@@ -208,6 +243,7 @@ fn the_consume_set() {
                         body: "\tprintf(\"v=%d\\n\", [[Thing alloc] initialValue]);\n",
                         expect: "v=42\nd\n",
                         needs_reflection: false,
+                        needs_heap: false,
                         known_defect: None,
                 },
         ] {
@@ -226,6 +262,7 @@ fn the_autoreleasepool_construct() {
                         body: "\t@autoreleasepool {\n\t\tThing *t = [[Thing alloc] init];\n\t\tprintf(\"in %d\\n\", t != 0);\n\t}\n\tprintf(\"out\\n\");\n",
                         expect: "in 1\nd\nout\n",
                         needs_reflection: false,
+                        needs_heap: false,
                         known_defect: None,
                 },
                 Cell {
@@ -234,6 +271,7 @@ fn the_autoreleasepool_construct() {
                         body: "\tThing *e = 0;\n\t@autoreleasepool {\n\t\te = [[Thing alloc] init];\n\t}\n\tprintf(\"alive %d\\n\", e != 0);\n\t[e release];\n",
                         expect: "alive 1\nd\n",
                         needs_reflection: false,
+                        needs_heap: false,
                         known_defect: None,
                 },
         ] {
@@ -252,6 +290,7 @@ fn the_perform_selector_family() {
                         body: "\tThing *t = [[Thing alloc] init];\n\tThing *c = (Thing *)[t performSelector:@selector(copy)];\n\tprintf(\"ok %d\\n\", c != 0);\n",
                         expect: "ok 1\nd\nd\n",
                         needs_reflection: true,
+                        needs_heap: false,
                         known_defect: None,
                 },
         ] {
@@ -270,6 +309,7 @@ fn the_compositions() {
                         body: "\tThing *c = [[[Thing alloc] init] copy];\n\tprintf(\"ok %d\\n\", c != 0);\n",
                         expect: "d\nok 1\nd\n",
                         needs_reflection: false,
+                        needs_heap: false,
                         known_defect: None,
                 },
                 Cell {
@@ -277,6 +317,7 @@ fn the_compositions() {
                         body: "\tMaker *m = [[Maker alloc] init];\n\tThing *t = [m copyOfOne];\n\tprintf(\"ok %d\\n\", t != 0);\n",
                         expect: "d\nok 1\nd\n",
                         needs_reflection: false,
+                        needs_heap: false,
                         known_defect: None,
                 },
                 Cell {
@@ -286,6 +327,7 @@ fn the_compositions() {
                         body: "\tThing *t = [[Thing alloc] init];\n\tid c = [t copy];\n\tprintf(\"ok %d\\n\", c != 0);\n",
                         expect: "ok 1\nd\nd\n",
                         needs_reflection: false,
+                        needs_heap: false,
                         known_defect: None,
                 },
                 Cell {
@@ -293,6 +335,7 @@ fn the_compositions() {
                         body: "\tThing *t = [[Thing alloc] init];\n\tvoid *c = [t copy];\n\tprintf(\"ok %d\\n\", c != 0);\n",
                         expect: "ok 1\nd\nd\n",
                         needs_reflection: false,
+                        needs_heap: false,
                         known_defect: None,
                 },
         ] {
