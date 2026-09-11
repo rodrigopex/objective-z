@@ -93,6 +93,11 @@ fn function_body(source_c: &str, name: &str) -> String {
 /// comparison between them rather than against a fixed string, so the test
 /// says "these agree" -- which is the actual requirement -- and does not
 /// have to be rewritten if the lowering's shape ever changes.
+///
+/// The `assert_eq!` held across #405 exactly as intended. The two
+/// `contains` checks above it did not, because one of them named the
+/// generated temporary instead of the release it stood for -- a reminder
+/// that a proxy for a property is not the property.
 #[test]
 fn both_spellings_of_an_owned_ivar_store_lower_identically() {
     let src = program(
@@ -123,15 +128,28 @@ fn both_spellings_of_an_owned_ivar_store_lower_identically() {
     let implicit = function_body(&out.source_c, "Holder_storeImplicit");
     let explicit = function_body(&out.source_c, "Holder_storeExplicit");
 
-    for (label, body) in [("implicit", &implicit), ("explicit", &explicit)] {
+    for (label, body, ivar) in [
+        ("implicit", &implicit, "_implicit"),
+        ("explicit", &explicit, "_explicit"),
+    ] {
         assert!(
             body.contains("oz_static_retain"),
             "the {} store takes no retain, so the ivar holds a reference nothing accounts for:\n{}",
             label,
             body
         );
+        /* That the previous value is released, asked of the operation
+         * rather than of the temporary's name. This used to look for
+         * `_oz_prev_`, which was a proxy for the release and stopped being
+         * one when #405 removed the temporary: a store whose right-hand
+         * side is a plain identifier now names `self->_x` directly, which
+         * is what keeps it correct inside a loop. The property is
+         * unchanged; only its spelling was. */
         assert!(
-            body.contains("_oz_prev_"),
+            body.contains(&format!(
+                "oz_static_release((struct OZObject *)(self->{}))",
+                ivar
+            )),
             "the {} store does not release what the ivar held before:\n{}",
             label,
             body

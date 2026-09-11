@@ -568,7 +568,7 @@ fn references_identifier(name: &str, root: Node, src: &str) -> bool {
 
 /// How a single store to a strong local can be emitted.
 #[derive(PartialEq, Clone, Copy)]
-enum LocalStore {
+pub(crate) enum LocalStore {
     /// A `+1` right-hand side that does not mention the variable: the old
     /// value can be released *before* evaluating it.
     ///
@@ -587,7 +587,12 @@ enum LocalStore {
     Unsupported,
 }
 
-fn classify_store(name: &str, rhs: Node, src: &str, program: &Program) -> LocalStore {
+pub(crate) fn classify_store(
+    name: &str,
+    rhs: Node,
+    src: &str,
+    program: &Program,
+) -> LocalStore {
     let owning = crate::arc::binds_ownership(rhs, src, program, &program.owning_methods);
     let mentions_self = references_identifier(name, rhs, src);
     if owning && !mentions_self {
@@ -2826,45 +2831,107 @@ fn render_strong_ivar_assign(
     let path = ctx.program.ivar_access_path(&ctx.class_name, &name)?;
     let root = ctx.program.root_class()?.to_string();
 
-    let takes_ownership = crate::arc::binds_ownership(right, ctx.src, ctx.program, &ctx.program.owning_methods);
+    /* The same three-way question `render_strong_local_assign` asks, routed
+     * through the same function. A strong ivar was the one slot whose store
+     * never asked it: it always evaluated the new value first, so an `-init`
+     * that allocates into an ivar needed two slab slots to run twice where a
+     * local needs one, and on a one-slot pool the second run got nil (#405).
+     */
+    let kind = classify_store(&name, right, ctx.src, ctx.program);
+    let takes_ownership =
+        crate::arc::binds_ownership(right, ctx.src, ctx.program, &ctx.program.owning_methods);
     let (value, value_ty) = render_expr(right, ctx);
 
-    let (line, col) = line_col(ctx.src, node.start_byte());
-    ctx.block_counter += 1;
-    let prev = format!("_oz_prev_L{}_C{}_{}", line, col, ctx.block_counter);
-    ctx.pre_stmts.push(format!(
-        "struct {root} *{prev} = (struct {root} *)(self->{path});",
-        root = root,
-        prev = prev,
-        path = path
-    ));
-
-    let retain = if takes_ownership {
-        String::new()
-    } else {
-        format!("oz_static_retain((struct {root} *)(self->{path})), ", root = root, path = path)
+    /* A store that needs no temporary names `self->{path}` directly, and
+     * that is what keeps it correct inside a loop. The previous value used
+     * to be captured into `ctx.pre_stmts` unconditionally, and those are
+     * drained by the enclosing *top-level* statement -- so in a loop the
+     * capture hoisted above it, read the ivar once while it was still nil,
+     * and every iteration released nil. `render_strong_local_assign`'s own
+     * comment records that defect being fixed there; here it was unreachable
+     * only because `staticbar::LoopEscape::OverlappingStore` refused the
+     * shape outright. Which is why relaxing that rejection and removing the
+     * temporary have to be the same change, and in that order.
+     */
+    let expr = match kind {
+        /* A `+1` right-hand side that does not mention the ivar: release
+         * first, then assign. The slot goes back to the slab before the next
+         * allocation asks for one, which is what lets one slot serve any
+         * number of stores. `classify_store` established that the right-hand
+         * side does not read the ivar, so freeing it first cannot pull the
+         * ground from under the value being computed.
+         */
+        LocalStore::Owning => format!(
+            "(oz_static_release((struct {root} *)(self->{path})), self->{path} = {value})",
+            root = root,
+            path = path,
+            value = value
+        ),
+        /* A plain identifier: retain new, release old, assign -- the order
+         * that makes `_x = _x` safe. Naming `value` twice is free of
+         * consequence only because it is an identifier, which is exactly
+         * what `classify_store` checked.
+         */
+        LocalStore::BorrowedIdent => format!(
+            "(oz_static_retain((struct {root} *)({value})), \
+             oz_static_release((struct {root} *)(self->{path})), self->{path} = {value})",
+            root = root,
+            path = path,
+            value = value
+        ),
+        /* Anything else: a borrowed call or message result, a cast, a
+         * subscript -- and `_x = [_x copy]`, which is `+1` but *does* read
+         * the ivar, so it is here rather than in the first arm and must not
+         * be retained. Nothing here establishes that computing the new value
+         * does not read the ivar, so the new value has to exist before the
+         * old one can be released. That needs the temporary, and it is the
+         * shape `OverlappingStore` still refuses inside a loop.
+         */
+        LocalStore::Unsupported => {
+            let (line, col) = line_col(ctx.src, node.start_byte());
+            ctx.block_counter += 1;
+            let prev = format!("_oz_prev_L{}_C{}_{}", line, col, ctx.block_counter);
+            ctx.pre_stmts.push(format!(
+                "struct {root} *{prev} = (struct {root} *)(self->{path});",
+                root = root,
+                prev = prev,
+                path = path
+            ));
+            let retain = if takes_ownership {
+                String::new()
+            } else {
+                format!(
+                    "oz_static_retain((struct {root} *)(self->{path})), ",
+                    root = root,
+                    path = path
+                )
+            };
+            // The comma expression yields the stored value only where
+            // something can use it. As a bare statement -- which is nearly
+            // always -- a trailing `self->_x` is a read whose result is
+            // discarded, and Clang says so: "expression result unused"
+            // [-Wunused-value]. Zephyr builds with -Werror, so that is a
+            // build failure, not just noise. The two arms above need no such
+            // suppression: their last operand is the assignment itself,
+            // which yields the stored value and has a side effect.
+            let yields = if node
+                .parent()
+                .is_some_and(|parent| parent.kind() == "expression_statement")
+            {
+                String::new()
+            } else {
+                format!(", self->{path}", path = path)
+            };
+            format!(
+                "(self->{path} = {value}, {retain}oz_static_release({prev}){yields})",
+                path = path,
+                value = value,
+                retain = retain,
+                prev = prev,
+                yields = yields
+            )
+        }
     };
-    // The comma expression yields the stored value only where something can
-    // use it. As a bare statement -- which is nearly always -- a trailing
-    // `self->_x` is a read whose result is discarded, and Clang says so:
-    // "expression result unused" [-Wunused-value]. Zephyr builds with
-    // -Werror, so that is a build failure, not just noise.
-    let yields = if node
-        .parent()
-        .is_some_and(|parent| parent.kind() == "expression_statement")
-    {
-        String::new()
-    } else {
-        format!(", self->{path}", path = path)
-    };
-    let expr = format!(
-        "(self->{path} = {value}, {retain}oz_static_release({prev}){yields})",
-        path = path,
-        value = value,
-        retain = retain,
-        prev = prev,
-        yields = yields
-    );
     let ty = if value_ty == "id" { format!("struct {} *", root) } else { value_ty };
     Some((expr, ty))
 }
