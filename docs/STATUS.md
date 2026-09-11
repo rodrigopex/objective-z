@@ -463,6 +463,52 @@ fit". There is no second live copy, because there is no release, and no
 pool size bounds that loop. It is `Accumulates` now, for both the scalar
 and the array spelling.
 
+### The advice that could not be taken (#425)
+
+Filed separately and fixed on the back of the above, because the answer
+changes once #423 has narrowed the arm — which is the point worth keeping.
+
+`OverlappingStore`'s message ended: "Raise this class's pool (a
+`/* oz-pool: <Class>=2 */` directive, or `--pool-sizes`) or bind it to a
+local declared before the loop". Only the second half works. `staticbar`
+has no pool awareness at all — it never reads `PoolSizes` — so it cannot
+know the directive was added, and the issue's own example is refused
+identically at `Foo=1`, `Foo=2` and `Foo=8`. Measured, and now asserted:
+`raising_the_pool_does_not_lift_an_overlapping_store` compares the three
+diagnostics and requires them to be the same string.
+
+The issue's *preferred* answer was to make the rejection pool-aware and
+accept an `OverlappingStore` whose class has two or more slots, on the
+grounds that #405 had noted this becomes sound once the hoisted temporary
+is gone for the shapes that do not need one. That reasoning is correct and
+its conclusion is not, and the gap between them is exactly what #423
+closed: the shapes that do not need the temporary are **already accepted at
+one slot**, because they release first. What is left refused is the
+complement — `LocalStore::Unsupported`, the store that reads its own
+destination — and there the pool is not the constraint. `ctx.pre_stmts`
+hoists that store's temporary out of the loop, so it reads the destination
+once while still nil and releases the same stale pointer every iteration.
+Accepting it on a pool of two would not fit two live objects; it would
+miscompile. No pool size moves a hoisted temporary back inside the loop.
+
+So the general lesson is not "the message was wrong". It is that a remedy
+offered in a diagnostic is a claim about the checker's own behaviour, and
+this one had never been true. It was also *pinned* by a green assertion —
+`diags.contains("oz-pool")`, with the comment "and how to fix it, since
+the shape is bounded -- just not at one" — which is the same failure mode
+as #423's inverted case, in the same file, found in the same pass.
+
+`Accumulates` carried the same false remedy for a different reason: "size
+the pool for the loop's own bound" names a number this pass does not know
+and that no directive could express for a dynamic trip count. Both now
+carry only what works, and say outright that the pool will not help.
+`Returned` never had the advice.
+
+Pool advice elsewhere is untouched and remains correct: `pools.rs` and
+`companion.rs` diagnose real slab sizing and exhaustion, where raising the
+pool *is* the fix. The rule is narrower than "don't mention the pool" — it
+is that the check giving the advice has to be the check that can act on it.
+
 ### A block literal borrows its enclosing body's context (#339, #342)
 
 The other shape of the same tell, and the more instructive one, because
@@ -1791,6 +1837,27 @@ from an expression that is not the thing stored.
 
 - **Never silently degrade.** Anything outside the supported subset is a hard,
   *located* error. This is deliberate, not a gap someone forgot to fill.
+- **A remedy in a diagnostic is a claim about the checker, so the check that
+  offers it has to be the check that can act on it.** The loop-escape rejection
+  told authors to raise the class's pool for four releases while having no pool
+  awareness at all -- it never reads `PoolSizes`, so the same program was refused
+  identically at `Foo=1`, `Foo=2` and `Foo=8` (#425). Worse, the shape it was
+  refusing is one no pool size can fix: its temporary is hoisted out of the loop
+  by `ctx.pre_stmts`, so accepting it on two slots would miscompile rather than
+  fit. Two tests hold the line -- one compares the diagnostic across three pool
+  sizes and requires one string, the other holds all three escapes to the rule so
+  a fourth cannot be added without answering it. This is narrower than "don't
+  mention the pool": `pools.rs` and `companion.rs` name it for real sizing and
+  exhaustion, where it is the fix.
+- **Key ownership on the reference, never on a syntactic form, and route every
+  spelling through one function.** Eight defects in a row came from a decision
+  keyed on a form (#351, #352, #359, #360, #365, #398, #400, #423). #423 is the
+  one to read for how it recurs after a fix: #405 routed two of the four
+  destination spellings of a store through one predicate, and the two it left
+  were wrong in *opposite* directions -- a `subscript_expression` over-rejecting
+  a shape the emitter already lowered release-first, and a `self->_ivar`
+  accepting one it lowered with a hoisted temporary. Fixing the site that was
+  reported is not the fix; enumerating its siblings is.
 - **A release is only ever emitted for an expression that is an object
   pointer.** Both operand sites used to take the expression's own type where it
   ended in `*` and the root pointer otherwise, reasoning that "`id` is the one
