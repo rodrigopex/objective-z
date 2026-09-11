@@ -621,6 +621,31 @@ test files whose ObjC is inline. `-release` has 1 send in the first population
 and **142** in the one that was skipped.
 
 
+### A blast-radius sweep whose own harness produced the diff (#424)
+
+The sweep for #424 built the `origin/main` binary in a scratch copy of the
+tree and ran both binaries over the corpora, the samples and the SDK's own
+`src/*.m`. It reported **nine SDK sources changed**, each with the whole
+`@implementation` emitted twice in main's output and once in the fix's -- a
+structural difference no ARC change can produce, which is the only reason it
+was not believed.
+
+The cause was in the harness. Main's binary was given main's tree as its `-I`
+and `--impl-dir` root while the input `.m` came from the *other* tree, so
+`imports.rs` saw `Foundation/OZSpinLock.h` under two paths, failed to recognise
+it as already resolved, and spliced the implementation a second time. Running
+each binary inside its own self-consistent tree -- the two verified
+byte-identical with `diff -r` apart from the change under test -- gave **140 of
+140 transpiled inputs byte-identical**, and zero cases where one binary
+accepted and the other refused.
+
+Two things to carry forward. A cross-tree comparison must hold *everything*
+about the invocation constant except the binary, and the root a compiler
+resolves includes against is part of the invocation, not scenery. And a
+before/after diff that shows a change too large for the hypothesis is evidence
+about the harness, not about the code -- the nine "regressions" were the
+harness describing itself.
+
 ### Two ways the case for literal dedup was overstated (#372)
 
 The issue was filed arguing footprint, and the footprint argument did not
@@ -1247,6 +1272,81 @@ selectors. Ownership is meaningless for a `void` or scalar result, and
 refusing those would reject ordinary polymorphism -- `-poke` overridden by
 three subclasses is what dynamic dispatch is *for*.
 
+## Where the same fix twice was the tell, a third time (#424)
+
+#359 brought the two strong slots that are not ivars under ARC -- a file-scope
+object and a `static` local -- and wrote the store once, as
+`emit::render_strong_local_assign`, on the argument that the three kinds of
+slot differ only in whether a scope releases them. The argument is right. The
+store did not actually follow it, because `render_strong_local_assign` answered
+`None` for one of the three shapes `emit::classify_store` distinguishes, and a
+`None` there falls through to `pass_through` -- a plain C store.
+
+That was sound for a managed **local**: `managed_object_locals` drops a
+candidate whose stores include a `LocalStore::Unsupported` one, so such a local
+is never managed at all and never reaches the store. `static_object_locals` and
+`is_file_scope_object` have no such filter. So
+
+```objc
+	static Thing *cached;
+
+	cached = [Thing alloc];   /* released the previous -- managed */
+	cached = [cached copy];   /* plain C store -- leaked the previous */
+```
+
+was managed for one store and not the other, and nothing anywhere said so. The
+two halves of #359 -- *which slots are strong* and *how a store to one is
+lowered* -- were keyed on different things, and only the first had been swept.
+
+Two shapes reach the gap, and the second is worse than a leak:
+
+- `cached = [cached copy]` is `+1` but reads the slot, so the release cannot
+  come first. Nothing released the previous value: a leak.
+- `g_slot = pick(a)` is a `+0` **call**, and `classify_store` puts it in the
+  same arm for the same reason it cannot be lowered release-first. It took no
+  retain either, so the caller's own release freed an object the slot still
+  pointed at. `g_slot = a` -- the identical reference, spelled as an
+  identifier -- has retained since #359. The spelling was the whole difference.
+
+The fix is the one this document already prescribes: route every spelling
+through one function. `render_overlapping_strong_store` is the ivar arm moved
+out and parameterised on the slot's C lvalue, which is the only thing the four
+strong slots differ in. **The filter was deliberately not copied to the other
+two slots**, even though it is the smaller change: it would have dropped those
+slots' *other* stores back to unmanaged, trading a declared leak on one store
+for a silent one on all of them.
+
+### The loop hazard the shared lowering had to fix to be shareable
+
+The ivar arm could not be moved as it stood. It pushed the previous value's
+capture into `ctx.pre_stmts` **with its initialiser**, and `pre_stmts` are
+drained by the enclosing *top-level* statement -- so the capture is lifted
+above an enclosing loop, above a braced body included. Measured on `main`:
+
+```c
+struct OZObject *_oz_prev_L397_C3_1 = (struct OZObject *)(self->_kid);
+for (int i = 0; i < 3; i++) {
+	(self->_kid = pick(a), oz_static_retain(...), oz_static_release(_oz_prev_L397_C3_1));
+}
+```
+
+One pointer, read once before the loop, released three times.
+
+The comment on that arm said the shape was unreachable inside a loop because
+`staticbar::LoopEscape::OverlappingStore` refuses it. It is not, and the reason
+is worth keeping: the bar only walks outward from a **`+1`** expression, and
+half of what lands in this arm is `+0`. A rejection that covers the shape
+by accident of what the scan visits is not a guard.
+
+`render_comma_operand_expr` had already solved this for #376 and written down
+why: **declare** the temporary through `pre_stmts`, **assign** it inside the
+comma expression. A declaration with no initialiser evaluates nothing, so
+lifting it above a loop costs nothing and reorders nothing, while the capture
+stays where the source put it. The shared lowering does that, which closes the
+ivar defect as a side effect of being shareable at all -- and without relaxing
+the bar, which is still right to refuse a `+1` of this shape for its own
+reason: two objects are briefly live, so one slab slot is not enough.
+
 ## Which positions ask the ownership question (#355 and after)
 
 The audit behind #359 walked every **sink** a `+1` reference can reach —
@@ -1617,6 +1717,30 @@ from an expression that is not the thing stored.
   word nobody maintained. The payoff was not the wasted atomic: a writer is
   what makes an object non-`const`, so removing the last one is what let a
   boxed literal move from `datas` to `.rodata` and stop costing RAM at all.
+- **A strong slot's store is keyed on the store's shape, never on the kind of
+  slot.** There are four -- an ivar, a managed local, a `static` local, a
+  file-scope object -- and they differ in exactly one thing: the C lvalue the
+  store names. Everything else about ownership is identical, so the lowering is
+  one function (`emit::render_overlapping_strong_store` for the shape that
+  needs a temporary, `render_strong_local_assign` for the two that do not) and
+  the caller supplies the lvalue text. #359 made this argument and wrote the
+  *membership* test three times and the store once; #424 was the store's own
+  arm having been written for one slot kind and silently answering `None` for
+  the others. When a slot kind is added, the question to ask is not "does it
+  have a store" but "which arm of `classify_store` does it reach, and does
+  something upstream guarantee it cannot reach the others".
+- **A temporary an expression needs is declared through `ctx.pre_stmts` and
+  assigned inside the expression.** `pre_stmts` are drained by the enclosing
+  *top-level* statement, so anything pushed there is lifted above an enclosing
+  loop -- above a braced body too, which is the part that surprises. Pushing a
+  declaration *with* its initialiser therefore evaluates it once, outside the
+  loop, and every iteration then operates on a stale value: #234 released nil
+  four times that way, and the ivar store released one pointer three times
+  (#424). A declaration with no initialiser evaluates nothing, so lifting it
+  reorders nothing. The split is `render_comma_operand_expr`'s (#376) and it is
+  the general answer, not a special case -- the alternative, a self-contained
+  braced group, is only available where a statement is
+  (`render_owning_operand_statement`).
 - **A leak is a bug; a double free is memory corruption.** ARC therefore fails
   toward leaking: an unrecognised shape is treated as borrowed. Widening what
   counts as owning is the dangerous direction and must be exact rather than
