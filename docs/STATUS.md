@@ -517,6 +517,51 @@ class parsed with ivars, and hard-error naming the class and the `.m` to add.
 
 ## How measurements mislead
 
+### A CI filter that never once said no, and read as success (#409)
+
+#387 added a `changes` job so a pull request that cannot affect a target build
+stops paying for the five ARM/Zephyr jobs. It ran on thirteen pull requests and
+skipped nothing. The cause was one line:
+
+```sh
+git fetch --quiet --depth=1 origin "$base"
+files=$(git diff --name-only "origin/${base}...HEAD" 2>/dev/null) || {
+        say true "could not diff against the base ref"
+```
+
+`...` needs a **merge base**, and a depth-1 fetch leaves none. There was a second
+cause underneath, found only by running the shape locally: `actions/checkout`
+makes a *single-branch* clone, whose refspec covers the pull request's own ref
+alone, so the fetch wrote `FETCH_HEAD` and never
+`refs/remotes/origin/<base>` -- `origin/main` was not a valid object name, so the
+diff had nothing to fail *at*. Either cause alone produces the same verdict, which
+is why the first one found looked like the whole answer.
+
+Three things worth keeping.
+
+- **A fail-open is invisible by construction.** Failing open is right here: an
+  unnecessary job costs minutes, a skipped necessary one lets a regression
+  through. But `affects=true` from a dead diff and `affects=true` from a diff that
+  found `emit.rs` print the same line, and the reason went to stderr, which
+  nothing reads. The fix annotates an unexplained fail-open with `::warning::`, so
+  the run summary carries it. **A safe default still needs to be distinguishable
+  from the answer it imitates.**
+- **`gh pr checks` cannot see this class of bug at all.** It renders a skipped
+  job as `pass`, so the filter working and the filter doing nothing look
+  identical there. The only instrument that answers is
+  `/repos/.../actions/runs/<id>/jobs`, whose `conclusion` is `skipped` or
+  `success`. That is how this shipped and stayed shipped.
+- **Naming an experiment is not running it.** #387 wrote "the first docs-only PR
+  after this merges is what shows them skipped" and #390 repeated it. Both were
+  correct about what would settle it; neither settled it, and #406 became that
+  pull request thirteen merges later -- inside a day -- without anyone looking.
+  The same pair shipped a cache that cached nothing (#391) the same way.
+
+And the measurement the filter was justified by was itself short. #387 costed the
+gated jobs at 805s and #409 at 940s; the real figure on run 34595210212 is
+**1887s**, because `zephyr-integration` is gated too and neither figure counted
+its 947s.
+
 ### A blast-radius sweep that covered two thirds of what it claimed (#400)
 
 Every codegen PR of 2026-09-11 quoted "81 of 81 corpus cases byte-identical" and
