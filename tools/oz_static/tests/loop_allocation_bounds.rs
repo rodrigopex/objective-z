@@ -13,15 +13,23 @@
 // Measured on a one-slot pool, four iterations each, which is what the
 // cases below assert:
 //
-//   | destination                  | reused | released first | slots |
-//   | ---                          | ---    | ---            | ---   |
-//   | managed local                | yes    | yes            | 1     |
-//   | ivar / file-scope variable   | yes    | **no**         | **2** |
-//   | array element, varying index | **no** | n/a            | loop  |
+//   | destination                       | reused | released first | slots |
+//   | ---                               | ---    | ---            | ---   |
+//   | managed local                     | yes    | yes            | 1     |
+//   | ivar / global, store cannot read it | yes  | yes            | 1     |
+//   | ivar / global, store reads it     | yes    | **no**         | **2** |
+//   | array element, varying index      | **no** | n/a            | loop  |
 //
-// The ivar overlap is inherent rather than a defect elsewhere: the new
-// value must be evaluated before the old is released, or
-// `_ivar = [_ivar retain]` would free a live object.
+// The ivar overlap was called inherent here, on the grounds that the new
+// value must be evaluated before the old is released or
+// `_ivar = [_ivar retain]` would free a live object. That holds only for a
+// store that *reads* the ivar. `_ivar = [Foo make]` does not, and #405
+// gave the ivar path the release-first shape locals had since #234, so two
+// of the three now need one slot. `staticbar::overlapping_unless_released_first`
+// asks `emit::classify_store` which it is, so the bar and the emitter
+// cannot drift: refusing a release-first store over-rejects, and accepting
+// a temporary-hoisting one miscompiles, because a loop lifts that
+// temporary out of itself.
 //
 // The old rule was wrong in **both** directions, and each direction has
 // cases here. It refused the operand positions, which the emitter releases
@@ -144,16 +152,18 @@ int main(void)
     );
 }
 
-/// An ivar store: reused, but released **after** the new value exists, so
-/// two are briefly live and one slot is not enough.
+/// An ivar store whose right-hand side cannot read the ivar: released
+/// first, so one slot serves every iteration.
 ///
-/// Refused now for **both** spellings. The `alloc` spelling was already
-/// refused; the factory spelling was accepted and produced
-/// `arr[0] = object` followed by nils, which is the silent failure this
-/// case exists to prevent. The message has to name the pool, because
-/// raising it is the fix.
+/// This was refused until #405 -- the emitter evaluated the new value
+/// before releasing the old for *any* ivar store, so the shape really did
+/// need two slots and the bar was right to refuse it. Both halves changed
+/// together: `render_strong_ivar_assign` now releases first here, and the
+/// bar asks it rather than assuming. `[Foo make]` is the factory spelling
+/// on purpose, since that is the one the old selector-name rule could not
+/// see at all.
 #[test]
-fn an_ivar_store_names_the_two_slot_overlap() {
+fn an_ivar_store_released_first_needs_only_one_slot() {
     let src = program(
         "\
 @interface Holder : OZObject {
@@ -168,6 +178,54 @@ fn an_ivar_store_names_the_two_slot_overlap() {
 
 	for (i = 0; i < 4; i++) {
 		_ivar = [Foo make];
+		printf(\"i=%d tag=%d\\n\", i, [_ivar tag]);
+	}
+}
+@end
+
+int main(void)
+{
+	Holder *h = [[Holder alloc] init];
+	[h run];
+	return 0;
+}
+",
+    );
+    assert_eq!(
+        compile_and_run_strict(&src, "loopbound_ivar_released_first"),
+        "i=0 tag=1\ni=1 tag=1\ni=2 tag=1\ni=3 tag=1\n",
+        "the store releases the previous Foo before allocating the next, so the one slot \
+         is free again every iteration -- a nil would print tag=0"
+    );
+}
+
+/// An ivar store whose right-hand side *does* read the ivar: the new value
+/// has to exist before the old one can go, so two are briefly live and one
+/// slot is not enough. Still refused, and the message still has to name the
+/// pool, because raising it is the fix.
+///
+/// The ternary is what puts this shape in `LocalStore::Unsupported`: the
+/// `+1` is real, but the store can read `_ivar`, so the emitter keeps the
+/// hoisted temporary. Accepting it would do more than exhaust the pool --
+/// that temporary goes through `ctx.pre_stmts`, which a loop lifts out of
+/// the loop entirely, so it would read the ivar once while still nil and
+/// release nil on every iteration.
+#[test]
+fn an_ivar_store_that_reads_the_ivar_names_the_two_slot_overlap() {
+    let src = program(
+        "\
+@interface Holder : OZObject {
+	Foo *_ivar;
+}
+- (void)run;
+@end
+@implementation Holder
+- (void)run
+{
+	int i;
+
+	for (i = 0; i < 4; i++) {
+		_ivar = i > 0 ? [Foo make] : _ivar;
 	}
 }
 @end
