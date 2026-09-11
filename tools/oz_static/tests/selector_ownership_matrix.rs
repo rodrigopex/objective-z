@@ -338,6 +338,29 @@ fn the_compositions() {
                         needs_heap: false,
                         known_defect: None,
                 },
+                Cell {
+                        /* `-copy` is the one owning selector whose receiver
+                         * can be the slot being stored into, and that is
+                         * the composition #424 was: the store releases the
+                         * previous value only for the right-hand sides it
+                         * can evaluate *after* the release. A `static`
+                         * local's store was not one of them, so the
+                         * original was never released -- this row printed
+                         * `ok 1` with no `d` before it.
+                         *
+                         * Counting could not have caught it either way:
+                         * the `d` has to be observed, and it has to be
+                         * observed *before* `ok 1`, which is what says the
+                         * released pointer is the original and not the
+                         * copy. */
+                        what: "-copy into the static local it reads -- the original \
+                               must be released by the store that replaces it (#424)",
+                        body: "\tstatic Thing *cached;\n\n\tcached = [[Thing alloc] init];\n\tcached = [cached copy];\n\tprintf(\"ok %d\\n\", cached != 0);\n",
+                        expect: "d\nok 1\n",
+                        needs_reflection: false,
+                        needs_heap: false,
+                        known_defect: None,
+                },
         ] {
                 run(&cell);
         }

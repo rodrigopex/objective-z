@@ -36,6 +36,7 @@ static int g_deallocs = 0;
 }
 - (id)initWithTag:(int)tag;
 - (int)tag;
+- (Thing *)copy;
 @end
 @implementation Thing
 - (id)initWithTag:(int)tag
@@ -49,6 +50,12 @@ static int g_deallocs = 0;
 - (int)tag
 {
 	return _tag;
+}
+/* Tags the copy differently, so a test can tell the two objects apart --
+ * a leak and a correct replacement both leave *a* Thing in the slot. */
+- (Thing *)copy
+{
+	return [[Thing alloc] initWithTag:_tag + 10];
 }
 - (void)dealloc
 {
@@ -271,4 +278,235 @@ int main(void)
 
     let stdout = compile_and_run(&src, "strong_slot_borrowed_field");
     assert_eq!(stdout, "n=5 deallocs=0\n");
+}
+
+/* ---- a store that reads the slot it is about to overwrite (#424) ------
+ *
+ * The store-shape question `emit::classify_store` asks has three answers,
+ * and only two of them release the previous value by naming the slot
+ * directly. The third -- a right-hand side that reads the slot, or a
+ * borrowed call result -- needs the new value to exist first, so it needs a
+ * temporary. A strong *ivar* got one; the other two strong slots got
+ * `None` from `render_strong_local_assign` and fell through to a plain C
+ * store, so the previous value was simply dropped.
+ *
+ * Measured on `main` before the fix, with these exact programs: the static
+ * local and the global both printed `deallocs=0` where they now print 1,
+ * and the borrowed-call row's `[g_slot tag]` after `[a release]` was a
+ * read of freed memory. A leak in two rows and a use-after-free in the
+ * third, and nothing in the tree said those slots were only partly
+ * managed.
+ */
+
+/// `cached = [cached copy]` -- `+1`, and it reads the slot, so the copy
+/// has to exist before the original can go.
+#[test]
+fn a_static_local_releases_the_previous_value_when_the_store_reads_it() {
+    let src = program(
+        "\
+#include <stdio.h>
+
+static int tick(void)
+{
+	static Thing *cached;
+
+	cached = [[Thing alloc] initWithTag:1];
+	printf(\"alloc deallocs=%d tag=%d\\n\", g_deallocs, [cached tag]);
+	cached = [cached copy];
+	printf(\"copy deallocs=%d tag=%d\\n\", g_deallocs, [cached tag]);
+	return [cached tag];
+}
+
+int main(void)
+{
+	tick();
+	return 0;
+}
+",
+    );
+
+    let stdout = compile_and_run(&src, "strong_slot_static_self_read");
+    assert_eq!(
+        stdout,
+        "alloc deallocs=0 tag=1\ncopy deallocs=1 tag=11\n",
+        "the copy must replace the original in the slot and the original must be \
+         released exactly once -- it read `deallocs=0` before #424"
+    );
+}
+
+/// The same shape on a file-scope global, which reaches the store through
+/// `is_file_scope_object` rather than `arc_managed_slots`. Two different
+/// membership tests, one lowering -- which is the whole point of routing
+/// them through one function.
+#[test]
+fn a_global_releases_the_previous_value_when_the_store_reads_it() {
+    let src = program(
+        "\
+#include <stdio.h>
+
+static Thing *g_slot;
+
+int main(void)
+{
+	g_slot = [[Thing alloc] initWithTag:2];
+	printf(\"alloc deallocs=%d tag=%d\\n\", g_deallocs, [g_slot tag]);
+	g_slot = [g_slot copy];
+	printf(\"copy deallocs=%d tag=%d\\n\", g_deallocs, [g_slot tag]);
+	g_slot = nil;
+	printf(\"cleared deallocs=%d\\n\", g_deallocs);
+	return 0;
+}
+",
+    );
+
+    let stdout = compile_and_run(&src, "strong_slot_global_self_read");
+    assert_eq!(
+        stdout,
+        "alloc deallocs=0 tag=2\ncopy deallocs=1 tag=12\ncleared deallocs=2\n",
+        "each store must release what the slot held, whatever the store's right-hand \
+         side reads"
+    );
+}
+
+/// The other half of the same store kind: a **borrowed** right-hand side
+/// that is not a plain identifier. `g_slot = pick(a)` is `+0`, so the slot
+/// has to retain it as well as release what it replaced -- exactly what
+/// `g_slot = a` already did. The two spell the same reference, and keying
+/// on the spelling is what left them different.
+///
+/// The retain is what the last line proves: after the caller's own
+/// `[a release]` the slot is the only owner left, so reading the tag is a
+/// live read. Before the fix it was a read of freed memory.
+#[test]
+fn a_global_retains_a_borrowed_call_result_and_releases_what_it_replaced() {
+    let src = program(
+        "\
+#include <stdio.h>
+
+static Thing *g_slot;
+
+static Thing *pick(Thing *t)
+{
+	return t;
+}
+
+static void stash(Thing *t)
+{
+	g_slot = pick(t);
+}
+
+int main(void)
+{
+	Thing *a = [[Thing alloc] initWithTag:1];
+
+	g_slot = [[Thing alloc] initWithTag:2];
+	printf(\"first deallocs=%d\\n\", g_deallocs);
+	stash(a);
+	printf(\"stashed deallocs=%d tag=%d\\n\", g_deallocs, [g_slot tag]);
+	[a release];
+	printf(\"released deallocs=%d tag=%d\\n\", g_deallocs, [g_slot tag]);
+	return 0;
+}
+",
+    );
+
+    let stdout = compile_and_run(&src, "strong_slot_global_borrowed_call");
+    assert_eq!(
+        stdout,
+        "first deallocs=0\nstashed deallocs=1 tag=1\nreleased deallocs=1 tag=1\n",
+        "the slot must release the object it replaced and retain the borrowed one it \
+         was given, so the caller's release cannot free it"
+    );
+}
+
+/// The temporary this store needs is **declared** above the enclosing
+/// statement and **assigned** inside the comma expression, and this is the
+/// shape that says why.
+///
+/// `ctx.pre_stmts` is drained by the enclosing top-level statement, so
+/// anything pushed there is lifted above a loop -- above a *braced* body
+/// too, measured. Pushing the declaration together with its initialiser
+/// read the slot once, before the loop, and then released that same
+/// pointer on every iteration: the second pass released an object already
+/// freed by the first. Splitting the two keeps the capture inside the
+/// iteration.
+///
+/// A `+1` store of this kind inside a loop is refused outright by
+/// `staticbar` (it needs two slab slots), so the reachable shape is the
+/// borrowed one -- which is why the loop stores a `+0` call result. Both
+/// go through the same lowering.
+///
+/// Asserted twice over, on the emitted text and on the lifetimes, because
+/// the text is where the invariant lives and the behaviour is what it is
+/// for: the declaration must sit outside the loop and the capture inside
+/// it, and after three iterations the object the loop replaced must have
+/// died exactly once while the one it holds is still live.
+#[test]
+fn a_slot_store_that_reads_it_inside_a_loop_captures_once_per_iteration() {
+    let body = "\
+#include <stdio.h>
+
+static Thing *g_slot;
+
+static Thing *pick(Thing *t)
+{
+	return t;
+}
+
+int main(void)
+{
+	Thing *a = [[Thing alloc] initWithTag:1];
+
+	g_slot = [[Thing alloc] initWithTag:2];
+	for (int i = 0; i < 3; i++) {
+		g_slot = pick(a);
+	}
+	printf(\"loop deallocs=%d tag=%d\\n\", g_deallocs, [g_slot tag]);
+	[a release];
+	printf(\"end deallocs=%d tag=%d\\n\", g_deallocs, [g_slot tag]);
+	return 0;
+}
+";
+    let src = program(body);
+
+    let out = oz_static::transpile(&src).expect("should transpile");
+    let main_body = out.source_c.split("int main(void)").nth(1).expect("a main");
+    /* Every statement is preceded by the source it came from, as a
+     * comment, so a search for emitted text finds the *comment* first and
+     * the whole assertion then reads the input back to itself. This file's
+     * own instance of the trap: skip the comment lines once, up front. */
+    let code: Vec<&str> =
+        main_body.lines().map(|line| line.trim()).filter(|line| !line.starts_with("/*")).collect();
+    /* The hoisted line: a declaration and nothing else. An `=` on it would
+     * be the capture, and a capture above the loop reads the slot once. */
+    let declaration = code
+        .iter()
+        .find(|line| line.contains("_oz_prev_") && !line.contains("g_slot ="))
+        .expect("the temporary is declared");
+    assert!(
+        !declaration.contains('='),
+        "the hoisted line must declare the temporary without initialising it, \
+         got `{}`:\n{}",
+        declaration,
+        main_body
+    );
+    /* The store itself: capture, assign, retain, release, all in the one
+     * expression the loop body runs every iteration. */
+    let store = code
+        .iter()
+        .find(|line| line.contains("g_slot = pick(a)"))
+        .expect("the store survives");
+    assert!(
+        store.contains("_oz_prev_") && store.contains("= (struct OZObject *)(g_slot)"),
+        "the capture must happen inside the loop, once per iteration, got `{}`",
+        store
+    );
+
+    let stdout = compile_and_run(&src, "strong_slot_self_read_loop");
+    assert_eq!(
+        stdout,
+        "loop deallocs=1 tag=1\nend deallocs=1 tag=1\n",
+        "the object the first iteration replaced must die exactly once, and the one \
+         the slot ends up holding must outlive the caller's own release"
+    );
 }

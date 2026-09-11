@@ -48,11 +48,19 @@ struct Shape {
 const DECLS: &str = "\
 @interface Thing : OZObject
 - (int)tag;
+- (Thing *)copy;
 @end
 @implementation Thing
 - (int)tag
 {
 	return 1;
+}
+/* The one owning selector whose right-hand side *reads* the slot it is
+   stored into -- `x = [x copy]`. The SDK declares no `-copy`, which is why
+   the store shape that needs it went unwalked until #424. */
+- (Thing *)copy
+{
+	return [[Thing alloc] init];
 }
 @end
 
@@ -305,6 +313,81 @@ void staticLocal(void)
 	static Thing *cached;
 
 	cached = [[Thing alloc] init];
+}
+",
+        ),
+        /* The store shape none of the rows above reaches: a right-hand
+         * side the slot cannot be released before. `classify_store` calls
+         * it `Unsupported`, and it is the one that needs a temporary --
+         * the slot kind decided whether it got one, which is what #424
+         * was. All four rows below go through
+         * `render_overlapping_strong_store` now.
+         *
+         * The `-copy` rows count 0 allocations because the allocation is
+         * inside `Thing_copy`, not inside the function under test. */
+        (
+            Shape {
+                what: "ivar whose store reads it (`_x = [_x copy]`)",
+                func: "Sink5_ivarSelfRead",
+                expect: (0, 0, 1),
+                known_defect: None,
+            },
+            "\
+@interface Sink5 : OZObject {
+	Thing *_ivar;
+}
+- (void)ivarSelfRead;
+@end
+@implementation Sink5
+- (void)ivarSelfRead
+{
+	_ivar = [_ivar copy];
+}
+@end
+",
+        ),
+        (
+            Shape {
+                what: "static local whose store reads it (#424) -- emitted (0, 0, 0) before",
+                func: "staticSelfRead",
+                expect: (0, 0, 1),
+                known_defect: None,
+            },
+            "\
+void staticSelfRead(void)
+{
+	static Thing *cached;
+
+	cached = [cached copy];
+}
+",
+        ),
+        (
+            Shape {
+                what: "file-scope global whose store reads it (#424) -- emitted (0, 0, 0) before",
+                func: "globalSelfRead",
+                expect: (0, 0, 1),
+                known_defect: None,
+            },
+            "\
+void globalSelfRead(void)
+{
+	g_global = [g_global copy];
+}
+",
+        ),
+        (
+            Shape {
+                what: "file-scope global given a borrowed call result (#424) -- \
+                       emitted (0, 0, 0) before",
+                func: "globalBorrowedCall",
+                expect: (0, 1, 1),
+                known_defect: None,
+            },
+            "\
+void globalBorrowedCall(void)
+{
+	g_global = factory();
 }
 ",
         ),
