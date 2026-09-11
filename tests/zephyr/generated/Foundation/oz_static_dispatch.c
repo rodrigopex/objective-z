@@ -34,7 +34,7 @@ void OZObject_oz_free(struct OZObject *obj)
 /* synthesized: increments the retain count; shared by every class,
  * not tied to one (not from source) */
 /* synthesized: the class's own name, read by the default
- * `-cDescription:maxLength:` (not from source) */
+ * `-getDescription:maxLength:` (not from source) */
 const char *oz_static_class_name(struct OZObject *self)
 {
 	if (!self) {
@@ -52,7 +52,7 @@ const char *oz_static_class_name(struct OZObject *self)
 	case OZ_STATIC_CLASS_Level2: return "Level2";
 	case OZ_STATIC_CLASS_Level3: return "Level3";
 	case OZ_STATIC_CLASS_Level4: return "Level4";
-	case OZ_STATIC_CLASS_OZQ31: return "OZQ31";
+	case OZ_STATIC_CLASS_OZNumber: return "OZNumber";
 	case OZ_STATIC_CLASS_BoxedTest: return "BoxedTest";
 	default: return "?";
 	}
@@ -161,9 +161,9 @@ void oz_static_release(struct OZObject *self)
 		OZObject_dealloc((struct OZObject *)self);
 		Level4_oz_free((struct Level4 *)self);
 		break;
-	case OZ_STATIC_CLASS_OZQ31: /* OZQ31 */
-		OZQ31_dealloc((struct OZQ31 *)self);
-		OZQ31_oz_free((struct OZQ31 *)self);
+	case OZ_STATIC_CLASS_OZNumber: /* OZNumber */
+		OZNumber_dealloc((struct OZNumber *)self);
+		OZNumber_oz_free((struct OZNumber *)self);
 		break;
 	case OZ_STATIC_CLASS_BoxedTest: /* BoxedTest */
 		OZObject_dealloc((struct OZObject *)self);
@@ -191,7 +191,7 @@ void * OZ_PROTOCOL_SEND_init(struct OZObject *self)
 	case OZ_STATIC_CLASS_Level2: return OZObject_init((struct OZObject *)self);
 	case OZ_STATIC_CLASS_Level3: return OZObject_init((struct OZObject *)self);
 	case OZ_STATIC_CLASS_Level4: return OZObject_init((struct OZObject *)self);
-	case OZ_STATIC_CLASS_OZQ31: return OZObject_init((struct OZObject *)self);
+	case OZ_STATIC_CLASS_OZNumber: return OZObject_init((struct OZObject *)self);
 	case OZ_STATIC_CLASS_BoxedTest: return OZObject_init((struct OZObject *)self);
 	default: return (void *)0;
 	}
@@ -213,7 +213,7 @@ void OZ_PROTOCOL_SEND_dealloc(struct OZObject *self)
 	case OZ_STATIC_CLASS_Level2: OZObject_dealloc((struct OZObject *)self); return;
 	case OZ_STATIC_CLASS_Level3: OZObject_dealloc((struct OZObject *)self); return;
 	case OZ_STATIC_CLASS_Level4: OZObject_dealloc((struct OZObject *)self); return;
-	case OZ_STATIC_CLASS_OZQ31: OZQ31_dealloc((struct OZQ31 *)self); return;
+	case OZ_STATIC_CLASS_OZNumber: OZNumber_dealloc((struct OZNumber *)self); return;
 	case OZ_STATIC_CLASS_BoxedTest: OZObject_dealloc((struct OZObject *)self); return;
 	default: return;
 	}
@@ -235,30 +235,30 @@ BOOL OZ_PROTOCOL_SEND_isEqual_(struct OZObject *self, void * anObject)
 	case OZ_STATIC_CLASS_Level2: return OZObject_isEqual_((struct OZObject *)self, anObject);
 	case OZ_STATIC_CLASS_Level3: return OZObject_isEqual_((struct OZObject *)self, anObject);
 	case OZ_STATIC_CLASS_Level4: return OZObject_isEqual_((struct OZObject *)self, anObject);
-	case OZ_STATIC_CLASS_OZQ31: return OZQ31_isEqual_((struct OZQ31 *)self, anObject);
+	case OZ_STATIC_CLASS_OZNumber: return OZNumber_isEqual_((struct OZNumber *)self, anObject);
 	case OZ_STATIC_CLASS_BoxedTest: return OZObject_isEqual_((struct OZObject *)self, anObject);
 	default: return (BOOL)0;
 	}
 }
 
-/* protocol dispatch: routes 'cDescription:maxLength:' to whichever class implements it
+/* protocol dispatch: routes 'getDescription:maxLength:' to whichever class implements it
  * (not from source) */
-int OZ_PROTOCOL_SEND_cDescription_maxLength_(struct OZObject *self, char* buf, size_t maxLen)
+int OZ_PROTOCOL_SEND_getDescription_maxLength_(struct OZObject *self, char* buf, size_t maxLen)
 {
 	switch (self->_meta.class_id) {
-	case OZ_STATIC_CLASS_OZObject: return OZObject_cDescription_maxLength_((struct OZObject *)self, buf, maxLen);
-	case OZ_STATIC_CLASS_Widget: return OZObject_cDescription_maxLength_((struct OZObject *)self, buf, maxLen);
-	case OZ_STATIC_CLASS_Base: return OZObject_cDescription_maxLength_((struct OZObject *)self, buf, maxLen);
-	case OZ_STATIC_CLASS_Child: return OZObject_cDescription_maxLength_((struct OZObject *)self, buf, maxLen);
-	case OZ_STATIC_CLASS_Node: return OZObject_cDescription_maxLength_((struct OZObject *)self, buf, maxLen);
-	case OZ_STATIC_CLASS_LightSwitch: return OZObject_cDescription_maxLength_((struct OZObject *)self, buf, maxLen);
-	case OZ_STATIC_CLASS_Fan: return OZObject_cDescription_maxLength_((struct OZObject *)self, buf, maxLen);
-	case OZ_STATIC_CLASS_Level1: return OZObject_cDescription_maxLength_((struct OZObject *)self, buf, maxLen);
-	case OZ_STATIC_CLASS_Level2: return OZObject_cDescription_maxLength_((struct OZObject *)self, buf, maxLen);
-	case OZ_STATIC_CLASS_Level3: return OZObject_cDescription_maxLength_((struct OZObject *)self, buf, maxLen);
-	case OZ_STATIC_CLASS_Level4: return OZObject_cDescription_maxLength_((struct OZObject *)self, buf, maxLen);
-	case OZ_STATIC_CLASS_OZQ31: return OZQ31_cDescription_maxLength_((struct OZQ31 *)self, buf, maxLen);
-	case OZ_STATIC_CLASS_BoxedTest: return OZObject_cDescription_maxLength_((struct OZObject *)self, buf, maxLen);
+	case OZ_STATIC_CLASS_OZObject: return OZObject_getDescription_maxLength_((struct OZObject *)self, buf, maxLen);
+	case OZ_STATIC_CLASS_Widget: return OZObject_getDescription_maxLength_((struct OZObject *)self, buf, maxLen);
+	case OZ_STATIC_CLASS_Base: return OZObject_getDescription_maxLength_((struct OZObject *)self, buf, maxLen);
+	case OZ_STATIC_CLASS_Child: return OZObject_getDescription_maxLength_((struct OZObject *)self, buf, maxLen);
+	case OZ_STATIC_CLASS_Node: return OZObject_getDescription_maxLength_((struct OZObject *)self, buf, maxLen);
+	case OZ_STATIC_CLASS_LightSwitch: return OZObject_getDescription_maxLength_((struct OZObject *)self, buf, maxLen);
+	case OZ_STATIC_CLASS_Fan: return OZObject_getDescription_maxLength_((struct OZObject *)self, buf, maxLen);
+	case OZ_STATIC_CLASS_Level1: return OZObject_getDescription_maxLength_((struct OZObject *)self, buf, maxLen);
+	case OZ_STATIC_CLASS_Level2: return OZObject_getDescription_maxLength_((struct OZObject *)self, buf, maxLen);
+	case OZ_STATIC_CLASS_Level3: return OZObject_getDescription_maxLength_((struct OZObject *)self, buf, maxLen);
+	case OZ_STATIC_CLASS_Level4: return OZObject_getDescription_maxLength_((struct OZObject *)self, buf, maxLen);
+	case OZ_STATIC_CLASS_OZNumber: return OZNumber_getDescription_maxLength_((struct OZNumber *)self, buf, maxLen);
+	case OZ_STATIC_CLASS_BoxedTest: return OZObject_getDescription_maxLength_((struct OZObject *)self, buf, maxLen);
 	default: return (int)0;
 	}
 }
