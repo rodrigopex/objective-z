@@ -2357,5 +2357,35 @@ from an expression that is not the thing stored.
   The macro's name now covers a heap as well as a pool, which is a small lie in
   a name accepted deliberately: renaming it breaks every build already passing
   it, and a `-D` flag is the one interface here with no deprecation path.
+
+- **File scope in an SDK `.m` is the Foundation's shared namespace, not that
+  file's.** Text ahead of an `@implementation` is spliced into the *generated
+  header* for that origin, and every Foundation translation unit includes those
+  headers -- so anything defined there is defined for all of them. Two
+  consequences, both learned the expensive way. A function has to be
+  `static inline` rather than `static`: `_oz_write_default_description` as plain
+  `static` was unused in all but one of the units it landed in, Zephyr builds
+  with `-Werror`, and it failed `-Wunused-function` on every sample whose
+  generated set includes a file that does not call it -- which the two
+  single-purpose samples it was first tried on happened not to be (#354). And a
+  macro has to be project-namespaced: `src/OZMutableString.m` carried
+  `#define NULL ((void *)0)`, which redefined a standard library macro for the
+  whole Foundation (#422).
+  That second one is the harder shape to catch, because **nothing it can be run
+  through reports it.** It was `#ifndef`-guarded and its replacement text was
+  token-identical to libc's, so it never expanded, never warned, and changed no
+  byte of any output -- reading the generated header, compiling it, running it,
+  and `just test-pedantic` (the gate a real redefinition *would* trip) were all
+  green with it in place. Only the text says it, so
+  `tests/sdk_spliced_file_scope.rs` reads the text: a `#define` in a spliced
+  prelude must start `OZ`/`_OZ`, which admits the `_OZ_Q31_HELPERS` idempotency
+  guard around `OZNumber.m`'s `static inline` helpers and rejects anything owned
+  by someone else, and no SDK `.m` may define a standard library macro anywhere.
+  Keep the guard's own first draft in mind when writing another like it: it
+  found the prelude with `src.find("@implementation")`, which matched the word
+  inside the comment explaining the splice and cut the prelude off one line
+  above the `#define` it was written to catch. It reported clean on the exact
+  input it was built against. **A text guard is not evidence until it has been
+  made to fail.**
 - **The version is `tools/oz_static/Cargo.toml`**, bumped in the same commit
   as the change it describes. The repo-level `VERSION` file is retired.
