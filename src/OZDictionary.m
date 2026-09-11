@@ -4,21 +4,21 @@
 
 @implementation OZDictionary
 
-@synthesize iterIdx = _iterIdx;
+@synthesize enumerationIndex = _enumerationIndex;
 
-- (instancetype)iter
+- (instancetype)objectEnumerator
 {
-	_iterIdx = 0;
+	_enumerationIndex = 0;
 	return self;
 }
 
-- (id)next
+- (id)nextObject
 {
-	if (_iterIdx >= _count) {
+	if (_enumerationIndex >= _count) {
 		return nil;
 	}
-	id ret = _keys[_iterIdx];
-	_iterIdx++;
+	id ret = _keys[_enumerationIndex];
+	_enumerationIndex++;
 	return ret;
 }
 

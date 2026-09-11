@@ -361,7 +361,7 @@ mod tests {
 
     /// `countByEnumeratingWithState:objects:count:` is the real case this
     /// exists for: declared in `OZArray.h`, never defined in `OZArray.m`.
-    /// The `iterIdx` row is the trap -- no body either, but only because it
+    /// The `enumerationIndex` row is the trap -- no body either, but only because it
     /// is `@synthesize`d, and oz_static does emit that accessor.
     #[test]
     fn distinguishes_definitions_from_bare_declarations() {
@@ -371,19 +371,19 @@ mod tests {
             {"kind": "ObjCInterfaceDecl", "name": "OZArray", "inner": [
               {"kind": "ObjCMethodDecl", "name": "count"},
               {"kind": "ObjCMethodDecl", "name": "countByEnumeratingWithState:objects:count:"},
-              {"kind": "ObjCMethodDecl", "name": "iterIdx"}
+              {"kind": "ObjCMethodDecl", "name": "enumerationIndex"}
             ]},
             {"kind": "ObjCImplementationDecl", "name": "OZArray", "inner": [
               {"kind": "ObjCMethodDecl", "name": "count",
                "inner": [{"kind": "CompoundStmt"}]},
-              {"kind": "ObjCMethodDecl", "name": "iterIdx"}
+              {"kind": "ObjCMethodDecl", "name": "enumerationIndex"}
             ]}
           ]
         }"#;
         let facts = AstFacts::from_json(json).expect("parses");
         assert!(facts.has_method_body("OZArray", "count"));
         assert!(!facts.has_method_body("OZArray", "countByEnumeratingWithState:objects:count:"));
-        assert!(!facts.has_method_body("OZArray", "iterIdx"));
+        assert!(!facts.has_method_body("OZArray", "enumerationIndex"));
         assert!(facts.knows_class("OZArray"));
     }
 

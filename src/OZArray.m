@@ -4,7 +4,7 @@
 
 @implementation OZArray
 
-@synthesize iterIdx = _iterIdx;
+@synthesize enumerationIndex = _enumerationIndex;
 
 - (size_t)count
 {
@@ -64,18 +64,18 @@
 	}
 }
 
-- (instancetype)iter {
-	_iterIdx = 0;
+- (instancetype)objectEnumerator {
+	_enumerationIndex = 0;
 	return self;
 }
-- (id)next {
-	if (_iterIdx >= _count) {
+- (id)nextObject {
+	if (_enumerationIndex >= _count) {
 		return nil;
 	}
 
-	id ret = _items[_iterIdx];
+	id ret = _items[_enumerationIndex];
 
-	_iterIdx++;
+	_enumerationIndex++;
 
 	return ret;
 }

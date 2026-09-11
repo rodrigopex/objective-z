@@ -2505,9 +2505,9 @@ fn declarator_name_and_stars(node: Node, src: &str) -> (String, usize) {
 ///
 /// ```c
 /// {
-///     struct OZObject *_oz_iterN = (struct OZObject *)OZ_PROTOCOL_SEND_iter((struct OZObject *)(collection));
+///     struct OZObject *_oz_iterN = (struct OZObject *)OZ_PROTOCOL_SEND_objectEnumerator((struct OZObject *)(collection));
 ///     struct OZObject *_oz_recvN = _oz_iterN;
-///     for (Type *var = (Type *)OZ_PROTOCOL_SEND_next(_oz_recvN); var != ((void *)0); var = (Type *)OZ_PROTOCOL_SEND_next(_oz_recvN)) { body }
+///     for (Type *var = (Type *)OZ_PROTOCOL_SEND_nextObject(_oz_recvN); var != ((void *)0); var = (Type *)OZ_PROTOCOL_SEND_nextObject(_oz_recvN)) { body }
 /// }
 /// ```
 ///
@@ -3906,8 +3906,8 @@ fn render_autoreleasepool_statement(node: Node, ctx: &mut EmitCtx) -> (String, S
 
 fn render_forin_statement(node: Node, ctx: &mut EmitCtx) -> (String, String) {
     let (line, col) = line_col(ctx.src, node.start_byte());
-    if !ctx.program.is_dynamically_dispatched("iter", false)
-        || !ctx.program.is_dynamically_dispatched("next", false)
+    if !ctx.program.is_dynamically_dispatched("objectEnumerator", false)
+        || !ctx.program.is_dynamically_dispatched("nextObject", false)
     {
         ctx.err(
             node,
@@ -3941,7 +3941,7 @@ fn render_forin_statement(node: Node, ctx: &mut EmitCtx) -> (String, String) {
     ctx.block_counter += 1;
     let iter_tmp = format!("_oz_iter_L{}_C{}_{}", line, col, ctx.block_counter);
     let recv_tmp = format!("_oz_recv_L{}_C{}_{}", line, col, ctx.block_counter);
-    let next_call = format!("({})OZ_PROTOCOL_SEND_next({})", c_type, recv_tmp);
+    let next_call = format!("({})OZ_PROTOCOL_SEND_nextObject({})", c_type, recv_tmp);
 
     ctx.scope.insert(var_name.clone(), c_type.clone());
     ctx.locals.insert(var_name.clone());
@@ -3956,7 +3956,7 @@ fn render_forin_statement(node: Node, ctx: &mut EmitCtx) -> (String, String) {
     (
         format!(
             "{{\n\
-             \tstruct {root} *{iter_tmp} = (struct {root} *)OZ_PROTOCOL_SEND_iter((struct {root} *)({coll_text}));\n\
+             \tstruct {root} *{iter_tmp} = (struct {root} *)OZ_PROTOCOL_SEND_objectEnumerator((struct {root} *)({coll_text}));\n\
              \tstruct {root} *{recv_tmp} = {iter_tmp};\n\
              \tfor ({c_type} {var_name} = {next_call}; {var_name} != ((void *)0); {var_name} = {next_call}) {body_text}\n\
              }}",

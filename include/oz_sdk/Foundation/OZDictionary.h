@@ -15,10 +15,10 @@ struct NSFastEnumerationState;
 	__unsafe_unretained id *_keys;
 	__unsafe_unretained id *_values;
 	size_t _count;
-	uint16_t _iterIdx;
+	uint16_t _enumerationIndex;
 }
 
-@property (readonly) uint16_t iterIdx;
+@property (readonly) uint16_t enumerationIndex;
 
 + (id)dictionaryWithObjects:(const id *)objects
 		    forKeys:(const id *)keys
@@ -30,8 +30,8 @@ struct NSFastEnumerationState;
 				     objects:(__unsafe_unretained id *)stackbuf
 				       count:(unsigned long)len;
 - (int)getDescription:(char *)buf maxLength:(size_t)maxLen;
-- (instancetype)iter;
-- (id)next;
+- (instancetype)objectEnumerator;
+- (id)nextObject;
 @end
 
 @compatibility_alias NSDictionary OZDictionary;
