@@ -1708,7 +1708,13 @@ from an expression that is not the thing stored.
 - **Every public name the SDK exports carries the `OZ` prefix — protocols
   included.** The three protocols were `ObjectProtocol`, `IteratorProtocol` and
   `SingletonProtocol` until #401, which made them `OZObjectProtocol`,
-  `OZIteratorProtocol` and `OZSingletonProtocol` in headers named to match. They
+  `OZIteratorProtocol` and `OZSingletonProtocol`. The headers did *not* match,
+  which this document claimed they did until #413: all three were still spelled
+  `OZ…+Protocol.h`, Objective-C's **category** syntax, for files containing only
+  an `@protocol` block -- and two of them named classes that do not exist, so a
+  reader grepping `OZIterator` found nothing but the protocol. They are
+  `OZObjectProtocol.h`, `OZIteratorProtocol.h` and `OZSingletonProtocol.h` now.
+  They
   were the one family a *user* writes into their own declarations
   (`@interface Foo: OZObject <OZSingletonProtocol>`), so they were also the one
   family that told a reader nothing about where it came from. A new protocol is
@@ -1731,5 +1737,47 @@ from an expression that is not the thing stored.
   resolves as an identifier, find the comparison and prove a stale one fails**;
   three tests in `behavior_immortal_literals.rs` do, which was established by
   restoring the old spelling and watching them go red rather than by assuming.
+- **`get` on a selector means it writes through a caller's pointer.** Objective-C
+  reserves the prefix for that shape -- `-getBytes:length:range:` -- so
+  `-getDescription:maxLength:` carries it and `OZHeap`'s `-usedBytes`, which
+  returns a value, does not. `OZString`'s `-cString` keeps its own spelling for
+  the same reason: it hands back a pointer to storage that already exists, so
+  nothing is written and `get` would be a lie. The asymmetry is the rule working,
+  not an oversight, and it is stated in `OZObject.h` beside the declaration
+  because a later reader would otherwise "fix" it (#413).
+- **`OZNumber` is an embedded fixed-point type, not an `NSNumber` clone.**
+  Widths are spelled and *sized*: `+numberWithUnsignedInt8:`, never Cocoa's
+  `+numberWithUnsignedChar:`. What a caller needs from this class is the width,
+  and `@compatibility_alias NSNumber` is a convenience rather than a contract, so
+  fidelity to Cocoa's C-type names loses to explicitness every time (#413). The
+  two platform-width forms it keeps are documented as the exception they are.
+- **A selector compared as data needs a test that goes red when it drifts.**
+  `docs/STATUS.md` already said a rename touching such a name must have one
+  (see the `SINGLETON_PROTOCOL` case above), and #413 found the rule stated but
+  unenforced for `model.rs`'s `ALWAYS_DYNAMIC`. That one is worse than
+  `SINGLETON_PROTOCOL` because it fails **conditionally**: `is_protocol_selector`
+  is consulted first, so every program whose root adopts `OZObjectProtocol` --
+  which is every fixture in the suite -- still gets its dispatcher, and only a
+  minimal hand-rolled root silently loses one. Restoring the old spelling left
+  all 568 other tests green. The test that closes it
+  (`behavior_dispatch::description_dispatches_dynamically_without_a_protocol_declaring_it`)
+  needs both conditions at once: a root adopting nothing, and exactly one
+  implementor, so neither the protocol arm nor the multi-implementor arm can
+  answer for it. **When a literal is unprotected, the shape that reaches it is
+  usually the one no fixture builds.**
+- **The create-rule selectors are one constant, not two lists.**
+  `arc::is_owning_selector` and `arc::creates_reference` each carried their own
+  copy until #413, and the cost of that is already recorded in `arc.rs`:
+  `+allocWithHeap:` missing from one made `samples/heap_alloc` leak every object
+  it allocated, with no diagnostic, because ARC fails toward leaking. Adding a
+  selector to one and not the other is the same defect waiting to happen, so both
+  now read `CREATE_RULE_SELECTORS`.
+
+  A regression test for an owning selector has to bind the allocation **bare**.
+  `[[Widget dynamicAlloc] init]` cannot see the defect: the outer `-init` is
+  itself an owning selector, so the binding is `+1` whatever the receiver's
+  provenance was. Written the natural way first, the #413 test passed with the
+  selector removed from the list -- vacuously. `Widget *w = [Widget dynamicAlloc];`
+  is what makes it fail.
 - **The version is `tools/oz_static/Cargo.toml`**, bumped in the same commit
   as the change it describes. The repo-level `VERSION` file is retired.
