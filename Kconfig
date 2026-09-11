@@ -175,6 +175,65 @@ config OBJZ_DEFAULT_DESCRIPTION
 	  Host builds of the test corpora always have this on: it is
 	  guarded on CONFIG_OBJZ, which only a Zephyr build defines.
 
+config OBJZ_LOG_BUFFER_SIZE
+	int "OZLog line buffer size (bytes)"
+	range 32 1024
+	default 128
+	help
+	  Size of the buffer OZLog formats one whole line into, the last
+	  byte of which is the terminating NUL.
+
+	  It is an automatic array in OZLog's own frame, so it is spent
+	  on the stack of whatever thread calls OZLog -- and on every
+	  such thread, not once. Raising it raises the high-water mark
+	  of each of them by the same amount, which is what the ceiling
+	  is about: 1024 is the whole of CONFIG_MAIN_STACK_SIZE's
+	  default on mps2/an385, so a value near it needs the stack
+	  raised first. Read the headroom with `kernel thread stacks` at
+	  the shell rather than reasoning about it -- that is how the
+	  sizes in px-keyboard's prj.conf were chosen.
+
+	  Too small does not overflow and does not fault. OZLog stops
+	  writing at the boundary, so a longer line is silently
+	  truncated and it is the tail that goes: the last fields of
+	  the line disappear, and a %@ that straddles the boundary lands
+	  mid-description, because -getDescription:maxLength: is handed
+	  only the bytes that are left and writes what fits. That is the
+	  same silent-truncation contract that selector has everywhere
+	  else, reached here through the buffer rather than through
+	  %.N@. Nothing reports it, so a field that has gone missing
+	  from a log line is the symptom to recognise.
+
+	  Raise it for a program that logs a deep object graph -- an
+	  OZArray or OZDictionary description prints its elements, so
+	  its length is a property of the data rather than of the source
+	  -- and lower it for one whose lines are short and whose stack
+	  is tight.
+
+	  The floor is 32 because below it not even one field fits
+	  whole: a single conversion is rendered through a 32-byte
+	  scratch buffer before being copied in, and the inherited
+	  <ClassName: 0xADDRESS> description runs to strlen(name) + 14
+	  bytes at most -- the brackets, ": ", "0x" and up to eight hex
+	  digits, leading zeroes skipped -- so 22 for OZObject at any
+	  real 32-bit address.
+
+	  The default 128 is what src/OZLog.c hardcoded behind an
+	  #ifndef until #420, which documented this option in OZLog.h
+	  while declaring it nowhere. Setting it did not quietly do
+	  nothing: Zephyr aborts on Kconfig warnings, so a prj.conf that
+	  believed the documentation failed the configure step with
+	  "attempt to assign the value '256' to the undefined symbol
+	  OBJZ_LOG_BUFFER_SIZE" -- naming the user's spelling, not the
+	  documentation that was wrong.
+
+	  There is no #ifndef fallback left. src/OZLog.c is added to a
+	  build only by oz_static.cmake under CONFIG_OBJZ and this
+	  option lives inside `if OBJZ`, so the symbol always exists
+	  where the file does -- and losing this entry is a compile
+	  error at the buffer's declaration rather than a silent return
+	  to 128. The fallback was the concealment, not a safety net.
+
 config OBJZ_HEAP
 	bool "Enable heap-based allocation (dynamicAllocWithHeap:)"
 	depends on HEAP_MEM_POOL_SIZE > 0
