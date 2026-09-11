@@ -62,6 +62,13 @@ Built on Zephyr primitives (`k_mem_slab`, `SYS_INIT`, `k_spinlock_t`, `atomic_t`
 - **Compile-time ARC** — scope-based retain/release, auto-dealloc, break/continue cleanup
 - **Per-class slab pools** — auto-generated from AST analysis, zero heap overhead
 - **`@autoreleasepool`** — scoped memory management
+- **An object is allocated once and may be initialised more than once** —
+  `+alloc` is the slab get and returns a fully-formed, zeroed instance;
+  `-init` is an ordinary method. Sending `-init` twice costs no extra slab
+  slot, so **`-init` must be idempotent**: free or release what an ivar
+  already holds before overwriting it. A strong object ivar does that for
+  you (the store releases the previous value first). A raw `malloc`, a
+  `k_work_init`, or a `gpio_add_callback_dt` does not
 - **Foundation classes** — `OZString`, `OZArray`, `OZDictionary`, `OZQ31` with fast enumeration
 
 ### Language Features
