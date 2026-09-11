@@ -969,6 +969,55 @@ refcount shape of every sink, with the two remaining defects asserted to
 the test and forces the list to change, and everything not listed is
 believed correct rather than merely unexamined.
 
+## A seventh, and the audit that found it (#400)
+
+#400 walked the dimension the four earlier audits did not: **which selectors
+and constructs create or consume a reference**, the set every other ownership
+answer is built on. Six areas, fourteen cells, now standing as
+`tools/oz_static/tests/selector_ownership_matrix.rs`.
+
+Everything behaved correctly except one cell, and it is the seventh consecutive
+ownership decision keyed on a syntactic form rather than on the reference:
+`managed_object_locals` asked `stars == 1 && program.is_class(type_text)`, and
+`id` carries no `*` in source -- it is already a pointer. So an `id`-typed local
+holding a `+1` was never ARC-managed, and `id c = [t copy];` deallocs once where
+`Thing *c = [t copy];` deallocs twice. Same reference, same statement, different
+spelling of the declared type.
+
+As with #398, the correct rule was already written down in the same file: the
+dynamic-dispatch return check reads
+`class_name_from_type(ty).is_some() || ty.trim() == "id"`. ARC's local scan did
+not consult it. Two of the seven have now been "a correct rule a few lines from
+a check that never asks it", which is worth watching for directly rather than
+rediscovering.
+
+**Why this matrix counts nothing.** `ownership_matrix.rs` counts `(allocations,
+retains, releases)`, and counting cannot see *which* pointer a release names --
+which is exactly what #398 got wrong, and why a row there would have passed
+before and after that fix. These rows assert observed stdout instead, with
+`-dealloc` printing, so an unreleased reference is visible and a
+released-through-the-wrong-pointer one crashes. It is also #376's lesson: its
+eager-allocation defect had matching counts and was invisible to a counting
+matrix.
+
+**Two traps this audit walked into itself**, both recorded because neither
+announced itself:
+
+- Every cell first passed the same stem to `compile_and_run`, which keys its
+  build directory on the stem. Twelve cells collided on one binary and each
+  reported the *first* cell's output -- the matrix agreed with itself about
+  nothing while reporting four of five groups failing for invented reasons.
+- The one cell that expects *no* dealloc could have passed on a failed
+  allocation, since nil produces the same output as "the author owns it". The
+  fixture's `-copy` allocates, so exhausting a slab is reachable. It asserts a
+  non-null receiver first; every other cell is protected by the dealloc it
+  asserts, because a `d` cannot print for an object that was never allocated.
+
+**What it establishes, and the claim's price.** Everything not in that file is
+believed correct about selector and construct ownership -- a claim worth making
+only while the list stays complete. A new selector or construct that can create
+or consume a reference needs a row.
+
 ## A sixth decision keyed on spelling (#398)
 
 `arc.rs` asked `selector.starts_with("init")` in **five** places, and that
