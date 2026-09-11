@@ -1779,5 +1779,67 @@ from an expression that is not the thing stored.
   provenance was. Written the natural way first, the #413 test passed with the
   selector removed from the list -- vacuously. `Widget *w = [Widget dynamicAlloc];`
   is what makes it fail.
+- **Every `CONFIG_OBJZ_*` a compiled source reads must be declared in
+  `Kconfig`, and an `#ifndef` fallback beside it is what makes a missing one
+  invisible.** `src/OZLog.c` carried
+  `#ifndef CONFIG_OBJZ_LOG_BUFFER_SIZE / #define ... 128`, sized its stack
+  buffer from it, and `OZLog.h` documented the option to users; `Kconfig`
+  declared it nowhere (#420). Three things about that shape are worth keeping.
+
+  The fallback is not a safety net, it is the concealment: it makes the code
+  *read* as configurable, so a maintainer greps the source, finds the symbol
+  used and defaulted, and never asks the separate question of whether
+  `Kconfig` declares it. A plainly hardcoded `128` would have been honest.
+
+  What the user gets is not the warning the option's absence sounds like.
+  Zephyr's `kconfig.cmake` turns Kconfig warnings into `error: Aborting due
+  to Kconfig warnings`, so `CONFIG_OBJZ_LOG_BUFFER_SIZE=256` in a `prj.conf`
+  fails the *configure* step with "attempt to assign the value '256' to the
+  undefined symbol OBJZ_LOG_BUFFER_SIZE" -- a hard failure naming the user's
+  spelling and not the documentation that was wrong. A documented-undeclared
+  option is therefore a broken build for anyone who believes the
+  documentation, not a silently ignored setting. The same machinery makes a
+  `range` a gate rather than advice: `=2048` fails with "user value 2048 ...
+  outside the active range ([32, 1024])".
+
+  The enforcement is structural rather than a test. Dropping the `#ifndef`
+  leaves the read bare, and `src/OZLog.c` is added to a build only by
+  `oz_static.cmake` under `CONFIG_OBJZ` while the option sits inside
+  `if OBJZ`, so the symbol exists wherever the file does -- and removing the
+  `Kconfig` entry now stops the build at
+  `src/OZLog.c:33:18: error: 'CONFIG_OBJZ_LOG_BUFFER_SIZE' undeclared`, which was
+  verified by removing it. For that one symbol there is no test to decay,
+  because the property is that nothing supplies a default but `Kconfig`.
+
+  The rule as a whole is enforced rather than remembered:
+  `tests/kconfig_options_declared.rs` fails on any `CONFIG_OBJZ_*` that
+  `src/`, `include/` or the three CMake files name without `Kconfig`
+  declaring it. Two of its choices carry the lesson. Comments in `src/` and
+  `include/` are **not** stripped, because a header comment promising an
+  option to users is a promise and that was half of #420 -- the option was
+  documented in `OZLog.h`'s Doxygen block; with the entry removed the test
+  names both `OZLog.c` and `OZLog.h`. Comments in the CMake files *are*
+  stripped, because those name retired symbols on purpose to record the
+  retirement, and requiring them to exist would be requiring it undone.
+
+  The sweep that followed found no second instance, which is the useful half
+  of the answer. Thirty-four distinct `CONFIG_OBJZ*` spellings appear in the
+  tree against the eight `Kconfig` declares, so twenty-six are undeclared --
+  and twenty-three of those occur only under `src/runtime_legacy/`,
+  `include/runtime_legacy/` and `tests/objc-reference/`, which no
+  `CMakeLists.txt`, cmake module or justfile recipe reaches, making them
+  references in dead code rather than reads. The three with a site outside
+  those trees are all prose recording a retirement: `CONFIG_OBJZ_BACKEND` in
+  `oz_static.cmake` and `CLAUDE.md` on the dispatcher that went with the
+  Python backend, `CONFIG_OBJZ_BACKEND_PYTHON` in `Kconfig`'s own comment
+  saying it no longer exists, `CONFIG_OBJZ_FLAT_DISPATCH` inside README's
+  "Legacy Runtime Reference" block -- and each of them again in this paragraph,
+  which is why a sweep run after reading this will keep counting three.
+  `CONFIG_OBJZ_LOG_BUFFER_SIZE` was the only one a compiled source read. The
+  reverse direction found one:
+  `CONFIG_OBJZ_BACKEND_STATIC` is declared, `default y`, and read by nothing
+  at all -- `CMakeLists.txt` gates on `CONFIG_OBJZ`, `oz_static.cmake` never
+  tests it, and `main.rs:5`'s comment claiming it is "wired into CMake by
+  cmake/oz_static.cmake" is the opposite of what that file does.
 - **The version is `tools/oz_static/Cargo.toml`**, bumped in the same commit
   as the change it describes. The repo-level `VERSION` file is retired.

@@ -443,7 +443,7 @@ objz_transpile_sources(<target> <source1.m> [source2.m ...]
 
 ## Configuration
 
-`CONFIG_OBJZ` enables the transpiler pipeline and auto-selects `STATIC_INIT_GNU`. Five options sit under it, and the defaults are what a plain `CONFIG_OBJZ=y` gives you:
+`CONFIG_OBJZ` enables the transpiler pipeline and auto-selects `STATIC_INIT_GNU`. Six options sit under it, and the defaults are what a plain `CONFIG_OBJZ=y` gives you:
 
 | Option | Default | Effect |
 |---|---|---|
@@ -452,6 +452,9 @@ objz_transpile_sources(<target> <source1.m> [source2.m ...]
 | `CONFIG_OBJZ_REFLECTION` | `y` | `@selector`, `SEL`, `-respondsToSelector:`, `-performSelector:` |
 | `CONFIG_OBJZ_DEFAULT_DESCRIPTION` | `y` | An inherited `-getDescription:maxLength:` of the form `<ClassName: 0xADDRESS>`, so `%@` names an object |
 | `CONFIG_OBJZ_DEBUG_LINES` | `y`, and only under `CONFIG_DEBUG` | `#line` directives back to the `.m`, so a debugger names it |
+| `CONFIG_OBJZ_LOG_BUFFER_SIZE` | `128`, range `32` to `1024` | Bytes `OZLog` formats one line into, on the calling thread's stack |
+
+`CONFIG_OBJZ_LOG_BUFFER_SIZE` was documented in `OZLog.h` and declared nowhere until #420, so setting it failed the configure step on the *user's* spelling. It is real now, and both halves of it are worth knowing before changing it. The buffer is an automatic array in `OZLog`'s frame, so it is spent on the stack of every thread that logs rather than once — read the headroom with `kernel thread stacks` and raise the stack first; the 1024 ceiling is the whole of `CONFIG_MAIN_STACK_SIZE`'s default on `mps2/an385`. And too small neither overflows nor faults: writing stops at the boundary, so a longer line loses its *tail* silently and a `%@` straddling the boundary lands mid-description, `-getDescription:maxLength:` having been handed only the bytes that were left. At 32, `samples/transpiled_literals` prints `a = 10, b = 25002031, a + b = 2` for a line whose full form is `... = 25002041`, and runs to completion. Raise it when a description is long by nature — an `OZArray` or `OZDictionary` prints its elements, so its length is a property of the data.
 
 The two introspection options generate `const` tables only for the constructs a program actually uses, so leaving them on costs nothing until something introspects. Set either to `n` to forbid its constructs outright: they then become located transpile errors naming the option, never silently unavailable.
 
