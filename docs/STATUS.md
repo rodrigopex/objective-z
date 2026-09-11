@@ -104,7 +104,7 @@ Stated precisely rather than as "everything works":
   give, rather than refusing, is **not implementable from the spelling**:
   whether `size_t` is wider than `unsigned int` is target-dependent, so
   ranking them textually would be a guess.
-- **`-cDescription:maxLength:` is `int (char *, size_t)`** -- `snprintf`'s
+- **`-getDescription:maxLength:` is `int (char *, size_t)`** -- `snprintf`'s
   own shape, which is the function it imitates. The capacity is a `size_t`
   because it cannot be negative; the result stays `int` because the
   alternatives were worse. `ssize_t` is unusable: the Clang AST dump that
@@ -707,14 +707,14 @@ that reported success while the thing it named was broken.
   pid-keyed one has to be removed on `Drop` or it is a leak per run
   instead.
 - **Unused code is not free when the call site is unconditional.** The
-  default `-cDescription:maxLength:` (#354) looked like it would cost only
+  default `-getDescription:maxLength:` (#354) looked like it would cost only
   programs that use `%@`, on the reasoning that `--gc-sections` drops the
   protocol dispatch otherwise. Measured, it costs **~360 B on every program
   that calls `OZLog` at all** -- `samples/hello_category`, which contains no
   `%@`, grew 26456 -> 26820 B. `src/OZLog.c:82` calls the dispatch from
   inside `oz_log`'s body and the format string is parsed at *run time*, so
   the `%@` branch is always present and the whole chain behind it stays
-  reachable: the dispatch, `OZObject_cDescription_maxLength_` (4 B to
+  reachable: the dispatch, `OZObject_getDescription_maxLength_` (4 B to
   176 B, of which 110 is formatting the address), the synthesized
   `oz_static_class_name` (40 B) and one name string per class.
 

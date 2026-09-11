@@ -19,7 +19,7 @@
 	return _items[index];
 }
 
-- (int)cDescription:(char *)buf maxLength:(size_t)maxLen
+- (int)getDescription:(char *)buf maxLength:(size_t)maxLen
 {
 	/* `pos` is unsigned alongside `maxLen`, which is safe because every
 	 * subtraction below is already guarded by `pos < maxLen` -- the loop
@@ -40,7 +40,7 @@
 		 * a negative one would wrap `pos` past `maxLen` if added
 		 * blindly -- which the old all-signed version did, then indexed
 		 * with it. */
-		int written = [elem cDescription:buf + pos maxLength:maxLen - pos];
+		int written = [elem getDescription:buf + pos maxLength:maxLen - pos];
 		if (written > 0) {
 			pos += (size_t)written;
 		}

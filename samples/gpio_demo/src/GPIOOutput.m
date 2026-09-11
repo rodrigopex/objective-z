@@ -40,7 +40,7 @@
 	gpio_pin_toggle_dt(super.spec);
 }
 
-- (int)cDescription:(char *)buf maxLength:(size_t)maxLen
+- (int)getDescription:(char *)buf maxLength:(size_t)maxLen
 {
 	return snprintk(buf, maxLen, "<%s: %s pin %u, active=%d>",
 			"GPIOOutput", super.spec->port->name, super.spec->pin, _active);

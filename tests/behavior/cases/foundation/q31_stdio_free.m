@@ -1,5 +1,5 @@
 /* oz-pool: OZObject=1,OZQ31=32 */
-/* Behavior test: OZQ31 integer-only cDescription and division (no stdio). */
+/* Behavior test: OZQ31 integer-only getDescription and division (no stdio). */
 #import "OZFoundationBase.h"
 
 @interface Q31NoStdio : OZObject

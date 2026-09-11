@@ -8,7 +8,7 @@
  * @brief Formatted logging with %@ object specifier for transpiled code.
  *
  * Pure C implementation of OZLog() for transpiled builds.
- * Uses OZ_PROTOCOL_SEND_cDescription_maxLength_() for %@ (const vtable dispatch).
+ * Uses OZ_PROTOCOL_SEND_getDescription_maxLength_() for %@ (const vtable dispatch).
  * Zero heap allocation — everything on the stack.
  */
 #include <stdarg.h>
@@ -79,7 +79,7 @@ void OZLog(const char *fmt, ...)
 					}
 				} else {
 					_oz_log_precision = obj_prec;
-					pos += OZ_PROTOCOL_SEND_cDescription_maxLength_(
+					pos += OZ_PROTOCOL_SEND_getDescription_maxLength_(
 						obj, buf + pos, max - pos);
 					_oz_log_precision = -1;
 				}

@@ -8,7 +8,7 @@
  * @brief Formatted logging with %@ object specifier for transpiled code.
  *
  * OZLog() works like printk() but supports the %@ format specifier
- * to print objects via their -cDescription:maxLength: method.
+ * to print objects via their -getDescription:maxLength: method.
  */
 #pragma once
 

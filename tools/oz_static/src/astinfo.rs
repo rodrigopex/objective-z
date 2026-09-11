@@ -81,7 +81,7 @@ pub struct AstFacts {
     /// carries every interface it imports and no other file's
     /// implementations. Treating "interface seen" as "I would have seen the
     /// bodies" made oz_static drop the declaration of everything the SDK
-    /// implements in `src/*.m` -- `OZ_PROTOCOL_SEND_cDescription_maxLength_`
+    /// implements in `src/*.m` -- `OZ_PROTOCOL_SEND_getDescription_maxLength_`
     /// among them -- while still emitting the calls, so the generated C
     /// stopped compiling. Now the guard abstains unless this dump really
     /// covered the class's implementation.

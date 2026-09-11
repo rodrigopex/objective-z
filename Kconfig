@@ -145,13 +145,13 @@ config OBJZ_DEBUG_LINES
 	  it, or if some tool in the chain mishandles them.
 
 config OBJZ_DEFAULT_DESCRIPTION
-	bool "Default -cDescription:maxLength: naming the class"
+	bool "Default -getDescription:maxLength: naming the class"
 	default y
 	help
 	  Give every class an inherited description of the form
 	  <ClassName: 0xADDRESS>, so OZLog's %@ names an object rather
 	  than printing nothing. A class that writes its own
-	  -cDescription:maxLength: overrides it either way; this only
+	  -getDescription:maxLength: overrides it either way; this only
 	  decides what the classes that do not write one produce.
 
 	  Costs ~360 bytes of flash, and costs them on every program that

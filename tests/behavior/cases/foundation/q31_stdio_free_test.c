@@ -1,5 +1,5 @@
 /*
- * Behavior test: OZQ31 integer-only cDescription and division.
+ * Behavior test: OZQ31 integer-only getDescription and division.
  * Tests _oz_q31_to_str (spec, boundary, coverage) and _oz_q31_div via ObjC.
  */
 #include "unity.h"

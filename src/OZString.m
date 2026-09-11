@@ -21,7 +21,7 @@
 	return _length;
 }
 
-- (int)cDescription:(char *)buf maxLength:(size_t)maxLen
+- (int)getDescription:(char *)buf maxLength:(size_t)maxLen
 {
 	/* Both operands unsigned now, so the cast the signed comparison
 	 * needed is gone with it. */

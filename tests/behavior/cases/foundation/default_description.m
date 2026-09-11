@@ -1,4 +1,4 @@
-/* `-cDescription:maxLength:` has a useful default (#354).
+/* `-getDescription:maxLength:` has a useful default (#354).
  *
  * `OZObject`'s implementation is what every class inherits until it writes
  * its own, and it used to be `return 0;` -- an undocumented no-op. So `%@`
@@ -87,7 +87,7 @@ static int same(const char *a, const char *b)
 @end
 
 @implementation Custom
-- (int)cDescription:(char *)buf maxLength:(size_t)maxLen
+- (int)getDescription:(char *)buf maxLength:(size_t)maxLen
 {
 	const char *s = "custom!";
 	size_t n = (size_t)length(s);
@@ -110,7 +110,7 @@ int run_default_names_the_class(void)
 	int n = 0;
 
 	fill(buf, 0, (int)sizeof(buf));
-	n = [p cDescription:buf maxLength:sizeof(buf) - 1];
+	n = [p getDescription:buf maxLength:sizeof(buf) - 1];
 
 	return (n == length(buf)) && starts_with(buf, "<Plain: 0x") &&
 	       (buf[length(buf) - 1] == '>') && (length(buf) > 11);
@@ -123,7 +123,7 @@ int run_own_description_wins(void)
 	int n = 0;
 
 	fill(buf, 0, (int)sizeof(buf));
-	n = [c cDescription:buf maxLength:sizeof(buf) - 1];
+	n = [c getDescription:buf maxLength:sizeof(buf) - 1];
 	return (n == 7) && same(buf, "custom!");
 }
 
@@ -137,7 +137,7 @@ int run_bounded(void)
 		int n = 0;
 
 		fill(buf, '#', (int)sizeof(buf));
-		n = [p cDescription:buf maxLength:limit];
+		n = [p getDescription:buf maxLength:limit];
 		if (n < 0 || (size_t)n > limit) {
 			return 0;
 		}

@@ -506,7 +506,7 @@ static inline void _oz_q31_div(int32_t a_raw, uint8_t a_shift,
 
 /* ── OZObject overrides ────────────────────────────────────────── */
 
-- (int)cDescription:(char *)buf maxLength:(size_t)maxLen
+- (int)getDescription:(char *)buf maxLength:(size_t)maxLen
 {
 	int prec = _oz_get_log_precision();
 	if (prec < 0) {

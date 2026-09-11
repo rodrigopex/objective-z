@@ -74,5 +74,5 @@
 - (id)performSelector:(SEL)aSelector withObject:(id)object;
 - (id)performSelector:(SEL)aSelector withObject:(id)object withObject:(id)otherObject;
 - (BOOL)isEqual:(id)anObject;
-- (int)cDescription:(char *)buf maxLength:(size_t)maxLen;
+- (int)getDescription:(char *)buf maxLength:(size_t)maxLen;
 @end
