@@ -365,6 +365,91 @@ can expose every decision that was made without it. The release path, the
 subscript lowering and the store path were all wrong in the same direction,
 and all three only became *visible* once the extent existed.
 
+### The third spelling, and then the fourth (#405, #423)
+
+The sharpest instance so far, because the *test suite* was the thing
+asserting the defect.
+
+#405 made a strong ivar store release its previous value before evaluating
+the new one where the new one cannot read it, and narrowed
+`staticbar::LoopEscape::OverlappingStore` to match — routing the
+`identifier` and `field_expression` spellings of a store's destination
+through one predicate, `overlapping_unless_released_first`. There is a
+third spelling. `subscript_expression` kept answering `OverlappingStore`
+unconditionally, so
+
+```objc
+/* oz-pool: Foo=1 */
+for (i = 0; i < 4; i++) {
+        _arr[0] = [Foo make];
+}
+```
+
+was refused as needing "two slab slots rather than one" while
+`emit::render_strong_array_element_assign` had, since the same #405, been
+emitting `(release(self->_arr[0]), self->_arr[0] = <new>)` for it — one
+slot, and measured at 4/4 objects on a pool of one (#423).
+
+Two things are worth keeping from it.
+
+The first is that `tools/oz_static/tests/loop_allocation_bounds.rs`
+**asserted the over-rejection as correct behaviour**, in a case named
+`a_constant_index_overlaps_rather_than_accumulates` whose message explained
+why a constant index "overlaps at two rather than accumulating". It was
+written when that was true of every subscript and merged alongside the
+change that stopped it being true of one of them. So the suite was not
+merely failing to catch the defect, it was pinning it in place: fixing
+#423 required *inverting* a green assertion, which is a different and
+slower thing to notice than a missing test. The case is still there, with
+the same program, now running four iterations on one slot instead of
+asserting the refusal.
+
+The second is what looking for a *fourth* site found, which was wrong in
+the opposite direction. The `field_expression` arm extracted its
+destination with `find_last_identifier`, and in `self->_ivar` the field is
+a `field_identifier`, not an `identifier` — so it answered `self`. The bar
+then asked `emit::classify_store` whether the right-hand side mentions
+`self` while the emitter keyed the real store on `_ivar`, and the two
+agree on every spelling but one:
+
+```objc
+for (i = 0; i < 4; i++) {
+        self->_ivar = [_ivar dup];      /* accepted */
+}
+```
+
+`[_ivar dup]` does not mention `self`, so the bar called it release-first
+and accepted it; the emitter saw a right-hand side that reads `_ivar`, kept
+the hoisted temporary, and `ctx.pre_stmts` put that temporary **above** the
+loop:
+
+```c
+struct OZObject *_oz_prev_L381_C3_1 = (struct OZObject *)(self->_ivar);
+for (i = 0; i < 4; i++) {
+        (self->_ivar = Foo_dup(...), oz_static_release(_oz_prev_L381_C3_1));
+}
+```
+
+— captured once while the ivar was still nil, and that same stale pointer
+released on every iteration. So the rejection this issue was filed to
+*relax* was, at one spelling, not firing when it had to. An over-rejection
+and a miscompile from one cause, which is the tell itself: the cause is not
+"the subscript arm was forgotten", it is that four spellings were each
+answering the question themselves. All four now go through
+`staticbar::assigned_slot_name`, which mirrors `emit::assigned_ivar_name`
+(it cannot call it — that needs an `EmitCtx` the bar does not have).
+
+A third defect fell out of giving the subscript arm the same gate as the
+others: the bar asked `scope.class_ivars`, which is *every* ivar, where
+both emitters gate on `Program::owned_object_ivar_names`, which is fewer.
+An `__unsafe_unretained` ivar is not a strong slot — releasing a borrow is
+the double free the qualifier exists to prevent, so the store lowers to a
+plain C one that releases nothing — and a store into one was being accepted
+with `OverlappingStore`'s reasoning, "raise the pool and both live copies
+fit". There is no second live copy, because there is no release, and no
+pool size bounds that loop. It is `Accumulates` now, for both the scalar
+and the array spelling.
+
 ### A block literal borrows its enclosing body's context (#339, #342)
 
 The other shape of the same tell, and the more instructive one, because
@@ -1585,9 +1670,18 @@ directions at once.
 | destination | reused? | previous released *before* the next allocation? | slots | run |
 | --- | --- | --- | --- | --- |
 | managed local | yes | **yes** | 1 | 4/4 objects |
-| ivar, file-scope variable | yes | **no** | **2** | 1/4, then `nil` |
+| ivar, file-scope variable, store cannot read it | yes | **yes** (since #405) | 1 | 4/4 objects |
+| ivar, file-scope variable, store reads it | yes | **no** | **2** | 1/4, then `nil` |
+| array element, constant index, store cannot read it | yes | **yes** (since #423) | 1 | 4/4 objects |
+| array element, constant index, store reads it | yes | **no** | **2** | refused |
 | array element, varying index | **no** | n/a | loop bound | unbounded |
 | local ARC declined to manage | yes | **no**, nothing releases | loop bound | unbounded |
+| ivar that is not an owned strong slot | yes | **no**, nothing releases | loop bound | unbounded |
+
+The first two rows were one row reading "**no**, 2 slots, 1/4 then `nil`"
+when #345 measured them, which is what the prose below is arguing with; the
+two array rows were likewise one refusal until #423 split them the same
+way.
 
 The ivar overlap was called **inherent** here, and it is not. The claim was
 that the new value has to be evaluated before the old one is released, or
@@ -1601,7 +1695,7 @@ local served with one, and a class whose `-init` allocates into an ivar could
 not be initialised twice on its own sizing: measured `first=1`, `second=0` on
 a one-slot pool (#405).
 
-Both stores now route through one predicate, and
+Every store now routes through one predicate, and
 `staticbar::overlapping_unless_released_first` asks it rather than
 re-deriving an answer. Two of the three shapes need no temporary and are
 accepted; `_x = [_x copy]` is `+1` but reads the ivar, so it keeps the
@@ -1611,6 +1705,14 @@ being lifted -- the refused shape hoists its temporary through
 would miscompile rather than merely exhaust the pool. The rejection was
 load-bearing for one shape and wrong for the other two, which is why the
 narrowing and the store fix had to be the same change.
+
+"Every store" is #423's correction, and worth stating as such: when this
+was written it meant the ivar store and the local store, and the sentence
+read "both stores". The *destination spellings* were two of four — a
+`subscript_expression` and a `self->_ivar` were each still deciding for
+themselves, in opposite directions. They reach the predicate through
+`staticbar::assigned_slot_name` now; see "The third spelling, and then the
+fourth" above.
 
 ### The over-rejection
 
@@ -1650,10 +1752,24 @@ diagnostic says which applies rather than listing workarounds for a reason
 that may not hold. The old message asserted the reference "escapes the
 iteration" even for shapes where it plainly did not.
 
-Two boundaries worth keeping in view. A **constant** subscript names the
-same element every iteration, so it overlaps at two rather than
-accumulating — a rule that called every subscript unbounded would say
-something false about it. And `[[Foo alloc] init]` is **one** object, so it
+Three boundaries worth keeping in view.
+
+A **constant** subscript names the same element every iteration, so it is
+an ivar store for this purpose rather than an unbounded one — a rule that
+called every subscript unbounded would say something false about it. Which
+half of the ivar answer it gets is then the same question as for any other
+spelling: released first, so one slot, where the store cannot read the
+element; two, and refused, where it can (#423). It was refused either way
+until then, and this document said "it overlaps at two", which was only
+ever true of the second.
+
+An ivar the emitter does **not** manage as a strong slot —
+`__unsafe_unretained`, or a type Clang did not call an owned object — is
+not an overlap at all. Nothing releases the previous value there, so the
+loop accumulates and no pool size bounds it; telling the author to raise
+the pool would be advice that cannot work (#423).
+
+And `[[Foo alloc] init]` is **one** object, so it
 is reported at the outer send: `-init` consumes its receiver's reference
 and hands it back, and reporting the inner one would start the escape walk
 from an expression that is not the thing stored.
