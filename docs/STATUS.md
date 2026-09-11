@@ -1003,6 +1003,27 @@ that reported success while the thing it named was broken.
   checked yet**, because the work that falsifies it gets recorded somewhere
   else. The old document's "Not verified" section was wrong four times in the
   same direction, each time understating what was already reachable.
+- **`grep -c` measures declarations, not dispatch.** #421 reported `%@` on an
+  `OZMutableString` printing `<OZMutableString: 0xADDRESS>`, evidenced by
+  `grep -c getDescription` answering 0 for both its header and its
+  implementation while `OZString`, `OZArray`, `OZDictionary` and `OZNumber`
+  each have their own. The count is correct and the conclusion is not:
+  `companion.rs` resolves each class's protocol-dispatch arm by walking the
+  superclass chain, so `OZMutableString`'s arm reads
+  `return OZString_getDescription_maxLength_(...)` and `%@` has always printed
+  the contents. Measured on `mps2/an385` -- `ms=hello world` -- both as its
+  own type and through an `id`, with and without any `OZString` literal in the
+  program, since a literal is what would otherwise be the reason `OZString`'s
+  implementation is in the binary at all. **The absent-method reading of an
+  inheriting class is the address, and the address is what an unrun report
+  reproduces**: the shape #421 describes is real, but only in a tree where
+  `OZString` has no `-getDescription:maxLength:` either, which is what
+  deleting it from both files was needed to produce.
+  What the report did find is that nothing pinned any of this.
+  `behavior_foundation_mutable_string.rs` now does, on the dynamic path and on
+  the dispatcher arm, so the next reader of that issue does not close it by
+  adding an override that duplicates the superclass's -- code in every
+  Foundation translation unit, bought with nothing.
 
 ## Why this is not Clang's ARC, and what that costs (#351)
 
