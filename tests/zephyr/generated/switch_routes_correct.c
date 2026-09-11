@@ -7,7 +7,7 @@
 
 /* @protocol Togglable -- compile-time only, see oz_static_dispatch.h/.c */
 
-/* synthesized: backing storage for every LightSwitch instance -- 4 slot(s), sized from this translation unit's allocation sites (override with --pool-sizes) */
+/* synthesized: backing storage for every LightSwitch instance -- 4 slot(s), sized from this translation unit's allocation sites, each counted once per call site of the body it escapes from (override with --pool-sizes) */
 OZ_SLAB_DEFINE(oz_slab_LightSwitch, sizeof(struct LightSwitch), 4, 4);
 
 /* synthesized: allocates and zero-initializes a new LightSwitch (not from source) */
@@ -51,7 +51,7 @@ int LightSwitch_toggle(struct LightSwitch *self)
 /*--------------------- end implementation: LightSwitch ----------------------*/
 
 
-/* synthesized: backing storage for every Fan instance -- 4 slot(s), sized from this translation unit's allocation sites (override with --pool-sizes) */
+/* synthesized: backing storage for every Fan instance -- 4 slot(s), sized from this translation unit's allocation sites, each counted once per call site of the body it escapes from (override with --pool-sizes) */
 OZ_SLAB_DEFINE(oz_slab_Fan, sizeof(struct Fan), 4, 4);
 
 /* synthesized: allocates and zero-initializes a new Fan (not from source) */

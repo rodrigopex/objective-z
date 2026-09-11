@@ -5,7 +5,7 @@
 
 /* already resolved: #import "OZTestBase.h" */
 
-/* synthesized: backing storage for every Base instance -- 4 slot(s), sized from this translation unit's allocation sites (override with --pool-sizes) */
+/* synthesized: backing storage for every Base instance -- 4 slot(s), sized from this translation unit's allocation sites, each counted once per call site of the body it escapes from (override with --pool-sizes) */
 OZ_SLAB_DEFINE(oz_slab_Base, sizeof(struct Base), 4, 4);
 
 /* synthesized: allocates and zero-initializes a new Base (not from source) */
@@ -57,7 +57,7 @@ int Base_baseVal(struct Base *self)
 /*------------------------- end implementation: Base -------------------------*/
 
 
-/* synthesized: backing storage for every Child instance -- 4 slot(s), sized from this translation unit's allocation sites (override with --pool-sizes) */
+/* synthesized: backing storage for every Child instance -- 4 slot(s), sized from this translation unit's allocation sites, each counted once per call site of the body it escapes from (override with --pool-sizes) */
 OZ_SLAB_DEFINE(oz_slab_Child, sizeof(struct Child), 4, 4);
 
 /* synthesized: allocates and zero-initializes a new Child (not from source) */

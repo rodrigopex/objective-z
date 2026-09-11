@@ -3,7 +3,7 @@
 #include "alloc_returns_valid.h"
 #include "OZObject.h"
 
-/* synthesized: backing storage for every Widget instance -- 4 slot(s), sized from this translation unit's allocation sites (override with --pool-sizes) */
+/* synthesized: backing storage for every Widget instance -- 4 slot(s), sized from this translation unit's allocation sites, each counted once per call site of the body it escapes from (override with --pool-sizes) */
 OZ_SLAB_DEFINE(oz_slab_Widget, sizeof(struct Widget), 4, 4);
 
 /* synthesized: allocates and zero-initializes a new Widget (not from source) */

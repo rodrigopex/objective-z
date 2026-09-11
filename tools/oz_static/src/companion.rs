@@ -172,7 +172,8 @@ fn render_exhaustion_trap(name: &str) -> String {
 fn render_slab_define(name: &str, slots: usize) -> String {
     format!(
         "/* synthesized: backing storage for every {name} instance -- {slots} slot(s), \
-         sized from this translation unit's allocation sites (override with --pool-sizes) */\n\
+         sized from this translation unit's allocation sites, each counted once per call \
+         site of the body it escapes from (override with --pool-sizes) */\n\
          OZ_SLAB_DEFINE(oz_slab_{name}, sizeof(struct {name}), {slots}, {align});\n\n",
         name = name,
         slots = slots,

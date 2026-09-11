@@ -11,7 +11,7 @@
 
 static int triple(int x) { return x * 3; }
 
-/* synthesized: backing storage for every BoxedTest instance -- 4 slot(s), sized from this translation unit's allocation sites (override with --pool-sizes) */
+/* synthesized: backing storage for every BoxedTest instance -- 4 slot(s), sized from this translation unit's allocation sites, each counted once per call site of the body it escapes from (override with --pool-sizes) */
 OZ_SLAB_DEFINE(oz_slab_BoxedTest, sizeof(struct BoxedTest), 4, 4);
 
 /* synthesized: releases the 5 object ivar(s) a BoxedTest owns -- called from

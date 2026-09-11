@@ -5,7 +5,7 @@
 
 /* already resolved: #import "OZTestBase.h" */
 
-/* synthesized: backing storage for every Level1 instance -- 4 slot(s), sized from this translation unit's allocation sites (override with --pool-sizes) */
+/* synthesized: backing storage for every Level1 instance -- 4 slot(s), sized from this translation unit's allocation sites, each counted once per call site of the body it escapes from (override with --pool-sizes) */
 OZ_SLAB_DEFINE(oz_slab_Level1, sizeof(struct Level1), 4, 4);
 
 /* synthesized: allocates and zero-initializes a new Level1 (not from source) */
@@ -46,7 +46,7 @@ int Level1_depth(struct Level1 *self)
 /*------------------------ end implementation: Level1 ------------------------*/
 
 
-/* synthesized: backing storage for every Level2 instance -- 4 slot(s), sized from this translation unit's allocation sites (override with --pool-sizes) */
+/* synthesized: backing storage for every Level2 instance -- 4 slot(s), sized from this translation unit's allocation sites, each counted once per call site of the body it escapes from (override with --pool-sizes) */
 OZ_SLAB_DEFINE(oz_slab_Level2, sizeof(struct Level2), 4, 4);
 
 /* synthesized: allocates and zero-initializes a new Level2 (not from source) */
@@ -87,7 +87,7 @@ int Level2_depth(struct Level2 *self)
 /*------------------------ end implementation: Level2 ------------------------*/
 
 
-/* synthesized: backing storage for every Level3 instance -- 4 slot(s), sized from this translation unit's allocation sites (override with --pool-sizes) */
+/* synthesized: backing storage for every Level3 instance -- 4 slot(s), sized from this translation unit's allocation sites, each counted once per call site of the body it escapes from (override with --pool-sizes) */
 OZ_SLAB_DEFINE(oz_slab_Level3, sizeof(struct Level3), 4, 4);
 
 /* synthesized: allocates and zero-initializes a new Level3 (not from source) */
@@ -128,7 +128,7 @@ int Level3_depth(struct Level3 *self)
 /*------------------------ end implementation: Level3 ------------------------*/
 
 
-/* synthesized: backing storage for every Level4 instance -- 4 slot(s), sized from this translation unit's allocation sites (override with --pool-sizes) */
+/* synthesized: backing storage for every Level4 instance -- 4 slot(s), sized from this translation unit's allocation sites, each counted once per call site of the body it escapes from (override with --pool-sizes) */
 OZ_SLAB_DEFINE(oz_slab_Level4, sizeof(struct Level4), 4, 4);
 
 /* synthesized: allocates and zero-initializes a new Level4 (not from source) */
