@@ -173,8 +173,16 @@ fn the_consume_set() {
                         // defect: an author who took control keeps it.
                         what: "-retain by hand, balanced by a manual release -- ARC \
                                stops managing the local entirely",
-                        body: "\tThing *t = [[Thing alloc] init];\n\t[t retain];\n\t[t release];\n\tprintf(\"ok\\n\");\n",
-                        expect: "ok\n",
+                        // `live %d` is not decoration. This is the one cell
+                        // that expects *no* dealloc, so without a non-null
+                        // check a failed allocation would produce the same
+                        // output and the cell would pass vacuously -- the
+                        // fixture's `-copy` allocates, so a cell can exhaust
+                        // a slab. Every other cell is protected by the
+                        // dealloc it asserts: a `d` cannot print for an
+                        // object that was never allocated.
+                        body: "\tThing *t = [[Thing alloc] init];\n\tprintf(\"live %d\\n\", t != 0);\n\t[t retain];\n\t[t release];\n\tprintf(\"ok\\n\");\n",
+                        expect: "live 1\nok\n",
                         needs_reflection: false,
                         known_defect: None,
                 },
