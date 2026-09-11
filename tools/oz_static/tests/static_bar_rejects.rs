@@ -124,8 +124,17 @@ fn non_capturing_block_accepted() {
     });
 }
 
+/// `_cached = [Item alloc]` in a loop: accepted since #405.
+///
+/// It was refused because an ivar store evaluated the new value before
+/// releasing the old, so two were briefly live and one slab slot could not
+/// serve it. `render_strong_ivar_assign` now releases first where the store
+/// cannot read the ivar -- as `render_strong_local_assign` has since #234 --
+/// so the shape needs one slot and the bar asks the emitter rather than
+/// assuming. The behavioural proof that it really runs on one slot is
+/// `loop_allocation_bounds::an_ivar_store_released_first_needs_only_one_slot`.
 #[test]
-fn escaping_alloc_in_loop_rejected() {
+fn alloc_into_an_ivar_in_a_loop_accepted() {
     let src = format!(
         "{}\n@interface Item : OZObject\n@end\n@implementation Item\n@end\n\
          @interface Foo : OZObject {{\n    Item *_cached;\n}}\n- (void)test;\n@end\n\
@@ -133,13 +142,32 @@ fn escaping_alloc_in_loop_rejected() {
          \x20       _cached = [Item alloc];\n    }}\n}}\n@end\n",
         PREAMBLE()
     );
+    oz_static::transpile(&src).unwrap_or_else(|diags| {
+        panic!(
+            "expected an ivar store whose value cannot read it to be accepted, got:\n{}",
+            diags.iter().map(|d| d.to_string()).collect::<Vec<_>>().join("\n")
+        )
+    });
+}
+
+/// The half that is still refused, and why the narrowing is not a blanket
+/// acceptance: when the store *can* read the ivar the new value has to exist
+/// before the old one goes, so two are briefly live. The emitter keeps a
+/// hoisted temporary for that shape, and a loop lifts the temporary out of
+/// itself -- so accepting this would miscompile, not merely exhaust.
+#[test]
+fn alloc_into_an_ivar_the_store_reads_is_rejected() {
+    let src = format!(
+        "{}\n@interface Item : OZObject\n@end\n@implementation Item\n@end\n\
+         @interface Foo : OZObject {{\n    Item *_cached;\n}}\n- (void)test;\n@end\n\
+         @implementation Foo\n- (void)test {{\n    int i;\n    for (i = 0; i < 3; i++) {{\n\
+         \x20       _cached = i > 0 ? [Item alloc] : _cached;\n    }}\n}}\n@end\n",
+        PREAMBLE()
+    );
     let diags = expect_reject(&src);
     assert!(diags.contains("Item"), "diagnostics: {}", diags);
-    /* #345 replaced the old "escapes the iteration" wording with one
-       that names the destination. An ivar *is* reused each iteration,
-       but its store releases the previous object only after the new one
-       exists, so two are briefly live and one slab slot cannot serve
-       it. */
+    /* #345 replaced the old "escapes the iteration" wording with one that
+       names the destination; #405 narrowed which ivar stores reach it. */
     assert!(diags.contains("an ivar"), "diagnostics: {}", diags);
 }
 

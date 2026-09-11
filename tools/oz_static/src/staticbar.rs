@@ -212,13 +212,27 @@ fn is_owning_receiver_of_owning_send(node: Node, src: &str, program: &Program) -
 /// | destination | reused? | released before next alloc? | slots | run |
 /// | --- | --- | --- | --- | --- |
 /// | managed local | yes | **yes** | 1 | 4/4 objects |
-/// | ivar / global | yes | **no** | **2** | 1/4, then nil |
+/// | ivar / global, store cannot read it | yes | **yes** | 1 | 4/4 objects |
+/// | ivar / global, store reads it | yes | **no** | **2** | 1/4, then nil |
 /// | array element, varying index | **no** | n/a | loop bound | unbounded |
 ///
-/// The ivar overlap is *inherent*, not a defect to fix elsewhere: the new
-/// value has to be evaluated before the old one is released, or
-/// `_ivar = [_ivar retain]` would free a live object. So that shape needs
-/// two slots and the author has to say so.
+/// The ivar overlap was called *inherent* here, on the grounds that the new
+/// value has to be evaluated before the old one is released or
+/// `_ivar = [_ivar retain]` would free a live object. That is true only of a
+/// store that **reads** the ivar. `_ivar = [Thing alloc]` does not, and
+/// `render_strong_local_assign` had been releasing first on exactly that
+/// condition for locals since #234 while the ivar path evaluated the new
+/// value first unconditionally -- so an ivar needed two slots for a store a
+/// local served with one, and an `-init` that allocates into an ivar could
+/// not run twice on its own sizing (#405).
+///
+/// So the arm narrows rather than disappears, and
+/// `overlapping_unless_released_first` asks the emitter which it is. Note
+/// that this is not only an over-rejection being lifted: the refused shape
+/// hoists its temporary through `ctx.pre_stmts`, which a loop lifts out
+/// entirely, so accepting *that* shape would miscompile rather than merely
+/// exhaust. The rejection was load-bearing for one shape and wrong for the
+/// other two.
 ///
 /// The two shapes the old rule conflated, kept from the helper this
 /// replaced:
@@ -298,7 +312,12 @@ impl LoopEscape {
 /// Reaching the enclosing block without passing a store or a `return` is
 /// the confined case: nothing kept the reference, so it dies with the
 /// statement.
-fn loop_escape(node: Node, src: &str, scope: &MethodScope) -> Option<LoopEscape> {
+fn loop_escape(
+    node: Node,
+    src: &str,
+    program: &Program,
+    scope: &MethodScope,
+) -> Option<LoopEscape> {
     let mut cur = node;
     loop {
         let Some(parent) = cur.parent() else {
@@ -330,7 +349,9 @@ fn loop_escape(node: Node, src: &str, scope: &MethodScope) -> Option<LoopEscape>
              * overwritten with the previous released first; both are one
              * slot (measured). */
             "init_declarator" | "declaration" => return None,
-            "assignment_expression" => return assignment_escape(parent, cur, src, scope),
+            "assignment_expression" => {
+                return assignment_escape(parent, cur, src, program, scope)
+            }
             "return_statement" => return Some(LoopEscape::Returned),
             /* Nothing kept it: it dies with the statement. */
             "expression_statement" | "compound_statement" => return None,
@@ -343,12 +364,46 @@ fn loop_escape(node: Node, src: &str, scope: &MethodScope) -> Option<LoopEscape>
     }
 }
 
+/// Does one slab slot serve this store, because the emitter releases the
+/// previous value *before* evaluating the new one?
+///
+/// The bar asks `emit::classify_store` rather than re-deriving the answer,
+/// because the two have to agree exactly: a shape the emitter lowers
+/// release-first needs one slot and must be accepted, and a shape it lowers
+/// with a hoisted temporary needs two *and* has that temporary lifted out
+/// of the loop by `ctx.pre_stmts`. Refusing the first over-rejects; accepting
+/// the second miscompiles. One predicate is the only thing that keeps them
+/// from drifting apart (#405).
+///
+/// Before #405 a strong ivar always evaluated the new value first, so every
+/// store to one was refused here. Two of the three shapes now need no
+/// temporary:
+///
+///   - `LocalStore::Owning` -- a `+1` that does not read the ivar. One slot.
+///   - `LocalStore::BorrowedIdent` -- a plain identifier, named twice safely.
+///   - `LocalStore::Unsupported` -- everything else, `_x = [_x copy]`
+///     included: `+1`, but it reads the ivar, so the new value has to exist
+///     before the old one can go. Still two slots, still refused.
+fn overlapping_unless_released_first(
+    name: &str,
+    value: Node,
+    src: &str,
+    program: &Program,
+    what: &'static str,
+) -> Option<LoopEscape> {
+    match crate::emit::classify_store(name, value, src, program) {
+        crate::emit::LocalStore::Owning | crate::emit::LocalStore::BorrowedIdent => None,
+        crate::emit::LocalStore::Unsupported => Some(LoopEscape::OverlappingStore(what)),
+    }
+}
+
 /// Which slot an assignment keeps the reference in, and whether one slab
 /// slot can serve it.
 fn assignment_escape(
     assignment: Node,
     value: Node,
     src: &str,
+    program: &Program,
     scope: &MethodScope,
 ) -> Option<LoopEscape> {
     let mut c = assignment.walk();
@@ -377,15 +432,29 @@ fn assignment_escape(
                 return Some(LoopEscape::Accumulates("a local ARC does not manage"));
             }
             if scope.class_ivars.contains(name) {
-                return Some(LoopEscape::OverlappingStore("an ivar"));
+                return overlapping_unless_released_first(name, value, src, program, "an ivar");
             }
-            /* A file-scope variable, which ARC manages as a strong slot
-             * the same way an ivar is (#359), so it has the same two-slot
-             * overlap. */
-            Some(LoopEscape::OverlappingStore("a file-scope variable"))
+            /* A file-scope variable, which ARC manages as a strong slot the
+             * same way an ivar is (#359) -- including the release-first
+             * store, since `render_strong_local_assign` is the lowering for
+             * all three kinds of strong slot. */
+            overlapping_unless_released_first(
+                name,
+                value,
+                src,
+                program,
+                "a file-scope variable",
+            )
         }
-        /* `self->_x`, and any other struct-field spelling. */
-        "field_expression" => Some(LoopEscape::OverlappingStore("an ivar")),
+        /* `self->_x`, and any other struct-field spelling. The ivar's own
+         * name is the last identifier in it, which is what the emitter
+         * keys its store on too (`emit::assigned_ivar_name`). */
+        "field_expression" => match find_last_identifier(*lhs, src) {
+            Some(name) => {
+                overlapping_unless_released_first(&name, value, src, program, "an ivar")
+            }
+            None => Some(LoopEscape::OverlappingStore("an ivar")),
+        },
         "subscript_expression" => {
             /* A constant index names the same element every iteration, so
              * it behaves like an ivar; anything else varies, and varying is
@@ -444,7 +513,7 @@ fn walk_for_reject(
                 &program.owning_methods,
             ) && !is_owning_receiver_of_owning_send(node, src, program);
             if creates_plus_one && in_loop {
-                if let Some(escape) = loop_escape(node, src, scope) {
+                if let Some(escape) = loop_escape(node, src, program, scope) {
                     let class_name = node_text(node, src)
                         .trim_start_matches('[')
                         .split_whitespace()
@@ -486,7 +555,7 @@ fn walk_for_reject(
             } else {
                 "a boxed dictionary literal"
             };
-            if let Some(escape) = loop_escape(node, src, scope) {
+            if let Some(escape) = loop_escape(node, src, program, scope) {
                 err(diags, src, node, escape.describe(what));
             }
         }
