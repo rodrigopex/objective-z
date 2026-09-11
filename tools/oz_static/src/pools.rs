@@ -11,6 +11,31 @@
 // however many times it runs, which is why the count is a floor rather
 // than a bound and why `--pool-sizes` exists to override it.
 //
+// Since #410 a site is counted once *per call site of the body it escapes
+// from*. An allocation an owning factory hands back outlives the call, so
+// `+make` called three times needs three slots where the old rule gave
+// one and the second and third calls got nil. A site whose reference dies
+// inside its body still counts once, however often that body runs --
+// `arc::allocation_escapes_via_return` is what tells the two apart, so a
+// helper a factory allocates and drops does not multiply.
+//
+// Two limits of that, both stated here rather than left to be found:
+//
+//   - **An instance send names no callee.** This pass tracks no locals, so
+//     `[obj make]` cannot be resolved to a body and its callee keeps the
+//     pre-#410 floor of one slot. Class-method sends (the receiver is
+//     always statically known) and plain C calls do resolve. The failure
+//     direction is under-counting, which is the old behaviour, not a new
+//     hazard.
+//   - **The floor for an uncalled body is 0 for a class method and 1 for
+//     everything else.** A class method not called here is genuinely not
+//     called; an instance method may arrive through dynamic dispatch and a
+//     C function may be an entry point, so silence there means "unknown"
+//     and must over-count. With a floor of 1 everywhere, `src/OZQ31.m`'s
+//     seventeen uncalled `+fixedWith...` forwarders each claimed a slot
+//     and every program sized OZQ31 at 16 -- `samples/hello_category`
+//     included, which uses no OZQ31 at all.
+//
 // Two differences from the oracle, both because oz_static already decided
 // the question elsewhere:
 //
@@ -71,26 +96,23 @@ impl PoolSizes {
     /// The oracle walks each method/function body AST in turn; walking the
     /// tree once from the root reaches the same sites (every body is under
     /// it) without needing to enumerate the bodies first.
-    pub fn analyze(source: &str, program: &Program) -> Self {
+    pub fn analyze(source: &str, program: &Program) -> (Self, Vec<crate::model::Diagnostic>) {
         let tree = crate::parse::parse(source);
-        let mut counted = HashMap::new();
-        let mut item_slots_counted = 0usize;
-        count_sites(
-            tree.root_node(),
-            source,
-            program,
-            &mut counted,
-            &mut item_slots_counted,
-        );
+        let mut scan = Scan::default();
+        walk_sites(tree.root_node(), source, program, None, None, None, &mut scan);
+        let (counted, item_slots_counted, diagnostics) = scan.resolve(program);
         let directive = parse_pool_directive(source).unwrap_or_default();
-        PoolSizes {
-            counted,
-            directive,
-            cli: HashMap::new(),
-            item_slots_counted,
-            item_slots_directive: parse_item_pool_directive(source),
-            item_slots_cli: None,
-        }
+        (
+            PoolSizes {
+                counted,
+                directive,
+                cli: HashMap::new(),
+                item_slots_counted,
+                item_slots_directive: parse_item_pool_directive(source),
+                item_slots_cli: None,
+            },
+            diagnostics,
+        )
     }
 
     /// Apply `--pool-sizes Class=N,...` overrides on top of the counted
@@ -231,13 +253,102 @@ fn parse_item_pool_directive(source: &str) -> Option<usize> {
     after[..end].trim().parse().ok()
 }
 
-fn count_sites(
+/// The method or plain C function an allocation site -- or a call -- sits
+/// in. Sizing needs the enclosing body's *identity*, not just its text,
+/// because an allocation that escapes costs one slot per call site of
+/// whatever it escapes from (#410).
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+enum Owner {
+    Method(String, String),
+    Function(String),
+}
+
+impl Owner {
+    fn describe(&self) -> String {
+        match self {
+            Owner::Method(class, selector) => format!("[{} {}]", class, selector),
+            Owner::Function(name) => format!("{}()", name),
+        }
+    }
+}
+
+struct AllocSite {
+    class: String,
+    /// `None` for a site outside any body this pass recognises; it is
+    /// counted once, exactly as every site was before #410.
+    owner: Option<Owner>,
+    /// Does the reference leave its enclosing body through a `return`?
+    /// Only then does the site cost one slot per call site.
+    escapes: bool,
+}
+
+#[derive(Default)]
+struct Scan {
+    sites: Vec<AllocSite>,
+    /// Callee -> the owner each of its resolvable call sites sits in.
+    /// `None` for a call outside any recognised body.
+    callers: HashMap<Owner, Vec<Option<Owner>>>,
+    item_slots: usize,
+}
+
+/// One walk, collecting allocation sites with their enclosing body and the
+/// call edges between bodies.
+///
+/// `body` is the enclosing `compound_statement`, carried because
+/// `arc::allocation_escapes_via_return` needs the whole body to follow a
+/// returned name back to its declaration.
+fn walk_sites(
     node: Node,
     src: &str,
     program: &Program,
-    counts: &mut HashMap<String, usize>,
-    item_slots: &mut usize,
+    class: Option<&str>,
+    owner: Option<&Owner>,
+    body: Option<Node>,
+    scan: &mut Scan,
 ) {
+    /* Descend into a new owner where one starts, so every site below it is
+     * attributed to it rather than to whatever enclosed the class. */
+    match node.kind() {
+        "class_implementation" => {
+            let (name, _, _) = crate::collect::class_header(node, src);
+            if !name.is_empty() {
+                let mut cursor = node.walk();
+                let children: Vec<Node> = node.children(&mut cursor).collect();
+                for child in children {
+                    walk_sites(child, src, program, Some(&name), owner, body, scan);
+                }
+                return;
+            }
+        }
+        "method_definition" => {
+            if let Some(class_name) = class {
+                let known = program.classes.keys().cloned().collect();
+                let sig = crate::collect::extract_method_sig(node, src, class_name, &known);
+                let this = Owner::Method(class_name.to_string(), sig.selector);
+                let mut cursor = node.walk();
+                let children: Vec<Node> = node.children(&mut cursor).collect();
+                let this_body = children.iter().find(|c| c.kind() == "compound_statement").copied();
+                for child in children {
+                    walk_sites(child, src, program, class, Some(&this), this_body, scan);
+                }
+                return;
+            }
+        }
+        "function_definition" => {
+            if let Some(name) = crate::arc::function_name(node, src) {
+                let this = Owner::Function(name);
+                let mut cursor = node.walk();
+                let children: Vec<Node> = node.children(&mut cursor).collect();
+                let this_body = children.iter().find(|c| c.kind() == "compound_statement").copied();
+                for child in children {
+                    walk_sites(child, src, program, class, Some(&this), this_body, scan);
+                }
+                return;
+            }
+        }
+        _ => {}
+    }
+
     let allocated = match node.kind() {
         "message_expression" => alloc_receiver_class(node, src, program),
         // The desugars these drive allocate through the same per-class
@@ -251,13 +362,29 @@ fn count_sites(
         _ => None,
     };
     if let Some(name) = allocated {
-        *counts.entry(name).or_insert(0) += 1;
+        let escapes = body
+            .is_some_and(|b| crate::arc::allocation_escapes_via_return(node, b, src));
+        scan.sites.push(AllocSite { class: name, owner: owner.cloned(), escapes });
+    } else if node.kind() == "message_expression" {
+        /* A call edge, for the multiplicity of whatever it calls. Only a
+         * class-method send with a literal class receiver is resolvable
+         * here: pools tracks no locals, so `[obj make]` names no callee.
+         * That under-counts rather than over-counts -- such a site keeps
+         * the pre-#410 floor of one slot -- and is stated in the module
+         * header rather than left to be discovered. */
+        if let Some(callee) = class_method_callee(node, src, program) {
+            scan.callers.entry(callee).or_default().push(owner.cloned());
+        }
+    } else if node.kind() == "call_expression" {
+        if let Some(callee) = c_function_callee(node, src) {
+            scan.callers.entry(callee).or_default().push(owner.cloned());
+        }
     }
     // Element slots, on top of the one object slot counted above. The
     // element counts must agree with what `emit::render_boxed_array_literal`
     // and `render_boxed_dictionary_literal` actually pass as `count`, so
     // both use the same child filters those do.
-    *item_slots += match node.kind() {
+    scan.item_slots += match node.kind() {
         "array_literal" => array_element_count(node),
         // Keys and values share one contiguous run of `2 * pairs` slots
         // (`companion::render_dict_support` points `_keys` at the first
@@ -268,7 +395,152 @@ fn count_sites(
     let mut cursor = node.walk();
     let children: Vec<Node> = node.children(&mut cursor).collect();
     for child in children {
-        count_sites(child, src, program, counts, item_slots);
+        walk_sites(child, src, program, class, owner, body, scan);
+    }
+}
+
+/// `[ClassName selector]` where the class declares that class method --
+/// the only send whose callee pools can name without tracking types.
+fn class_method_callee(node: Node, src: &str, program: &Program) -> Option<Owner> {
+    let mut cursor = node.walk();
+    let children: Vec<Node> =
+        node.children(&mut cursor).filter(|c| c.kind() != "[" && c.kind() != "]").collect();
+    if children.len() < 2 {
+        return None;
+    }
+    let receiver = &src[children[0].byte_range()];
+    if !program.is_class(receiver) {
+        return None;
+    }
+    let selector = crate::staticbar::message_selector(node, src);
+    if selector.is_empty() {
+        return None;
+    }
+    Some(Owner::Method(receiver.to_string(), selector))
+}
+
+/// `f(...)` where `f` is a plain identifier.
+fn c_function_callee(node: Node, src: &str) -> Option<Owner> {
+    let mut cursor = node.walk();
+    let callee = node.children(&mut cursor).next()?;
+    if callee.kind() != "identifier" {
+        return None;
+    }
+    Some(Owner::Function(src[callee.byte_range()].to_string()))
+}
+
+/// Is this owner a `+` method? Only then is "nothing calls it in this
+/// unit" a fact rather than an absence of evidence.
+fn is_class_method(owner: &Owner, program: &Program) -> bool {
+    let Owner::Method(class, selector) = owner else {
+        return false;
+    };
+    program.classes.get(class).is_some_and(|info| {
+        info.methods.iter().any(|m| m.selector == *selector && m.is_class_method)
+    })
+}
+
+/// How many times this body runs, counted as **static call sites** rather
+/// than executions -- transitively, so a factory called twice from a
+/// factory called once costs two.
+///
+/// A body nothing in the unit calls counts 1: `main`, an entry point, a
+/// method reached only by dynamic dispatch. That is the floor the whole
+/// pass has always been, not a claim that it runs once.
+fn multiplicity(
+    owner: &Owner,
+    callers: &HashMap<Owner, Vec<Option<Owner>>>,
+    program: &Program,
+    memo: &mut HashMap<Owner, usize>,
+    stack: &mut Vec<Owner>,
+) -> Result<usize, Vec<Owner>> {
+    if let Some(seen) = memo.get(owner) {
+        return Ok(*seen);
+    }
+    if stack.contains(owner) {
+        /* A cycle has no finite answer, and guessing one would size a pool
+         * that cannot be right. Hard error, consistent with the rule that
+         * this backend never silently degrades. */
+        let mut cycle = stack.clone();
+        cycle.push(owner.clone());
+        return Err(cycle);
+    }
+    stack.push(owner.clone());
+    /* A body with no resolvable call site in this unit. For a **class
+     * method** that means it is not called here at all, and 0 is the
+     * truthful answer: a class-method receiver is always statically known
+     * (see `alloc_receiver_class`), so there is no dispatch this pass
+     * cannot see. Counting 1 instead is what made every program pay for
+     * `src/OZQ31.m`'s seventeen `+fixedWith...` forwarders -- each
+     * uncalled, each contributing a slot, so `hello_category` sized
+     * OZQ31 at 16 while using no OZQ31 at all.
+     *
+     * Everything else keeps the floor of 1, and the asymmetry is the
+     * point: an instance method can arrive through dynamic dispatch and a
+     * C function can be an entry point, so "no caller here" does not mean
+     * "never runs". Sizing has to over-count there, because the failure
+     * mode of under-counting is a nil from an exhausted slab. */
+    let floor = if is_class_method(owner, program) { 0 } else { 1 };
+    let total = match callers.get(owner) {
+        None => floor,
+        Some(sites) if sites.is_empty() => floor,
+        Some(sites) => {
+            let mut sum = 0usize;
+            for site in sites {
+                sum += match site {
+                    None => 1,
+                    Some(caller) => multiplicity(caller, callers, program, memo, stack)?,
+                };
+            }
+            sum
+        }
+    };
+    stack.pop();
+    memo.insert(owner.clone(), total);
+    Ok(total)
+}
+
+impl Scan {
+    /// Turn sites and call edges into per-class slot counts.
+    fn resolve(
+        self,
+        program: &Program,
+    ) -> (HashMap<String, usize>, usize, Vec<crate::model::Diagnostic>) {
+        let mut counts: HashMap<String, usize> = HashMap::new();
+        let mut diagnostics = Vec::new();
+        let mut memo = HashMap::new();
+        for site in &self.sites {
+            let slots = match (&site.owner, site.escapes) {
+                (Some(owner), true) => {
+                    let mut stack = Vec::new();
+                    match multiplicity(owner, &self.callers, program, &mut memo, &mut stack) {
+                        Ok(n) => n,
+                        Err(cycle) => {
+                            let path = cycle
+                                .iter()
+                                .map(Owner::describe)
+                                .collect::<Vec<_>>()
+                                .join(" -> ");
+                            diagnostics.push(crate::model::Diagnostic::new(
+                                format!(
+                                    "cannot size the '{}' slab: the allocation escapes through a \
+                                     call cycle ({}), so the number of live instances has no \
+                                     static answer. Size it explicitly with a \
+                                     `/* oz-pool: {}=N */` directive or --pool-sizes {}=N",
+                                    site.class, path, site.class, site.class
+                                ),
+                                1,
+                                1,
+                            ));
+                            1
+                        }
+                    }
+                }
+                _ => 1,
+            };
+            *counts.entry(site.class.clone()).or_insert(0) += slots;
+        }
+        (counts, self.item_slots, diagnostics)
     }
 }
 
