@@ -738,7 +738,18 @@ pub(crate) fn managed_object_locals(
             // strip, and `is_class` is the authority on whether the name is
             // a class at all rather than a plain C struct.
             let (type_text, stars) = crate::collect::extract_type_and_stars(node, src);
-            let is_object = stars == 1 && program.is_class(type_text.trim());
+            let bare = type_text.trim();
+            // `id` is the one object spelling that carries no `*` in
+            // source -- it is already a pointer -- so a `stars == 1` test
+            // cannot see it, and an `id` local holding a `+1` was
+            // therefore never managed and never released (#400). The rule
+            // was already written down elsewhere in this file: the
+            // dynamic-dispatch return check reads
+            // `class_name_from_type(ty).is_some() || ty.trim() == "id"`.
+            // `stars == 0` matters -- `id *p` is a pointer *to* an object
+            // reference, not one.
+            let is_object =
+                (stars == 1 && program.is_class(bare)) || (stars == 0 && bare == "id");
             if is_object && !node_text(node, src).contains("__unsafe_unretained") {
                 let mut cursor = node.walk();
                 for child in node.children(&mut cursor) {
