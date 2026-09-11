@@ -392,7 +392,7 @@ fn release_checks_immortal_before_decrementing() {
     );
 }
 
-/// A singleton is immortal too (#228). `OZSingleton+Protocol.h` states the
+/// A singleton is immortal too (#228). `OZSingletonProtocol.h` states the
 /// contract -- "Singleton objects are immortal, they are never deallocated"
 /// -- but until now nothing marked them, so it held only because no code
 /// happened to release one. Releasing one must not run `-dealloc`, and must

@@ -1,5 +1,5 @@
 /**
- * @file OZIterator+Protocol.h
+ * @file OZIteratorProtocol.h
  * @brief Protocol for OZ collections a for-in loop can walk.
  *
  * A class conforming to OZIteratorProtocol answers -iter with a cursor

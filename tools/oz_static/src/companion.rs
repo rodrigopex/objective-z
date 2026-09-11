@@ -23,7 +23,7 @@
 use crate::model::Program;
 
 /// The protocol that declares a class's instances immortal
-/// (`include/oz_sdk/Foundation/OZSingleton+Protocol.h`). Conformance is the
+/// (`include/oz_sdk/Foundation/OZSingletonProtocol.h`). Conformance is the
 /// signal, rather than a heuristic on the `+sharedInstance` shape: every
 /// singleton in the repository declares it, and a wrong guess here would mark
 /// an ordinary object immortal, which never gets its slab slot back.

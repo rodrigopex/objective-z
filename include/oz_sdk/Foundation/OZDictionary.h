@@ -7,7 +7,7 @@
  */
 #pragma once
 #import "OZObject.h"
-#import "OZIterator+Protocol.h"
+#import "OZIteratorProtocol.h"
 
 struct NSFastEnumerationState;
 
