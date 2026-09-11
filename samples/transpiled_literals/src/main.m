@@ -13,12 +13,12 @@ int main(void)
 	OZLog("=== ObjC Literals Demo ===");
 
 	/* Q31 fixed point numbers literals */
-	OZQ31 *a = @10;
-	OZQ31 *b = @25002031;
-	OZLog("a = %@, b = %@, a + b = %@", a, b, [a add:b]);
-	OZLog("a = %@, b = %@, a - b = %@", a, b, [a sub:b]);
-	OZLog("a = %@, b = %@, a * b = %@", a, b, [a mul:b]);
-	OZLog("a = %@, b = %@, a / b = %.14@", a, b, [a div:b]);
+	OZNumber *a = @10;
+	OZNumber *b = @25002031;
+	OZLog("a = %@, b = %@, a + b = %@", a, b, [a adding:b]);
+	OZLog("a = %@, b = %@, a - b = %@", a, b, [a subtracting:b]);
+	OZLog("a = %@, b = %@, a * b = %@", a, b, [a multiplyingBy:b]);
+	OZLog("a = %@, b = %@, a / b = %.14@", a, b, [a dividingBy:b]);
 
 	/* String literals */
 	OZString *greeting = @"hello";

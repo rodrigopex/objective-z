@@ -23,7 +23,7 @@
 // the check had been deleted outright.
 
 mod common;
-use common::{compile_and_run, expect_reject, ozarray_src, ozobject_src, ozq31_src};
+use common::{compile_and_run, expect_reject, ozarray_src, ozobject_src, oznumber_src};
 
 fn transpiles(src: &str) -> bool {
     oz_static::transpile(src).is_ok()
@@ -135,7 +135,7 @@ fn generic_constraint_checked_on_bare_declaration() {
     let base = format!(
         "{}{}{}\n@interface Widget : OZObject\n@end\n@implementation Widget\n@end\n",
         ozobject_src(),
-        ozq31_src(),
+        oznumber_src(),
         ozarray_src()
     );
     let bare = format!(
@@ -168,10 +168,10 @@ fn generic_constraint_checked_on_bare_declaration() {
 fn matching_generic_constraint_on_bare_declaration_accepted() {
     let src = format!(
         "{}{}{}\n@interface Runner : OZObject\n- (void)run;\n@end\n@implementation Runner\n\
-         - (void)run {{\n\tOZArray<OZQ31 *> *a;\n\ta = @[@(1)];\n\t(void)a;\n}}\n@end\n\
+         - (void)run {{\n\tOZArray<OZNumber *> *a;\n\ta = @[@(1)];\n\t(void)a;\n}}\n@end\n\
          int main(void) {{ return 0; }}\n",
         ozobject_src(),
-        ozq31_src(),
+        oznumber_src(),
         ozarray_src()
     );
     assert!(transpiles(&src), "a satisfied constraint must stay accepted");

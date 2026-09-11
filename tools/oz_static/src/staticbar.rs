@@ -588,7 +588,7 @@ fn walk_for_reject(
         // `@protocol(Foo)` -- as a single generic `at_expression` node
         // (there is no dedicated `boxed_expression` or `protocol_expression`
         // node kind in this grammar version). A numeric/boolean-shaped one
-        // (see `emit::is_numeric_boxed_shape`) desugars to an OZQ31 class-
+        // (see `emit::is_numeric_boxed_shape`) desugars to an OZNumber class-
         // method call, handled in `emit.rs`; a `@protocol(Name)`-shaped one
         // (see `emit::is_protocol_literal_shape`) gets its own message
         // below; anything else (a boxed call expression, etc.) has no
@@ -618,7 +618,7 @@ fn walk_for_reject(
                 diags,
                 src,
                 node,
-                "this '@'-boxed expression is not in the static subset's accepted construct set (only a numeric/boolean literal like '@42', '@3.5f', or '@YES' desugars to an OZQ31 class-method call)",
+                "this '@'-boxed expression is not in the static subset's accepted construct set (only a numeric/boolean literal like '@42', '@3.5f', or '@YES' desugars to an OZNumber class-method call)",
             );
             return;
         }

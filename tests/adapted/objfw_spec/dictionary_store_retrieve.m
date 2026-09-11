@@ -4,7 +4,7 @@
  * This test is ORIGINAL CODE — no ObjFW code was copied.
  * Pattern: OZDictionary store and retrieve by key.
  */
-/* oz-pool: OZObject=1,OZString=3,OZQ31=1,OZDictionary=1,DictTest=1 */
+/* oz-pool: OZObject=1,OZString=3,OZNumber=1,OZDictionary=1,DictTest=1 */
 #import "OZFoundationBase.h"
 
 @interface DictTest : OZObject {
@@ -22,7 +22,7 @@
 - (void)run {
 	OZDictionary *d = @{@"key" : @(42)};
 	_count = [d count];
-	OZQ31 *val = [d objectForKey:@"key"];
+	OZNumber *val = [d objectForKey:@"key"];
 	_storedVal = [val intValue];
 	id missing = [d objectForKey:@"nope"];
 	_missingNil = (missing == nil);

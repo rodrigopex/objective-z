@@ -1,11 +1,11 @@
 /*
- * Behavior test: OZQ31 integer-only getDescription and division.
+ * Behavior test: OZNumber integer-only getDescription and division.
  * Tests _oz_q31_to_str (spec, boundary, coverage) and _oz_q31_div via ObjC.
  */
 #include "unity.h"
 #include "oz_dispatch.h"
 #include "Q31NoStdio_ozh.h"
-#include "OZQ31_ozh.h"
+#include "OZNumber_ozh.h"
 #include <string.h>
 #include <limits.h>
 

@@ -20,13 +20,13 @@
 //
 // The abort asymmetry is what made a dictionary literal abort on release
 // while an array literal released cleanly: dictionary *keys* here are string
-// literals, whereas `@[ @10, @20 ]`'s elements are heap-allocated OZQ31
+// literals, whereas `@[ @10, @20 ]`'s elements are heap-allocated OZNumber
 // boxes.
 
 mod common;
 use common::{
     compile_and_run, iterator_protocol_src, ozarray_src, ozdictionary_src, ozobject_src,
-    ozq31_src, ozstring_src, singleton_protocol_src,
+    oznumber_src, ozstring_src, singleton_protocol_src,
 };
 
 /// A class conforming to `OZSingletonProtocol`, in the shape the three real
@@ -92,7 +92,7 @@ fn releasing_dictionary_literal_with_string_keys_does_not_abort() {
         "{}{}{}{}{}\n{}",
         ozobject_src(),
         iterator_protocol_src(),
-        ozq31_src(),
+        oznumber_src(),
         ozstring_src(),
         ozdictionary_src(),
         "\
@@ -116,7 +116,7 @@ fn releasing_array_of_string_literals_does_not_abort() {
         "{}{}{}{}{}\n{}",
         ozobject_src(),
         iterator_protocol_src(),
-        ozq31_src(),
+        oznumber_src(),
         ozstring_src(),
         ozarray_src(),
         "\

@@ -7,7 +7,7 @@
 // (tools/oz_transpile/emit.py): one slot per *allocation site*, not per
 // execution, counting explicit `[ClassName alloc]` sends plus the
 // implicit allocations the literal desugars perform (`@[...]` -> OZArray,
-// `@{...}` -> OZDictionary, `@42` -> OZQ31). A site is counted once
+// `@{...}` -> OZDictionary, `@42` -> OZNumber). A site is counted once
 // however many times it runs, which is why the count is a floor rather
 // than a bound and why `--pool-sizes` exists to override it.
 //
@@ -31,10 +31,10 @@
 //     everything else.** A class method not called here is genuinely not
 //     called; an instance method may arrive through dynamic dispatch and a
 //     C function may be an entry point, so silence there means "unknown"
-//     and must over-count. With a floor of 1 everywhere, `src/OZQ31.m`'s
+//     and must over-count. With a floor of 1 everywhere, `src/OZNumber.m`'s
 //     seventeen uncalled `+fixedWith...` forwarders each claimed a slot
-//     and every program sized OZQ31 at 16 -- `samples/hello_category`
-//     included, which uses no OZQ31 at all.
+//     and every program sized OZNumber at 16 -- `samples/hello_category`
+//     included, which uses no OZNumber at all.
 //
 // Two differences from the oracle, both because oz_static already decided
 // the question elsewhere:
@@ -357,7 +357,7 @@ fn walk_sites(
         "array_literal" => Some("OZArray".to_string()),
         "dictionary_literal" => Some("OZDictionary".to_string()),
         "at_expression" if crate::emit::is_numeric_boxed_shape(node, src) => {
-            Some("OZQ31".to_string())
+            Some("OZNumber".to_string())
         }
         _ => None,
     };
@@ -471,9 +471,9 @@ fn multiplicity(
      * truthful answer: a class-method receiver is always statically known
      * (see `alloc_receiver_class`), so there is no dispatch this pass
      * cannot see. Counting 1 instead is what made every program pay for
-     * `src/OZQ31.m`'s seventeen `+fixedWith...` forwarders -- each
+     * `src/OZNumber.m`'s seventeen `+fixedWith...` forwarders -- each
      * uncalled, each contributing a slot, so `hello_category` sized
-     * OZQ31 at 16 while using no OZQ31 at all.
+     * OZNumber at 16 while using no OZNumber at all.
      *
      * Everything else keeps the floor of 1, and the asymmetry is the
      * point: an instance method can arrive through dynamic dispatch and a

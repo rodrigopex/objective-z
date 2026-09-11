@@ -2,18 +2,18 @@
  * Adapted from: clang/test/Rewriter/objc-modern-boxing.mm,
  *               objc-modern-numeric-literal.mm
  * License: Apache 2.0 with LLVM Exception
- * Adaptation: Verifies @42, @(expr) lower to OZQ31 factory calls.
+ * Adaptation: Verifies @42, @(expr) lower to OZNumber factory calls.
  */
 #import "OZTestBase.h"
-#import <Foundation/OZQ31.h>
+#import <Foundation/OZNumber.h>
 
 @interface BoxingObj : OZObject {
-	OZQ31 *_literal;
-	OZQ31 *_expr;
+	OZNumber *_literal;
+	OZNumber *_expr;
 }
 - (void)run;
-- (OZQ31 *)literal;
-- (OZQ31 *)expr;
+- (OZNumber *)literal;
+- (OZNumber *)expr;
 @end
 
 @implementation BoxingObj
@@ -22,6 +22,6 @@
 	int x = 10;
 	_expr = @(x + 5);
 }
-- (OZQ31 *)literal { return _literal; }
-- (OZQ31 *)expr { return _expr; }
+- (OZNumber *)literal { return _literal; }
+- (OZNumber *)expr { return _expr; }
 @end

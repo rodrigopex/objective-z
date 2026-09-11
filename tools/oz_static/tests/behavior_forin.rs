@@ -17,7 +17,7 @@
 // mean what they need to.
 //
 // Uses the real `OZObject` (`common::ozobject_src`) as the root class,
-// `OZQ31`/`OZString` (`common::ozq31_src`/`common::ozstring_src`) for
+// `OZNumber`/`OZString` (`common::oznumber_src`/`common::ozstring_src`) for
 // the boxed elements, `OZArray` (`common::ozarray_src`) as the
 // collection, and `OZIteratorProtocol` (`common::iterator_protocol_src`)
 // -- declaring it (not formal `<OZIteratorProtocol>` conformance) is what
@@ -25,12 +25,12 @@
 
 mod common;
 use common::{
-    compile_and_run, iterator_protocol_src, ozarray_src, ozobject_src as PREAMBLE, ozq31_src, ozstring_src,
+    compile_and_run, iterator_protocol_src, ozarray_src, ozobject_src as PREAMBLE, oznumber_src, ozstring_src,
 };
 
 #[test]
 fn basic_array_sums_elements() {
-    // basic_array.m: sums every OZQ31 element of a 3-item literal via
+    // basic_array.m: sums every OZNumber element of a 3-item literal via
     // for-in.
     let src = format!(
         "{}{}{}{}\n\
@@ -45,7 +45,7 @@ fn basic_array_sums_elements() {
 - (void)sumArray {{
 	OZArray *arr = @[@(10), @(20), @(30)];
 	_sum = 0;
-	for (OZQ31 *n in arr) {{
+	for (OZNumber *n in arr) {{
 		_sum = _sum + [n intValue];
 	}}
 }}
@@ -64,7 +64,7 @@ int main(void) {{
 ",
         PREAMBLE(),
         iterator_protocol_src(),
-        ozq31_src(),
+        oznumber_src(),
         ozarray_src()
     );
     let stdout = compile_and_run(&src, "basic_array_sums_elements");
@@ -90,7 +90,7 @@ fn break_in_forin_stops_early() {
 - (void)breakAtThreshold {{
 	OZArray *arr = @[@(1), @(2), @(3), @(4)];
 	_stoppedAt = 0;
-	for (OZQ31 *n in arr) {{
+	for (OZNumber *n in arr) {{
 		int v = [n intValue];
 		if (v == 3) {{
 			break;
@@ -113,7 +113,7 @@ int main(void) {{
 ",
         PREAMBLE(),
         iterator_protocol_src(),
-        ozq31_src(),
+        oznumber_src(),
         ozarray_src()
     );
     let stdout = compile_and_run(&src, "break_in_forin_stops_early");
@@ -139,8 +139,8 @@ fn nested_forin_computes_correctly() {
 	OZArray *outer = @[@(1), @(2)];
 	OZArray *inner = @[@(10), @(20)];
 	_total = 0;
-	for (OZQ31 *a in outer) {{
-		for (OZQ31 *b in inner) {{
+	for (OZNumber *a in outer) {{
+		for (OZNumber *b in inner) {{
 			_total = _total + [a intValue] + [b intValue];
 		}}
 	}}
@@ -160,7 +160,7 @@ int main(void) {{
 ",
         PREAMBLE(),
         iterator_protocol_src(),
-        ozq31_src(),
+        oznumber_src(),
         ozarray_src()
     );
     let stdout = compile_and_run(&src, "nested_forin_computes_correctly");
@@ -171,7 +171,7 @@ int main(void) {{
 fn typed_var_iterates_ozstring() {
     // typed_var.m: for-in with a non-numeric element type (OZString *)
     // -- proves the loop variable's declared type isn't special-cased
-    // to OZQ31.
+    // to OZNumber.
     let src = format!(
         "{}{}{}{}\n\
 @interface TypedIterTest : OZObject {{

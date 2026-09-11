@@ -113,7 +113,7 @@ int main(void)
 	__block int sum = 0;
 
 	/* for-in lowered to iterator protocol */
-	for (OZQ31 *n in [sensor samples]) {
+	for (OZNumber *n in [sensor samples]) {
 		sum += [n intValue];
 	}
 
@@ -122,7 +122,7 @@ int main(void)
 	size_t count = [samples count];
 	for (size_t idx = 0; idx < count; idx++) {
 		id sample = [samples objectAtIndex:idx];
-		sum += [(OZQ31 *)sample intValue];
+		sum += [(OZNumber *)sample intValue];
 	}
 
 	printk("Sensor sum: %d\n", sum);
@@ -131,7 +131,7 @@ int main(void)
 	OZDictionary *dict = @{ @"a" : @10, @"b" : @20, @"c" : @30 };
 	__block int dict_sum = 0;
 	for (OZString *key in dict) {
-		OZQ31 *val = [dict objectForKey:key];
+		OZNumber *val = [dict objectForKey:key];
 		dict_sum += [val intValue];
 	}
 	printk("Dict sum: %d\n", dict_sum);

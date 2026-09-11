@@ -19,7 +19,7 @@
 
 mod common;
 use common::{
-    compile_and_run, expect_reject, ozarray_src, ozobject_src as PREAMBLE, ozq31_src,
+    compile_and_run, expect_reject, ozarray_src, ozobject_src as PREAMBLE, oznumber_src,
 };
 
 /// A local reassigned in a loop needs exactly one slab slot, because the
@@ -373,9 +373,9 @@ int main(void) { return 0; }
 #[test]
 fn reassigned_literal_needs_only_one_slot_and_one_buffer() {
     let src = format!(
-        "/* oz-pool: OZArray=1, OZQ31=2 */\n/* oz-item-pool: 2 */\n{}{}{}{}",
+        "/* oz-pool: OZArray=1, OZNumber=2 */\n/* oz-item-pool: 2 */\n{}{}{}{}",
         PREAMBLE(),
-        ozq31_src(),
+        oznumber_src(),
         ozarray_src(),
         "\
 @interface Runner : OZObject

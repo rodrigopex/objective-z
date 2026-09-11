@@ -13,7 +13,7 @@
 // codebase's other hard-rejected constructs.
 
 mod common;
-use common::{compile_and_run, iterator_protocol_src, ozarray_src, ozobject_src as PREAMBLE, ozq31_src};
+use common::{compile_and_run, iterator_protocol_src, ozarray_src, ozobject_src as PREAMBLE, oznumber_src};
 
 #[test]
 fn real_ozarray_enumeration_index_getter_reads_after_iteration() {
@@ -35,7 +35,7 @@ int main(void) {{
 ",
         PREAMBLE(),
         iterator_protocol_src(),
-        ozq31_src(),
+        oznumber_src(),
         ozarray_src()
     );
     let stdout = compile_and_run(&src, "real_ozarray_enumeration_index_getter_reads_after_iteration");

@@ -220,10 +220,10 @@ fn slab_lines(source_c: &str) -> String {
 /// silence means "unknown" and has to keep the floor of one -- the
 /// failure mode of guessing low is a nil from an exhausted slab.
 ///
-/// Measured against `src/OZQ31.m`, which is what found this: it has
+/// Measured against `src/OZNumber.m`, which is what found this: it has
 /// seventeen `+fixedWith...` forwarders that allocate nothing and are
 /// uncalled in most programs. Giving each of them a floor of one sized
-/// OZQ31 at 16 in `samples/hello_category`, which uses no OZQ31 at all.
+/// OZNumber at 16 in `samples/hello_category`, which uses no OZNumber at all.
 #[test]
 fn an_uncalled_class_method_contributes_no_slot() {
 	let src = format!(

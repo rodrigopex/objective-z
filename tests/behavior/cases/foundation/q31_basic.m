@@ -1,4 +1,4 @@
-/* oz-pool: OZObject=1,OZQ31=16 */
+/* oz-pool: OZObject=1,OZNumber=16 */
 #import "OZFoundationBase.h"
 
 @interface FPTest : OZObject
@@ -25,88 +25,88 @@
 @implementation FPTest
 
 - (int)intFromLiteral {
-	OZQ31 *n = @42;
+	OZNumber *n = @42;
 	int v = [n intValue];
 	return v;
 }
 
 - (float)floatFromLiteral {
-	OZQ31 *n = @(3.5f);
+	OZNumber *n = @(3.5f);
 	float v = [n floatValue];
 	return v;
 }
 
 - (int)intFromExpr {
 	int x = 7;
-	OZQ31 *n = @(x + 3);
+	OZNumber *n = @(x + 3);
 	int v = [n int32Value];
 	return v;
 }
 
 - (int)int8Roundtrip {
-	OZQ31 *n = @(100);
+	OZNumber *n = @(100);
 	int v = [n int8Value];
 	return v;
 }
 
 - (int)uint16Roundtrip {
-	OZQ31 *n = @(1000);
-	int v = [n uint16Value];
+	OZNumber *n = @(1000);
+	int v = [n unsignedInt16Value];
 	return v;
 }
 
 - (int)boolTrue {
-	OZQ31 *n = @(42);
+	OZNumber *n = @(42);
 	int v = [n boolValue];
 	return v;
 }
 
 - (int)boolFalse {
-	OZQ31 *n = @(0);
+	OZNumber *n = @(0);
 	int v = [n boolValue];
 	return v;
 }
 
 - (int)rawNonZero {
-	OZQ31 *n = @(5);
+	OZNumber *n = @(5);
 	int v = [n rawValue] != 0;
 	return v;
 }
 
 - (int)shiftForTen {
-	OZQ31 *n = @(10);
+	OZNumber *n = @(10);
 	int v = [n shift];
 	return v;
 }
 
 - (int)addResult {
-	OZQ31 *a = @(10);
-	OZQ31 *b = @(20);
-	OZQ31 *c = [a add:b];
+	OZNumber *a = @(10);
+	OZNumber *b = @(20);
+	OZNumber *c = [a adding:b];
 	int v = [c int32Value];
 	return v;
 }
 
 - (int)subResult {
-	OZQ31 *a = @(50);
-	OZQ31 *b = @(20);
-	OZQ31 *c = [a sub:b];
+	OZNumber *a = @(50);
+	OZNumber *b = @(20);
+	OZNumber *c = [a subtracting:b];
 	int v = [c int32Value];
 	return v;
 }
 
 - (int)mulResult {
-	OZQ31 *a = @(6);
-	OZQ31 *b = @(7);
-	OZQ31 *c = [a mul:b];
+	OZNumber *a = @(6);
+	OZNumber *b = @(7);
+	OZNumber *c = [a multiplyingBy:b];
 	int v = [c int32Value];
 	return v;
 }
 
 - (float)divResult {
-	OZQ31 *a = @(10);
-	OZQ31 *b = @(4);
-	OZQ31 *c = [a div:b];
+	OZNumber *a = @(10);
+	OZNumber *b = @(4);
+	OZNumber *c = [a dividingBy:b];
 	float v = [c floatValue];
 	return v;
 }

@@ -7,7 +7,7 @@
 // Uses the real `OZObject` (`common::ozobject_src`) as the root class.
 // OZString itself is transplanted from the real `src/OZString.m` (see
 // `common::ozstring_src`). The interesting part isn't the class -- it's
-// how `@"..."` boxes: unlike OZQ31 (a class-method call), the real
+// how `@"..."` boxes: unlike OZNumber (a class-method call), the real
 // pipeline (`tools/oz_transpile/emit.py`'s `ObjCStringLiteral` handling)
 // desugars a boxed string literal directly to a static, immortal `struct
 // OZString` instance -- no `alloc`/`init` at all, since every ivar

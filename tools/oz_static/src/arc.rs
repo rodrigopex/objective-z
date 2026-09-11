@@ -1013,7 +1013,7 @@ pub fn is_owning_expr(
     owning: &OwningMethods,
 ) -> bool {
     match node.kind() {
-        // `@42` / `@3.5f` allocate an OZQ31; `@[...]`/`@{...}` allocate the
+        // `@42` / `@3.5f` allocate an OZNumber; `@[...]`/`@{...}` allocate the
         // collection. A `@"..."` literal is a static, so releasing it is a
         // guarded no-op (see `emit::render_boxed_string_literal`) -- counting
         // it as owning keeps the rule uniform and costs nothing.
@@ -1622,8 +1622,8 @@ fn message_target(node: Node, src: &str, program: &Program) -> (Option<String>, 
     // A variable receiver, resolved from its *declaration* rather than
     // guessed. Left unresolved, an owning instance method called on a
     // variable hands back +1 that nothing releases: `[a sub:b]` in
-    // `foundation/q31_basic` leaked an OZQ31 on every call, because
-    // `OZQ31 *a` is not a class name and the send therefore looked
+    // `foundation/q31_basic` leaked an OZNumber on every call, because
+    // `OZNumber *a` is not a class name and the send therefore looked
     // borrowed however owning `-sub:` was known to be. Found by running the
     // corpus under LeakSanitizer through this backend for the first time.
     //

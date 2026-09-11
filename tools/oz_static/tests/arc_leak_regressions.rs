@@ -86,7 +86,7 @@ int main(void) {
 ///
 /// `arc::message_target` resolved only a class-name receiver, so
 /// `[a sub:b]` looked borrowed however owning `-sub:` was known to be --
-/// `OZQ31 *a` is not a class name. `foundation/q31_basic` leaked an OZQ31
+/// `OZNumber *a` is not a class name. `foundation/q31_basic` leaked an OZNumber
 /// per call on that path.
 ///
 /// Resolution is exact rather than inferred, which matters because widening

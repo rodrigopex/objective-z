@@ -1,4 +1,4 @@
-/* oz-pool: OZObject=1,OZQ31=3,OZArray=1,ArrayAccessTest=1 */
+/* oz-pool: OZObject=1,OZNumber=3,OZArray=1,ArrayAccessTest=1 */
 #import "OZFoundationBase.h"
 
 @interface ArrayAccessTest : OZObject {
@@ -14,7 +14,7 @@
 - (void)run {
 	OZArray *arr = @[@(100), @(200), @(300)];
 	_count = [arr count];
-	OZQ31 *first = [arr objectAtIndex:0];
+	OZNumber *first = [arr objectAtIndex:0];
 	_firstVal = [first intValue];
 }
 - (size_t)count {
