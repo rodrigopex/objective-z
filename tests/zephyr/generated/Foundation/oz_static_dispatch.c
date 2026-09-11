@@ -5,30 +5,34 @@
  * src/OZLog.c provides the strong definition where it is linked. */
 __attribute__((weak)) int _oz_get_log_precision(void) { return -1; }
 
-/* synthesized: backing storage for every OZObject instance -- 1 slot(s), sized from this translation unit's allocation sites, each counted once per call site of the body it escapes from (override with --pool-sizes) */
-OZ_SLAB_DEFINE(oz_slab_OZObject, sizeof(struct OZObject), 1, 4);
+/* synthesized: no slab for OZObject -- nothing in this program sends
+ * '[OZObject alloc]', so no k_mem_slab and no static storage is reserved for
+ * it. An instance can still exist: '[OZObject dynamicAlloc]' takes its
+ * storage from a heap and is not a slab site. Force one with
+ * --pool-sizes OZObject=N or an oz-pool comment, which is what a caller
+ * outside the transpiled sources needs (not from source) */
 
-/* synthesized: allocates and zero-initializes a new OZObject (not from source) */
+/* synthesized: OZObject has no slab (see above), so this cannot hand back
+ * storage. It is still defined, because a caller outside the transpiled
+ * sources references it and so does the collection-literal builder (not
+ * from source) */
 struct OZObject *OZObject_oz_alloc(void)
 {
-	struct OZObject *obj;
-	if (oz_slab_alloc(&oz_slab_OZObject, (void **)&obj) != 0) {
-#ifdef OZ_STATIC_TRAP_POOL_EXHAUSTION
-		oz_assert_msg(0, "OZObject pool exhausted -- raise it with --pool-sizes OZObject=N or an oz-pool comment");
-#endif
-		return (struct OZObject *)0;
-	}
-	memset(obj, 0, sizeof(struct OZObject));
-	((struct OZObject *)obj)->_meta.class_id = OZ_STATIC_CLASS_OZObject;
-	oz_atomic_init(&((struct OZObject *)obj)->oz_refcount, 1);
-	return obj;
+	oz_assert_msg(0, "OZObject has no slab -- nothing in this program sends '[OZObject alloc]'. Use '[OZObject dynamicAlloc]', or reserve a slab with --pool-sizes OZObject=N or an oz-pool comment");
+	return (struct OZObject *)0;
 }
 
-/* synthesized: returns OZObject's slot to its slab -- called only from
- * oz_static_release, once the refcount reaches zero (not from source) */
+/* synthesized: releases OZObject's storage -- called only from
+ * oz_static_release, once the refcount reaches zero. There is no slab here,
+ * so a heap is the only place an instance can go back to (not from
+ * source) */
 void OZObject_oz_free(struct OZObject *obj)
 {
-	oz_slab_free(&oz_slab_OZObject, (void *)obj);
+	/* No slab, so no slot to return. With heap support on, the check
+	 * above has already given a heap-allocated instance back to its
+	 * heap; without it, nothing in this program can have allocated
+	 * one at all. */
+	(void)obj;
 }
 
 /* synthesized: increments the retain count; shared by every class,
