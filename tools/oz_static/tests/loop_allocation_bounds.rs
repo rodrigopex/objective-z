@@ -243,8 +243,16 @@ int main(void)
 
 /// An ivar store whose right-hand side *does* read the ivar: the new value
 /// has to exist before the old one can go, so two are briefly live and one
-/// slot is not enough. Still refused, and the message still has to name the
-/// pool, because raising it is the fix.
+/// slot is not enough. Still refused -- and the message must **not** name
+/// the pool, because raising it is not the fix.
+///
+/// This assertion is the other half of #425, and it used to say the
+/// opposite: "and how to fix it, since the shape is bounded -- just not at
+/// one", asserting `oz-pool` appears in the diagnostic. It does not fix it.
+/// `staticbar` never reads `PoolSizes`, so it cannot know the directive was
+/// added, and the rejection stands unchanged at `Foo=1`, `Foo=2` and
+/// `Foo=8` -- measured. The test asserting the advice was present is what
+/// pinned it in place.
 ///
 /// The ternary is what puts this shape in `LocalStore::Unsupported`: the
 /// `+1` is real, but the store can read `_ivar`, so the emitter lowers it
@@ -258,6 +266,15 @@ int main(void)
 /// declaration and assigns inside the comma expression, so the only reason
 /// left is capacity -- and that reason is sufficient, which is why this
 /// case is unchanged.
+///
+/// That history matters to what the message may claim. While the temporary
+/// was hoisted, pool-awareness was *unsound* for this arm -- a bigger pool
+/// could not move the temporary back inside the loop. After #424 it is
+/// sound and merely unimplemented: measured, this shape runs correctly on a
+/// pool of two. So the diagnostic must not say the shape would be wrong at
+/// any pool size. What it says instead is the narrower fact that holds
+/// either way -- raising the pool does not lift *this rejection*, because
+/// the check never reads `PoolSizes`.
 #[test]
 fn an_ivar_store_that_reads_the_ivar_names_the_two_slot_overlap() {
     let src = program(
@@ -288,10 +305,151 @@ int main(void) { return 0; }
         diags
     );
     assert!(
-        diags.contains("oz-pool"),
-        "and how to fix it, since the shape is bounded -- just not at one; got:\n{}",
+        !diags.contains("oz-pool") && !diags.contains("--pool-sizes"),
+        "and must not suggest raising the pool, which cannot lift this rejection (#425); \
+         got:\n{}",
         diags
     );
+    assert!(
+        diags.contains("local declared before the loop"),
+        "the advice that does work has to still be there; got:\n{}",
+        diags
+    );
+}
+
+/// The rejection does not move when the pool is raised, which is the whole
+/// of #425: the advice was to do something that changes nothing.
+///
+/// Measured rather than argued, because "the check never reads
+/// `PoolSizes`" is a claim about code and this is a claim about behaviour.
+/// The same program at `Foo=1`, `Foo=2` and `Foo=8` is refused identically,
+/// so a diagnostic naming the pool sends the author round a loop of their
+/// own.
+#[test]
+fn raising_the_pool_does_not_lift_an_overlapping_store() {
+    let churn = "\
+@interface Holder : OZObject {
+	Foo *_thing;
+}
+- (void)churn;
+@end
+@implementation Holder
+- (void)churn
+{
+	int i;
+
+	for (i = 0; i < 4; i++) {
+		_thing = [_thing dup];
+	}
+}
+@end
+
+int main(void) { return 0; }
+";
+    let mut seen = Vec::new();
+    for pool in ["1", "2", "8"] {
+        let src = format!(
+            "/* oz-pool: Foo={} */\n{}{}\n{}",
+            pool,
+            ozobject_src(),
+            PRELUDE,
+            churn
+        );
+        let diags = expect_reject(&src);
+        assert!(
+            diags.contains("needs **two** slab slots"),
+            "pool={} must still be refused for the same reason; got:\n{}",
+            pool,
+            diags
+        );
+        assert!(
+            !diags.contains("oz-pool") && !diags.contains("--pool-sizes"),
+            "pool={} must not be told to raise the pool it already raised; got:\n{}",
+            pool,
+            diags
+        );
+        seen.push(diags);
+    }
+    assert_eq!(
+        seen[0], seen[1],
+        "the diagnostic is identical at Foo=1 and Foo=2, which is why advising a raise was \
+         advice to do nothing"
+    );
+    assert_eq!(seen[1], seen[2], "and identical again at Foo=8");
+}
+
+/// No diagnostic in this family may recommend the pool, for any of the
+/// three escapes.
+///
+/// A standing guard rather than three separate assertions: `Accumulates`
+/// carried the same false remedy for its own reason -- the loop's trip
+/// count is not a number this pass knows, so there was no pool size to
+/// name -- and `Returned` never had one. Anything added here later has to
+/// answer the same question, which is what a table-shaped test is for.
+#[test]
+fn no_loop_escape_recommends_raising_the_pool() {
+    let bodies: &[(&str, &str)] = &[
+        (
+            "OverlappingStore",
+            "\
+@interface Holder : OZObject { Foo *_thing; }
+- (void)go;
+@end
+@implementation Holder
+- (void)go
+{
+	int i;
+	for (i = 0; i < 4; i++) { _thing = [_thing dup]; }
+}
+@end
+int main(void) { return 0; }
+",
+        ),
+        (
+            "Accumulates",
+            "\
+@interface Holder : OZObject { Foo *_arr[4]; }
+- (void)go;
+@end
+@implementation Holder
+- (void)go
+{
+	int i;
+	for (i = 0; i < 4; i++) { _arr[i] = [Foo make]; }
+}
+@end
+int main(void) { return 0; }
+",
+        ),
+        (
+            "Returned",
+            "\
+@interface Holder : OZObject
+- (Foo *)go;
+@end
+@implementation Holder
+- (Foo *)go
+{
+	int i;
+	for (i = 0; i < 4; i++) { return [Foo make]; }
+	return 0;
+}
+@end
+int main(void) { return 0; }
+",
+        ),
+    ];
+    for (escape, body) in bodies {
+        let diags = expect_reject(&program(body));
+        assert!(
+            !diags.contains("oz-pool")
+                && !diags.contains("--pool-sizes")
+                && !diags.contains("size the pool"),
+            "{} still recommends the pool, which this check cannot read (#425); got:\n{}",
+            escape,
+            diags
+        );
+    }
 }
 
 /// The under-rejection, and the reason the trigger moved off the selector
