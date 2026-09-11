@@ -52,15 +52,35 @@ def _find_llvm_clang() -> str:
     return objz_clang.find_clang_or_exit()
 
 
-def _collect_pool_sizes(m_paths: list[Path]) -> str:
-    """Auto-generate pool sizes (4 blocks per class) from all @interface decls."""
+#: `Widget_alloc()` / `Widget_oz_alloc()` in a hand-written ztest driver --
+#: an allocation oz2c cannot see. See `_collect_pool_sizes`.
+DRIVER_ALLOC_RE = re.compile(r"\b(\w+?)(?:_oz)?_alloc\s*\(")
+
+
+def _collect_pool_sizes(m_paths: list[Path], driver_text: str) -> str:
+    """Pool sizes for classes the *script* can see allocated and oz2c cannot.
+
+    Every class the cases declare (`@interface X : ...`) at 4 blocks, plus
+    every `X_alloc()` in the ztest drivers under `tests/zephyr/src/`. The
+    drivers are hand-written C that oz2c never reads, so their allocations
+    contribute nothing to the counted size -- and since #419 a class with
+    no allocation site in the program text reserves no slab at all, where
+    it used to get a floor of one that silently covered this.
+
+    Every class the drivers allocate today is also declared by a case, so
+    this adds nothing right now. It is here because the *next* driver to
+    allocate an SDK class directly would otherwise regenerate C that traps
+    at runtime, and `generated-freshness` would pass on it: the same
+    mechanism, and the same fix, as `tests/tools/compile_and_run.py`.
+    """
     classes: list[str] = []
     for m_path in m_paths:
         text = m_path.read_text()
         classes.extend(re.findall(r"@interface\s+(\w+)\s*:", text))
+    classes.extend(DRIVER_ALLOC_RE.findall(driver_text))
     if not classes:
         return ""
-    return ",".join(f"{c}=4" for c in classes)
+    return ",".join(f"{c}=4" for c in sorted(set(classes)))
 
 
 def _ast_dump(clang: str, m_path: Path, out_json: Path) -> None:
@@ -93,7 +113,10 @@ def main() -> int:
             return 1
         m_paths.append(m_path)
 
-    pool_sizes = _collect_pool_sizes(m_paths)
+    driver_text = "\n".join(
+        p.read_text() for p in sorted((REPO_ROOT / "tests" / "zephyr" / "src").glob("*.c"))
+    )
+    pool_sizes = _collect_pool_sizes(m_paths, driver_text)
 
     with tempfile.TemporaryDirectory(prefix="oz_regen_") as tmpdir:
         tmpdir = Path(tmpdir)
@@ -150,9 +173,6 @@ def main() -> int:
             print("error: no classes found in oz2c output", file=sys.stderr)
             return 1
         root = "OZObject" if "OZObject" in classes else classes[0]
-        driver_text = "\n".join(
-            p.read_text() for p in sorted((REPO_ROOT / "tests" / "zephyr" / "src").glob("*.c"))
-        )
         oz_static_build.write_abi_shim(tmpdir, classes, root, driver_text)
 
         generated: dict[str, str] = {}

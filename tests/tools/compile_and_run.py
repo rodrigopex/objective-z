@@ -23,6 +23,9 @@ GEN_MAIN = REPO_ROOT / "tests" / "tools" / "gen_test_main.py"
 
 POOL_RE = re.compile(r"/\*\s*oz-pool:\s*(.+?)\s*\*/")
 HEAP_RE = re.compile(r"/\*\s*oz-heap\s*\*/")
+#: `Widget_alloc()` / `Widget_oz_alloc()` in a hand-written Unity driver --
+#: an allocation oz2c cannot see. See `_default_pool_sizes`.
+DRIVER_ALLOC_RE = re.compile(r"\b(\w+?)(?:_oz)?_alloc\s*\(")
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -53,19 +56,62 @@ def _parse_pool_sizes(m_path: Path) -> str:
     return ""
 
 
+def _merge_pool_sizes(defaults: str, directive: str) -> str:
+    """`defaults` filled in where `directive` is silent; the directive wins.
+
+    Both are `Class=N,...` strings. The result goes to `--pool-sizes`,
+    which beats the source directive `pools.rs` reads for itself -- so
+    passing a class the directive names with the directive's own number is
+    a no-op, and passing one it does not name is the point.
+    """
+    merged: dict[str, str] = {}
+    for spec in (defaults, directive):
+        for entry in spec.split(","):
+            entry = entry.strip()
+            if not entry or "=" not in entry:
+                continue
+            name, _, count = entry.partition("=")
+            merged[name.strip()] = count.strip()
+    return ",".join(f"{k}={v}" for k, v in sorted(merged.items()))
+
+
 def _needs_heap_support(m_path: Path) -> bool:
     """Check for /* oz-heap */ marker in .m file."""
     return bool(HEAP_RE.search(m_path.read_text()))
 
 
 
-def _default_pool_sizes(m_path: Path) -> str:
-    """Auto-generate default pool sizes (4 blocks per class) from @interface decls."""
+def _default_pool_sizes(m_path: Path, driver_text: str = "") -> str:
+    """Pool sizes for classes the *harness* can see allocated and oz2c cannot.
+
+    Two sources, both of them things outside the transpiled `.m`:
+
+      - every class the case declares (`@interface X : ...`), at 4 blocks.
+        This is the long-standing default.
+      - every `X_alloc()` in the companion `_test.c`. A Unity driver is
+        hand-written C that oz2c never reads, so an allocation there
+        contributes nothing to the counted size -- and since #419 a class
+        with no allocation site in the program text reserves no slab at all,
+        where it used to get a floor of one that silently covered this. The
+        floor was the wrong place to fix it: it cost a `k_mem_slab` plus an
+        instance of static storage in *every* program, for every class it
+        never allocates, to serve the handful of drivers that do this. The
+        right place is here, where the driver is actually visible --
+        `--pool-sizes` exists precisely for a bound the static count cannot
+        see, and `tests/behavior/cases/memory/heap_alloc_test.c`'s
+        `OZHeap_alloc()` and `foundation/defer_block_ivar_test.c`'s
+        `OZDefer_alloc()` are exactly that.
+
+    `X_alloc` rather than `X_oz_alloc` because the driver spells the retired
+    Python pipeline's ABI and `oz_static_build.write_abi_shim` bridges it;
+    both spellings are matched so neither form is missed.
+    """
     text = m_path.read_text()
-    classes = re.findall(r"@interface\s+(\w+)\s*:", text)
+    classes = set(re.findall(r"@interface\s+(\w+)\s*:", text))
+    classes |= set(DRIVER_ALLOC_RE.findall(driver_text))
     if not classes:
         return ""
-    return ",".join(f"{c}=4" for c in classes)
+    return ",".join(f"{c}=4" for c in sorted(classes))
 
 
 def _find_test_file(m_path: Path) -> Path | None:
@@ -152,7 +198,16 @@ def _run_pipeline_inner(m_path: Path, test_file: Path, tmpdir: Path,
     #
     # oz2c reads the AST dump step 1 already made rather than making its own,
     # so the dump and the transpile cannot disagree about flags.
-    pool_sizes = _parse_pool_sizes(m_path) or _default_pool_sizes(m_path)
+    # Merged, not "directive or defaults". A case whose directive names one
+    # class -- `/* oz-pool: OZObject=1 */` -- meant to size *that* class,
+    # not to drop the defaults for every other class in the file. It did,
+    # and seven `foundation/*` cases relied on the floor of one that #419
+    # removed to cover for it. The directive still wins per class, which is
+    # what it is for; it just no longer silences the rest.
+    pool_sizes = _merge_pool_sizes(
+        _default_pool_sizes(m_path, test_file.read_text() if test_file else ""),
+        _parse_pool_sizes(m_path),
+    )
     heap_support = _needs_heap_support(m_path)
 
     if backend != "static":

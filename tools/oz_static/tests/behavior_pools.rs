@@ -199,12 +199,25 @@ fn malformed_pool_sizes_argument_rejected() {
     assert!(oz_static::pools::parse_pool_sizes("=3").is_err());
 }
 
-/// Guards the reason `for_class` floors at one: a class nothing allocates
-/// still gets a usable slab, because its alloc function is emitted whether
-/// or not this translation unit calls it, and a zero-block
-/// `K_MEM_SLAB_DEFINE` is not a slab.
+/// A class with no slab-allocation site anywhere in the program gets **no
+/// slab** (#419).
+///
+/// This used to assert the opposite -- a one-slot slab, on the reasoning
+/// that the alloc function is emitted whether or not this translation unit
+/// calls it and that a zero-block `K_MEM_SLAB_DEFINE` is not a slab. The
+/// second half is still true, which is why the *count* question is still
+/// floored at one; the first half was answered in the wrong place. A class
+/// nothing slab-allocates was costing a `k_mem_slab` plus one instance of
+/// static storage in every program, which for a program using
+/// `+dynamicAlloc` is every byte of it.
+///
+/// `{Class}_oz_alloc` is still *defined* -- see
+/// `companion::render_no_slab_alloc` for the two callers that would
+/// otherwise reference a missing symbol -- and traps rather than handing
+/// back storage it does not have. The compile-and-run below is what proves
+/// the trap does not fire in a program that never calls it.
 #[test]
-fn never_allocated_class_still_gets_a_slot() {
+fn never_allocated_class_gets_no_slab() {
     let src = format!(
         "{}{}",
         ozobject_src(),
@@ -226,11 +239,71 @@ int main(void) {
     let out = oz_static::transpile(&src).expect("should transpile");
     let all = format!("{}{}", out.source_c, out.companion_c);
     assert!(
-        all.contains("OZ_SLAB_DEFINE(oz_slab_Unused, sizeof(struct Unused), 1, 4)"),
-        "expected a one-slot slab for the unused class; got:\n{}",
+        !all.contains("OZ_SLAB_DEFINE(oz_slab_Unused"),
+        "a class with no allocation site must reserve no slab; got:\n{}",
         all
     );
-    let stdout = compile_and_run(&src, "never_allocated_class_still_gets_a_slot");
+    assert!(
+        all.contains("no slab for Unused"),
+        "the elision must say so where the slab used to be; got:\n{}",
+        all
+    );
+    assert!(
+        all.contains("struct Unused *Unused_oz_alloc(void)"),
+        "the allocator must still be defined, or the collection-literal \
+         builder and any hand-written caller reference a missing symbol; got:\n{}",
+        all
+    );
+    let stdout = compile_and_run(&src, "never_allocated_class_gets_no_slab");
+    assert_eq!(stdout, "ran=1\n");
+}
+
+/// The presence question is **not** the multiplicity question, and this is
+/// the case that separates them (#419).
+///
+/// `Scan::resolve` gives a site inside an *uncalled class method* a
+/// multiplicity of zero -- deliberately, since a class method not called
+/// here is genuinely not called, and that is what stopped every program
+/// sizing `OZNumber` at 16 for seventeen uncalled factories. So `counted`
+/// is 0 for `Made` here even though `[Made alloc]` is right there in the
+/// text. Keying the elision on `counted` would drop this class's slab and
+/// leave `Made_make()` -- an emitted, externally callable function --
+/// allocating from a slab that does not exist. Keying it on site
+/// *presence* keeps the one-slot floor exactly where it was load-bearing.
+#[test]
+fn a_site_in_an_uncalled_class_method_still_gets_a_slab() {
+    let src = format!(
+        "{}{}",
+        ozobject_src(),
+        "\
+@interface Made : OZObject {
+	int _n;
+}
++ (Made *)make;
+@end
+@implementation Made
++ (Made *)make
+{
+	return [[Made alloc] init];
+}
+@end
+
+#include <stdio.h>
+int main(void) {
+	printf(\"ran=1\\n\");
+	return 0;
+}
+"
+    );
+    let out = oz_static::transpile(&src).expect("should transpile");
+    let all = format!("{}{}", out.source_c, out.companion_c);
+    assert!(
+        all.contains("OZ_SLAB_DEFINE(oz_slab_Made, sizeof(struct Made), 1, 4)"),
+        "a site in an uncalled class method is still a site, so the one-slot \
+         floor applies; got:\n{}",
+        all
+    );
+    let stdout = compile_and_run(&src, "a_site_in_an_uncalled_class_method_still_gets_a_slab");
     assert_eq!(stdout, "ran=1\n");
 }
 

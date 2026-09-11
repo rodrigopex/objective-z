@@ -250,6 +250,30 @@ pub fn compile_and_run_with_heap(source: &str, stem: &str) -> String {
     )
 }
 
+/// `compile_and_run_with_heap` plus arbitrary extra flags on the two `-c`
+/// compiles.
+///
+/// Exists for `-DOZ_STATIC_TRAP_POOL_EXHAUSTION`, which is the only way to
+/// reach the exhaustion traps at all and therefore the only way to prove
+/// they compile. A trap that *fires* aborts the process, so a test that
+/// defines the macro compiles the program and does not depend on its
+/// output; inspecting the emitted text is what says the trap is there, and
+/// this is what says the text is real C (#419).
+pub fn compile_and_run_with_heap_and_cc_flags(
+    source: &str,
+    stem: &str,
+    extra_cc_flags: &[&str],
+) -> String {
+    let mut flags = vec!["-DOZ_HEAP_SUPPORT"];
+    flags.extend_from_slice(extra_cc_flags);
+    compile_and_run_inner(
+        source,
+        stem,
+        &flags,
+        oz_static::Options { heap_support: true, ..Default::default() },
+    )
+}
+
 /// `compile_and_run` with `--introspection`, i.e. the configuration
 /// `CONFIG_OBJZ_INTROSPECTION`'s own default (`y`) produces.
 ///
