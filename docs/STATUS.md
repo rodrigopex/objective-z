@@ -783,6 +783,49 @@ defect produced clean ASan output and correct-looking program output. The
 sample that started this printed `Hello, world from object` after
 `Deallocating` and exited 0.
 
+## An object is allocated once, and may be initialised more than once
+
+`+alloc` is the slab get: `{Class}_oz_alloc()` is `oz_slab_alloc` plus a
+`memset`, the `class_id`, and `oz_refcount = 1`. It hands back a
+fully-formed instance, which is why a bare `[X alloc]` with no `-init` is
+legitimate here and is in fact the commonest allocation spelling in the
+tree. `-init` is an ordinary method that happens to be named `init`.
+
+So `-init` can be sent twice, and after #405 it costs **nothing** in slab
+terms: a strong ivar store releases its previous value before evaluating
+the new one, so the peak is `N` slots however many times the initialiser
+runs -- not `N+1`, and not `2N`. Sizing needs no headroom for it. Measured
+on a one-slot pool: `first=1`, `second=1`
+(`tools/oz_static/tests/ivar_store_ordering.rs`).
+
+**The contract that falls out: `-init` must be idempotent.** What the store
+ordering buys is memory safety, not semantic safety, and three shapes are
+outside it:
+
+- **A raw `malloc` into an ivar.** `src/OZMutableString.m` allocates its
+  character buffer directly; before #405 `-initWithCString:` overwrote
+  `_data` without freeing it, so a second initialisation leaked the first
+  buffer and `-dealloc` could not make up for it. Fixed there by freeing
+  first, which is a no-op on the first run because `+alloc` zeroed the ivar.
+- **A Zephyr primitive.** `gpio_add_callback_dt`
+  (`samples/gpio_demo/src/GPIOInput.m`) links a node into a list, so a
+  second add corrupts it. `k_work_init`, `k_timer_init` and friends are the
+  same shape.
+- **A one-shot subsystem call.** `bt_enable()` and `settings_load()`
+  (`px-keyboard/src/PXBLEController.m`) answer `-EALREADY` or redo work.
+
+None of those is a sizing problem and none is detectable in general -- any
+C call in an initialiser could be non-idempotent. So this is stated as a
+contract rather than enforced as a rejection, which was the other option
+considered and dropped: a `staticbar` refusal would have to key on
+"contains a C call", and the shape it was invented for turned out not to
+need refusing at all.
+
+For the record, Clang has no opinion here to match. `-Weverything
+-fobjc-arc` and `clang --analyze` are both silent on a double `-init`,
+including the loop form; what Clang polices is the initialiser graph
+*inside* a class, through `-Wobjc-designated-initializers`.
+
 ## The hybrid model: what this backend's ARC is
 
 The section above says why this is not Clang's ARC. This one says what it
@@ -1377,11 +1420,28 @@ directions at once.
 | array element, varying index | **no** | n/a | loop bound | unbounded |
 | local ARC declined to manage | yes | **no**, nothing releases | loop bound | unbounded |
 
-The ivar overlap is **inherent**, not a defect to fix elsewhere: the new
-value has to be evaluated before the old one is released, or
-`_ivar = [_ivar retain]` would free a live object. That shape is bounded —
-just at two — so the author is told to raise the pool rather than refused
-with no way forward.
+The ivar overlap was called **inherent** here, and it is not. The claim was
+that the new value has to be evaluated before the old one is released, or
+`_ivar = [_ivar retain]` would free a live object -- true only of a store
+that **reads** the ivar. `_ivar = [Thing alloc]` does not, and
+`emit::render_strong_local_assign` had been releasing first on exactly that
+condition for locals since #234, through `emit::classify_store`, while
+`render_strong_ivar_assign` never consulted it and evaluated the new value
+first unconditionally. So a strong ivar needed two slab slots for a store a
+local served with one, and a class whose `-init` allocates into an ivar could
+not be initialised twice on its own sizing: measured `first=1`, `second=0` on
+a one-slot pool (#405).
+
+Both stores now route through one predicate, and
+`staticbar::overlapping_unless_released_first` asks it rather than
+re-deriving an answer. Two of the three shapes need no temporary and are
+accepted; `_x = [_x copy]` is `+1` but reads the ivar, so it keeps the
+temporary and stays refused. That last part is not just an over-rejection
+being lifted -- the refused shape hoists its temporary through
+`ctx.pre_stmts`, which a loop lifts out of the loop entirely, so accepting it
+would miscompile rather than merely exhaust the pool. The rejection was
+load-bearing for one shape and wrong for the other two, which is why the
+narrowing and the store fix had to be the same change.
 
 ### The over-rejection
 
