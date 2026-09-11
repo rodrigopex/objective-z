@@ -3,8 +3,8 @@
 #include "OZQ31.h"
 #include "OZObject.h"
 
-/* synthesized: backing storage for every OZQ31 instance -- 8 slot(s), sized from this translation unit's allocation sites (override with --pool-sizes) */
-OZ_SLAB_DEFINE(oz_slab_OZQ31, sizeof(struct OZQ31), 8, 4);
+/* synthesized: backing storage for every OZQ31 instance -- 9 slot(s), sized from this translation unit's allocation sites (override with --pool-sizes) */
+OZ_SLAB_DEFINE(oz_slab_OZQ31, sizeof(struct OZQ31), 9, 4);
 
 /* synthesized: allocates and zero-initializes a new OZQ31 (not from source) */
 struct OZQ31 *OZQ31_oz_alloc(void)
