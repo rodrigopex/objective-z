@@ -546,11 +546,14 @@ Three things worth keeping.
   nothing reads. The fix annotates an unexplained fail-open with `::warning::`, so
   the run summary carries it. **A safe default still needs to be distinguishable
   from the answer it imitates.**
-- **`gh pr checks` cannot see this class of bug at all.** It renders a skipped
-  job as `pass`, so the filter working and the filter doing nothing look
-  identical there. The only instrument that answers is
-  `/repos/.../actions/runs/<id>/jobs`, whose `conclusion` is `skipped` or
-  `success`. That is how this shipped and stayed shipped.
+- **The instrument was never the problem, and #409 said it was.** The issue
+  claimed -- and #414 repeated in this document -- that `gh pr checks` renders a
+  skipped job as `pass`, so the bug could not be seen. Measured on run
+  34609454252 with gh 2.97.0, it prints `skipping` with a duration of `0`,
+  plainly distinct from the `pass` beside every job that ran; the jobs API
+  reports `conclusion: skipped` for the same jobs. **Both instruments would
+  have shown it.** Nobody ran either, for thirteen merges. A blamed tool is a
+  comfortable explanation for an unrun check, and it was the wrong one here.
 - **Naming an experiment is not running it.** #387 wrote "the first docs-only PR
   after this merges is what shows them skipped" and #390 repeated it. Both were
   correct about what would settle it; neither settled it, and #406 became that
@@ -561,6 +564,27 @@ And the measurement the filter was justified by was itself short. #387 costed th
 gated jobs at 805s and #409 at 940s; the real figure on run 34595210212 is
 **1887s**, because `zephyr-integration` is gated too and neither figure counted
 its 947s.
+
+**The experiment, run deliberately rather than waited for.** This entry's own
+pull request was the docs-only change that settled it -- `docs/STATUS.md` and
+nothing else, matching no pattern. Run 34609454252:
+
+```
+changes     success, 6s   reason: 1 changed file(s), none under a path that
+                          reaches a target build
+hw-build-check      skipped
+pedantic-gate       skipped
+spin-validate       skipped
+zephyr-integration  skipped
+```
+
+The five gated jobs that cost #406 1887s cost this pull request nothing. A
+skipped matrix job collapses to one entry, which is why `hw-build-check`'s two
+legs appear once.
+
+Thirteen merges of "the next docs-only PR will show this" took one deliberate
+pull request to answer. **The cheapest experiment in this document is the one
+nobody ran.**
 
 ### A blast-radius sweep that covered two thirds of what it claimed (#400)
 
