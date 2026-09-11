@@ -2,7 +2,11 @@
 //
 // main.rs - CLI entry point for the OZ-091 Track B spike.
 //
-// Wired into CMake by cmake/oz_static.cmake (CONFIG_OBJZ_BACKEND_STATIC).
+// Wired into CMake by cmake/oz_static.cmake, which CMakeLists.txt includes
+// under CONFIG_OBJZ. Not under CONFIG_OBJZ_BACKEND_STATIC: that symbol is
+// declared `default y` in Kconfig and read by nothing -- no cmake file
+// mentions it -- so turning it off would not select another backend. It is
+// the last trace of the retired backend dispatcher (#420's reverse sweep).
 // Run directly for manual experimentation:
 //   cargo run --manifest-path tools/oz_static/Cargo.toml -- <input.m> <outdir>
 
