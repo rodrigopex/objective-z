@@ -13,12 +13,15 @@
 // Measured on a one-slot pool, four iterations each, which is what the
 // cases below assert:
 //
-//   | destination                       | reused | released first | slots |
-//   | ---                               | ---    | ---            | ---   |
-//   | managed local                     | yes    | yes            | 1     |
-//   | ivar / global, store cannot read it | yes  | yes            | 1     |
-//   | ivar / global, store reads it     | yes    | **no**         | **2** |
-//   | array element, varying index      | **no** | n/a            | loop  |
+//   | destination                          | reused | released first | slots |
+//   | ---                                  | ---    | ---            | ---   |
+//   | managed local                        | yes    | yes            | 1     |
+//   | ivar / global, store cannot read it   | yes   | yes            | 1     |
+//   | ivar / global, store reads it        | yes    | **no**         | **2** |
+//   | array element, const index, cannot read it | yes | yes       | 1     |
+//   | array element, const index, reads it | yes    | **no**         | **2** |
+//   | array element, varying index         | **no** | n/a            | loop  |
+//   | ivar that is not an owned slot       | yes    | n/a, no release | loop |
 //
 // The ivar overlap was called inherent here, on the grounds that the new
 // value must be evaluated before the old is released or
@@ -30,6 +33,17 @@
 // cannot drift: refusing a release-first store over-rejects, and accepting
 // a temporary-hoisting one miscompiles, because a loop lifts that
 // temporary out of itself.
+//
+// #405 reached two of the three destination spellings. The subscript one
+// kept answering `OverlappingStore` unconditionally, so an array-element
+// store the emitter already lowered release-first stayed refused on a pool
+// it fits -- and the assertion in this file that said so was itself the
+// defect, which is why the case that used to claim "two slab slots" for a
+// constant index now runs four iterations on one instead (#423). The same
+// change found the spelling that was wrong in the *other* direction:
+// `self->_ivar = [_ivar dup]` was accepted and miscompiled, because the
+// destination extractor answered `self`. All three spellings now go
+// through `staticbar::assigned_slot_name`.
 //
 // The old rule was wrong in **both** directions, and each direction has
 // cases here. It refused the operand positions, which the emitter releases
@@ -47,8 +61,11 @@ use common::{compile_and_run_strict, expect_reject, ozobject_src};
 const PRELUDE: &str = "\
 #include <stdio.h>
 
+int g_freed = 0;
+
 @interface Foo : OZObject
 + (Foo *)make;
+- (Foo *)dup;
 - (int)tag;
 @end
 @implementation Foo
@@ -56,9 +73,21 @@ const PRELUDE: &str = "\
 {
 	return [[Foo alloc] init];
 }
+/* A `+1` whose receiver is the thing being overwritten, which is what puts
+ * a store in `LocalStore::Unsupported`: the new value cannot exist until
+ * the old one has been read, so the old one cannot be released first. */
+- (Foo *)dup
+{
+	return [[Foo alloc] init];
+}
 - (int)tag
 {
 	return 1;
+}
+- (void)dealloc
+{
+	g_freed++;
+	[super dealloc];
 }
 @end
 ";
@@ -285,12 +314,32 @@ int main(void) { return 0; }
     );
 }
 
-/// A *constant* index names the same element every iteration, so it
-/// behaves like an ivar -- two slots, not unbounded. Worth separating,
-/// because a rule that called every subscript unbounded would say
-/// something false about this one.
+/// A *constant* index names the same element every iteration, and the
+/// store is lowered release-first when the right-hand side cannot read the
+/// element -- so **one** slot serves the loop.
+///
+/// **This inverts what this file asserted when #405 merged.** The case
+/// below is the one that used to be here, unchanged except for its
+/// conclusion: it asserted the refusal was correct, naming "two slab
+/// slots". It was not. `render_strong_array_element_assign` has emitted
+/// `(release(self->_arr[0]), self->_arr[0] = <new>)` for a `+1` that does
+/// not read the element since #405, exactly as the ivar path does, so the
+/// element is empty again before the next allocation asks the slab for a
+/// slot. #405 routed the `identifier` and `field_expression` spellings
+/// through `staticbar::overlapping_unless_released_first` and left this
+/// third one answering `OverlappingStore` unconditionally, which is the
+/// whole of #423.
+///
+/// Measured rather than asserted to transpile, and measured the way
+/// `an_ivar_store_released_first_needs_only_one_slot` measures it: four
+/// iterations on a pool of **one**, every `tag` printing `1`. A `0` is
+/// `[nil tag]`, which is what a slab with no free slot hands back. The
+/// `freed` count is the other half of the claim -- each iteration's object
+/// is really released, not merely leaked into a slot that happened to be
+/// reused -- and the trailing `nil` store drops the last one, so four
+/// allocations produce four frees.
 #[test]
-fn a_constant_index_overlaps_rather_than_accumulates() {
+fn a_constant_index_store_released_first_needs_only_one_slot() {
     let src = program(
         "\
 @interface Holder : OZObject {
@@ -305,6 +354,107 @@ fn a_constant_index_overlaps_rather_than_accumulates() {
 
 	for (i = 0; i < 4; i++) {
 		_arr[0] = [Foo make];
+		printf(\"i=%d tag=%d\\n\", i, [_arr[0] tag]);
+	}
+	_arr[0] = nil;
+	printf(\"freed=%d\\n\", g_freed);
+}
+@end
+
+int main(void)
+{
+	Holder *h = [[Holder alloc] init];
+	[h fill];
+	return 0;
+}
+",
+    );
+    assert_eq!(
+        compile_and_run_strict(&src, "loopbound_array_const_released_first"),
+        "i=0 tag=1\ni=1 tag=1\ni=2 tag=1\ni=3 tag=1\nfreed=4\n",
+        "the store releases the previous element before allocating the next, so the one slot \
+         is free again every iteration -- a tag=0 would be the nil a full slab returns, and a \
+         freed count below 4 would mean an iteration's object was never released"
+    );
+}
+
+/// The same constant index through the **explicit** spelling. Both reach
+/// one predicate, which is the point of `assigned_slot_name`: `#360` had
+/// already found that `self->_arr[i]` fell through a rule written for
+/// `_arr[i]`, and a fix that accepted only the bare spelling would have
+/// left the same asymmetry one layer up.
+///
+/// The store is `self->_arr[0]`; the read-back is `_arr[0]`, because
+/// `self->_arr[0]` in *receiver* position is a separate and still-standing
+/// limitation -- oz2c cannot type it ("cannot statically resolve the
+/// receiver type ... (receiver type is 'id')") and refuses it. That is
+/// orthogonal to this store and is why the two halves are spelled
+/// differently here rather than the case being weakened to a
+/// transpile-only check.
+#[test]
+fn the_self_arrow_array_spelling_is_bounded_the_same_way() {
+    let src = program(
+        "\
+@interface Holder : OZObject {
+	Foo *_arr[4];
+}
+- (void)fill;
+@end
+@implementation Holder
+- (void)fill
+{
+	int i;
+
+	for (i = 0; i < 4; i++) {
+		self->_arr[0] = [Foo make];
+		printf(\"i=%d tag=%d\\n\", i, [_arr[0] tag]);
+	}
+	self->_arr[0] = nil;
+	printf(\"freed=%d\\n\", g_freed);
+}
+@end
+
+int main(void)
+{
+	Holder *h = [[Holder alloc] init];
+	[h fill];
+	return 0;
+}
+",
+    );
+    assert_eq!(
+        compile_and_run_strict(&src, "loopbound_array_const_self_arrow"),
+        "i=0 tag=1\ni=1 tag=1\ni=2 tag=1\ni=3 tag=1\nfreed=4\n",
+        "`self->_arr[0]` and `_arr[0]` are the same slot and must be bounded identically"
+    );
+}
+
+/// The one array shape that must **stay** refused: a store that *reads*
+/// the element.
+///
+/// `classify_store` puts this in `LocalStore::Unsupported`, and
+/// `render_strong_array_element_assign` makes that a located error rather
+/// than emitting a hoisted temporary -- so unlike the ivar path there is no
+/// `ctx.pre_stmts` to be lifted out of the loop here. Refusing it at the
+/// bar as well is what keeps the message about the loop rather than about
+/// the store, and what stops a later relaxation of the emitter from
+/// silently making the shape reachable.
+#[test]
+fn a_constant_index_store_that_reads_the_element_stays_refused() {
+    let src = program(
+        "\
+@interface Holder : OZObject {
+	Foo *_arr[4];
+}
+- (void)fill;
+@end
+@implementation Holder
+- (void)fill
+{
+	int i;
+
+	for (i = 0; i < 4; i++) {
+		_arr[0] = [_arr[0] dup];
 	}
 }
 @end
@@ -315,8 +465,128 @@ int main(void) { return 0; }
     let diags = expect_reject(&src);
     assert!(
         diags.contains("one element of an array ivar") && diags.contains("two"),
-        "a constant index is the same slot each time, so this overlaps at two rather than \
-         accumulating; got:\n{}",
+        "a store that reads the element cannot release first, so this one really does need \
+         two slots and must not be accepted along with the shapes that need one; got:\n{}",
+        diags
+    );
+}
+
+/// The fourth site, and the reason #423 is not only an over-rejection
+/// being lifted.
+///
+/// `self->_ivar = [_ivar dup]` was **accepted**. The bar extracted the
+/// store's destination with `find_last_identifier`, which answers `self`
+/// for `self->_ivar` -- the field is a `field_identifier`, not an
+/// `identifier` -- and then asked `classify_store` whether the right-hand
+/// side mentions `self`. It does not, so the shape looked release-first
+/// while `emit::assigned_ivar_name` keyed the actual store on `_ivar` and
+/// lowered it with the hoisted temporary. `ctx.pre_stmts` put that
+/// temporary *above* the loop:
+///
+/// ```c
+/// struct OZObject *_oz_prev_L381_C3_1 = (struct OZObject *)(self->_ivar);
+/// for (i = 0; i < 4; i++) {
+///         (self->_ivar = Foo_dup(...), oz_static_release(_oz_prev_L381_C3_1));
+/// }
+/// ```
+///
+/// -- captured once while the ivar was still nil, then released again on
+/// every iteration. So this spelling did not merely exhaust the pool, it
+/// miscompiled, and it did so through the one destination spelling the
+/// rejection could not see. `assigned_slot_name` is what closes it, and it
+/// is the same function the subscript arm above uses, so there is no
+/// fifth spelling to find.
+#[test]
+fn the_self_arrow_ivar_spelling_cannot_hide_a_store_that_reads_the_ivar() {
+    let src = program(
+        "\
+@interface Holder : OZObject {
+	Foo *_ivar;
+}
+- (void)run;
+@end
+@implementation Holder
+- (void)run
+{
+	int i;
+
+	for (i = 0; i < 4; i++) {
+		self->_ivar = [_ivar dup];
+	}
+}
+@end
+
+int main(void) { return 0; }
+",
+    );
+    let diags = expect_reject(&src);
+    assert!(
+        diags.contains("an ivar") && diags.contains("two"),
+        "the bare right-hand side hides nothing: `self->_ivar` and `_ivar` name one slot, and \
+         a store that reads it needs two; got:\n{}",
+        diags
+    );
+}
+
+/// An ivar the emitter does **not** manage as a strong slot: nothing
+/// releases the previous value, so the loop accumulates and no pool size
+/// bounds it.
+///
+/// `scope.class_ivars` is every ivar; `render_strong_ivar_assign` and
+/// `render_strong_array_element_assign` both gate on
+/// `Program::owned_object_ivar_names`, which is fewer -- releasing a borrow
+/// is the double free `__unsafe_unretained` exists to prevent, so they
+/// decline the slot and the store lowers to a plain C one. The bar was
+/// asking the wider question, so since #405 this was accepted with
+/// `OverlappingStore`'s reasoning: "raise the pool and both live copies
+/// fit". There is no second live copy to fit, because there is no release.
+/// Found while giving the subscript arm the same gate, which would
+/// otherwise have inherited it (#423).
+#[test]
+fn an_unretained_ivar_accumulates_rather_than_overlapping() {
+    let src = program(
+        "\
+@interface Holder : OZObject {
+	__unsafe_unretained Foo *_borrowed;
+	__unsafe_unretained Foo *_borrowed_arr[4];
+}
+- (void)run;
+- (void)fill;
+@end
+@implementation Holder
+- (void)run
+{
+	int i;
+
+	for (i = 0; i < 4; i++) {
+		_borrowed = [Foo make];
+	}
+}
+- (void)fill
+{
+	int i;
+
+	for (i = 0; i < 4; i++) {
+		_borrowed_arr[0] = [Foo make];
+	}
+}
+@end
+
+int main(void) { return 0; }
+",
+    );
+    let diags = expect_reject(&src);
+    assert_eq!(
+        diags.matches("an ivar that is not an owned strong slot").count(),
+        2,
+        "both the scalar and the array spelling of an unretained ivar accumulate, and neither \
+         should be told to raise a pool that cannot help; got:\n{}",
+        diags
+    );
+    assert!(
+        !diags.contains("oz-pool"),
+        "no pool size bounds a loop that never releases, so the advice must not appear here; \
+         got:\n{}",
         diags
     );
 }

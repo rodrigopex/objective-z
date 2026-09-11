@@ -96,6 +96,14 @@ pub(crate) fn message_selector(node: Node, src: &str) -> String {
 
 struct MethodScope<'a> {
     class_ivars: &'a HashSet<String>,
+    /// The ivars the emitter manages as **strong slots**, which is a subset
+    /// of `class_ivars`: `Program::owned_object_ivar_names`, the same list
+    /// `render_strong_ivar_assign` and `render_strong_array_element_assign`
+    /// gate on. An `__unsafe_unretained` ivar, or one of a type Clang did
+    /// not call an owned object, is not here -- both of those lower to a
+    /// plain C store that releases nothing, so a loop accumulates into them
+    /// rather than overlapping at two (#423).
+    owned_object_ivars: &'a HashSet<String>,
     /// Object locals ARC manages as strong variables, so that an overwrite
     /// releases what was there (`emit::managed_object_locals`). An
     /// allocation stored into one of these is bounded at a single live
@@ -214,6 +222,8 @@ fn is_owning_receiver_of_owning_send(node: Node, src: &str, program: &Program) -
 /// | managed local | yes | **yes** | 1 | 4/4 objects |
 /// | ivar / global, store cannot read it | yes | **yes** | 1 | 4/4 objects |
 /// | ivar / global, store reads it | yes | **no** | **2** | 1/4, then nil |
+/// | array element, constant index, store cannot read it | yes | **yes** | 1 | 4/4 objects |
+/// | array element, constant index, store reads it | yes | **no** | **2** | refused |
 /// | array element, varying index | **no** | n/a | loop bound | unbounded |
 ///
 /// The ivar overlap was called *inherent* here, on the grounds that the new
@@ -233,6 +243,18 @@ fn is_owning_receiver_of_owning_send(node: Node, src: &str, program: &Program) -
 /// entirely, so accepting *that* shape would miscompile rather than merely
 /// exhaust. The rejection was load-bearing for one shape and wrong for the
 /// other two.
+///
+/// #405 reached two destination spellings of three and left the subscript
+/// one answering `OverlappingStore` unconditionally, so an array-element
+/// store that *is* lowered release-first --
+/// `render_strong_array_element_assign` has emitted that shape for a `+1`
+/// right-hand side that does not read the element since #405, the same as
+/// the ivar path -- stayed refused on a one-slot pool it in fact fits
+/// (#423). All three spellings now go through `assigned_slot_name` and
+/// then through the one predicate, which is also what closed the fourth
+/// site: `self->_ivar = [_ivar dup]` was *accepted*, because the old
+/// extractor answered `self` and the right-hand side does not mention
+/// `self`.
 ///
 /// The two shapes the old rule conflated, kept from the helper this
 /// replaced:
@@ -397,6 +419,89 @@ fn overlapping_unless_released_first(
     }
 }
 
+/// A store into an **ivar**, whichever of the three spellings named it.
+///
+/// The one place the ivar arms agree, so that the owned-slot gate and the
+/// release-first question are each asked once. `scope.class_ivars` is every
+/// ivar the class has; only `scope.owned_object_ivars` are the ones the
+/// emitter lowers as strong slots, and the bar was asking the first while
+/// the emitter gated on the second -- so an `__unsafe_unretained` ivar was
+/// accepted with `OverlappingStore`'s reasoning ("raise the pool and both
+/// live copies fit") when in truth nothing ever releases the previous
+/// value and no pool size bounds the loop at all (#423).
+fn ivar_slot_escape(
+    name: &str,
+    value: Node,
+    src: &str,
+    program: &Program,
+    scope: &MethodScope,
+    what: &'static str,
+) -> Option<LoopEscape> {
+    if !scope.owned_object_ivars.contains(name) {
+        return Some(LoopEscape::Accumulates("an ivar that is not an owned strong slot"));
+    }
+    overlapping_unless_released_first(name, value, src, program, what)
+}
+
+/// The strong slot an assignment's left side names, by the **same rule the
+/// emitter keys its store on** (`emit::assigned_ivar_name`).
+///
+/// `find_last_identifier` stood in for this and answered a different
+/// question. In `self->_ivar` the field is a `field_identifier`, not an
+/// `identifier`, so the last *identifier* under that node is `self` -- and
+/// the bar then asked `classify_store` about `"self"` while the emitter
+/// asked about `"_ivar"`. The two agree only by accident, because
+/// `classify_store`'s question is whether the right-hand side *mentions the
+/// name*, and they disagree on exactly the store that reads the ivar under
+/// its bare name -- the one spelling that hides `self` from the right-hand
+/// side:
+///
+/// ```objc
+/// for (i = 0; i < 4; i++) { self->_ivar = [_ivar dup]; }
+/// ```
+///
+/// That was accepted, and the emitter lowered it with the hoisted
+/// temporary: `ctx.pre_stmts` put `_oz_prev` *above* the loop, so it
+/// captured the ivar once while it was still nil and released that same
+/// stale pointer on every iteration. So this was not an over-rejection but
+/// the miscompile the `OverlappingStore` arm exists to prevent, reached
+/// through the one spelling that arm could not see.
+///
+/// Fourth site of the cause #351, #352, #360 and #405 each fixed once: a
+/// decision keyed on a spelling rather than on the reference (#423). The
+/// answer each time is to route every spelling through one function, which
+/// is why the subscript arm below extracts its array's name with this
+/// rather than growing a rule of its own.
+///
+/// It cannot *call* `emit::assigned_ivar_name`, which needs an `EmitCtx`
+/// the bar does not have, so it mirrors it; the local-shadowing check that
+/// function does through `ctx.locals` is the caller's here, against
+/// `scope.locals`.
+fn assigned_slot_name(left: Node, src: &str) -> Option<String> {
+    if left.kind() == "identifier" {
+        return Some(node_text(left, src).to_string());
+    }
+    if left.kind() != "field_expression" {
+        return None;
+    }
+    let mut cursor = left.walk();
+    let children: Vec<Node> = left.children(&mut cursor).collect();
+    /* `self->_x` only. Dot syntax is a property store, which the caller
+     * handles separately because a setter's ordering is its own question. */
+    if !children.iter().any(|c| c.kind() == "->") {
+        return None;
+    }
+    let object = children.first()?;
+    if object.kind() != "identifier" || node_text(*object, src) != "self" {
+        return None;
+    }
+    let field = children.last()?;
+    if field.kind() != "field_identifier" {
+        return None;
+    }
+    Some(node_text(*field, src).to_string())
+}
+
 /// Which slot an assignment keeps the reference in, and whether one slab
 /// slot can serve it.
 fn assignment_escape(
@@ -432,7 +537,7 @@ fn assignment_escape(
                 return Some(LoopEscape::Accumulates("a local ARC does not manage"));
             }
             if scope.class_ivars.contains(name) {
-                return overlapping_unless_released_first(name, value, src, program, "an ivar");
+                return ivar_slot_escape(name, value, src, program, scope, "an ivar");
             }
             /* A file-scope variable, which ARC manages as a strong slot the
              * same way an ivar is (#359) -- including the release-first
@@ -446,13 +551,16 @@ fn assignment_escape(
                 "a file-scope variable",
             )
         }
-        /* `self->_x`, and any other struct-field spelling. The ivar's own
-         * name is the last identifier in it, which is what the emitter
-         * keys its store on too (`emit::assigned_ivar_name`). */
-        "field_expression" => match find_last_identifier(*lhs, src) {
-            Some(name) => {
-                overlapping_unless_released_first(&name, value, src, program, "an ivar")
-            }
+        /* `self->_x`. Routed through the same extractor the emitter keys
+         * its store on, for the same reason the arms above share one
+         * predicate (#423). */
+        "field_expression" => match assigned_slot_name(*lhs, src) {
+            Some(name) => ivar_slot_escape(&name, value, src, program, scope, "an ivar"),
+            /* Dot syntax, or a field of something that is not `self`. A
+             * property store sends the setter, and a synthesized setter
+             * retains the new value before releasing the old -- which is
+             * the two-slot overlap by construction, whatever the right-hand
+             * side reads. */
             None => Some(LoopEscape::OverlappingStore("an ivar")),
         },
         "subscript_expression" => {
@@ -460,18 +568,41 @@ fn assignment_escape(
              * it behaves like an ivar; anything else varies, and varying is
              * what accumulates. */
             let mut sc = lhs.walk();
-            let index = lhs
-                .children(&mut sc)
-                .filter(|n| !matches!(n.kind(), "[" | "]"))
-                .nth(1);
-            match index {
-                Some(i) if i.kind() == "number_literal" => {
-                    Some(LoopEscape::OverlappingStore("one element of an array ivar"))
-                }
-                _ => Some(LoopEscape::Accumulates(
-                    "an array element chosen per iteration",
-                )),
+            let parts: Vec<Node> =
+                lhs.children(&mut sc).filter(|n| !matches!(n.kind(), "[" | "]")).collect();
+            let index = parts.get(1);
+            if !index.is_some_and(|i| i.kind() == "number_literal") {
+                return Some(LoopEscape::Accumulates("an array element chosen per iteration"));
             }
+            /* The array's own name, by the same rule as the two arms above,
+             * so that both `_arr[0]` and `self->_arr[0]` reach the one
+             * predicate -- `render_strong_array_element_assign` extracts it
+             * with `assigned_ivar_name` and then asks `classify_store`
+             * about the *array*, not the element, so this has to ask about
+             * the same name or the two answer different questions. */
+            let Some(name) = parts.first().and_then(|recv| assigned_slot_name(*recv, src)) else {
+                return Some(LoopEscape::OverlappingStore("one element of an array ivar"));
+            };
+            /* Only an *ivar* array is a strong slot the emitter manages: a
+             * local or parameter array has no scope-exit release to pair
+             * with and a file-scope one is not in
+             * `owned_object_ivar_names`, so `render_strong_array_element_assign`
+             * declines all three and the store lowers to a plain C one that
+             * releases nothing. A local of the same name shadows the ivar,
+             * exactly as in C and exactly as `assigned_ivar_name` treats
+             * it; `ivar_slot_escape` then applies the owned-slot gate the
+             * other two arms apply. */
+            if scope.locals.contains(&name) || !scope.class_ivars.contains(&name) {
+                return Some(LoopEscape::Accumulates("an array element that is not an ivar"));
+            }
+            ivar_slot_escape(
+                &name,
+                value,
+                src,
+                program,
+                scope,
+                "one element of an array ivar",
+            )
         }
         _ => Some(LoopEscape::Accumulates("a destination this pass cannot bound")),
     }
@@ -1202,9 +1333,12 @@ pub fn check_method_body(
     }
     let ivar_names: HashSet<String> =
         program.all_ivars(&class_info.name).into_iter().map(|(n, _)| n).collect();
+    let owned_ivars: HashSet<String> =
+        program.owned_object_ivar_names(&class_info.name).into_iter().collect();
     let managed = crate::emit::managed_object_locals(body, src, program);
     let mut scope = MethodScope {
         class_ivars: &ivar_names,
+        owned_object_ivars: &owned_ivars,
         arc_managed_locals: &managed,
         locals: HashSet::new(),
         block_locals: HashSet::new(),
@@ -1233,10 +1367,13 @@ pub fn check_method_body(
 /// that surfaced at run time as an unexpected nil rather than at build time
 /// as a diagnostic.
 ///
-/// No `MethodScope` mode is needed for this. `class_ivars` is read in exactly
-/// one place -- `find_capture`, which asks whether a name a block closes over
-/// is an ivar -- and a free function has none, so the empty set is not a
-/// stand-in but the truth. Seeding it from some nearby class instead would
+/// No `MethodScope` mode is needed for this. `class_ivars` distinguishes an
+/// ivar from anything else -- `find_capture` asks whether a name a block
+/// closes over is one, and `assignment_escape` asks whether a store's
+/// destination is a strong slot the emitter manages (#405, #423) -- and a
+/// free function has no ivars, so the empty set is not a stand-in but the
+/// truth: a store there is to a local, a parameter or a file-scope variable,
+/// which is what those arms then conclude. Seeding it from some nearby class instead would
 /// invent captures: `samples/gpio_demo`'s `[led toggle]` inside a block in
 /// `main` would be flagged the moment any class in that file declared an ivar
 /// named `led`. `check_dealloc_body` is likewise inapplicable and is gated on
@@ -1247,6 +1384,7 @@ pub fn check_function_body(body: Node, src: &str, program: &Program) -> Vec<Diag
     let managed = crate::emit::managed_object_locals(body, src, program);
     let mut scope = MethodScope {
         class_ivars: &no_ivars,
+        owned_object_ivars: &no_ivars,
         arc_managed_locals: &managed,
         locals: HashSet::new(),
         block_locals: HashSet::new(),
