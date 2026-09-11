@@ -5,7 +5,7 @@
 
 /* already resolved: #import "OZTestBase.h" */
 
-/* synthesized: backing storage for every Node instance -- 4 slot(s), sized from this translation unit's allocation sites (override with --pool-sizes) */
+/* synthesized: backing storage for every Node instance -- 4 slot(s), sized from this translation unit's allocation sites, each counted once per call site of the body it escapes from (override with --pool-sizes) */
 OZ_SLAB_DEFINE(oz_slab_Node, sizeof(struct Node), 4, 4);
 
 /* synthesized: allocates and zero-initializes a new Node (not from source) */

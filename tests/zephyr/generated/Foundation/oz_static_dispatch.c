@@ -5,7 +5,7 @@
  * src/OZLog.c provides the strong definition where it is linked. */
 __attribute__((weak)) int _oz_get_log_precision(void) { return -1; }
 
-/* synthesized: backing storage for every OZObject instance -- 1 slot(s), sized from this translation unit's allocation sites (override with --pool-sizes) */
+/* synthesized: backing storage for every OZObject instance -- 1 slot(s), sized from this translation unit's allocation sites, each counted once per call site of the body it escapes from (override with --pool-sizes) */
 OZ_SLAB_DEFINE(oz_slab_OZObject, sizeof(struct OZObject), 1, 4);
 
 /* synthesized: allocates and zero-initializes a new OZObject (not from source) */
