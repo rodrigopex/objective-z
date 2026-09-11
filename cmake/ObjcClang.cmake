@@ -260,11 +260,10 @@ function(_objz_write_compile_db)
     string(REGEX REPLACE ",\n$" "\n" _json "${_json}")
     file(WRITE "${CMAKE_BINARY_DIR}/compile_commands_objc.json" "[\n${_json}]\n")
 
-    # Whether the build directory sits inside the source tree. Both editor
-    # conveniences below are conditional on it, for the same reason: twister
-    # builds every sample in a temporary directory, and neither a symlink into
-    # a deleted build nor a `.clangd` naming one does a checked-out tree any
-    # good (#304).
+    # Whether the build directory sits inside the source tree. The `.clangd`
+    # write below is conditional on it: twister builds every sample in a
+    # temporary directory, and a `.clangd` naming one does a checked-out tree
+    # no good (#304).
     file(RELATIVE_PATH _bin_rel "${CMAKE_SOURCE_DIR}" "${CMAKE_BINARY_DIR}")
     if(_bin_rel MATCHES "^\\.\\." OR IS_ABSOLUTE "${_bin_rel}")
         set(_objz_in_tree_build FALSE)
@@ -272,22 +271,30 @@ function(_objz_write_compile_db)
         set(_objz_in_tree_build TRUE)
     endif()
 
-    # A database in the build directory is not enough on its own. Editors and
-    # their clangd plugins pass `--compile-commands-dir <project root>`, which
-    # *overrides* the `CompilationDatabase:` key written below -- so clangd
-    # looks in the source root, finds nothing, and falls back to a bare
-    # `clang -x objective-c file.m`: host triple, no include paths, every
-    # `#import` unresolved. Linking the database where they look is what makes
-    # an out-of-tree app work without per-editor configuration (#320).
+    # The database stays in the build directory and is not linked anywhere.
     #
-    # A symlink rather than a copy, so it cannot go quietly stale.
-    set(_objz_link_db "")
-    if(_objz_in_tree_build)
-        set(_objz_link_db
-            COMMAND ${CMAKE_COMMAND} -E create_symlink
-                    "${_bin_rel}/compile_commands.json"
-                    "${CMAKE_SOURCE_DIR}/compile_commands.json")
-    endif()
+    # #320 linked it into ${CMAKE_SOURCE_DIR} as well, reasoning that a clangd
+    # plugin passing `--compile-commands-dir <project root>` *overrides* the
+    # `CompilationDatabase:` key written below, finds nothing at the root, and
+    # falls back to a bare `clang -x objective-c file.m` with the host triple.
+    # Half of that is true -- the flag does override the key -- but the flag
+    # does not leave clangd with nothing: it also looks in a `build`
+    # subdirectory of the directory it names. Measured with the symlink deleted,
+    # on clangd 21 (Apple, which the Zed objective-c extension takes from PATH)
+    # and 22.1.8 (Homebrew), `--compile-commands-dir <app root> --check
+    # src/main.m` loads <app root>/build/compile_commands.json and compiles at
+    # -triple thumbv7em-unknown-none-eabi with every include path (#407).
+    #
+    # So the link bought nothing for the layout every sample, `just` recipe and
+    # documented command uses, `-d <app>/build`, while leaving an untracked
+    # artifact at the root of each in-tree-built app.
+    #
+    # What it did cover, and what is given up with it: clangd's fallback is
+    # specific to a directory literally named `build` -- a database under
+    # `out/` is not found -- so an app built with `-d <app>/build-nrf` *and*
+    # edited through a plugin that overrides the database location has to point
+    # that flag at the real build directory. `.clangd` below still names it, so
+    # plain clangd needs nothing.
 
     add_custom_target(objz_compile_db ALL
         COMMAND ${Python3_EXECUTABLE}
@@ -297,7 +304,6 @@ function(_objz_write_compile_db)
                 --root ${CMAKE_SOURCE_DIR}
                 --root ${_mod}
                 --build-dir ${CMAKE_BINARY_DIR}
-        ${_objz_link_db}
         COMMENT "ObjZ: merging ObjC entries into compile_commands.json"
         VERBATIM
     )
