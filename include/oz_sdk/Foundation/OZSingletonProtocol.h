@@ -1,5 +1,5 @@
 /**
- * @file OZSingleton+Protocol.h
+ * @file OZSingletonProtocol.h
  * @brief Protocol for OZ singleton classes.
  *
  * Classes conforming to OZSingletonProtocol are created once via

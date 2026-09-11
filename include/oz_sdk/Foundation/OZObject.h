@@ -53,7 +53,7 @@
   * deliberately defines neither, since this file importing it makes the
   * reverse edge a cycle. It says so with an `#error` if reached first.
   */
- #import "OZObject+Protocol.h"
+ #import "OZObjectProtocol.h"
 
 /**
  * @brief Read the reference count of an object.

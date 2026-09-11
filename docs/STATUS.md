@@ -176,7 +176,7 @@ adoption `[indicator conformsToProtocol:...]` is
 `error: no known instance method for selector 'conformsToProtocol:'` however
 plainly `OZObject` declares it. Real Objective-C has the same rule and
 `<NSObject>` is the same answer. `OZObjectProtocol` lives in
-`include/oz_sdk/Foundation/OZObject+Protocol.h`, is reached through `OZObject.h`
+`include/oz_sdk/Foundation/OZObjectProtocol.h`, is reached through `OZObject.h`
 (which defines the `BOOL` its methods return), and is adopted by `OZObject`,
 `OZIteratorProtocol` and `OZSingletonProtocol`. Adopting it demands nothing of a
 conforming class: every method it declares is defined once, on the root class,

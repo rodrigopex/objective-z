@@ -567,7 +567,7 @@ fn remove_method_body(src: &str, signature_marker: &str) -> String {
 }
 
 /// `OZObjectProtocol`, verbatim from
-/// `include/oz_sdk/Foundation/OZObject+Protocol.h` -- the protocol
+/// `include/oz_sdk/Foundation/OZObjectProtocol.h` -- the protocol
 /// `OZObject` adopts and that every other protocol should adopt in turn
 /// (#307).
 ///
@@ -575,7 +575,7 @@ fn remove_method_body(src: &str, signature_marker: &str) -> String {
 /// point `OZObject.h` imports it.
 pub fn object_protocol_src() -> String {
     strip_import_and_pragma_lines(include_str!(
-        "../../../../include/oz_sdk/Foundation/OZObject+Protocol.h"
+        "../../../../include/oz_sdk/Foundation/OZObjectProtocol.h"
     ))
 }
 
@@ -594,7 +594,7 @@ pub fn ozobject_src() -> String {
     let header = include_str!("../../../../include/oz_sdk/Foundation/OZObject.h");
     let spliced = replace_line_containing(
         header,
-        "#import \"OZObject+Protocol.h\"",
+        "#import \"OZObjectProtocol.h\"",
         &object_protocol_src(),
     );
     assemble(&spliced, include_str!("../../../../src/OZObject.m"))
@@ -783,7 +783,7 @@ pub fn ozdictionary_src() -> String {
 }
 
 /// `OZIteratorProtocol`, the for-in protocol -- assembled from the real
-/// `include/oz_sdk/Foundation/OZIterator+Protocol.h` verbatim, no cuts at
+/// `include/oz_sdk/Foundation/OZIteratorProtocol.h` verbatim, no cuts at
 /// all needed: its `@property (nonatomic, readonly) uint16_t iterIdx;`
 /// (a *protocol* requirement, not a class one) never reaches the static
 /// bar or a collision with the class-level `@property` ban -- protocol
@@ -804,16 +804,16 @@ pub fn ozdictionary_src() -> String {
 /// `ozarray_src`/`ozdictionary_src` still declare it for the free
 /// conformance validation (#192) and because the real headers do too.
 pub fn iterator_protocol_src() -> String {
-    strip_import_and_pragma_lines(include_str!("../../../../include/oz_sdk/Foundation/OZIterator+Protocol.h"))
+    strip_import_and_pragma_lines(include_str!("../../../../include/oz_sdk/Foundation/OZIteratorProtocol.h"))
 }
 
 /// `OZSingletonProtocol`, verbatim from
-/// `include/oz_sdk/Foundation/OZSingleton+Protocol.h`. Conformance to it is
+/// `include/oz_sdk/Foundation/OZSingletonProtocol.h`. Conformance to it is
 /// what marks a class's instances immortal (#228), so the tests must use
 /// the real declaration rather than a look-alike -- a hand-copied protocol
 /// of the same name would keep passing if the header were renamed.
 pub fn singleton_protocol_src() -> String {
-    strip_import_and_pragma_lines(include_str!("../../../../include/oz_sdk/Foundation/OZSingleton+Protocol.h"))
+    strip_import_and_pragma_lines(include_str!("../../../../include/oz_sdk/Foundation/OZSingletonProtocol.h"))
 }
 
 /// OZHeap, the `allocWithHeap:` backing store -- assembled from

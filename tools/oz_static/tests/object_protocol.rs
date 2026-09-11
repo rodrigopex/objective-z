@@ -10,7 +10,7 @@
 //!
 //! Two halves, and each of these tests fails without one of them:
 //!
-//!   * the header half -- `OZObject+Protocol.h` declaring all ten methods
+//!   * the header half -- `OZObjectProtocol.h` declaring all ten methods
 //!     (it declared two), imported by `OZObject.h`, and adopted by
 //!     `OZObject` and by both SDK protocols;
 //!   * the transpiler half -- `Program::implements_selector`, so an
