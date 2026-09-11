@@ -528,6 +528,34 @@ Pool advice elsewhere is untouched and remains correct: `pools.rs` and
 pool *is* the fix. The rule is narrower than "don't mention the pool" — it
 is that the check giving the advice has to be the check that can act on it.
 
+### A test helper fixed twice, in two of its three copies (#418)
+
+Three test files carry a private `function_body(source_c, name)` that pulls
+one generated C function out of the output by name. Two of them --
+`explicit_ivar_store.rs` and `ownership_matrix.rs` -- carry a correction and
+a comment explaining it: `find` reaches the *prototype* in the companion
+interface block first, so the span returned begins at a declaration and runs
+to whatever `\n}` comes next, which is text from a different function
+entirely. `ownership_matrix.rs` records that this once made a correctly
+balanced function look like it leaked. `return_alias_escape.rs` was never
+updated.
+
+It went unnoticed for as long as the span it wrongly returned happened not
+to contain the strings its assertions look for. #418 added
+`int oz_static_retain_count(id obj);` to the spliced `OZObject.h`, and
+`a_returned_ivar_is_not_retained` -- which asserts the *absence* of
+`oz_static_retain` in `Holder_held` -- went red on a substring of a
+declaration in a header it was never meant to read. The test had been
+passing by luck, and a name change is what collected the debt.
+
+The general point, and it is the one this section is about: **when a helper
+carries a correction, the correction is a fact about the helper, not about
+the file it happens to live in.** Two copies knowing something the third
+does not is the tell. And an assertion of the form "this string does not
+appear in this span" is only as good as the span -- a negative assertion
+over a span that is too wide cannot fail for the right reason and cannot be
+trusted when it fails for the wrong one.
+
 ### A block literal borrows its enclosing body's context (#339, #342)
 
 The other shape of the same tell, and the more instructive one, because
@@ -2196,5 +2224,44 @@ from an expression that is not the thing stored.
   at all -- `CMakeLists.txt` gates on `CONFIG_OBJZ`, `oz_static.cmake` never
   tests it, and `main.rs:5`'s comment claiming it is "wired into CMake by
   cmake/oz_static.cmake" is the opposite of what that file does.
+
+- **`__objc_` is retired as a prefix, and a leading double underscore is never
+  ours to spell.** C reserves it to the implementation, so every name under it
+  was undefined behaviour waiting for a toolchain to claim the spelling.
+  Synthesized and internal names are `oz_static_` (companion-wide) or `_oz_`
+  (per-class). `__objc_refcount_get` was the last survivor in the live tree and
+  went in #418; the prefix remains only in `runtime_legacy/`, which is not
+  compiled, and in one `#define` bridge in `tests/tools/oz_static_build.py` that
+  exists so behaviour drivers written against the retired Python pipeline's ABI
+  stay unmodified. Neither is a precedent. `CLAUDE.md` had documented the
+  opposite -- "Internal functions: `__objc_` prefix" -- which #418 made outright
+  false, so the enumeration a rename needs runs over the *documentation* as well
+  as the code.
+- **One concept gets one public name, and a second name for it is usually a
+  signature problem wearing a naming problem's clothes.** `__objc_refcount_get`
+  and `oz_static_retain_count` did the same thing, and the reason there were two
+  is the part worth keeping: `oz_static_retain_count` took `struct <root> *`, and
+  `include/oz_sdk/Foundation/OZObject.h` has to declare whatever Objective-C
+  source calls -- Clang resolves the call while dumping the AST, before any
+  generated header exists -- while being unable to name a generated struct. So
+  the second name existed purely to have an `id`-typed parameter. Collapsing the
+  two meant changing the *signature*, not deleting a line: the companion emits
+  `int oz_static_retain_count(id obj)` now, `id` is `void *` in generated C, and
+  every internal caller keeps passing a root-struct pointer and converts
+  implicitly.
+
+  The invariant that falls out, and it has no local test of its own outside
+  #418's: **a declaration the SDK header and the companion both carry must
+  agree exactly.** The SDK headers are *spliced into* generated C, so the two
+  land in one translation unit -- identical, they are redundant and legal;
+  differing in one parameter type, they are a conflicting declaration and
+  nothing in the program compiles. That is a whole-program failure from a
+  one-word edit, and it is invisible to any fixture that does not splice the
+  header in question.
+- **`get` on a selector means it writes through a caller's pointer, and that
+  rule reaches plain C functions too.** The selector half is recorded above
+  (#413). `__objc_refcount_get` was the SDK's last `get`-prefixed *reader*, and
+  retiring it is what made the rule true of every name the SDK exports rather
+  than of selectors alone (#418).
 - **The version is `tools/oz_static/Cargo.toml`**, bumped in the same commit
   as the change it describes. The repo-level `VERSION` file is retired.
