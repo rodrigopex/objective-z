@@ -2848,10 +2848,13 @@ fn render_strong_ivar_assign(
      * drained by the enclosing *top-level* statement -- so in a loop the
      * capture hoisted above it, read the ivar once while it was still nil,
      * and every iteration released nil. `render_strong_local_assign`'s own
-     * comment records that defect being fixed there; here it was unreachable
-     * only because `staticbar::LoopEscape::OverlappingStore` refused the
-     * shape outright. Which is why relaxing that rejection and removing the
-     * temporary have to be the same change, and in that order.
+     * comment records that defect being fixed there; here it was believed
+     * unreachable because `staticbar::LoopEscape::OverlappingStore` refuses
+     * the shape inside a loop. It was not: the bar only walks outward from
+     * a `+1` expression, so `_x = pick(a);` -- `Unsupported` and `+0` --
+     * reached the loop and released one hoisted pointer three times.
+     * `render_overlapping_strong_store` hoists only the temporary's
+     * *declaration* now, which closes that without relaxing the bar (#424).
      */
     let expr = match kind {
         /* A `+1` right-hand side that does not mention the ivar: release
@@ -2886,54 +2889,115 @@ fn render_strong_ivar_assign(
          * does not read the ivar, so the new value has to exist before the
          * old one can be released. That needs the temporary, and it is the
          * shape `OverlappingStore` still refuses inside a loop.
+         *
+         * The lowering itself is `render_overlapping_strong_store`, shared
+         * with every other strong slot -- see that function for why it is
+         * one function and not one per slot kind (#424).
          */
-        LocalStore::Unsupported => {
-            let (line, col) = line_col(ctx.src, node.start_byte());
-            ctx.block_counter += 1;
-            let prev = format!("_oz_prev_L{}_C{}_{}", line, col, ctx.block_counter);
-            ctx.pre_stmts.push(format!(
-                "struct {root} *{prev} = (struct {root} *)(self->{path});",
-                root = root,
-                prev = prev,
-                path = path
-            ));
-            let retain = if takes_ownership {
-                String::new()
-            } else {
-                format!(
-                    "oz_static_retain((struct {root} *)(self->{path})), ",
-                    root = root,
-                    path = path
-                )
-            };
-            // The comma expression yields the stored value only where
-            // something can use it. As a bare statement -- which is nearly
-            // always -- a trailing `self->_x` is a read whose result is
-            // discarded, and Clang says so: "expression result unused"
-            // [-Wunused-value]. Zephyr builds with -Werror, so that is a
-            // build failure, not just noise. The two arms above need no such
-            // suppression: their last operand is the assignment itself,
-            // which yields the stored value and has a side effect.
-            let yields = if node
-                .parent()
-                .is_some_and(|parent| parent.kind() == "expression_statement")
-            {
-                String::new()
-            } else {
-                format!(", self->{path}", path = path)
-            };
-            format!(
-                "(self->{path} = {value}, {retain}oz_static_release({prev}){yields})",
-                path = path,
-                value = value,
-                retain = retain,
-                prev = prev,
-                yields = yields
-            )
-        }
+        LocalStore::Unsupported => render_overlapping_strong_store(
+            node,
+            &format!("self->{}", path),
+            &value,
+            takes_ownership,
+            &root,
+            ctx,
+        ),
     };
     let ty = if value_ty == "id" { format!("struct {} *", root) } else { value_ty };
     Some((expr, ty))
+}
+
+/// The one store shape whose new value has to exist before the old one can
+/// go: `LocalStore::Unsupported`, for **every** strong slot.
+///
+/// `target` is the slot's C lvalue -- `self->_x` for an ivar, the bare name
+/// for a managed local, a `static` local or a file-scope object. That is
+/// the only thing the four differ in, so the lowering is written once and
+/// the caller supplies the text (#424).
+///
+/// Why it has to be shared rather than copied: `render_strong_local_assign`
+/// returned `None` for this kind, which was sound for a managed *local*
+/// (`managed_object_locals` filters a candidate out when any of its stores
+/// is `Unsupported`, so one never reaches here) and silently wrong for the
+/// other two, which have no such filter. `cached = [cached copy];` fell
+/// through to a plain C store and the previous value was never released --
+/// a leak, and an undeclared one, since nothing in the tree said those
+/// slots were only partly managed. Keying on the *kind of slot* is what
+/// #359 was; keying the store on the reference and routing all four
+/// spellings through one function is the only thing that has stopped the
+/// next site appearing.
+///
+/// The emitted order is: capture the old pointer, store the new value,
+/// retain it if it was borrowed, then release the old one.
+///
+/// ```c
+/// /* struct OZObject *_oz_prev_L9_C2_1;  -- hoisted declaration */
+/// (_oz_prev_L9_C2_1 = (struct OZObject *)(cached),
+///  cached = Thing_copy((struct Thing *)(cached)),
+///  oz_static_release(_oz_prev_L9_C2_1))
+/// ```
+///
+/// The temporary is **declared** through `ctx.pre_stmts` and **assigned**
+/// inside the comma expression. That split is `render_comma_operand_expr`'s
+/// and it is load-bearing here for the same reason: `pre_stmts` are drained
+/// by the enclosing *top-level* statement, so anything pushed there is
+/// lifted above an enclosing loop -- measured, and above a *braced* body
+/// too. The previous shape pushed the initialiser with the declaration, so
+/// `for (...) { _x = pick(a); }` read the ivar once before the loop and
+/// released that same pointer on every iteration. A declaration with no
+/// initialiser evaluates nothing, so lifting it costs nothing and reorders
+/// nothing; only the capture, the store and the release have to stay
+/// inside the expression, and a comma expression keeps them there.
+///
+/// Self-assignment is safe in both arms. `cached = [cached copy]` reads the
+/// slot in the second operand, while it still holds the old value, and the
+/// release comes last. A borrowed right-hand side that hands the slot's own
+/// object back is retained before that release, so its count never reaches
+/// zero in between.
+///
+/// A `+1` right-hand side is stored without retaining -- it already carries
+/// the reference the slot is taking over, and a second one would have no
+/// release to balance it.
+fn render_overlapping_strong_store(
+    node: Node,
+    target: &str,
+    value: &str,
+    takes_ownership: bool,
+    root: &str,
+    ctx: &mut EmitCtx,
+) -> String {
+    let (line, col) = line_col(ctx.src, node.start_byte());
+    ctx.block_counter += 1;
+    let prev = format!("_oz_prev_L{}_C{}_{}", line, col, ctx.block_counter);
+    ctx.pre_stmts.push(format!("struct {root} *{prev};", root = root, prev = prev));
+    let retain = if takes_ownership {
+        String::new()
+    } else {
+        format!("oz_static_retain((struct {root} *)({target})), ", root = root, target = target)
+    };
+    /* The comma expression yields the stored value only where something
+     * can use it. As a bare statement -- which is nearly always -- a
+     * trailing `self->_x` is a read whose result is discarded, and Clang
+     * says so: "expression result unused" [-Wunused-value]. Zephyr builds
+     * with -Werror, so that is a build failure, not just noise. The
+     * release-first arms need no such suppression: their last operand is
+     * the assignment itself, which yields the stored value and has a side
+     * effect. */
+    let yields = if node.parent().is_some_and(|parent| parent.kind() == "expression_statement") {
+        String::new()
+    } else {
+        format!(", {target}", target = target)
+    };
+    format!(
+        "({prev} = (struct {root} *)({target}), {target} = {value}, \
+         {retain}oz_static_release({prev}){yields})",
+        prev = prev,
+        root = root,
+        target = target,
+        value = value,
+        retain = retain,
+        yields = yields
+    )
 }
 
 /// Assignment to a strong object *local*: release what it held, so the
@@ -2967,9 +3031,12 @@ fn render_strong_ivar_assign(
 /// sound: every value such a local can hold is owned, so there is never a
 /// reference released that was not taken. See `managed_object_locals`.
 ///
-/// Takes no `node`, unlike `render_strong_ivar_assign`: that one needs the
-/// assignment's position to name a temporary, and this one deliberately
-/// emits no temporary at all.
+/// Takes `node` for the same reason `render_strong_ivar_assign` does: the
+/// one store shape whose new value must exist before the old one is
+/// released needs the assignment's position to name a temporary. It used to
+/// take none, and returned `None` for that shape -- correct for a managed
+/// local, whose stores are filtered upstream, and a silent plain C store
+/// for a `static` local or a file-scope object, which are not (#424).
 /// Is `name` a file-scope object variable -- a strong slot that no scope
 /// owns?
 ///
@@ -2991,6 +3058,7 @@ fn is_file_scope_object(name: &str, ctx: &EmitCtx) -> bool {
 }
 
 fn render_strong_local_assign(
+    node: Node,
     left: Node,
     right: Node,
     ctx: &mut EmitCtx,
@@ -3011,20 +3079,25 @@ fn render_strong_local_assign(
     }
     let root = ctx.program.root_class()?.to_string();
     let kind = classify_store(&name, right, ctx.src, ctx.program);
-    if kind == LocalStore::Unsupported {
-        return None;
-    }
+    let takes_ownership =
+        crate::arc::binds_ownership(right, ctx.src, ctx.program, &ctx.program.owning_methods);
     let (value, _value_ty) = render_expr(right, ctx);
 
-    // No temporary, deliberately. An earlier version captured the previous
-    // value into a `ctx.pre_stmts` local, which is drained by whichever
-    // *top-level* statement is being rendered -- so for an assignment inside
-    // a loop the capture was hoisted above the `for`, read `c` once while it
-    // was still nil, and every iteration then released nil. The loop leaked
-    // exactly as before, and the generated C looked plausible. Naming `c`
-    // directly inside the comma expression is both simpler and correct: the
-    // comma operator sequences left to right, so a release written before
-    // the assignment observes the old value.
+    // No temporary in the two release-first arms, deliberately. An earlier
+    // version captured the previous value into a `ctx.pre_stmts` local *with
+    // its initialiser*, and those are drained by whichever *top-level*
+    // statement is being rendered -- so for an assignment inside a loop the
+    // capture was hoisted above the `for`, read `c` once while it was still
+    // nil, and every iteration then released nil. The loop leaked exactly as
+    // before, and the generated C looked plausible. Naming `c` directly
+    // inside the comma expression is both simpler and correct: the comma
+    // operator sequences left to right, so a release written before the
+    // assignment observes the old value.
+    //
+    // The third arm cannot name `c` directly -- its right-hand side may read
+    // the slot -- and takes `render_overlapping_strong_store` instead, which
+    // hoists only the temporary's *declaration* and so is loop-safe for the
+    // same reason this is.
     let expr = match kind {
         // A `+1` right-hand side that does not mention the variable: release
         // first, then assign. Releasing *before* the allocation is what lets
@@ -3051,10 +3124,25 @@ fn render_strong_local_assign(
             name = name,
             value = value
         ),
-        LocalStore::Unsupported => unreachable!("returned above"),
+        /* A borrowed call or message result, a cast, a subscript -- and
+         * `cached = [cached copy]`, which is `+1` but *does* read the slot.
+         * The new value has to exist before the old one can be released, so
+         * this is the one arm that needs a temporary, and it is the same
+         * lowering a strong ivar's store of the same shape gets (#424).
+         *
+         * Unreachable for a managed *local*: `managed_object_locals` drops a
+         * candidate whose stores include one of this kind, and that filter
+         * stays -- `staticbar` reads the same set to decide a loop needs one
+         * slab slot, which is true only of the release-first arms. It is
+         * reachable, and was silently a plain C store, for the two slots
+         * that have no such filter. */
+        LocalStore::Unsupported => {
+            render_overlapping_strong_store(node, &name, &value, takes_ownership, &root, ctx)
+        }
     };
-    // The comma expression already yields the assigned value, so unlike the
-    // ivar path there is no trailing read to suppress for `-Wunused-value`.
+    // The release-first arms' comma expression already yields the assigned
+    // value, so unlike the ivar path there is no trailing read to suppress
+    // for `-Wunused-value`; the overlapping arm decides that for itself.
     let ty = ctx.scope.get(&name).cloned().unwrap_or_else(|| format!("struct {} *", root));
     Some((expr, ty))
 }
@@ -3353,7 +3441,7 @@ fn render_assignment_expression(node: Node, ctx: &mut EmitCtx) -> (String, Strin
         if let Some(rendered) = render_strong_ivar_assign(node, left, right, ctx) {
             return rendered;
         }
-        if let Some(rendered) = render_strong_local_assign(left, right, ctx) {
+        if let Some(rendered) = render_strong_local_assign(node, left, right, ctx) {
             return rendered;
         }
         if let Some(rendered) = render_strong_array_element_assign(node, left, right, ctx) {
