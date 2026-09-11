@@ -79,3 +79,10 @@ void test_is_equal_to_string(void)
 {
 	TEST_ASSERT_TRUE(MutableStringTest_isEqualToStringTrue(t));
 }
+
+void test_reinitialise_replaces_content_without_leaking(void)
+{
+	MutableStringTest_buildAndReinitialise(t);
+	TEST_ASSERT_EQUAL_STRING("second", MutableStringTest_result(t));
+	TEST_ASSERT_EQUAL_UINT(6, MutableStringTest_resultLength(t));
+}

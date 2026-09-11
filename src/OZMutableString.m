@@ -13,6 +13,16 @@
 - (id)initWithCString:(const char *)str
 {
 	self = [super init];
+	/* `+alloc` zeroed `_data`, and `-init` may run more than once on the
+	 * same object, so this is a no-op on the first run and frees the
+	 * previous buffer on any later one. Without it a second
+	 * initialisation leaks the first buffer, which `-dealloc` can never
+	 * make up for -- by then `_data` names only the last one (#405).
+	 */
+	free((void *)_data);
+	_data = NULL;
+	_length = 0;
+	_capacity = 0;
 	if (str == NULL) {
 		size_t cap = 16;
 		char *buf = (char *)malloc(cap);
@@ -49,6 +59,16 @@
 - (id)initWithCapacity:(size_t)capacity
 {
 	self = [super init];
+	/* `+alloc` zeroed `_data`, and `-init` may run more than once on the
+	 * same object, so this is a no-op on the first run and frees the
+	 * previous buffer on any later one. Without it a second
+	 * initialisation leaks the first buffer, which `-dealloc` can never
+	 * make up for -- by then `_data` names only the last one (#405).
+	 */
+	free((void *)_data);
+	_data = NULL;
+	_length = 0;
+	_capacity = 0;
 	size_t cap = capacity < 16 ? 16 : capacity;
 	char *buf = (char *)malloc(cap);
 	if (buf == NULL) {

@@ -13,6 +13,7 @@
 - (void)buildAndAppendGrow;
 - (void)buildAndSetString;
 - (void)buildAndSetStringNil;
+- (void)buildAndReinitialise;
 /* query methods — read from _ms ivar */
 - (const char *)result;
 - (unsigned int)resultLength;
@@ -72,6 +73,20 @@
 {
 	_ms = [[OZMutableString alloc] initWithCString:"content"];
 	[_ms setString:nil];
+}
+
+/*
+ * The same object initialised twice. `-initWithCString:` mallocs into
+ * `_data`, and before #405 it did so without freeing what was already
+ * there -- so the first buffer leaked and `-dealloc` could not make up
+ * for it, since by then `_data` names only the second. Observable under
+ * LeakSanitizer (`just test-behavior --check-leaks`); the content
+ * assertion below only says the reinitialisation itself works.
+ */
+- (void)buildAndReinitialise
+{
+	_ms = [[OZMutableString alloc] initWithCString:"first"];
+	[_ms initWithCString:"second"];
 }
 
 - (const char *)result
