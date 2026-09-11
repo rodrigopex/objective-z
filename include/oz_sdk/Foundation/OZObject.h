@@ -66,7 +66,21 @@ unsigned int __objc_refcount_get(id obj);
 __attribute__((objc_root_class))
 @interface OZObject <OZObjectProtocol>
 + (instancetype)alloc;
-+ (instancetype)allocWithHeap:(id)heap;
+/**
+ * @brief Allocate from the system heap (`k_malloc` on Zephyr).
+ *
+ * The dynamic counterpart to `+alloc`, which takes a slot from the
+ * class's static slab. Static versus dynamic is the axis these two
+ * names divide on, and the system heap is the ordinary case on Zephyr
+ * -- which is why it gets the short name and a named heap is the one
+ * that takes an argument.
+ *
+ * Needs `CONFIG_OBJZ_HEAP=y`; without it this is a located transpile
+ * error rather than a silent fallback to the slab.
+ */
++ (instancetype)dynamicAlloc;
+/** @brief Allocate from @p heap, or from the system heap when it is nil. */
++ (instancetype)dynamicAllocWithHeap:(id)heap;
 + (Class)class;
 - (Class)class;
 - (BOOL)isMemberOfClass:(Class)aClass;

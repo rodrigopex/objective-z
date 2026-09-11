@@ -1,5 +1,5 @@
 sample:
-  description: Heap-based allocation with allocWithHeap
+  description: Heap-based allocation with dynamicAllocWithHeap
   name: ObjZ Heap Alloc Demo
 common:
   tags: objz

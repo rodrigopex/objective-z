@@ -191,7 +191,7 @@ static inline void *oz_current_thread(void)
 #define oz_platform_snprint(buf, len, fmt, ...) snprintk(buf, len, fmt, ##__VA_ARGS__)
 
 /* ------------------------------------------------------------------ */
-/* Heap allocator — sys_heap + spinlock wrapper for allocWithHeap:     */
+/* Heap allocator — sys_heap + spinlock wrapper for dynamicAllocWithHeap:     */
 /* ------------------------------------------------------------------ */
 
 #ifdef OZ_HEAP_SUPPORT

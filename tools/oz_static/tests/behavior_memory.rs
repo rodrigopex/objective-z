@@ -10,7 +10,7 @@
 //
 // tests/behavior/cases/memory/heap_alloc.m is covered in
 // behavior_foundation_heap.rs instead, alongside the rest of OZHeap, now
-// that `+allocWithHeap:` is implemented.
+// that `+dynamicAllocWithHeap:` is implemented.
 
 mod common;
 use common::{compile_and_run, ozobject_src as PREAMBLE};

@@ -165,7 +165,7 @@ All benchmarks on **nRF52833 DK** (ARM Cortex-M4F @ 64 MHz), DWT cycle counter, 
 | `OZArray`          | Immutable arrays — count, objectAtIndex, for-in          |
 | `OZDictionary`     | Immutable dictionaries — count, objectForKey, for-in     |
 | `OZQ31`          | Q31+shift fixed-point — Zephyr sensor_decode interop, arithmetic |
-| `OZHeap`           | Dynamic heap allocator — initWithBuffer, allocWithHeap   |
+| `OZHeap`           | Dynamic heap allocator — initWithBuffer, dynamicAllocWithHeap   |
 | `OZSpinLock`       | RAII spinlock for `@synchronized` blocks                 |
 | `OZTimer`          | Zephyr `k_timer` wrapper — block expiry, strong userdata |
 | `OZDefer`          | Scope-guard for deterministic cleanup                    |
@@ -447,7 +447,7 @@ objz_transpile_sources(<target> <source1.m> [source2.m ...]
 
 | Option | Default | Effect |
 |---|---|---|
-| `CONFIG_OBJZ_HEAP` | `n` | `+allocWithHeap:` and the heap-aware free path |
+| `CONFIG_OBJZ_HEAP` | `n` | `+dynamicAllocWithHeap:` and the heap-aware free path |
 | `CONFIG_OBJZ_INTROSPECTION` | `y` | `-isKindOfClass:` and `-conformsToProtocol:` |
 | `CONFIG_OBJZ_REFLECTION` | `y` | `@selector`, `SEL`, `-respondsToSelector:`, `-performSelector:` |
 | `CONFIG_OBJZ_DEFAULT_DESCRIPTION` | `y` | An inherited `-cDescription:maxLength:` of the form `<ClassName: 0xADDRESS>`, so `%@` names an object |
