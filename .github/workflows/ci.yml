@@ -42,26 +42,43 @@ env:
   OZ_CLANG: /usr/bin/clang-19
 
 jobs:
-  # Whether the four ARM/Zephyr jobs below need to run at all. See
+  # Whether the five ARM/Zephyr jobs below need to run at all. See
   # .github/ci-affects-target.sh for what counts as relevant, and for why
-  # only those four are gated and not the eight the ruleset requires.
+  # only those five are gated and not the eight the ruleset requires.
   #
   # A job rather than a `paths:` filter because GitHub has no per-job
   # path filtering -- `paths` gates the whole workflow. So the answer is
   # computed once here and the heavy jobs depend on it. The cost is one
   # short job ahead of them; the saving on a docs-only pull request is
-  # the ~805s they would otherwise spend building samples that no changed
-  # file affects (#387). `docs/STATUS.md` travels with every code change
-  # in this repo, so docs-only changes are ordinary rather than rare.
+  # the 1887s they otherwise spend building samples that no changed file
+  # affects -- measured on run 34595210212, the docs-only pull request
+  # that was supposed to show them skipped and did not (#409).
+  # `docs/STATUS.md` travels with every code change in this repo, so
+  # docs-only changes are ordinary rather than rare.
   changes:
     runs-on: ubuntu-latest
     outputs:
       target: ${{ steps.check.outputs.affects }}
     steps:
+      # `fetch-depth: 0`, because the filter diffs with `...` and that
+      # needs a merge base. The default depth-1 single-branch checkout
+      # has neither the merge base nor `origin/<base>`, so the diff died
+      # and the filter failed open on all thirteen pull requests between
+      # #388 landing it and #409 -- never once skipping a job (#409).
+      # The whole history is 711 commits, against the 1887s the filter
+      # exists to avoid.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Does this change reach a target build?
         id: check
+        # The base commit, straight from the event, so the answer does
+        # not also depend on `actions/checkout`'s refspec putting
+        # `origin/<base>` where the script can see it. The script tries
+        # this first and falls back to the ref.
+        env:
+          OZ_BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: .github/ci-affects-target.sh >> "$GITHUB_OUTPUT"
 
   # The primary gate for the static backend, and until #269 it never ran
@@ -121,6 +138,14 @@ jobs:
 
       - name: Run the Rust test suite
         run: cargo test --manifest-path tools/oz_static/Cargo.toml
+
+      # Here rather than in its own job because it takes seconds and
+      # because a new job would be a new check context, which the `main`
+      # ruleset would then have to learn about. It builds its own
+      # throwaway repositories, so it does not care what this checkout
+      # looks like.
+      - name: Test the CI paths filter
+        run: .github/ci-affects-target.test.sh
 
   behavior-tests:
     runs-on: ubuntu-latest
