@@ -4,33 +4,33 @@
 
 /* =============================================================================
  * @interface BoxedTest : OZObject {
- * 	OZQ31 *_fromVar;
- * 	OZQ31 *_fromExpr;
- * 	OZQ31 *_fromCall;
- * 	OZQ31 *_fromFloat;
- * 	OZQ31 *_fromUint;
+ * 	OZNumber *_fromVar;
+ * 	OZNumber *_fromExpr;
+ * 	OZNumber *_fromCall;
+ * 	OZNumber *_fromFloat;
+ * 	OZNumber *_fromUint;
  * }
  * ========================================================================== */
 struct BoxedTest {
 	struct OZObject base; /* synthesized: inherited from OZObject */
-	struct OZQ31 *_fromVar;
-	struct OZQ31 *_fromExpr;
-	struct OZQ31 *_fromCall;
-	struct OZQ31 *_fromFloat;
-	struct OZQ31 *_fromUint;
+	struct OZNumber *_fromVar;
+	struct OZNumber *_fromExpr;
+	struct OZNumber *_fromCall;
+	struct OZNumber *_fromFloat;
+	struct OZNumber *_fromUint;
 };
 
 /* - (void)run; */
 void BoxedTest_run(struct BoxedTest *self);
-/* - (OZQ31 *)fromVar; */
-struct OZQ31 * BoxedTest_fromVar(struct BoxedTest *self);
-/* - (OZQ31 *)fromExpr; */
-struct OZQ31 * BoxedTest_fromExpr(struct BoxedTest *self);
-/* - (OZQ31 *)fromCall; */
-struct OZQ31 * BoxedTest_fromCall(struct BoxedTest *self);
-/* - (OZQ31 *)fromFloat; */
-struct OZQ31 * BoxedTest_fromFloat(struct BoxedTest *self);
-/* - (OZQ31 *)fromUint; */
-struct OZQ31 * BoxedTest_fromUint(struct BoxedTest *self);
+/* - (OZNumber *)fromVar; */
+struct OZNumber * BoxedTest_fromVar(struct BoxedTest *self);
+/* - (OZNumber *)fromExpr; */
+struct OZNumber * BoxedTest_fromExpr(struct BoxedTest *self);
+/* - (OZNumber *)fromCall; */
+struct OZNumber * BoxedTest_fromCall(struct BoxedTest *self);
+/* - (OZNumber *)fromFloat; */
+struct OZNumber * BoxedTest_fromFloat(struct BoxedTest *self);
+/* - (OZNumber *)fromUint; */
+struct OZNumber * BoxedTest_fromUint(struct BoxedTest *self);
 /*========================= end interface: BoxedTest =========================*/
 

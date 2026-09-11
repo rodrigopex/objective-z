@@ -3,7 +3,7 @@
 #include "oz_static_dispatch.h"
 
 /**
- * @file OZObject+Protocol.h
+ * @file OZObjectProtocol.h
  * @brief OZObjectProtocol -- what every OZ object answers to.
  *
  * This is oz_sdk's `<NSObject>`: the protocol a *protocol* adopts so that
@@ -51,10 +51,10 @@
  * Objective-C-side one. oz2c gives this origin a generated `.h`/`.c` pair
  * like any other, the `@protocol` block is elided from it (protocols are
  * a compile-time contract, never emitted), and the resulting
- * `OZObject+Protocol.c` is compiled on its own -- including only its own
+ * `OZObjectProtocol.c` is compiled on its own -- including only its own
  * header, where an unguarded `#error` fires every time. */
 #if defined(__OBJC__) && !defined(YES)
-#error "OZObject+Protocol.h is reached through OZObject.h, which defines BOOL/YES/NO; import that instead"
+#error "OZObjectProtocol.h is reached through OZObject.h, which defines BOOL/YES/NO; import that instead"
 #endif
 /**
  * @brief What every OZ object answers to.

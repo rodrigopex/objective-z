@@ -59,14 +59,15 @@ struct OZObject {
 	oz_atomic_t oz_refcount; /* synthesized: retain count */
 };
 struct OZObject * OZObject_alloc_cls(void);
-struct OZObject * OZObject_allocWithHeap__cls(void * heap);
+struct OZObject * OZObject_dynamicAlloc_cls(void);
+struct OZObject * OZObject_dynamicAllocWithHeap__cls(void * heap);
 struct OZObject * OZObject_init(struct OZObject *self);
 void OZObject_dealloc(struct OZObject *self);
 BOOL OZObject_isEqual_(struct OZObject *self, void * anObject);
-int OZObject_cDescription_maxLength_(struct OZObject *self, char* buf, size_t maxLen);
+int OZObject_getDescription_maxLength_(struct OZObject *self, char* buf, size_t maxLen);
 struct OZObject *OZObject_oz_alloc(void);
 void OZObject_oz_free(struct OZObject *obj);
-/* The class's own name, for the default `-cDescription:maxLength:`
+/* The class's own name, for the default `-getDescription:maxLength:`
  * (see `OZObject.m`). A switch rather than a table indexed by class_id:
  * the ids are dense so either would do, but a switch costs no pointer
  * array and the linker drops the whole function when nothing reaches
@@ -155,56 +156,51 @@ int Level4_depth(struct Level4 *self);
 struct Level4 *Level4_oz_alloc(void);
 void Level4_oz_free(struct Level4 *obj);
 
-/* -- OZQ31 (id 11, extends OZObject) -- */
-#define OZ_STATIC_CLASS_OZQ31 11
-struct OZQ31;
-struct OZQ31 * OZQ31_fixedWithFloat__cls(float value);
-struct OZQ31 * OZQ31_fixedWithInt32__cls(int32_t value);
-struct OZQ31 * OZQ31_fixedWithRaw_shift__cls(int32_t raw, uint8_t shift);
-struct OZQ31 * OZQ31_fixedWithBool__cls(BOOL value);
-struct OZQ31 * OZQ31_fixedWithInt__cls(int value);
-struct OZQ31 * OZQ31_fixedWithUnsignedInt__cls(unsigned int value);
-struct OZQ31 * OZQ31_numberWithInt8__cls(int8_t value);
-struct OZQ31 * OZQ31_numberWithUint8__cls(uint8_t value);
-struct OZQ31 * OZQ31_numberWithInt16__cls(int16_t value);
-struct OZQ31 * OZQ31_numberWithUint16__cls(uint16_t value);
-struct OZQ31 * OZQ31_numberWithInt32__cls(int32_t value);
-struct OZQ31 * OZQ31_numberWithUint32__cls(uint32_t value);
-struct OZQ31 * OZQ31_numberWithFloat__cls(float value);
-struct OZQ31 * OZQ31_numberWithBool__cls(BOOL value);
-struct OZQ31 * OZQ31_numberWithInt__cls(int value);
-struct OZQ31 * OZQ31_numberWithUnsignedInt__cls(unsigned int value);
-int8_t OZQ31_int8Value(struct OZQ31 *self);
-uint8_t OZQ31_uint8Value(struct OZQ31 *self);
-int16_t OZQ31_int16Value(struct OZQ31 *self);
-uint16_t OZQ31_uint16Value(struct OZQ31 *self);
-int32_t OZQ31_int32Value(struct OZQ31 *self);
-uint32_t OZQ31_uint32Value(struct OZQ31 *self);
-float OZQ31_floatValue(struct OZQ31 *self);
-BOOL OZQ31_boolValue(struct OZQ31 *self);
-int OZQ31_intValue(struct OZQ31 *self);
-unsigned int OZQ31_unsignedIntValue(struct OZQ31 *self);
-int32_t OZQ31_rawValue(struct OZQ31 *self);
-uint8_t OZQ31_shift(struct OZQ31 *self);
-struct OZQ31 * OZQ31_add_(struct OZQ31 *self, struct OZQ31 * other);
-struct OZQ31 * OZQ31_sub_(struct OZQ31 *self, struct OZQ31 * other);
-struct OZQ31 * OZQ31_mul_(struct OZQ31 *self, struct OZQ31 * other);
-struct OZQ31 * OZQ31_div_(struct OZQ31 *self, struct OZQ31 * other);
-int OZQ31_cDescription_maxLength_(struct OZQ31 *self, char* buf, size_t maxLen);
-BOOL OZQ31_isEqual_(struct OZQ31 *self, void * anObject);
-void OZQ31_dealloc(struct OZQ31 *self);
-struct OZQ31 *OZQ31_oz_alloc(void);
-void OZQ31_oz_free(struct OZQ31 *obj);
+/* -- OZNumber (id 11, extends OZObject) -- */
+#define OZ_STATIC_CLASS_OZNumber 11
+struct OZNumber;
+struct OZNumber * OZNumber_numberWithFloat__cls(float value);
+struct OZNumber * OZNumber_numberWithInt32__cls(int32_t value);
+struct OZNumber * OZNumber_numberWithRaw_shift__cls(int32_t raw, uint8_t shift);
+struct OZNumber * OZNumber_numberWithInt8__cls(int8_t value);
+struct OZNumber * OZNumber_numberWithUnsignedInt8__cls(uint8_t value);
+struct OZNumber * OZNumber_numberWithInt16__cls(int16_t value);
+struct OZNumber * OZNumber_numberWithUnsignedInt16__cls(uint16_t value);
+struct OZNumber * OZNumber_numberWithUnsignedInt32__cls(uint32_t value);
+struct OZNumber * OZNumber_numberWithBool__cls(BOOL value);
+struct OZNumber * OZNumber_numberWithInt__cls(int value);
+struct OZNumber * OZNumber_numberWithUnsignedInt__cls(unsigned int value);
+int8_t OZNumber_int8Value(struct OZNumber *self);
+uint8_t OZNumber_unsignedInt8Value(struct OZNumber *self);
+int16_t OZNumber_int16Value(struct OZNumber *self);
+uint16_t OZNumber_unsignedInt16Value(struct OZNumber *self);
+int32_t OZNumber_int32Value(struct OZNumber *self);
+uint32_t OZNumber_unsignedInt32Value(struct OZNumber *self);
+float OZNumber_floatValue(struct OZNumber *self);
+BOOL OZNumber_boolValue(struct OZNumber *self);
+int OZNumber_intValue(struct OZNumber *self);
+unsigned int OZNumber_unsignedIntValue(struct OZNumber *self);
+int32_t OZNumber_rawValue(struct OZNumber *self);
+uint8_t OZNumber_shift(struct OZNumber *self);
+struct OZNumber * OZNumber_adding_(struct OZNumber *self, struct OZNumber * other);
+struct OZNumber * OZNumber_subtracting_(struct OZNumber *self, struct OZNumber * other);
+struct OZNumber * OZNumber_multiplyingBy_(struct OZNumber *self, struct OZNumber * other);
+struct OZNumber * OZNumber_dividingBy_(struct OZNumber *self, struct OZNumber * other);
+int OZNumber_getDescription_maxLength_(struct OZNumber *self, char* buf, size_t maxLen);
+BOOL OZNumber_isEqual_(struct OZNumber *self, void * anObject);
+void OZNumber_dealloc(struct OZNumber *self);
+struct OZNumber *OZNumber_oz_alloc(void);
+void OZNumber_oz_free(struct OZNumber *obj);
 
 /* -- BoxedTest (id 12, extends OZObject) -- */
 #define OZ_STATIC_CLASS_BoxedTest 12
 struct BoxedTest;
 void BoxedTest_run(struct BoxedTest *self);
-struct OZQ31 * BoxedTest_fromVar(struct BoxedTest *self);
-struct OZQ31 * BoxedTest_fromExpr(struct BoxedTest *self);
-struct OZQ31 * BoxedTest_fromCall(struct BoxedTest *self);
-struct OZQ31 * BoxedTest_fromFloat(struct BoxedTest *self);
-struct OZQ31 * BoxedTest_fromUint(struct BoxedTest *self);
+struct OZNumber * BoxedTest_fromVar(struct BoxedTest *self);
+struct OZNumber * BoxedTest_fromExpr(struct BoxedTest *self);
+struct OZNumber * BoxedTest_fromCall(struct BoxedTest *self);
+struct OZNumber * BoxedTest_fromFloat(struct BoxedTest *self);
+struct OZNumber * BoxedTest_fromUint(struct BoxedTest *self);
 struct BoxedTest *BoxedTest_oz_alloc(void);
 void BoxedTest_oz_free(struct BoxedTest *obj);
 void BoxedTest_oz_release_ivars(struct BoxedTest *self);
@@ -215,8 +211,8 @@ void * OZ_PROTOCOL_SEND_init(struct OZObject *self);
 void OZ_PROTOCOL_SEND_dealloc(struct OZObject *self);
 /* protocol dispatch: routes 'isEqual:' to whichever class implements it */
 BOOL OZ_PROTOCOL_SEND_isEqual_(struct OZObject *self, void * anObject);
-/* protocol dispatch: routes 'cDescription:maxLength:' to whichever class implements it */
-int OZ_PROTOCOL_SEND_cDescription_maxLength_(struct OZObject *self, char* buf, size_t maxLen);
+/* protocol dispatch: routes 'getDescription:maxLength:' to whichever class implements it */
+int OZ_PROTOCOL_SEND_getDescription_maxLength_(struct OZObject *self, char* buf, size_t maxLen);
 /* protocol dispatch: routes 'toggle' to whichever class implements it */
 int OZ_PROTOCOL_SEND_toggle(struct OZObject *self);
 /* protocol dispatch: routes 'depth' to whichever class implements it */

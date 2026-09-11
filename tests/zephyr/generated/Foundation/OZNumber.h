@@ -3,7 +3,7 @@
 #include "oz_static_dispatch.h"
 
 /**
- * @file OZQ31.h
+ * @file OZNumber.h
  * @brief Q31 fixed-point numeric class.
  *
  * Lightweight ObjC interface that Clang can parse for AST dump.
@@ -14,88 +14,89 @@
  */
 /* already resolved: #import "OZObject.h" */
 /* =============================================================================
- * @interface OZQ31 : OZObject {
+ * @interface OZNumber : OZObject {
  * 	int32_t _raw;    / * Q31 mantissa, normalised to [-1.0, 1.0) * /
  * 	uint8_t _shift;  / * exponent: real_value = (raw / 2^31) * 2^shift * /
  * }
- * / * Factory methods * /
+ * / *
+ *  * Factories. One family, not two: `fixedWith…` used to sit alongside
+ *  * these with five members differing from their `numberWith…` twin in
+ *  * nothing but the name, and `@42` desugared to the `fixedWith…` half
+ *  * while user code was pointed at the other (#413).
+ *  *
+ *  * Widths are spelled out and *kept*: `UnsignedInt8` rather than Cocoa's
+ *  * `UnsignedChar`. This is an embedded fixed-point type, not an NSNumber
+ *  * clone -- what a caller needs to know is the width, and
+ *  * `@compatibility_alias NSNumber` below is a convenience rather than a
+ *  * contract.
+ *  * /
  * ========================================================================== */
-struct OZQ31 {
+struct OZNumber {
 	struct OZObject base; /* synthesized: inherited from OZObject */
 	int32_t _raw;
 	uint8_t _shift;
 };
 
-/* + (instancetype)fixedWithFloat:(float)value; */
-struct OZQ31 * OZQ31_fixedWithFloat__cls(float value);
-/* + (instancetype)fixedWithInt32:(int32_t)value; */
-struct OZQ31 * OZQ31_fixedWithInt32__cls(int32_t value);
-/* + (instancetype)fixedWithRaw:(int32_t)raw shift:(uint8_t)shift; */
-struct OZQ31 * OZQ31_fixedWithRaw_shift__cls(int32_t raw, uint8_t shift);
-/* + (instancetype)fixedWithBool:(BOOL)value; */
-struct OZQ31 * OZQ31_fixedWithBool__cls(BOOL value);
-/* + (instancetype)fixedWithInt:(int)value; */
-struct OZQ31 * OZQ31_fixedWithInt__cls(int value);
-/* + (instancetype)fixedWithUnsignedInt:(unsigned int)value; */
-struct OZQ31 * OZQ31_fixedWithUnsignedInt__cls(unsigned int value);
-/* + (instancetype)numberWithInt8:(int8_t)value; */
-struct OZQ31 * OZQ31_numberWithInt8__cls(int8_t value);
-/* + (instancetype)numberWithUint8:(uint8_t)value; */
-struct OZQ31 * OZQ31_numberWithUint8__cls(uint8_t value);
-/* + (instancetype)numberWithInt16:(int16_t)value; */
-struct OZQ31 * OZQ31_numberWithInt16__cls(int16_t value);
-/* + (instancetype)numberWithUint16:(uint16_t)value; */
-struct OZQ31 * OZQ31_numberWithUint16__cls(uint16_t value);
-/* + (instancetype)numberWithInt32:(int32_t)value; */
-struct OZQ31 * OZQ31_numberWithInt32__cls(int32_t value);
-/* + (instancetype)numberWithUint32:(uint32_t)value; */
-struct OZQ31 * OZQ31_numberWithUint32__cls(uint32_t value);
 /* + (instancetype)numberWithFloat:(float)value; */
-struct OZQ31 * OZQ31_numberWithFloat__cls(float value);
+struct OZNumber * OZNumber_numberWithFloat__cls(float value);
+/* + (instancetype)numberWithInt32:(int32_t)value; */
+struct OZNumber * OZNumber_numberWithInt32__cls(int32_t value);
+/* + (instancetype)numberWithRaw:(int32_t)raw shift:(uint8_t)shift; */
+struct OZNumber * OZNumber_numberWithRaw_shift__cls(int32_t raw, uint8_t shift);
+/* + (instancetype)numberWithInt8:(int8_t)value; */
+struct OZNumber * OZNumber_numberWithInt8__cls(int8_t value);
+/* + (instancetype)numberWithUnsignedInt8:(uint8_t)value; */
+struct OZNumber * OZNumber_numberWithUnsignedInt8__cls(uint8_t value);
+/* + (instancetype)numberWithInt16:(int16_t)value; */
+struct OZNumber * OZNumber_numberWithInt16__cls(int16_t value);
+/* + (instancetype)numberWithUnsignedInt16:(uint16_t)value; */
+struct OZNumber * OZNumber_numberWithUnsignedInt16__cls(uint16_t value);
+/* + (instancetype)numberWithUnsignedInt32:(uint32_t)value; */
+struct OZNumber * OZNumber_numberWithUnsignedInt32__cls(uint32_t value);
 /* + (instancetype)numberWithBool:(BOOL)value; */
-struct OZQ31 * OZQ31_numberWithBool__cls(BOOL value);
+struct OZNumber * OZNumber_numberWithBool__cls(BOOL value);
 /* + (instancetype)numberWithInt:(int)value; */
-struct OZQ31 * OZQ31_numberWithInt__cls(int value);
+struct OZNumber * OZNumber_numberWithInt__cls(int value);
 /* + (instancetype)numberWithUnsignedInt:(unsigned int)value; */
-struct OZQ31 * OZQ31_numberWithUnsignedInt__cls(unsigned int value);
+struct OZNumber * OZNumber_numberWithUnsignedInt__cls(unsigned int value);
 /* - (int8_t)int8Value; */
-int8_t OZQ31_int8Value(struct OZQ31 *self);
-/* - (uint8_t)uint8Value; */
-uint8_t OZQ31_uint8Value(struct OZQ31 *self);
+int8_t OZNumber_int8Value(struct OZNumber *self);
+/* - (uint8_t)unsignedInt8Value; */
+uint8_t OZNumber_unsignedInt8Value(struct OZNumber *self);
 /* - (int16_t)int16Value; */
-int16_t OZQ31_int16Value(struct OZQ31 *self);
-/* - (uint16_t)uint16Value; */
-uint16_t OZQ31_uint16Value(struct OZQ31 *self);
+int16_t OZNumber_int16Value(struct OZNumber *self);
+/* - (uint16_t)unsignedInt16Value; */
+uint16_t OZNumber_unsignedInt16Value(struct OZNumber *self);
 /* - (int32_t)int32Value; */
-int32_t OZQ31_int32Value(struct OZQ31 *self);
-/* - (uint32_t)uint32Value; */
-uint32_t OZQ31_uint32Value(struct OZQ31 *self);
+int32_t OZNumber_int32Value(struct OZNumber *self);
+/* - (uint32_t)unsignedInt32Value; */
+uint32_t OZNumber_unsignedInt32Value(struct OZNumber *self);
 /* - (float)floatValue; */
-float OZQ31_floatValue(struct OZQ31 *self);
+float OZNumber_floatValue(struct OZNumber *self);
 /* - (BOOL)boolValue; */
-BOOL OZQ31_boolValue(struct OZQ31 *self);
+BOOL OZNumber_boolValue(struct OZNumber *self);
 /* - (int)intValue; */
-int OZQ31_intValue(struct OZQ31 *self);
+int OZNumber_intValue(struct OZNumber *self);
 /* - (unsigned int)unsignedIntValue; */
-unsigned int OZQ31_unsignedIntValue(struct OZQ31 *self);
+unsigned int OZNumber_unsignedIntValue(struct OZNumber *self);
 /* - (int32_t)rawValue; */
-int32_t OZQ31_rawValue(struct OZQ31 *self);
+int32_t OZNumber_rawValue(struct OZNumber *self);
 /* - (uint8_t)shift; */
-uint8_t OZQ31_shift(struct OZQ31 *self);
-/* - (instancetype)add:(OZQ31 *)other; */
-struct OZQ31 * OZQ31_add_(struct OZQ31 *self, struct OZQ31 * other);
-/* - (instancetype)sub:(OZQ31 *)other; */
-struct OZQ31 * OZQ31_sub_(struct OZQ31 *self, struct OZQ31 * other);
-/* - (instancetype)mul:(OZQ31 *)other; */
-struct OZQ31 * OZQ31_mul_(struct OZQ31 *self, struct OZQ31 * other);
-/* - (instancetype)div:(OZQ31 *)other; */
-struct OZQ31 * OZQ31_div_(struct OZQ31 *self, struct OZQ31 * other);
-/* - (int)cDescription:(char *)buf maxLength:(size_t)maxLen; */
-int OZQ31_cDescription_maxLength_(struct OZQ31 *self, char* buf, size_t maxLen);
+uint8_t OZNumber_shift(struct OZNumber *self);
+/* - (instancetype)adding:(OZNumber *)other; */
+struct OZNumber * OZNumber_adding_(struct OZNumber *self, struct OZNumber * other);
+/* - (instancetype)subtracting:(OZNumber *)other; */
+struct OZNumber * OZNumber_subtracting_(struct OZNumber *self, struct OZNumber * other);
+/* - (instancetype)multiplyingBy:(OZNumber *)other; */
+struct OZNumber * OZNumber_multiplyingBy_(struct OZNumber *self, struct OZNumber * other);
+/* - (instancetype)dividingBy:(OZNumber *)other; */
+struct OZNumber * OZNumber_dividingBy_(struct OZNumber *self, struct OZNumber * other);
+/* - (int)getDescription:(char *)buf maxLength:(size_t)maxLen; */
+int OZNumber_getDescription_maxLength_(struct OZNumber *self, char* buf, size_t maxLen);
 /* - (BOOL)isEqual:(id)anObject; */
-BOOL OZQ31_isEqual_(struct OZQ31 *self, void * anObject);
-void OZQ31_dealloc(struct OZQ31 *self);
-/*=========================== end interface: OZQ31 ===========================*/
+BOOL OZNumber_isEqual_(struct OZNumber *self, void * anObject);
+void OZNumber_dealloc(struct OZNumber *self);
+/*========================= end interface: OZNumber ==========================*/
 
 #ifndef _OZ_Q31_HELPERS
 #define _OZ_Q31_HELPERS
