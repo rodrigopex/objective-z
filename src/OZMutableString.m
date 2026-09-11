@@ -1,12 +1,27 @@
 /* Mutable string implementation for OZ transpiler. */
 
 #import <Foundation/OZMutableString.h>
+/*
+ * `<stddef.h>` for `NULL`, named here rather than taken from the
+ * `OZString.h` -> `OZObject.h` chain that also supplies it. This file used
+ * to carry `#define NULL ((void *)0)` of its own instead, added alongside
+ * the libc stubs for the Clang AST dump (d7ec624) -- but no dump path has
+ * ever needed it: `tests/behavior/include/stubs/` stubs `stdlib.h`,
+ * `string.h` and `stdio.h` and deliberately not `stddef.h`, and every
+ * dump (`cmake/ObjcClang.cmake`, `tests/tools/compile_and_run.py`,
+ * `tests/smoke/run.py`, the Rust harness, `just ast-dump`) reaches the
+ * real one. It was `#ifndef`-guarded, so it never expanded either.
+ *
+ * It had to go regardless of being dead: file-scope text ahead of an
+ * `@implementation` is spliced into the *generated header* for this
+ * origin, which every Foundation translation unit includes -- see the
+ * comment on `_oz_write_default_description` in `src/OZObject.m`. So a
+ * `.m` redefining a standard library macro redefines it for the whole
+ * Foundation, and this one did (#422).
+ */
+#include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
-
-#ifndef NULL
-#define NULL ((void *)0)
-#endif
 
 @implementation OZMutableString
 
