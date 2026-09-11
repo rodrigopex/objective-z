@@ -316,21 +316,56 @@ impl LoopEscape {
     /// cannot serve it, rather than listing workarounds for a reason that
     /// may not apply -- the old wording claimed the reference "escapes the
     /// iteration" even for the shapes that were being refused wrongly.
+    ///
+    /// **Every remedy here has to be one the author can actually take**,
+    /// which is what #425 was: both of the messages below ended by
+    /// suggesting a bigger pool, and taking that suggestion changed
+    /// nothing. This check has no pool awareness at all -- it never reads
+    /// `PoolSizes` -- so it cannot know the directive was added, and
+    /// measured on the issue's own example the rejection stood unchanged at
+    /// `Foo=1`, `Foo=2` and `Foo=8`.
+    ///
+    /// Making it pool-aware instead was the issue's preferred answer and is
+    /// the wrong one, which only became visible once #423 had narrowed the
+    /// arm. The shapes that need two slots *because two are briefly live*
+    /// are already accepted at one slot now: they release first, so nothing
+    /// overlaps. What still reaches `OverlappingStore` from
+    /// `overlapping_unless_released_first` is `LocalStore::Unsupported` --
+    /// the store that reads its own destination and therefore keeps a
+    /// hoisted temporary. `ctx.pre_stmts` lifts that temporary *out of the
+    /// loop*, so it captures the destination once, while it is still nil,
+    /// and releases that same stale pointer on every iteration. Accepting
+    /// it on a pool of two would not fit two live objects, it would
+    /// miscompile. No pool size makes a hoisted temporary land inside the
+    /// loop.
+    ///
+    /// `Accumulates` had the same false remedy for a different reason: the
+    /// loop's bound is not something this pass knows, so "size the pool for
+    /// the loop's own bound" is not a number the author can be told and not
+    /// one any directive could express for a loop whose trip count is
+    /// dynamic.
+    ///
+    /// So both keep only the advice that works. The pool remains the right
+    /// tool for a *site* that needs more than one live instance; it is not
+    /// a tool for either of these.
     fn describe(&self, what: &str) -> String {
         match self {
             LoopEscape::OverlappingStore(dest) => format!(
                 "{what} inside a loop is stored into {dest}, which needs **two** slab slots \
                  rather than one: the store releases the previous object only after the new \
-                 one exists, so both are briefly live. Raise this class's pool (a \
-                 `/* oz-pool: <Class>=2 */` directive, or --pool-sizes) or bind it to a local \
-                 declared before the loop -- a local's previous value is released *before* the \
-                 next allocation, so one slot serves it"
+                 one exists, so both are briefly live. Bind it to a local declared before the \
+                 loop and store that -- a local's previous value is released *before* the next \
+                 allocation, so one slot serves it. Raising this class's pool does not lift \
+                 this: the store keeps a temporary that is hoisted out of the loop, so the \
+                 shape would be wrong at any pool size"
             ),
             LoopEscape::Accumulates(dest) => format!(
                 "{what} inside a loop is stored into {dest}, so each iteration keeps its own \
                  instance and nothing is released; the static subset sizes one slab slot per \
                  allocation site and cannot bound how many the loop needs. Store it in a local \
-                 that each iteration overwrites, or size the pool for the loop's own bound"
+                 that each iteration overwrites, or release each instance before the next \
+                 iteration allocates. Raising this class's pool does not lift this either: the \
+                 loop's bound is not a number this pass knows"
             ),
             LoopEscape::Returned => format!(
                 "{what} inside a loop is returned, so the iteration does not end its life and \
