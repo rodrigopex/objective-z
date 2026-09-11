@@ -471,7 +471,8 @@ fn resolve_pools(
     item_pool_size: Option<usize>,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> pools::PoolSizes {
-    let mut sizes = pools::PoolSizes::analyze(source, program);
+    let (mut sizes, pool_diagnostics) = pools::PoolSizes::analyze(source, program);
+    diagnostics.extend(pool_diagnostics);
     sizes.set_overrides(overrides.clone());
     if let Some(slots) = item_pool_size {
         sizes.set_item_pool_override(slots);

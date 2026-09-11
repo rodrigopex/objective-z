@@ -878,7 +878,7 @@ fn is_reassigned(node: Node, src: &str, name: &str) -> bool {
 /// A `function_definition`'s own name, reached through however many
 /// declarator layers its return type needs (`static Sensor *f(int)` nests a
 /// `pointer_declarator` around the `function_declarator`).
-fn function_name(function: Node, src: &str) -> Option<String> {
+pub(crate) fn function_name(function: Node, src: &str) -> Option<String> {
     fn find_declarator_identifier<'a>(node: Node<'a>, src: &str) -> Option<String> {
         if node.kind() == "function_declarator" {
             let mut cursor = node.walk();
@@ -922,6 +922,56 @@ fn collect_returns<'a>(body: Node<'a>) -> Vec<Node<'a>> {
     }
     walk(body, &mut out);
     out
+}
+
+/// Does the allocation at `site` leave `body` through one of its returns?
+///
+/// Sizing needs this and ownership does not, which is why it is a separate
+/// question asked through the same helpers. `pools` counts one slab slot
+/// per allocation *site*; an allocation an owning factory hands back
+/// outlives the call, so it costs one slot per **call site** of that
+/// factory, while a helper the factory allocates and drops costs one
+/// however often it runs (#410).
+///
+/// The two shapes are the ones `return_hands_back_ownership` already
+/// reads, and reading them the same way is the point -- sizing and
+/// ownership must not disagree about which allocation escapes:
+///
+/// ```objc
+/// return [[Thing alloc] init];              /* the value contains the site */
+/// Thing *t = [[Thing alloc] init]; return t; /* and through any alias (#351) */
+/// ```
+///
+/// Structural containment only: no `Program`, no `OwningMethods`. Whether
+/// the enclosing method is owning at all is the caller's question, and
+/// `pools` has already asked it before getting here.
+pub(crate) fn allocation_escapes_via_return(site: Node, body: Node, src: &str) -> bool {
+    let contains = |outer: Node| {
+        outer.start_byte() <= site.start_byte() && site.end_byte() <= outer.end_byte()
+    };
+    for ret in collect_returns(body) {
+        let Some(value) = value_of_return(ret) else {
+            continue;
+        };
+        if contains(value) {
+            return true;
+        }
+        let value = value_behind_casts(value, src);
+        if value.kind() != "identifier" {
+            continue;
+        }
+        let name = node_text(value, src);
+        if declared_initializer(body, src, name).is_some_and(contains) {
+            return true;
+        }
+        if alias_chain(body, src, name)
+            .into_iter()
+            .any(|aliased| declared_initializer(body, src, &aliased).is_some_and(contains))
+        {
+            return true;
+        }
+    }
+    false
 }
 
 fn value_of_return<'a>(ret: Node<'a>) -> Option<Node<'a>> {
