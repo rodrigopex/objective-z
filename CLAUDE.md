@@ -323,7 +323,15 @@ Retained as reference for transpiler development. Not compiled — the runtime c
 - Use `/* comment */` for documentation, `/** comment */` for Doxygen (not `//`)
 - Always use curly braces with `if`, even single-line blocks
 - Avoid `typedef` for structs — use explicit `struct objc_xxx` names (exception: public API types like `id`, `SEL`, `Class` per ObjC spec)
-- Internal functions: `__objc_` prefix (double underscore)
+- **Internal and synthesized functions: `oz_static_` (companion-wide) or `_oz_`
+  (per-class). The `__objc_` prefix is retired — don't add one.** A leading double
+  underscore is reserved to the implementation in C, so every name under it was
+  undefined behaviour waiting for a toolchain to claim it. `__objc_refcount_get` was
+  its last survivor in the live tree and went in #418, replaced by
+  `oz_static_retain_count`, which already did the same job. The prefix still appears
+  in `src/runtime_legacy/` and `include/runtime_legacy/` (not compiled) and as one
+  `#define` bridge in `tests/tools/oz_static_build.py`, which exists so behaviour
+  drivers written against the old ABI stay unmodified — neither is a precedent
 - ObjC ivars: underscore prefix (`_color`, `_model`)
 - Use `#import` for ObjC headers, `#include` for C headers
 
