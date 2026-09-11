@@ -16,9 +16,9 @@ mod common;
 use common::{compile_and_run, iterator_protocol_src, ozarray_src, ozobject_src as PREAMBLE, ozq31_src};
 
 #[test]
-fn real_ozarray_iter_idx_getter_reads_after_iteration() {
-    // OZArray.h's own `@property (readonly) uint16_t iterIdx;` +
-    // OZArray.m's `@synthesize iterIdx = _iterIdx;` -- explicit ivar,
+fn real_ozarray_enumeration_index_getter_reads_after_iteration() {
+    // OZArray.h's own `@property (readonly) uint16_t enumerationIndex;` +
+    // OZArray.m's `@synthesize enumerationIndex = _enumerationIndex;` -- explicit ivar,
     // readonly, no `nonatomic` (so atomic: exercises the OZ_SPINLOCK
     // path, a no-op `if` on host but still must compile and run).
     let src = format!(
@@ -26,10 +26,10 @@ fn real_ozarray_iter_idx_getter_reads_after_iteration() {
 #include <stdio.h>
 int main(void) {{
 	OZArray *arr = @[@(10), @(20), @(30)];
-	[arr iter];
-	[arr next];
-	[arr next];
-	printf(\"iterIdx=%u\\n\", [arr iterIdx]);
+	[arr objectEnumerator];
+	[arr nextObject];
+	[arr nextObject];
+	printf(\"enumerationIndex=%u\\n\", [arr enumerationIndex]);
 	return 0;
 }}
 ",
@@ -38,8 +38,8 @@ int main(void) {{
         ozq31_src(),
         ozarray_src()
     );
-    let stdout = compile_and_run(&src, "real_ozarray_iter_idx_getter_reads_after_iteration");
-    assert_eq!(stdout, "iterIdx=2\n");
+    let stdout = compile_and_run(&src, "real_ozarray_enumeration_index_getter_reads_after_iteration");
+    assert_eq!(stdout, "enumerationIndex=2\n");
 }
 
 #[test]

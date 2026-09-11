@@ -14,10 +14,10 @@ struct NSFastEnumerationState;
 @interface OZArray<__covariant ObjectType> : OZObject <OZIteratorProtocol> {
 	__unsafe_unretained id *_items;
 	size_t _count;
-	uint16_t _iterIdx;
+	uint16_t _enumerationIndex;
 }
 
-@property (readonly) uint16_t iterIdx;
+@property (readonly) uint16_t enumerationIndex;
 
 + (id)arrayWithObjects:(const id *)objects count:(size_t)count;
 - (size_t)count;
@@ -28,8 +28,8 @@ struct NSFastEnumerationState;
 				     objects:(__unsafe_unretained id *)stackbuf
 				       count:(unsigned long)len;
 - (int)getDescription:(char *)buf maxLength:(size_t)maxLen;
-- (instancetype)iter;
-- (id)next;
+- (instancetype)objectEnumerator;
+- (id)nextObject;
 @end
 
 @compatibility_alias NSArray OZArray;
