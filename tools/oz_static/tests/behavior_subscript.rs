@@ -19,7 +19,7 @@
 mod common;
 use common::{
     compile_and_run, expect_reject, iterator_protocol_src, ozarray_src, ozdictionary_src,
-    ozobject_src, ozq31_src, ozstring_src,
+    ozobject_src, oznumber_src, ozstring_src,
 };
 
 #[test]
@@ -28,14 +28,14 @@ fn indexed_subscript_reads_array_element() {
         "{}{}{}{}\n{}",
         ozobject_src(),
         iterator_protocol_src(),
-        ozq31_src(),
+        oznumber_src(),
         ozarray_src(),
         "\
 #include <stdio.h>
 int main(void) {
 	OZArray *nums = @[ @10, @20, @30 ];
-	OZQ31 *first = nums[0];
-	OZQ31 *third = nums[2];
+	OZNumber *first = nums[0];
+	OZNumber *third = nums[2];
 	printf(\"first=%d\\n\", [first int32Value]);
 	printf(\"third=%d\\n\", [third int32Value]);
 	printf(\"count=%d\\n\", [nums count]);
@@ -54,15 +54,15 @@ fn keyed_subscript_reads_dictionary_value() {
         "{}{}{}{}{}\n{}",
         ozobject_src(),
         iterator_protocol_src(),
-        ozq31_src(),
+        oznumber_src(),
         ozstring_src(),
         ozdictionary_src(),
         "\
 #include <stdio.h>
 int main(void) {
 	OZDictionary *scores = @{ @\"alpha\" : @100, @\"beta\" : @200 };
-	OZQ31 *alpha = scores[@\"alpha\"];
-	OZQ31 *beta = scores[@\"beta\"];
+	OZNumber *alpha = scores[@\"alpha\"];
+	OZNumber *beta = scores[@\"beta\"];
 	printf(\"alpha=%d\\n\", [alpha int32Value]);
 	printf(\"beta=%d\\n\", [beta int32Value]);
 	[scores release];
@@ -82,7 +82,7 @@ fn nested_subscript_on_array_of_arrays() {
         "{}{}{}{}\n{}",
         ozobject_src(),
         iterator_protocol_src(),
-        ozq31_src(),
+        oznumber_src(),
         ozarray_src(),
         "\
 #include <stdio.h>
@@ -91,10 +91,10 @@ int main(void) {
 	OZArray *row1 = @[ @3, @4 ];
 	OZArray *matrix = @[ row0, row1 ];
 	OZArray *firstRow = matrix[0];
-	OZQ31 *m01 = firstRow[1];
+	OZNumber *m01 = firstRow[1];
 	printf(\"m01=%d\\n\", [m01 int32Value]);
 	OZArray *secondRow = matrix[1];
-	OZQ31 *m10 = secondRow[0];
+	OZNumber *m10 = secondRow[0];
 	printf(\"m10=%d\\n\", [m10 int32Value]);
 	[matrix release];
 	[row0 release];

@@ -198,7 +198,7 @@ fn one_line(text: &str) -> String {
 /// But a surviving `/*` is a diagnostic in its own right: Clang and GCC both
 /// warn "'/*' within block comment" under `-Wall`, and Zephyr builds with
 /// `-Werror`, so echoing a source comment into a banner was enough to fail
-/// the build. 36 of those came from `OZQ31.h`'s ivar doc comments alone.
+/// the build. 36 of those came from `OZNumber.h`'s ivar doc comments alone.
 fn neutralize_comment_delimiters(text: &str) -> String {
     text.replace("*/", "* /").replace("/*", "/ *")
 }
@@ -1518,7 +1518,7 @@ fn needs_translation(node: Node) -> bool {
 /// Is `node` (an `at_expression`) shaped like a numeric/boolean boxed
 /// literal -- `@42`, `@3.5f`, `@(expr)`, `@YES`/`@NO` -- as opposed to
 /// anything else the grammar also parses as `at_expression` (a boxed call
-/// expression, `@protocol(...)`, etc.), which has no OZQ31 desugaring and
+/// expression, `@protocol(...)`, etc.), which has no OZNumber desugaring and
 /// must stay rejected. Used by both `staticbar.rs` (to know what's still
 /// rejected) and `render_boxed_at_expression` below (to know how to
 /// desugar what isn't).
@@ -2006,7 +2006,7 @@ pub(crate) fn parse_message<'a>(node: Node<'a>, src: &str) -> MessageParts<'a> {
 /// `render_message` would for a real `[ClassName selector:arg]` send --
 /// used to desugar a boxed literal into a call on the user-defined class
 /// that must exist for the literal to mean anything (there's no built-in
-/// Foundation in this design; `OZQ31`/`OZString` are ordinary classes the
+/// Foundation in this design; `OZNumber`/`OZString` are ordinary classes the
 /// static subset already knows how to compile). Returns `None` (leaving
 /// the caller to raise a clear error) if the class or the method don't
 /// exist, rather than emitting a call to a function that was never
@@ -2030,7 +2030,7 @@ fn synthetic_class_call(
 /// Desugars a numeric/boolean boxed literal (`@42`, `@3.5f`, `@(expr)`,
 /// `@YES`/`@NO` -- see `is_numeric_boxed_shape`, which gates whether the
 /// static bar even lets this node through) into a class-method call on
-/// `OZQ31`: `fixedWithInt32:` for an integer-shaped value, `fixedWithFloat:`
+/// `OZNumber`: `numberWithInt32:` for an integer-shaped value, `numberWithFloat:`
 /// for a float-shaped one. There's no real type-checker here to decide
 /// int vs. float for an arbitrary expression, so this uses the same
 /// heuristic Python's oracle output suggests: a literal token containing
@@ -2198,15 +2198,15 @@ fn render_boxed_at_expression(node: Node, ctx: &mut EmitCtx) -> (String, String)
     };
     let (value_text, value_ty) = render_expr(inner, ctx);
     let is_float = literal_is_float || value_ty == "float" || value_ty == "double";
-    let selector = if is_float { "fixedWithFloat:" } else { "fixedWithInt32:" };
+    let selector = if is_float { "numberWithFloat:" } else { "numberWithInt32:" };
 
-    match synthetic_class_call(ctx, "OZQ31", selector, &[value_text]) {
+    match synthetic_class_call(ctx, "OZNumber", selector, &[value_text]) {
         Some((call, ret_ty)) => (call, ret_ty),
         None => {
             ctx.err(
                 node,
                 format!(
-                    "boxed literal at {}:{} desugars to '[OZQ31 {}]', but no class 'OZQ31' with that class method is defined in this source",
+                    "boxed literal at {}:{} desugars to '[OZNumber {}]', but no class 'OZNumber' with that class method is defined in this source",
                     line, col, selector
                 ),
             );
@@ -4594,7 +4594,7 @@ fn declared_block_pointer_type(node: Node, src: &str) -> Option<(String, usize)>
 ///     `tests/zephyr/generated/OZTimer_ozm.c:28` renders that same cast
 ///     as plain `(void *)expBlock`.
 ///   - the cast's target type has to be *reported*, so a send against a
-///     cast receiver resolves. `[((OZQ31 *)obj) int32Value]` otherwise
+///     cast receiver resolves. `[((OZNumber *)obj) int32Value]` otherwise
 ///     fails with "cannot statically resolve the receiver type ...
 ///     (receiver type is 'id')", since every expression not specifically
 ///     handled reports the opaque `id`. The oracle gets this for free from

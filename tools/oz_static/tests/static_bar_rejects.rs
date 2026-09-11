@@ -5,7 +5,7 @@
 
 mod common;
 use common::{
-    compile_and_run, expect_reject, ozarray_src, ozobject_src as PREAMBLE, ozq31_src,
+    compile_and_run, expect_reject, ozarray_src, ozobject_src as PREAMBLE, oznumber_src,
 };
 
 #[test]
@@ -403,7 +403,7 @@ fn array_literal_accumulated_in_a_loop_rejected() {
     let src = format!(
         "{}{}{}{}",
         PREAMBLE(),
-        ozq31_src(),
+        oznumber_src(),
         ozarray_src(),
         "\
 @interface Keeper : OZObject
@@ -438,7 +438,7 @@ fn dictionary_literal_accumulated_in_a_loop_rejected() {
     let src = format!(
         "{}{}{}{}",
         PREAMBLE(),
-        ozq31_src(),
+        oznumber_src(),
         common::ozdictionary_src(),
         "\
 @interface Keeper : OZObject
@@ -476,7 +476,7 @@ fn array_literal_in_a_loop_bound_to_a_fresh_local_accepted() {
     let src = format!(
         "/* oz-item-pool: 2 */\n{}{}{}{}",
         PREAMBLE(),
-        ozq31_src(),
+        oznumber_src(),
         ozarray_src(),
         "\
 @interface Keeper : OZObject

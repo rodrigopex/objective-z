@@ -5,7 +5,7 @@
 // dictionary_basic.m.
 //
 // Uses the real `OZObject` (`common::ozobject_src`) as the root class,
-// `OZQ31` (`common::ozq31_src`) for the boxed integer values, `OZString`
+// `OZNumber` (`common::oznumber_src`) for the boxed integer values, `OZString`
 // (`common::ozstring_src`) for the boxed string keys, and `OZDictionary`
 // (`common::ozdictionary_src`, a partial port -- see its doc comment).
 // `@{...}` desugars via `emit::render_boxed_dictionary_literal`, the
@@ -17,7 +17,7 @@
 // it, this whole fixture would be unportable.
 
 mod common;
-use common::{compile_and_run, ozdictionary_src, ozobject_src as PREAMBLE, ozq31_src, ozstring_src};
+use common::{compile_and_run, ozdictionary_src, ozobject_src as PREAMBLE, oznumber_src, ozstring_src};
 
 #[test]
 fn dictionary_basic_literal_count_value_for_key_and_missing_key() {
@@ -40,7 +40,7 @@ fn dictionary_basic_literal_count_value_for_key_and_missing_key() {
 }}
 - (int)valueForKey {{
 	OZDictionary *d = @{{@\"x\": @(99)}};
-	OZQ31 *n = [d objectForKey:@\"x\"];
+	OZNumber *n = [d objectForKey:@\"x\"];
 	int v = [n intValue];
 	return v;
 }}
@@ -62,7 +62,7 @@ int main(void) {{
 ",
         PREAMBLE(),
         ozstring_src(),
-        ozq31_src(),
+        oznumber_src(),
         ozdictionary_src()
     );
     let stdout = compile_and_run(&src, "dictionary_basic_literal_count_value_for_key_and_missing_key");

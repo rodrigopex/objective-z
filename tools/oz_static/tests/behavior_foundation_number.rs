@@ -1,28 +1,28 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// behavior_foundation_q31.rs - OZ-092 Phase 2 (reordered ahead of for-in):
-// OZQ31, the fixed-point number Foundation class, ported from
+// behavior_foundation_number.rs - OZ-092 Phase 2 (reordered ahead of for-in):
+// OZNumber, the fixed-point number Foundation class, ported from
 // tests/behavior/cases/foundation/{number_basic,q31_basic,q31_stdio_free}.m.
 //
 // Uses the real `OZObject` (`common::ozobject_src`) as the root class.
-// OZQ31 itself is transplanted verbatim from the real `src/OZQ31.m` /
-// `include/oz_sdk/Foundation/OZQ31.h` -- same helper function bodies
+// OZNumber itself is transplanted verbatim from the real `src/OZNumber.m` /
+// `include/oz_sdk/Foundation/OZNumber.h` -- same helper function bodies
 // (`_oz_bits_for_mag`, `_oz_shift_for_*`, `_oz_encode_*`, `_oz_decode_*`,
 // `_oz_align_shift`, `_oz_q31_to_str`, `_oz_q31_div`), same method
 // bodies, including `other->_raw` cross-instance ivar access and
-// `[[OZQ31 alloc] init]` chaining -- both confirmed to transpile and run
+// `[[OZNumber alloc] init]` chaining -- both confirmed to transpile and run
 // correctly through oz_static before this file was written. This is the
 // real oracle algorithm, not a re-derivation, so parity with the Python
 // pipeline's actual behavior is exact by construction rather than by
 // matching documented comments.
 //
 // A boxed literal (`@42`, `@(expr)`, `@3.5f`) desugars to a class-method
-// call on a class literally named `OZQ31` (see
+// call on a class literally named `OZNumber` (see
 // `emit::render_boxed_at_expression`) -- so none of this needed new
 // transpiler features beyond that desugaring; it's ordinary ObjC/C source.
 
 mod common;
-use common::{compile_and_run, ozobject_src as PREAMBLE, ozq31_src};
+use common::{compile_and_run, ozobject_src as PREAMBLE, oznumber_src};
 
 #[test]
 fn number_basic_boxes_int_literal() {
@@ -34,7 +34,7 @@ fn number_basic_boxes_int_literal() {
 @end
 @implementation NumTest
 - (int)boxed {{
-	OZQ31 *n = @(42);
+	OZNumber *n = @(42);
 	int v = [n intValue];
 	return v;
 }}
@@ -47,7 +47,7 @@ int main(void) {{
 	return 0;
 }}
 ",
-        PREAMBLE(), ozq31_src()
+        PREAMBLE(), oznumber_src()
     );
     let stdout = compile_and_run(&src, "number_basic_boxes_int_literal");
     assert_eq!(stdout, "boxed=42\n");
@@ -58,9 +58,9 @@ fn q31_basic_roundtrip_and_arithmetic() {
     // q31_basic.m, all 13 methods.
     //
     // The `oz-pool` directive is needed because every Q31 here comes from
-    // a single `[OZQ31 alloc]` site inside a factory method, so counting
+    // a single `[OZNumber alloc]` site inside a factory method, so counting
     // sites sizes the slab at 1 while the test needs many live at once.
-    // The oracle's own case carries `OZQ31=16` for exactly that reason.
+    // The oracle's own case carries `OZNumber=16` for exactly that reason.
     //
     // The count here is higher than the oracle's, though, and that gap is
     // structural rather than a tuning choice: the oracle has scope-based
@@ -70,7 +70,7 @@ fn q31_basic_roundtrip_and_arithmetic() {
     // the whole run stays live. Any pool size ported from an oracle case
     // has to be raised for the same reason until ARC lands.
     let src = format!(
-        "/* oz-pool: OZObject=1,OZQ31=64 */\n{}{}\n\
+        "/* oz-pool: OZObject=1,OZNumber=64 */\n{}{}\n\
 @interface FPTest : OZObject
 - (int)intFromLiteral;
 - (float)floatFromLiteral;
@@ -89,76 +89,76 @@ fn q31_basic_roundtrip_and_arithmetic() {
 
 @implementation FPTest
 - (int)intFromLiteral {{
-	OZQ31 *n = @42;
+	OZNumber *n = @42;
 	int v = [n intValue];
 	return v;
 }}
 - (float)floatFromLiteral {{
-	OZQ31 *n = @(3.5f);
+	OZNumber *n = @(3.5f);
 	float v = [n floatValue];
 	return v;
 }}
 - (int)intFromExpr {{
 	int x = 7;
-	OZQ31 *n = @(x + 3);
+	OZNumber *n = @(x + 3);
 	int v = [n int32Value];
 	return v;
 }}
 - (int)int8Roundtrip {{
-	OZQ31 *n = @(100);
+	OZNumber *n = @(100);
 	int v = [n int8Value];
 	return v;
 }}
 - (int)uint16Roundtrip {{
-	OZQ31 *n = @(1000);
-	int v = [n uint16Value];
+	OZNumber *n = @(1000);
+	int v = [n unsignedInt16Value];
 	return v;
 }}
 - (int)boolTrue {{
-	OZQ31 *n = @(42);
+	OZNumber *n = @(42);
 	int v = [n boolValue];
 	return v;
 }}
 - (int)boolFalse {{
-	OZQ31 *n = @(0);
+	OZNumber *n = @(0);
 	int v = [n boolValue];
 	return v;
 }}
 - (int)rawNonZero {{
-	OZQ31 *n = @(5);
+	OZNumber *n = @(5);
 	int v = [n rawValue] != 0;
 	return v;
 }}
 - (int)shiftForTen {{
-	OZQ31 *n = @(10);
+	OZNumber *n = @(10);
 	int v = [n shift];
 	return v;
 }}
 - (int)addResult {{
-	OZQ31 *a = @(10);
-	OZQ31 *b = @(20);
-	OZQ31 *c = [a add:b];
+	OZNumber *a = @(10);
+	OZNumber *b = @(20);
+	OZNumber *c = [a adding:b];
 	int v = [c int32Value];
 	return v;
 }}
 - (int)subResult {{
-	OZQ31 *a = @(50);
-	OZQ31 *b = @(20);
-	OZQ31 *c = [a sub:b];
+	OZNumber *a = @(50);
+	OZNumber *b = @(20);
+	OZNumber *c = [a subtracting:b];
 	int v = [c int32Value];
 	return v;
 }}
 - (int)mulResult {{
-	OZQ31 *a = @(6);
-	OZQ31 *b = @(7);
-	OZQ31 *c = [a mul:b];
+	OZNumber *a = @(6);
+	OZNumber *b = @(7);
+	OZNumber *c = [a multiplyingBy:b];
 	int v = [c int32Value];
 	return v;
 }}
 - (float)divResult {{
-	OZQ31 *a = @(10);
-	OZQ31 *b = @(4);
-	OZQ31 *c = [a div:b];
+	OZNumber *a = @(10);
+	OZNumber *b = @(4);
+	OZNumber *c = [a dividingBy:b];
 	float v = [c floatValue];
 	return v;
 }}
@@ -183,7 +183,7 @@ int main(void) {{
 	return 0;
 }}
 ",
-        PREAMBLE(), ozq31_src()
+        PREAMBLE(), oznumber_src()
     );
     let stdout = compile_and_run(&src, "q31_basic_roundtrip_and_arithmetic");
     assert_eq!(
@@ -240,16 +240,16 @@ static void check_str(const char *label, int32_t raw, uint8_t shift, int precisi
 @end
 @implementation Q31NoStdio
 - (float)divTenByFour {{
-	OZQ31 *a = @(10);
-	OZQ31 *b = @(4);
-	OZQ31 *c = [a div:b];
+	OZNumber *a = @(10);
+	OZNumber *b = @(4);
+	OZNumber *c = [a dividingBy:b];
 	float v = [c floatValue];
 	return v;
 }}
 - (int)divByZeroRaw {{
-	OZQ31 *a = @(10);
-	OZQ31 *b = [OZQ31 fixedWithRaw:0 shift:0];
-	OZQ31 *c = [a div:b];
+	OZNumber *a = @(10);
+	OZNumber *b = [OZNumber numberWithRaw:0 shift:0];
+	OZNumber *c = [a dividingBy:b];
 	int v = [c rawValue];
 	return v;
 }}
@@ -317,7 +317,7 @@ int main(void) {{
 	return 0;
 }}
 ",
-        PREAMBLE(), ozq31_src()
+        PREAMBLE(), oznumber_src()
     );
     let stdout = compile_and_run(&src, "q31_stdio_free_to_str_and_div_helpers");
     for line in stdout.lines() {

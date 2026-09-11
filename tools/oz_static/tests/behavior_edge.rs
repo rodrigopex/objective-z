@@ -4,9 +4,9 @@
 // (tests/behavior/cases/edge/) to oz_static, per OZ-092. All 8 upstream
 // fixtures are in scope: multiple_args_method, nil_returns_zero,
 // empty_class_no_methods, deep_inheritance, plus boxed_enum, boxed_float,
-// boxed_expression, boxed_call_expr -- now that OZQ31 exists
-// (behavior_foundation_q31.rs), the 4 boxed-literal fixtures are real
-// accept+run tests against the real OZQ31 (via `common::ozq31_src`), not
+// boxed_expression, boxed_call_expr -- now that OZNumber exists
+// (behavior_foundation_number.rs), the 4 boxed-literal fixtures are real
+// accept+run tests against the real OZNumber (via `common::oznumber_src`), not
 // reject tests -- @(expr) legitimately boxes an enum/float/arithmetic
 // expression/function-call result in the real Python pipeline too.
 //
@@ -14,7 +14,7 @@
 // same as every other oz_static test file.
 
 mod common;
-use common::{compile_and_run, ozobject_src as PREAMBLE, ozq31_src};
+use common::{compile_and_run, ozobject_src as PREAMBLE, oznumber_src};
 
 #[test]
 fn multiple_args_method() {
@@ -178,17 +178,17 @@ int main(void) {{
     assert_eq!(stdout, "level4=4\nlevel3=3\nlevel1=1\n");
 }
 
-// --- boxed literals, via the real OZQ31 (OZ-092 Foundation work) -------
+// --- boxed literals, via the real OZNumber (OZ-092 Foundation work) -------
 
 #[test]
-fn boxed_enum_boxes_int_via_ozq31() {
+fn boxed_enum_boxes_int_via_oznumber() {
     // boxed_enum.m: `_boxed = @(code);` where `code` is an enum-typed
     // (here: plain int, oz_static has no enum-in-param-position support
-    // to spare) method parameter -- boxes through OZQ31's int32 path.
+    // to spare) method parameter -- boxes through OZNumber's int32 path.
     let src = format!(
         "{}{}\n\
 @interface BoxedEnumTest : OZObject {{
-	struct OZQ31 *_boxed;
+	struct OZNumber *_boxed;
 }}
 - (void)boxStatus:(int)code;
 - (int)boxedValue;
@@ -212,14 +212,14 @@ int main(void) {{
 	return 0;
 }}
 ",
-        PREAMBLE(), ozq31_src()
+        PREAMBLE(), oznumber_src()
     );
-    let stdout = compile_and_run(&src, "boxed_enum_boxes_int_via_ozq31");
+    let stdout = compile_and_run(&src, "boxed_enum_boxes_int_via_oznumber");
     assert_eq!(stdout, "ok=200\nnot_found=404\n");
 }
 
 #[test]
-fn boxed_float_boxes_float_var_via_ozq31() {
+fn boxed_float_boxes_float_var_via_oznumber() {
     // boxed_float.m: `_boxed = @(f);` where `f` is a float local -- the
     // boxed spelling (a bare identifier) carries no float hint, so this
     // exercises render_boxed_at_expression's scope-type fallback (see
@@ -227,7 +227,7 @@ fn boxed_float_boxes_float_var_via_ozq31() {
     let src = format!(
         "{}{}\n\
 @interface BoxedFloatTest : OZObject {{
-	struct OZQ31 *_boxed;
+	struct OZNumber *_boxed;
 }}
 - (void)run;
 - (float)boxedValue;
@@ -251,14 +251,14 @@ int main(void) {{
 	return 0;
 }}
 ",
-        PREAMBLE(), ozq31_src()
+        PREAMBLE(), oznumber_src()
     );
-    let stdout = compile_and_run(&src, "boxed_float_boxes_float_var_via_ozq31");
+    let stdout = compile_and_run(&src, "boxed_float_boxes_float_var_via_oznumber");
     assert_eq!(stdout, "within_tolerance=ok\n");
 }
 
 #[test]
-fn boxed_expression_boxes_var_expr_call_float_uint_via_ozq31() {
+fn boxed_expression_boxes_var_expr_call_float_uint_via_oznumber() {
     // boxed_expression.m: boxes a bare variable, an arithmetic
     // expression, a function-call result, a float, and an unsigned int,
     // all via `@(...)`.
@@ -269,11 +269,11 @@ static int triple(int x) {{
 }}
 
 @interface BoxedTest : OZObject {{
-	struct OZQ31 *_fromVar;
-	struct OZQ31 *_fromExpr;
-	struct OZQ31 *_fromCall;
-	struct OZQ31 *_fromFloat;
-	struct OZQ31 *_fromUint;
+	struct OZNumber *_fromVar;
+	struct OZNumber *_fromExpr;
+	struct OZNumber *_fromCall;
+	struct OZNumber *_fromFloat;
+	struct OZNumber *_fromUint;
 }}
 - (void)run;
 - (int)fromVarValue;
@@ -324,9 +324,9 @@ int main(void) {{
 	return 0;
 }}
 ",
-        PREAMBLE(), ozq31_src()
+        PREAMBLE(), oznumber_src()
     );
-    let stdout = compile_and_run(&src, "boxed_expression_boxes_var_expr_call_float_uint_via_ozq31");
+    let stdout = compile_and_run(&src, "boxed_expression_boxes_var_expr_call_float_uint_via_oznumber");
     assert_eq!(
         stdout,
         "fromVar=7\nfromExpr=10\nfromCall=21\nfromFloat=ok\nfromUint=1000\n"
@@ -334,7 +334,7 @@ int main(void) {{
 }
 
 #[test]
-fn boxed_call_expr_boxes_function_result_via_ozq31() {
+fn boxed_call_expr_boxes_function_result_via_oznumber() {
     // boxed_call_expr.m: `_boxed = @(computeValue());` -- a function
     // call's result boxed directly.
     let src = format!(
@@ -343,7 +343,7 @@ static int computeValue(void) {{
 	return 99;
 }}
 @interface BoxedCallTest : OZObject {{
-	struct OZQ31 *_boxed;
+	struct OZNumber *_boxed;
 }}
 - (void)run;
 - (int)boxedValue;
@@ -365,8 +365,8 @@ int main(void) {{
 	return 0;
 }}
 ",
-        PREAMBLE(), ozq31_src()
+        PREAMBLE(), oznumber_src()
     );
-    let stdout = compile_and_run(&src, "boxed_call_expr_boxes_function_result_via_ozq31");
+    let stdout = compile_and_run(&src, "boxed_call_expr_boxes_function_result_via_oznumber");
     assert_eq!(stdout, "boxed=99\n");
 }

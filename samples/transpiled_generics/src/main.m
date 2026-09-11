@@ -18,9 +18,9 @@ int main(void)
 	printk("=== Generics Demo ===\n");
 
 	@autoreleasepool {
-		/* Typed array of numbers — subscript returns OZQ31 * */
-		OZArray<OZQ31 *> *numbers = @[ @10, @20, @30 ];
-		OZQ31 *first = numbers[0];
+		/* Typed array of numbers — subscript returns OZNumber * */
+		OZArray<OZNumber *> *numbers = @[ @10, @20, @30 ];
+		OZNumber *first = numbers[0];
 		OZLog("numbers[0] = %@", first);
 		OZLog("numbers count = %d", [numbers count]);
 
@@ -31,18 +31,18 @@ int main(void)
 		}
 
 		/* Typed dictionary — keyed subscript returns typed value */
-		OZDictionary<OZString *, OZQ31 *> *scores = @{
+		OZDictionary<OZString *, OZNumber *> *scores = @{
 			@"alpha" : @100,
 			@"beta" : @200,
 			@"gamma" : @300,
 		};
-		OZQ31 *alpha = scores[@"alpha"];
+		OZNumber *alpha = scores[@"alpha"];
 		OZLog("alpha score = %@", alpha);
 
 		/* Typed block param in enumerateObjectsUsingBlock: */
 		__block int sum = 0;
 		[numbers enumerateObjectsUsingBlock:^(id obj, size_t idx, BOOL *stop) {
-		  sum += [(OZQ31 *)obj intValue];
+		  sum += [(OZNumber *)obj intValue];
 		  *stop = NO;
 		}];
 		printk("sum = %d\n", sum);
@@ -52,8 +52,8 @@ int main(void)
 		OZLog("generic[0] = %@", generic[0]);
 
 		/* Nested generics: array of arrays */
-		OZArray<OZArray<OZQ31 *> *> *matrix = @[ @[@1, @2], @[@3, @4] ];
-		OZArray<OZQ31 *> *firstRow = matrix[0];
+		OZArray<OZArray<OZNumber *> *> *matrix = @[ @[@1, @2], @[@3, @4] ];
+		OZArray<OZNumber *> *firstRow = matrix[0];
 		OZLog("matrix[0][1] = %@", firstRow[1]);
 	}
 

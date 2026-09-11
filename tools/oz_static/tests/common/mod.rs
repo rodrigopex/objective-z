@@ -438,7 +438,7 @@ pub fn expect_reject(source: &str) -> String {
 // `#ifdef` was only ever a compiler-portability guard in the original
 // anyway, since this harness's `cc` always defines `__clang__`).
 //
-// A few classes (OZArray; OZQ31 for one method) need real content
+// A few classes (OZArray; OZNumber for one method) need real content
 // removed or added on top of that, because they use something oz_static
 // can't yet resolve or a cross-file dependency this host harness can't
 // pull in. Those cuts are done as small, named, marker-anchored
@@ -600,10 +600,10 @@ pub fn ozobject_src() -> String {
     assemble(&spliced, include_str!("../../../../src/OZObject.m"))
 }
 
-/// OZQ31, the fixed-point Foundation class -- assembled from
-/// `include/oz_sdk/Foundation/OZQ31.h` / `src/OZQ31.m` verbatim (same
+/// OZNumber, the fixed-point Foundation class -- assembled from
+/// `include/oz_sdk/Foundation/OZNumber.h` / `src/OZNumber.m` verbatim (same
 /// helper function bodies and method bodies, including `other->_raw`
-/// cross-instance ivar access and `[[OZQ31 alloc] init]` chaining), with
+/// cross-instance ivar access and `[[OZNumber alloc] init]` chaining), with
 /// one addition: the real `-getDescription:maxLength:` calls
 /// `_oz_get_log_precision()`, defined in `src/OZLog.c` -- which needs
 /// Zephyr's `printk` and the Python pipeline's own generated dispatch
@@ -612,10 +612,10 @@ pub fn ozobject_src() -> String {
 /// log-precision-specific behavior (`%.N@` format specifiers) isn't
 /// exercised by any test here. Requires `OZObject` (`common::ozobject_src`)
 /// in scope as the root class.
-pub fn ozq31_src() -> String {
+pub fn oznumber_src() -> String {
     let assembled = assemble(
-        include_str!("../../../../include/oz_sdk/Foundation/OZQ31.h"),
-        include_str!("../../../../src/OZQ31.m"),
+        include_str!("../../../../include/oz_sdk/Foundation/OZNumber.h"),
+        include_str!("../../../../src/OZNumber.m"),
     );
     format!(
         "/* synthesized stub (not from source): the real _oz_get_log_precision\n * \
@@ -700,11 +700,11 @@ pub fn ozdefer_src() -> String {
 /// `companion::render_array_support` (malloc-based instead of
 /// pool-based) and never written to ObjC source at all -- it backs the
 /// `@[...]` boxed array literal desugar in `emit.rs`, the same way
-/// `OZQ31`'s class methods back `@42`.
+/// `OZNumber`'s class methods back `@42`.
 ///
 /// Requires `OZObject` (`common::ozobject_src`) in scope as the root
-/// class; a boxed array literal's elements typically also need `OZQ31`
-/// (`common::ozq31_src`) in scope, since `@(42)` desugars to it. For-in
+/// class; a boxed array literal's elements typically also need `OZNumber`
+/// (`common::oznumber_src`) in scope, since `@(42)` desugars to it. For-in
 /// over an `OZArray` also needs `OZIteratorProtocol`
 /// (`common::iterator_protocol_src`) declared somewhere in scope.
 pub fn ozarray_src() -> String {
@@ -765,7 +765,7 @@ pub fn ozmutablestring_src() -> String {
 ///
 /// Requires `OZObject` (`common::ozobject_src`) in scope as the root
 /// class; a boxed dictionary literal's keys/values typically also need
-/// `OZString` (`common::ozstring_src`) and `OZQ31` (`common::ozq31_src`)
+/// `OZString` (`common::ozstring_src`) and `OZNumber` (`common::oznumber_src`)
 /// in scope, since `@"..."` and `@(42)` desugar to them. For-in over an
 /// `OZDictionary` also needs `OZIteratorProtocol`
 /// (`common::iterator_protocol_src`) declared somewhere in scope.

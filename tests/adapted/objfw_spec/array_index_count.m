@@ -4,7 +4,7 @@
  * This test is ORIGINAL CODE — no ObjFW code was copied.
  * Pattern: OZArray count, objectAtIndex, out-of-bounds.
  */
-/* oz-pool: OZObject=1,OZQ31=3,OZArray=1,ArrIdxTest=1 */
+/* oz-pool: OZObject=1,OZNumber=3,OZArray=1,ArrIdxTest=1 */
 #import "OZFoundationBase.h"
 
 @interface ArrIdxTest : OZObject {
@@ -24,9 +24,9 @@
 - (void)run {
 	OZArray *arr = @[@(10), @(20), @(30)];
 	_count = [arr count];
-	OZQ31 *f = [arr objectAtIndex:0];
+	OZNumber *f = [arr objectAtIndex:0];
 	_first = [f intValue];
-	OZQ31 *l = [arr objectAtIndex:2];
+	OZNumber *l = [arr objectAtIndex:2];
 	_last = [l intValue];
 	id oob = [arr objectAtIndex:99];
 	_oobNil = (oob == nil);

@@ -1,12 +1,12 @@
-/* oz-pool: OZObject=1,OZQ31=1,BoxedFloatTest=1 */
+/* oz-pool: OZObject=1,OZNumber=1,BoxedFloatTest=1 */
 #import "OZTestBase.h"
-#import <Foundation/OZQ31.h>
+#import <Foundation/OZNumber.h>
 
 @interface BoxedFloatTest : OZObject {
-	OZQ31 *_boxed;
+	OZNumber *_boxed;
 }
 - (void)run;
-- (OZQ31 *)boxed;
+- (OZNumber *)boxed;
 @end
 
 @implementation BoxedFloatTest
@@ -14,7 +14,7 @@
 	float f = 3.14f;
 	_boxed = @(f);
 }
-- (OZQ31 *)boxed {
+- (OZNumber *)boxed {
 	return _boxed;
 }
 @end

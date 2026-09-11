@@ -53,7 +53,7 @@
 // genuinely the two assemblers' own.
 
 mod common;
-use common::{ozarray_src, ozobject_src, ozq31_src};
+use common::{ozarray_src, ozobject_src, oznumber_src};
 
 /// Run both emitters over one source. Returns (single-file diagnostics,
 /// split diagnostics, single-file text, split text-of-everything).
@@ -394,10 +394,10 @@ int main(void) { struct color c; c.r = NORTH; return c.r; }
 fn item_pool_definition_has_no_trailing_semicolon() {
     let src = format!(
         "{}{}{}\n@interface Runner : OZObject\n- (void)run;\n@end\n@implementation Runner\n\
-         - (void)run {{\n\tOZArray<OZQ31 *> *a = @[@(1), @(2)];\n\t(void)a;\n}}\n@end\n\
+         - (void)run {{\n\tOZArray<OZNumber *> *a = @[@(1), @(2)];\n\t(void)a;\n}}\n@end\n\
          int main(void) {{ return 0; }}\n",
         ozobject_src(),
-        ozq31_src(),
+        oznumber_src(),
         ozarray_src()
     );
     let (single_diags, split_diags, single_text, split_text) = both(&src);

@@ -314,7 +314,7 @@ fn extract_type_and_stars_inner(
                 }
             }
             "generic_specifier" => {
-                // `Container<Arg, ...>` (e.g. `OZArray<OZQ31 *>`): this
+                // `Container<Arg, ...>` (e.g. `OZArray<OZNumber *>`): this
                 // spike renders a generic collection's *declared* type
                 // exactly like its non-generic form -- element-type
                 // constraints are a `generics::check_program` concern,

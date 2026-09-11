@@ -18,7 +18,7 @@
 
 mod common;
 use common::{
-    compile_and_run, ozarray_src, ozdictionary_src, ozobject_src, ozq31_src,
+    compile_and_run, ozarray_src, ozdictionary_src, ozobject_src, oznumber_src,
 };
 
 /// A one-slot pool serves one *simultaneously live* object; the next
@@ -257,7 +257,7 @@ fn item_pool_is_sized_from_literal_element_counts() {
     let src = format!(
         "{}{}{}{}",
         ozobject_src(),
-        ozq31_src(),
+        oznumber_src(),
         ozarray_src(),
         "\
 @interface Lits : OZObject
@@ -297,7 +297,7 @@ fn dictionary_literal_reserves_two_slots_per_pair() {
     let src = format!(
         "{}{}{}{}",
         ozobject_src(),
-        ozq31_src(),
+        oznumber_src(),
         ozdictionary_src(),
         "\
 @interface Dicts : OZObject
@@ -355,7 +355,7 @@ fn item_pool_directive_raises_the_bound() {
     let src = format!(
         "/* oz-item-pool: 16 */\n{}{}{}{}",
         ozobject_src(),
-        ozq31_src(),
+        oznumber_src(),
         ozarray_src(),
         "\
 @interface Lits : OZObject
@@ -389,7 +389,7 @@ fn item_pool_directive_does_not_disturb_the_class_pool_directive() {
     let src = format!(
         "/* oz-item-pool: 9 */\n/* oz-pool: Lits=5 */\n{}{}{}{}",
         ozobject_src(),
-        ozq31_src(),
+        oznumber_src(),
         ozarray_src(),
         "\
 @interface Lits : OZObject
@@ -438,7 +438,7 @@ fn item_pool_bound_is_enforced_and_exhaustion_returns_nil() {
     let src = format!(
         "/* oz-item-pool: 3 */\n{}{}{}{}",
         ozobject_src(),
-        ozq31_src(),
+        oznumber_src(),
         ozarray_src(),
         "\
 #include <stdio.h>
@@ -464,7 +464,7 @@ fn item_slots_return_to_the_pool_when_the_collection_is_released() {
     let src = format!(
         "/* oz-item-pool: 2 */\n{}{}{}{}",
         ozobject_src(),
-        ozq31_src(),
+        oznumber_src(),
         ozarray_src(),
         "\
 #include <stdio.h>

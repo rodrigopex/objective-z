@@ -27,7 +27,7 @@
 // `behavior_foundation_array`.
 
 mod common;
-use common::{compile_and_run_strict, ozobject_src, ozq31_src};
+use common::{compile_and_run_strict, ozobject_src, oznumber_src};
 
 #[test]
 fn bare_class_name_ivar_gains_struct_tag() {
@@ -136,12 +136,12 @@ fn send_through_cast_resolves_receiver() {
     let src = format!(
         "{}{}\n{}",
         ozobject_src(),
-        ozq31_src(),
+        oznumber_src(),
         "\
 #include <stdio.h>
 int main(void) {
-	id boxed = [OZQ31 fixedWithInt32:42];
-	printf(\"val=%d\\n\", [((OZQ31 *)boxed) int32Value]);
+	id boxed = [OZNumber numberWithInt32:42];
+	printf(\"val=%d\\n\", [((OZNumber *)boxed) int32Value]);
 	[boxed release];
 	return 0;
 }

@@ -204,7 +204,7 @@ fn classify_declared_type(type_node: Node, src: &str, program: &Program) -> Decl
 struct Constrained {
     constraints: Vec<Constraint>,
     /// The declared container/type spelling, for the diagnostic message
-    /// (`"required by 'OZArray<OZQ31 *>'"`, matching the oracle's own
+    /// (`"required by 'OZArray<OZNumber *>'"`, matching the oracle's own
     /// message shape in `_validate_array_generics`).
     declared_spelling: String,
 }
@@ -813,7 +813,7 @@ fn resolve_concrete_class(
             let boxed = node.children(&mut cursor).any(|c| c.kind() == "@");
             (boxed && program.is_class("OZString")).then(|| "OZString".to_string())
         }
-        "at_expression" => program.is_class("OZQ31").then(|| "OZQ31".to_string()),
+        "at_expression" => program.is_class("OZNumber").then(|| "OZNumber".to_string()),
         _ => None,
     }
 }

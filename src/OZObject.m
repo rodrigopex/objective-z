@@ -8,7 +8,7 @@
  *
  * Hand-rolled rather than `snprintf`: this runs on targets with no stdio
  * linked, and the existing descriptions in this SDK all write bytes
- * directly for the same reason (`OZString` memcpy's, `OZQ31` calls
+ * directly for the same reason (`OZString` memcpy's, `OZNumber` calls
  * `_oz_q31_to_str`).
  *
  * `static inline`, and that is load-bearing rather than a performance

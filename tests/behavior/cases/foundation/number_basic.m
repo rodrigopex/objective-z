@@ -1,4 +1,4 @@
-/* oz-pool: OZObject=1,OZQ31=4 */
+/* oz-pool: OZObject=1,OZNumber=4 */
 #import "OZFoundationBase.h"
 
 @interface NumTest : OZObject
@@ -7,7 +7,7 @@
 
 @implementation NumTest
 - (int)boxed {
-	OZQ31 *n = @(42);
+	OZNumber *n = @(42);
 	int v = [n intValue];
 	return v;
 }

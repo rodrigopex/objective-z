@@ -184,8 +184,8 @@ fn cross_file_multi_level_inheritance_compiles_links_and_runs() {
 /// introduces.
 #[test]
 fn boxed_array_literal_helper_prototype_is_visible_across_files() {
-    // Minimal stand-ins for the real OZQ31/OZArray -- just enough to
-    // trigger `emit::render_interface`'s `name == "OZQ31"`/`"OZArray"`
+    // Minimal stand-ins for the real OZNumber/OZArray -- just enough to
+    // trigger `emit::render_interface`'s `name == "OZNumber"`/`"OZArray"`
     // special cases (the boxed-literal desugar and its helper are
     // hardcoded to those exact class names), without real OZArray.m's
     // `countByEnumeratingWithState:`/`enumerateObjectsUsingBlock:` (a
@@ -194,15 +194,15 @@ fn boxed_array_literal_helper_prototype_is_visible_across_files() {
     // of single- or multi-file output).
     let dir = scratch_dir("boxed_array_literal");
     fs::write(
-        dir.join("OZQ31.h"),
+        dir.join("OZNumber.h"),
         "#pragma once\n#import <Foundation/OZObject.h>\n\n\
-         @interface OZQ31 : OZObject {\n\tint32_t _raw;\n}\n+ (id)fixedWithInt32:(int32_t)v;\n@end\n",
+         @interface OZNumber : OZObject {\n\tint32_t _raw;\n}\n+ (id)numberWithInt32:(int32_t)v;\n@end\n",
     )
     .unwrap();
     fs::write(
-        dir.join("OZQ31.m"),
-        "#import \"OZQ31.h\"\n\n@implementation OZQ31\n\
-         + (id)fixedWithInt32:(int32_t)v {\n\tOZQ31 *q = [OZQ31 alloc];\n\tq->_raw = v;\n\treturn q;\n}\n@end\n",
+        dir.join("OZNumber.m"),
+        "#import \"OZNumber.h\"\n\n@implementation OZNumber\n\
+         + (id)numberWithInt32:(int32_t)v {\n\tOZNumber *q = [OZNumber alloc];\n\tq->_raw = v;\n\treturn q;\n}\n@end\n",
     )
     .unwrap();
     fs::write(
@@ -218,19 +218,19 @@ fn boxed_array_literal_helper_prototype_is_visible_across_files() {
     .unwrap();
     fs::write(
         dir.join("main.m"),
-        "#import <Foundation/OZObject.h>\n#import \"OZQ31.h\"\n#import \"OZArray.h\"\n\n\
+        "#import <Foundation/OZObject.h>\n#import \"OZNumber.h\"\n#import \"OZArray.h\"\n\n\
          #include <stdio.h>\nint main(void) {\n\tOZArray *arr = @[@(1), @(2), @(3)];\n\tprintf(\"count=%zu\\n\", [arr count]);\n\treturn 0;\n}\n",
     )
     .unwrap();
 
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let include_dirs = vec![repo_root.join("include/oz_sdk")];
-    // `dir` first: these scratch OZQ31/OZArray stand-ins must win over
-    // the real `src/OZQ31.m`/`src/OZArray.m` sibling impls, which would
+    // `dir` first: these scratch OZNumber/OZArray stand-ins must win over
+    // the real `src/OZNumber.m`/`src/OZArray.m` sibling impls, which would
     // otherwise be found first (same stem) and, via their own `#import
     // <Foundation/...>`, pull in the *real* header too under a
     // different canonical path -- merging both into one conflicting
-    // "OZQ31" class instead of using only the scratch stand-in.
+    // "OZNumber" class instead of using only the scratch stand-in.
     let impl_dirs = vec![dir.clone(), repo_root.join("src")];
     let source = fs::read_to_string(dir.join("main.m")).unwrap();
 

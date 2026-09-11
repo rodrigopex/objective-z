@@ -1,5 +1,5 @@
-/* oz-pool: OZObject=1,OZQ31=32 */
-/* Behavior test: OZQ31 integer-only getDescription and division (no stdio). */
+/* oz-pool: OZObject=1,OZNumber=32 */
+/* Behavior test: OZNumber integer-only getDescription and division (no stdio). */
 #import "OZFoundationBase.h"
 
 @interface Q31NoStdio : OZObject
@@ -19,81 +19,81 @@
 
 - (float)divTenByFour
 {
-	OZQ31 *a = @(10);
-	OZQ31 *b = @(4);
-	OZQ31 *c = [a div:b];
+	OZNumber *a = @(10);
+	OZNumber *b = @(4);
+	OZNumber *c = [a dividingBy:b];
 	float v = [c floatValue];
 	return v;
 }
 
 - (float)divTenByThree
 {
-	OZQ31 *a = @(10);
-	OZQ31 *b = @(3);
-	OZQ31 *c = [a div:b];
+	OZNumber *a = @(10);
+	OZNumber *b = @(3);
+	OZNumber *c = [a dividingBy:b];
 	float v = [c floatValue];
 	return v;
 }
 
 - (float)divNegTenByTwo
 {
-	OZQ31 *a = @(-10);
-	OZQ31 *b = @(2);
-	OZQ31 *c = [a div:b];
+	OZNumber *a = @(-10);
+	OZNumber *b = @(2);
+	OZNumber *c = [a dividingBy:b];
 	float v = [c floatValue];
 	return v;
 }
 
 - (float)divTenByNegTwo
 {
-	OZQ31 *a = @(10);
-	OZQ31 *b = @(-2);
-	OZQ31 *c = [a div:b];
+	OZNumber *a = @(10);
+	OZNumber *b = @(-2);
+	OZNumber *c = [a dividingBy:b];
 	float v = [c floatValue];
 	return v;
 }
 
 - (float)divNegByNeg
 {
-	OZQ31 *a = @(-10);
-	OZQ31 *b = @(-2);
-	OZQ31 *c = [a div:b];
+	OZNumber *a = @(-10);
+	OZNumber *b = @(-2);
+	OZNumber *c = [a dividingBy:b];
 	float v = [c floatValue];
 	return v;
 }
 
 - (float)divSelfBySelf
 {
-	OZQ31 *a = @(42);
-	OZQ31 *b = @(42);
-	OZQ31 *c = [a div:b];
+	OZNumber *a = @(42);
+	OZNumber *b = @(42);
+	OZNumber *c = [a dividingBy:b];
 	float v = [c floatValue];
 	return v;
 }
 
 - (float)divSmallByLarge
 {
-	OZQ31 *a = @(1);
-	OZQ31 *b = @(1000);
-	OZQ31 *c = [a div:b];
+	OZNumber *a = @(1);
+	OZNumber *b = @(1000);
+	OZNumber *c = [a dividingBy:b];
 	float v = [c floatValue];
 	return v;
 }
 
 - (float)divLargeBySmall
 {
-	OZQ31 *a = @(1000);
-	OZQ31 *b = @(1);
-	OZQ31 *c = [a div:b];
+	OZNumber *a = @(1000);
+	OZNumber *b = @(1);
+	OZNumber *c = [a dividingBy:b];
 	float v = [c floatValue];
 	return v;
 }
 
 - (int)divByZeroRaw
 {
-	OZQ31 *a = @(10);
-	OZQ31 *b = [OZQ31 fixedWithRaw:0 shift:0];
-	OZQ31 *c = [a div:b];
+	OZNumber *a = @(10);
+	OZNumber *b = [OZNumber numberWithRaw:0 shift:0];
+	OZNumber *c = [a dividingBy:b];
 	int v = [c rawValue];
 	return v;
 }

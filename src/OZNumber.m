@@ -1,6 +1,6 @@
 /* Fixed-point (Q31+shift) implementation for OZ transpiler. */
 
-#import <Foundation/OZQ31.h>
+#import <Foundation/OZNumber.h>
 #import <Foundation/OZLog.h>
 
 #ifndef _OZ_Q31_HELPERS
@@ -265,97 +265,86 @@ static inline void _oz_q31_div(int32_t a_raw, uint8_t a_shift,
 }
 #endif /* _OZ_Q31_HELPERS */
 
-@implementation OZQ31
+@implementation OZNumber
 
-+ (instancetype)fixedWithFloat:(float)value
+/*
+ * The three primitives. Everything else in this class forwards to one of
+ * them, and that direction is the reverse of what it was until #413: the
+ * `fixedWith*` family held the allocating, encoding bodies and the
+ * `numberWith*` family was a veneer that delegated to it. Five of those
+ * `fixedWith*` forms differed from their `numberWith*` twin in nothing but
+ * the name, so the veneer absorbed the bodies and the duplicates went.
+ *
+ * `+numberWithRaw:shift:` is the exception that stayed: it is the only way
+ * to build from a Q-format value that is already encoded, which is what
+ * Zephyr's `sensor_decode` hands back, so it is not a duplicate of
+ * anything.
+ */
+
++ (instancetype)numberWithFloat:(float)value
 {
-	OZQ31 *fp = [[OZQ31 alloc] init];
+	OZNumber *fp = [[OZNumber alloc] init];
 	fp->_shift = _oz_shift_for_float(value);
 	fp->_raw = _oz_encode_float(value, fp->_shift);
 	return fp;
 }
 
-+ (instancetype)fixedWithInt32:(int32_t)value
++ (instancetype)numberWithInt32:(int32_t)value
 {
-	OZQ31 *fp = [[OZQ31 alloc] init];
+	OZNumber *fp = [[OZNumber alloc] init];
 	fp->_shift = _oz_shift_for_int32(value);
 	fp->_raw = _oz_encode_int32(value, fp->_shift);
 	return fp;
 }
 
-+ (instancetype)fixedWithRaw:(int32_t)raw shift:(uint8_t)shift
++ (instancetype)numberWithRaw:(int32_t)raw shift:(uint8_t)shift
 {
-	OZQ31 *fp = [[OZQ31 alloc] init];
+	OZNumber *fp = [[OZNumber alloc] init];
 	fp->_raw = raw;
 	fp->_shift = shift;
 	return fp;
 }
 
-+ (instancetype)fixedWithBool:(BOOL)value
-{
-	return [OZQ31 fixedWithInt32:value ? 1 : 0];
-}
-
-+ (instancetype)fixedWithInt:(int)value
-{
-	return [OZQ31 fixedWithInt32:(int32_t)value];
-}
-
-+ (instancetype)fixedWithUnsignedInt:(unsigned int)value
-{
-	return [OZQ31 fixedWithInt32:(int32_t)value];
-}
-
-/* ── Clang literal compatibility (delegates to fixedWith*) ───── */
+/* ── Width-named forwarders ──────────────────────────── */
 
 + (instancetype)numberWithInt8:(int8_t)value
 {
-	return [OZQ31 fixedWithInt32:(int32_t)value];
+	return [OZNumber numberWithInt32:(int32_t)value];
 }
 
-+ (instancetype)numberWithUint8:(uint8_t)value
++ (instancetype)numberWithUnsignedInt8:(uint8_t)value
 {
-	return [OZQ31 fixedWithInt32:(int32_t)value];
+	return [OZNumber numberWithInt32:(int32_t)value];
 }
 
 + (instancetype)numberWithInt16:(int16_t)value
 {
-	return [OZQ31 fixedWithInt32:(int32_t)value];
+	return [OZNumber numberWithInt32:(int32_t)value];
 }
 
-+ (instancetype)numberWithUint16:(uint16_t)value
++ (instancetype)numberWithUnsignedInt16:(uint16_t)value
 {
-	return [OZQ31 fixedWithInt32:(int32_t)value];
+	return [OZNumber numberWithInt32:(int32_t)value];
 }
 
-+ (instancetype)numberWithInt32:(int32_t)value
++ (instancetype)numberWithUnsignedInt32:(uint32_t)value
 {
-	return [OZQ31 fixedWithInt32:value];
-}
-
-+ (instancetype)numberWithUint32:(uint32_t)value
-{
-	return [OZQ31 fixedWithInt32:(int32_t)value];
-}
-
-+ (instancetype)numberWithFloat:(float)value
-{
-	return [OZQ31 fixedWithFloat:value];
+	return [OZNumber numberWithInt32:(int32_t)value];
 }
 
 + (instancetype)numberWithBool:(BOOL)value
 {
-	return [OZQ31 fixedWithBool:value];
+	return [OZNumber numberWithInt32:value ? 1 : 0];
 }
 
 + (instancetype)numberWithInt:(int)value
 {
-	return [OZQ31 fixedWithInt32:(int32_t)value];
+	return [OZNumber numberWithInt32:(int32_t)value];
 }
 
 + (instancetype)numberWithUnsignedInt:(unsigned int)value
 {
-	return [OZQ31 fixedWithInt32:(int32_t)value];
+	return [OZNumber numberWithInt32:(int32_t)value];
 }
 
 /* ── Value extraction ──────────────────────────────────────────── */
@@ -365,7 +354,7 @@ static inline void _oz_q31_div(int32_t a_raw, uint8_t a_shift,
 	return (int8_t)_oz_decode_int32(_raw, _shift);
 }
 
-- (uint8_t)uint8Value
+- (uint8_t)unsignedInt8Value
 {
 	return (uint8_t)_oz_decode_int32(_raw, _shift);
 }
@@ -375,7 +364,7 @@ static inline void _oz_q31_div(int32_t a_raw, uint8_t a_shift,
 	return (int16_t)_oz_decode_int32(_raw, _shift);
 }
 
-- (uint16_t)uint16Value
+- (uint16_t)unsignedInt16Value
 {
 	return (uint16_t)_oz_decode_int32(_raw, _shift);
 }
@@ -385,7 +374,7 @@ static inline void _oz_q31_div(int32_t a_raw, uint8_t a_shift,
 	return _oz_decode_int32(_raw, _shift);
 }
 
-- (uint32_t)uint32Value
+- (uint32_t)unsignedInt32Value
 {
 	return (uint32_t)_oz_decode_int32(_raw, _shift);
 }
@@ -424,7 +413,7 @@ static inline void _oz_q31_div(int32_t a_raw, uint8_t a_shift,
 
 /* ── Arithmetic ────────────────────────────────────────────────── */
 
-- (instancetype)add:(OZQ31 *)other
+- (instancetype)adding:(OZNumber *)other
 {
 	int32_t a = _raw;
 	int32_t b = other->_raw;
@@ -432,7 +421,7 @@ static inline void _oz_q31_div(int32_t a_raw, uint8_t a_shift,
 	_oz_align_shift(&a, _shift, &b, other->_shift, &s);
 
 	/*
-	 * Re-normalizing add: if the sum overflows int32, shift right
+	 * Re-normalizing -adding: if the sum overflows int32, shift right
 	 * and increase the shift to preserve magnitude over precision.
 	 */
 	int64_t sum = (int64_t)a + (int64_t)b;
@@ -446,10 +435,10 @@ static inline void _oz_q31_div(int32_t a_raw, uint8_t a_shift,
 	if (sum < INT32_MIN) {
 		sum = INT32_MIN;
 	}
-	return [OZQ31 fixedWithRaw:(int32_t)sum shift:s];
+	return [OZNumber numberWithRaw:(int32_t)sum shift:s];
 }
 
-- (instancetype)sub:(OZQ31 *)other
+- (instancetype)subtracting:(OZNumber *)other
 {
 	int32_t a = _raw;
 	int32_t b = other->_raw;
@@ -457,7 +446,7 @@ static inline void _oz_q31_div(int32_t a_raw, uint8_t a_shift,
 	_oz_align_shift(&a, _shift, &b, other->_shift, &s);
 
 	/*
-	 * Re-normalizing sub: same overflow handling as add.
+	 * Re-normalizing -subtracting: same overflow handling as -adding:.
 	 */
 	int64_t diff = (int64_t)a - (int64_t)b;
 	while ((diff > INT32_MAX || diff < INT32_MIN) && s < 31) {
@@ -470,10 +459,10 @@ static inline void _oz_q31_div(int32_t a_raw, uint8_t a_shift,
 	if (diff < INT32_MIN) {
 		diff = INT32_MIN;
 	}
-	return [OZQ31 fixedWithRaw:(int32_t)diff shift:s];
+	return [OZNumber numberWithRaw:(int32_t)diff shift:s];
 }
 
-- (instancetype)mul:(OZQ31 *)other
+- (instancetype)multiplyingBy:(OZNumber *)other
 {
 	/*
 	 * Q31 multiply:
@@ -488,10 +477,10 @@ static inline void _oz_q31_div(int32_t a_raw, uint8_t a_shift,
 	if (result_shift > 31) {
 		result_shift = 31;
 	}
-	return [OZQ31 fixedWithRaw:result_raw shift:result_shift];
+	return [OZNumber numberWithRaw:result_raw shift:result_shift];
 }
 
-- (instancetype)div:(OZQ31 *)other
+- (instancetype)dividingBy:(OZNumber *)other
 {
 	/*
 	 * Q31 integer-only division using 64-bit long division.
@@ -501,7 +490,7 @@ static inline void _oz_q31_div(int32_t a_raw, uint8_t a_shift,
 	uint8_t r_shift;
 	_oz_q31_div(_raw, _shift, other->_raw, other->_shift,
 		    &r_raw, &r_shift);
-	return [OZQ31 fixedWithRaw:r_raw shift:r_shift];
+	return [OZNumber numberWithRaw:r_raw shift:r_shift];
 }
 
 /* ── OZObject overrides ────────────────────────────────────────── */
@@ -520,13 +509,13 @@ static inline void _oz_q31_div(int32_t a_raw, uint8_t a_shift,
 	if (self == anObject) {
 		return YES;
 	}
-	OZQ31 *other = (OZQ31 *)anObject;
+	OZNumber *other = (OZNumber *)anObject;
 	return (_raw == other->_raw) && (_shift == other->_shift);
 }
 
 - (void)dealloc
 {
-	/* OZQ31 is a compile-time constant and must never be freed. */
+	/* OZNumber is a compile-time constant and must never be freed. */
 }
 
 @end
