@@ -101,14 +101,37 @@ fn program(body: &str) -> String {
     format!("/* oz-pool: Thing=4 */\n{}{}\n{}", PREAMBLE(), THING, body)
 }
 
-/// The body of one generated C function, by name.
+/// One generated C function's *definition*, by name.
+///
+/// Skips lines that end in `;`, because the companion interface block
+/// declares a prototype for every method and `find` reaches that first --
+/// which returns a body consisting of the prototype plus whatever follows
+/// it, and makes an assertion about the function's contents pass or fail
+/// for reasons that have nothing to do with the function. This is the same
+/// correction `explicit_ivar_store.rs` and `ownership_matrix.rs` already
+/// carry; this copy was left behind.
+///
+/// It was not academic here. `a_returned_ivar_is_not_retained` asserts the
+/// *absence* of `oz_static_retain` in `Holder_held`, and the span this
+/// used to return started at `Holder_held`'s prototype and ran on through
+/// the spliced `OZObject.h`. #418 put `int oz_static_retain_count(id obj);`
+/// in that header, so the test began failing on a substring of a
+/// declaration in a file it was never meant to read -- and had been
+/// passing only because nothing in that span happened to match.
 fn function_body(source_c: &str, name: &str) -> String {
-    let at = source_c
-        .find(&format!("{}(", name))
-        .unwrap_or_else(|| panic!("no `{}` in:\n{}", name, source_c));
-    let tail = &source_c[at..];
-    let end = tail.find("\n}").map(|e| e + 2).unwrap_or(tail.len());
-    tail[..end].to_string()
+    let needle = format!("{}(", name);
+    let mut from = 0;
+    while let Some(rel) = source_c[from..].find(&needle) {
+        let at = from + rel;
+        let line_end = source_c[at..].find('\n').map(|e| at + e).unwrap_or(source_c.len());
+        if !source_c[at..line_end].trim_end().ends_with(';') {
+            let tail = &source_c[at..];
+            let end = tail.find("\n}").map(|e| e + 2).unwrap_or(tail.len());
+            return tail[..end].to_string();
+        }
+        from = at + needle.len();
+    }
+    panic!("no definition of `{}` in:\n{}", name, source_c);
 }
 
 /* ---- mechanism 1: a syntactic alias, resolved for free ---------------- */

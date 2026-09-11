@@ -1297,13 +1297,16 @@ via the PAL. */\nextern oz_mem_blocks_t oz_item_pool;\n\n",
         h.push_str(&format!(
                 "struct {root} *oz_static_retain(struct {root} *self);\n\
                  void oz_static_release(struct {root} *self);\n\
-                 int oz_static_retain_count(struct {root} *self);\n\
-                 /* Refcount introspection under the name the legacy runtime used, so\n \
-                 * source written against it keeps compiling (samples/mem_demo). A\n \
-                 * function rather than the oracle's macro, because the real\n \
-                 * src/OZObject.m already declares it as one -- a macro of the same\n \
-                 * name would be expanded in that declaration and break it. */\n\
-                 unsigned int __objc_refcount_get(id obj);\n",
+                 /* `id`, not `struct {root} *`, and alone among the three in that.\n \
+                 * This is the only one Objective-C source may call -- ARC forbids\n \
+                 * '[obj retainCount]' and owns the retain/release pair -- so\n \
+                 * 'include/oz_sdk/Foundation/OZObject.h' declares it too, for\n \
+                 * Clang's AST dump, and that header cannot name a generated\n \
+                 * struct. The two declarations have to agree: the SDK header is\n \
+                 * spliced into this program's C, so a differing parameter type\n \
+                 * would be a conflicting declaration rather than a redundant one.\n \
+                 * It replaced a separate reserved-prefix forwarder in #418. */\n\
+                 int oz_static_retain_count(id obj);\n",
                 root = name
             ));
             if root_needs_synthetic_dealloc {
@@ -1411,20 +1414,15 @@ not tied to one (not from source) */\n",
              \tif (self && !self->_meta.immortal) {{\n\t\toz_atomic_inc(&self->oz_refcount);\n\t}}\n\treturn self;\n}}\n\n",
             root = root
         ));
-        c.push_str(&format!(
-            "/* Refcount introspection under the legacy runtime's name -- see the\n * \
-declaration in the companion header for why this is a function. */\n\
-             unsigned int __objc_refcount_get(id obj)\n{{\n\
-             \treturn (unsigned int)oz_static_retain_count((struct {root} *)obj);\n}}\n\n",
-            root = root
-        ));
-
         c.push_str(
             "/* synthesized: reads the current retain count; 0 for a nil\n * \
-receiver (not from source) */\n",
+receiver. Takes 'id' because Objective-C source calls this one directly\n * \
+and 'include/oz_sdk/Foundation/OZObject.h' has to declare it without\n * \
+naming a generated struct (not from source) */\n",
         );
         c.push_str(&format!(
-            "int oz_static_retain_count(struct {root} *self)\n{{\n\
+            "int oz_static_retain_count(id obj)\n{{\n\
+             \tstruct {root} *self = (struct {root} *)obj;\n\
              \tif (!self) {{\n\t\treturn 0;\n\t}}\n\
              \t/* Not refcounted, so the stored word is not maintained and\n\
              \t * reporting it would be reporting a stale number. One permanent\n\

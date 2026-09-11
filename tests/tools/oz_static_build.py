@@ -104,7 +104,16 @@ def write_abi_shim(outdir: Path, classes: list[str], root: str,
     body.append(f"#define {root}_retain oz_static_retain")
     body.append(f"#define {root}_release oz_static_release")
     body.append(f"#define {root}_retainCount oz_static_retain_count")
-    body.append(f"#define __objc_refcount_get(o) oz_static_retain_count((struct {root} *)(o))")
+    # `__objc_refcount_get` was retired from the SDK and from generated C in
+    # #418 (reserved identifier, `__objc_` is the internal prefix, second
+    # public name for `oz_static_retain_count`, and the last `get`-prefixed
+    # getter).  This bridge is deliberately *not* retired with it: nine
+    # drivers still spell it -- seven under `tests/behavior/cases/` and
+    # `tests/zephyr/src/test_{lifecycle,memory}.c` -- and the rule for this
+    # block is that drivers stay unmodified and the harness bridges the
+    # name.  It is now the only place in the tree the spelling survives
+    # outside `runtime_legacy/`.
+    body.append("#define __objc_refcount_get(o) oz_static_retain_count(o)")
 
     generated = generated_text(outdir)
     for cls, sel in sorted(set(CLASS_METHOD_RE.findall(generated))):
