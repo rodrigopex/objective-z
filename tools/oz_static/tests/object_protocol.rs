@@ -48,7 +48,7 @@ fn object_protocol_declares_what_the_root_class_does() {
         .map(|m| m.selector)
         .collect();
 
-    const LIFECYCLE: &[&str] = &["init", "dealloc", "alloc", "allocWithHeap:"];
+    const LIFECYCLE: &[&str] = &["init", "dealloc", "alloc", "dynamicAlloc", "dynamicAllocWithHeap:"];
     let root = &program.classes["OZObject"];
     let expected: Vec<&str> = root
         .methods

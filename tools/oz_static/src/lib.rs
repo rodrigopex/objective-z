@@ -65,7 +65,7 @@ pub struct Options {
     /// are reported first, then `ast_paths`. The CLI supplies only paths,
     /// so its indices start at 0 and line up with its own `--ast` list.
     pub ast_paths: Vec<std::path::PathBuf>,
-    /// Enable `+allocWithHeap:` and the heap-aware free path -- the oracle's
+    /// Enable `+dynamicAllocWithHeap:` and the heap-aware free path -- the oracle's
     /// `--heap-support`. Off by default: the field it adds to every object
     /// and the branch it adds to every free are only worth paying for if
     /// something actually allocates from a heap.

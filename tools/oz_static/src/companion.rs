@@ -251,7 +251,7 @@ fn render_release_ivars(name: &str, root: &str, owned: &[(String, Option<String>
     c
 }
 
-/// `{name}_oz_alloc_with_heap`, backing `[Cls allocWithHeap:h]`: the same
+/// `{name}_oz_dynamic_alloc_with_heap`, backing `[Cls dynamicAllocWithHeap:h]`: the same
 /// initialization as `{name}_oz_alloc`, but the storage comes from an
 /// `OZHeap` (or the system heap when the argument is nil) instead of the
 /// class's slab, and the object is marked so `{name}_oz_free` knows to
@@ -313,9 +313,9 @@ fn render_heap_alloc(name: &str, root: &str, heap_support: bool, immortal: bool)
     }
     format!(
         "/* synthesized: allocates a new {name} from an OZHeap rather than its slab --\n * \
-backs '[{name} allocWithHeap:h]' (not from source) */\n\
+backs '[{name} dynamicAllocWithHeap:h]' (not from source) */\n\
          #ifdef OZ_HEAP_SUPPORT\n\
-         struct {name} *{name}_oz_alloc_with_heap(struct {root} *heap_obj)\n{{\n\
+         struct {name} *{name}_oz_dynamic_alloc_with_heap(struct {root} *heap_obj)\n{{\n\
          \tstruct {name} *obj = (struct {name} *)oz_heap_obj_alloc(\n\
          \t\t(struct OZHeap *)heap_obj, sizeof(struct {name}));\n\
          \tif (!obj) {{\n\t\treturn (struct {name} *)0;\n\t}}\n\
@@ -1245,7 +1245,7 @@ via the PAL. */\nextern oz_mem_blocks_t oz_item_pool;\n\n",
         // will not exist.
         let heap_proto = if program.heap_support {
             format!(
-                "#ifdef OZ_HEAP_SUPPORT\nstruct {name} *{name}_oz_alloc_with_heap(struct {root} *heap_obj);\n#endif\n",
+                "#ifdef OZ_HEAP_SUPPORT\nstruct {name} *{name}_oz_dynamic_alloc_with_heap(struct {root} *heap_obj);\n#endif\n",
                 name = name,
                 root = root.as_deref().unwrap_or(name)
             )

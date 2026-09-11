@@ -107,7 +107,7 @@ fn main() -> ExitCode {
                 i += 2;
             }
             // Same spelling and meaning as the Python backend's flag.
-            // Enables `+allocWithHeap:` and the heap-aware free path; the
+            // Enables `+dynamicAllocWithHeap:` and the heap-aware free path; the
             // generated code is additionally guarded by `OZ_HEAP_SUPPORT`,
             // which is what makes the PAL expose the heap it needs.
             "--heap-support" => {

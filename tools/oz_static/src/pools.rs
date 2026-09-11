@@ -571,6 +571,15 @@ fn alloc_receiver_class(node: Node, src: &str, program: &Program) -> Option<Stri
     }
     let receiver = &src[children[0].byte_range()];
     let selector = &src[children[1].byte_range()];
+    /* Whole-string, and deliberately so. `+dynamicAlloc` (#413) is a
+     * zero-argument class-method send on a literal class name, which is
+     * *structurally identical* to `+alloc` here -- two children, a class
+     * receiver -- so a prefix or `starts_with` test would count it and
+     * reserve a slab slot for a class that never takes one. Heap-allocated
+     * objects carry `_meta.heap_allocated` and go back to their heap in
+     * `{Class}_oz_free`, never touching the slab (`companion.rs`). The
+     * omission of `dynamicAlloc` from this comparison is the point, not an
+     * oversight. */
     if selector != "alloc" {
         return None;
     }

@@ -135,7 +135,7 @@ function(objz_transpile_sources_static target)
     list(REMOVE_DUPLICATES _src_dirs)
 
     set(_oz2c_flags -I ${_mod}/include/oz_sdk)
-    # CONFIG_OBJZ_HEAP enables `+allocWithHeap:` and the heap-aware free
+    # CONFIG_OBJZ_HEAP enables `+dynamicAllocWithHeap:` and the heap-aware free
     # path. The generated code is additionally guarded by OZ_HEAP_SUPPORT,
     # which is what makes the PAL expose the heap functions it calls -- so
     # both have to be set together, exactly as the Python backend does it.

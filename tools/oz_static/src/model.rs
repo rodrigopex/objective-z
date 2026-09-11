@@ -142,7 +142,7 @@ pub struct Program {
     /// only authority on whether an `id`-typed ivar is an object the class
     /// owns -- see `astinfo` and `owned_object_ivar_names`.
     pub ast: Option<crate::astinfo::AstFacts>,
-    /// Whether `--heap-support` was given, enabling `+allocWithHeap:` and the
+    /// Whether `--heap-support` was given, enabling `+dynamicAllocWithHeap:` and the
     /// heap-aware free path. Every class then also gets a heap allocator, the
     /// root's `_meta` a `heap_allocated` flag, and the companion the two functions
     /// the PAL declares but leaves to generated code.

@@ -4127,22 +4127,36 @@ fn render_message(node: Node, ctx: &mut EmitCtx) -> (String, String) {
             "BOOL".to_string(),
         );
     }
-    // `+allocWithHeap:` is declared once on the root class, but it has to
-    // allocate `sizeof(struct {receiver})` and stamp the receiver's own
-    // class_id -- so, exactly like `+alloc`, it resolves to the *receiver's*
-    // generated allocator rather than to the declaring class's. Dispatching
-    // it as an ordinary class method would call
-    // `OZObject_allocWithHeap__cls`, which allocates an OZObject-sized
-    // block: `samples/heap_alloc` did precisely that, and it linked to
-    // nothing at all because no such function is generated.
-    if parts.selector == "allocWithHeap:" && parts.args.len() == 1 {
+    // `+dynamicAllocWithHeap:` and `+dynamicAlloc` are declared once on the
+    // root class, but each has to allocate `sizeof(struct {receiver})` and
+    // stamp the receiver's own class_id -- so, exactly like `+alloc`, they
+    // resolve to the *receiver's* generated allocator rather than to the
+    // declaring class's. Dispatching as an ordinary class method would call
+    // `OZObject_dynamicAllocWithHeap__cls`, which allocates an
+    // OZObject-sized block: `samples/heap_alloc` did precisely that under
+    // the old spelling, and it linked to nothing at all because no such
+    // function is generated.
+    //
+    // The two differ only in where the heap comes from. `+dynamicAlloc`
+    // passes a null heap, which is what `oz_heap_obj_alloc` routes to
+    // `oz_sys_heap_alloc` (`k_malloc` on Zephyr, `malloc` on host) -- so it
+    // needs no allocator of its own, and reusing
+    // `{cls}_oz_dynamic_alloc_with_heap` is what keeps the memset, the
+    // class_id stamp, the `heap_allocated` flag and the refcount init in
+    // one place rather than two.
+    let heap_arg = match parts.selector.as_str() {
+        "dynamicAllocWithHeap:" if parts.args.len() == 1 => Some(arg_texts[0].clone()),
+        "dynamicAlloc" if parts.args.is_empty() => Some("0".to_string()),
+        _ => None,
+    };
+    if let Some(heap) = heap_arg {
         if let Some(cls) = recv_type.strip_prefix("class:") {
             let cls = cls.to_string();
             if !ctx.program.heap_support {
                 ctx.err(
                     node,
                     format!(
-                        "'{}' needs heap support, which is off -- pass --heap-support (and build with -DOZ_HEAP_SUPPORT) to enable '+allocWithHeap:'",
+                        "'{}' needs heap support, which is off -- pass --heap-support (and build with -DOZ_HEAP_SUPPORT) to enable '+dynamicAlloc' and '+dynamicAllocWithHeap:'",
                         one_line(node_text(node, ctx.src))
                     ),
                 );
@@ -4150,10 +4164,10 @@ fn render_message(node: Node, ctx: &mut EmitCtx) -> (String, String) {
             }
             return (
                 format!(
-                    "{cls}_oz_alloc_with_heap((struct {root} *)({heap}))",
+                    "{cls}_oz_dynamic_alloc_with_heap((struct {root} *)({heap}))",
                     cls = cls,
                     root = root,
-                    heap = arg_texts[0]
+                    heap = heap
                 ),
                 format!("struct {} *", cls),
             );
@@ -5245,7 +5259,7 @@ fn render_loop_jump(node: Node, ctx: &mut EmitCtx) -> (String, String) {
 ///
 /// A statement is the one place a reference can be created and abandoned
 /// in the same breath. `arc.rs` knows `-copy`, `-new`, `+alloc`,
-/// `+allocWithHeap:` and every analysed factory return +1; every path that
+/// `+dynamicAllocWithHeap:` and every analysed factory return +1; every path that
 /// *binds* such a result already releases it -- a local at its scope's end
 /// (`release_lines`), a strong local or ivar on the next store
 /// (`render_strong_local_assign`), a `return` on its way out

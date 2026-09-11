@@ -176,12 +176,12 @@ config OBJZ_DEFAULT_DESCRIPTION
 	  guarded on CONFIG_OBJZ, which only a Zephyr build defines.
 
 config OBJZ_HEAP
-	bool "Enable heap-based allocation (allocWithHeap:)"
+	bool "Enable heap-based allocation (dynamicAllocWithHeap:)"
 	depends on HEAP_MEM_POOL_SIZE > 0
 	select SYS_HEAP_RUNTIME_STATS
 	help
 	  Allow objects to be allocated from an OZHeap instead of
-	  k_mem_slab.  Adds +allocWithHeap: class method and
+	  k_mem_slab.  Adds +dynamicAllocWithHeap: class method and
 	  heap-aware free path using CONTAINER_OF.
 	  Enables SYS_HEAP_RUNTIME_STATS for heap usage queries.
 

@@ -62,7 +62,7 @@ use common::ScratchDir;
 /// using OZTimer all along -- Apple clang does not diagnose that
 /// conversion, so a maintainer's machine reported the whole corpus clean.
 /// Before them the last entry was `memory/heap_alloc.m`, which needed
-/// `+allocWithHeap:` support and a fix to the SDK headers where both
+/// `+dynamicAllocWithHeap:` support and a fix to the SDK headers where both
 /// `OZHeap.h` and `platform/oz_platform.h` defined `struct oz_heap_inner`
 /// under a guard neither of them set.
 const KNOWN_CC_FAILURES: &[(&str, &str)] = &[

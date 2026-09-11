@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // behavior_foundation_heap.rs - OZHeap, the store behind
-// `allocWithHeap:`, transplanted from the real `src/OZHeap.m` (see
+// `dynamicAllocWithHeap:`, transplanted from the real `src/OZHeap.m` (see
 // `common::ozheap_src`).
 //
 // The first two tests prove oz_static *transpiles* OZHeap into C that
@@ -14,7 +14,7 @@
 //
 // The last test does prove accounting, through the real malloc-backed PAL
 // versions (`platform/oz_platform_host.h`, behind `OZ_HEAP_SUPPORT`) reached
-// via `+allocWithHeap:`. It is the shape of the oracle's own
+// via `+dynamicAllocWithHeap:`. It is the shape of the oracle's own
 // `tests/behavior/cases/memory/heap_alloc.m`, which cannot itself be run
 // through the cross-backend harness: that case's driver asserts on the
 // oracle's root struct layout (`w->base._meta.class_id`) rather than on
@@ -115,7 +115,7 @@ int main(void) {{
     assert_eq!(stdout, "used=0\ndealloc_before=0\ndealloc_after=1\n");
 }
 
-/// `+allocWithHeap:` end to end: the storage comes from the heap it was
+/// `+dynamicAllocWithHeap:` end to end: the storage comes from the heap it was
 /// given, the heap's used-bytes reflects that, and freeing gives the space
 /// back -- so `-usedBytes` is 0 again once the object dies.
 ///
@@ -125,7 +125,7 @@ int main(void) {{
 /// skipped ARC entirely, so nothing released them (see `emit::arc_enter`).
 /// The heap's own accounting is what makes that observable at all.
 #[test]
-fn alloc_with_heap_takes_storage_from_the_heap_and_gives_it_back() {
+fn dynamic_alloc_with_heap_takes_storage_from_the_heap_and_gives_it_back() {
     let src = format!(
         "{}{}\n\
 #include <stdio.h>
@@ -154,7 +154,7 @@ int main(void) {{
 \tOZHeap *h = [[OZHeap alloc] initWithBuffer:g_buf size:1024];
 \tprintf(\"before=%zu\\n\", [h usedBytes]);
 \t@autoreleasepool {{
-\t\tWidget *w = [[Widget allocWithHeap:h] init];
+\t\tWidget *w = [[Widget dynamicAllocWithHeap:h] init];
 \t\t[w setTag:7];
 \t\tprintf(\"tag=%d\\n\", [w tag]);
 \t\tprintf(\"during=%d\\n\", [h usedBytes] > 0);
@@ -169,7 +169,85 @@ int main(void) {{
     );
     let stdout = compile_and_run_with_heap(
         &src,
-        "alloc_with_heap_takes_storage_from_the_heap_and_gives_it_back",
+        "dynamic_alloc_with_heap_takes_storage_from_the_heap_and_gives_it_back",
     );
     assert_eq!(stdout, "before=0\ntag=7\nduring=1\nafter=0\n");
+}
+
+/// `+dynamicAlloc` end to end: the system heap, no `OZHeap` in sight, and
+/// the object still dies.
+///
+/// This is the test that fails without `dynamicAlloc` in
+/// `arc::CREATE_RULE_SELECTORS`, and the shape is load-bearing. It binds
+/// the bare allocation -- `Widget *w = [Widget dynamicAlloc];` -- and
+/// **not** `[[Widget dynamicAlloc] init]`, which cannot see the defect:
+/// there the outer `-init` is itself an owning selector
+/// (`is_owning_selector` -> `is_initialiser`), so the binding is `+1`
+/// whatever the receiver's provenance was, and the local gets its
+/// scope-exit release either way. Written that way first, this test passed
+/// with `dynamicAlloc` removed from the list -- vacuously, which is worth
+/// recording because it is the more natural spelling to reach for.
+///
+/// A bare allocation with no `-init` is deliberately legal: allocation and
+/// initialisation are separate concerns, and the generated allocator
+/// already zeroes the storage.
+///
+/// ARC fails toward leaking, so a
+/// selector it does not recognise as `+1` produces **no diagnostic at
+/// all** -- the object simply never gets released, `-dealloc` never runs,
+/// and both the transpile and the link succeed. That is exactly how
+/// `samples/heap_alloc` once leaked every object it allocated
+/// (`arc.rs`'s own comment records it), and the only way to see it is to
+/// run something that observes the dealloc.
+///
+/// `-usedBytes` cannot be the witness here the way it is for
+/// `+dynamicAllocWithHeap:`: the system heap is `k_malloc`/`malloc` with
+/// no per-heap accounting to query. So the observable is the `-dealloc`
+/// side effect, which is also the thing a missing release actually
+/// suppresses.
+#[test]
+fn dynamic_alloc_takes_the_system_heap_and_still_deallocs() {
+    let src = format!(
+        "{}{}\n\
+#include <stdio.h>
+
+@interface Widget : OZObject {{
+\tint _tag;
+}}
+- (void)setTag:(int)t;
+- (int)tag;
+@end
+
+static int g_dealloc_count;
+
+@implementation Widget
+- (void)setTag:(int)t {{
+\t_tag = t;
+}}
+- (int)tag {{
+\treturn _tag;
+}}
+- (void)dealloc {{
+\tg_dealloc_count++;
+}}
+@end
+
+int main(void) {{
+\tprintf(\"before=%d\\n\", g_dealloc_count);
+\t@autoreleasepool {{
+\t\tWidget *w = [Widget dynamicAlloc];
+\t\t[w setTag:7];
+\t\tprintf(\"tag=%d\\n\", [w tag]);
+\t\tprintf(\"during=%d\\n\", g_dealloc_count);
+\t}}
+\tprintf(\"after=%d\\n\", g_dealloc_count);
+\treturn 0;
+}}
+",
+        PREAMBLE(),
+        ozheap_src()
+    );
+    let stdout =
+        compile_and_run_with_heap(&src, "dynamic_alloc_takes_the_system_heap_and_still_deallocs");
+    assert_eq!(stdout, "before=0\ntag=7\nduring=0\nafter=1\n");
 }

@@ -1,7 +1,7 @@
 /*
  * SPDX-License-Identifier: Apache-2.0
  *
- * Heap allocation demo — allocWithHeap: vs slab alloc.
+ * Heap allocation demo — dynamicAlloc and dynamicAllocWithHeap: vs slab alloc.
  * Transpiled to plain C — no ObjC runtime needed.
  */
 
@@ -56,11 +56,11 @@ int main(void)
 
 	/* Allocate from user-provided heap */
 	@autoreleasepool {
-		Sensor *s = [[Sensor allocWithHeap:appHeap] init];
+		Sensor *s = [[Sensor dynamicAllocWithHeap:appHeap] init];
 		[s setValue:42];
 		OZLog("Sensor allocated from app heap, value=%d", [s value]);
 		OZLog("app heap after alloc: %zu bytes used", [appHeap usedBytes]);
-		Sensor *s2 = [[Sensor allocWithHeap:sHeap] init];
+		Sensor *s2 = [[Sensor dynamicAllocWithHeap:sHeap] init];
 		[s2 setValue:84];
 		OZLog("Sensor allocated from local heap, value=%d", [s2 value]);
 		OZLog("local heap after alloc: %zu bytes used", [sHeap usedBytes]);
@@ -69,9 +69,9 @@ int main(void)
 	OZLog("app heap after free: %zu bytes used", [appHeap usedBytes]);
 	OZLog("local heap after free: %zu bytes used", [sHeap usedBytes]);
 
-	/* Allocate from system heap (nil = k_malloc on Zephyr) */
+	/* Allocate from the system heap -- k_malloc on Zephyr */
 	@autoreleasepool {
-		Sensor *s = [[Sensor allocWithHeap:nil] init];
+		Sensor *s = [[Sensor dynamicAlloc] init];
 		[s setValue:99];
 		OZLog("Sensor allocated from system heap, value=%d", [s value]);
 	}

@@ -196,19 +196,31 @@ fn is_initialiser(program: &Program, _class: Option<&str>, selector: &str) -> bo
 /// Selectors that are +1 by convention rather than by analysis, matching
 /// Objective-C's own naming rule (the "create rule"): these transfer
 /// ownership whatever their body does.
+///
+/// **One constant, two readers.** `is_owning_selector` and
+/// `creates_reference` both answer from this list and neither spells it
+/// again. They used to carry separate copies, which is one drift away from
+/// the defect the next paragraph describes -- and exactly the "same fix
+/// twice" shape `docs/STATUS.md` warns about, since adding a selector to
+/// one and not the other leaks silently.
+///
+/// The heap allocators are on it because `+dynamicAlloc` and
+/// `+dynamicAllocWithHeap:` are `+alloc` with the storage coming from a
+/// heap rather than a slab, so they hand back +1 just the same. Missing
+/// from this list, `samples/heap_alloc` leaked every object it allocated:
+/// nothing released them, no `-dealloc` ran, and the heap's used-bytes
+/// never came back down -- which the sample's own expected output
+/// ("app heap after free: 0 bytes used", "Sensor dealloc") states.
+/// Compiling and linking cannot catch that; only running it can.
+///
+/// `retain` is deliberately *not* here: it is owning for
+/// `is_owning_selector`'s purposes but creates no new reference, which is
+/// the distinction `creates_reference` exists to draw (see its own doc).
+pub const CREATE_RULE_SELECTORS: &[&str] =
+    &["alloc", "dynamicAlloc", "dynamicAllocWithHeap:", "new", "copy", "mutableCopy"];
+
 fn is_owning_selector(program: &Program, class: Option<&str>, selector: &str) -> bool {
-    selector == "alloc"
-        // `+allocWithHeap:` is `+alloc` with the storage coming from an
-        // OZHeap, so it hands back +1 just the same. Missing from this list,
-        // `samples/heap_alloc` leaked every object it allocated: nothing
-        // released them, no `-dealloc` ran, and the heap's used-bytes never
-        // came back down -- which the sample's own expected output
-        // ("app heap after free: 0 bytes used", "Sensor dealloc") states.
-        // Compiling and linking cannot catch that; only running it can.
-        || selector == "allocWithHeap:"
-        || selector == "new"
-        || selector == "copy"
-        || selector == "mutableCopy"
+    CREATE_RULE_SELECTORS.contains(&selector)
         || selector == "retain"
         || is_initialiser(program, class, selector)
 }
@@ -1148,7 +1160,7 @@ pub fn binds_ownership(
 ///     So an `init` send is followed back to its receiver rather than
 ///     trusted on its name.
 fn creates_reference(selector: &str) -> bool {
-    matches!(selector, "alloc" | "allocWithHeap:" | "new" | "copy" | "mutableCopy")
+    CREATE_RULE_SELECTORS.contains(&selector)
 }
 
 /// The +1 reference throwing `node`'s value away would abandon, or None

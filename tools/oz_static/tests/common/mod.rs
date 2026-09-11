@@ -232,7 +232,7 @@ pub fn compile_and_run_with_zephyr_stubs(source: &str, stem: &str) -> String {
 }
 
 /// Same as `compile_and_run`, but with `--heap-support` on the transpile and
-/// `-DOZ_HEAP_SUPPORT` on the compiles -- the pair `+allocWithHeap:` needs,
+/// `-DOZ_HEAP_SUPPORT` on the compiles -- the pair `+dynamicAllocWithHeap:` needs,
 /// and the same pair `tests/tools/compile_and_run.py` sets for a case
 /// carrying the `/* oz-heap */` directive.
 ///
@@ -816,7 +816,7 @@ pub fn singleton_protocol_src() -> String {
     strip_import_and_pragma_lines(include_str!("../../../../include/oz_sdk/Foundation/OZSingletonProtocol.h"))
 }
 
-/// OZHeap, the `allocWithHeap:` backing store -- assembled from
+/// OZHeap, the `dynamicAllocWithHeap:` backing store -- assembled from
 /// `include/oz_sdk/Foundation/OZHeap.h` / `src/OZHeap.m` verbatim, no
 /// cuts and no rewrites.
 ///

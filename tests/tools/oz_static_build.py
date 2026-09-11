@@ -99,7 +99,7 @@ def write_abi_shim(outdir: Path, classes: list[str], root: str,
         # The oracle names the heap allocator after the selector; oz_static
         # keeps its `oz_` prefix for everything it synthesizes, as it does
         # for `_oz_alloc` itself.
-        body.append(f"#define {cls}_allocWithHeap_ {cls}_oz_alloc_with_heap")
+        body.append(f"#define {cls}_dynamicAllocWithHeap_ {cls}_oz_dynamic_alloc_with_heap")
         body.append(f"#define OZ_CLASS_{cls} OZ_STATIC_CLASS_{cls}")
     body.append(f"#define {root}_retain oz_static_retain")
     body.append(f"#define {root}_release oz_static_release")

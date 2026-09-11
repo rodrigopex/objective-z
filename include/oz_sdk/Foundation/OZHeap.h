@@ -1,10 +1,10 @@
 /**
  * @file OZHeap.h
- * @brief Heap manager for OZ objects — allocWithHeap: support.
+ * @brief Heap manager for OZ objects — dynamicAllocWithHeap: support.
  *
  * OZHeap wraps a sys_heap (Zephyr) or malloc pool (host) with
  * thread-safe locking.  Declare an OZHeap via slab, initialise
- * with -initWithBuffer:size:, then pass to [Cls allocWithHeap:].
+ * with -initWithBuffer:size:, then pass to [Cls dynamicAllocWithHeap:].
  */
 
 #pragma once
