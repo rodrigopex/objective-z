@@ -378,7 +378,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: /home/runner/zephyr-sdk-1.0.1
-          key: zephyr-sdk-1.0.1-arm-riscv-llvm
+          key: zephyr-sdk-1.0.1-arm-riscv-aarch64-llvm
 
       - name: Install Zephyr SDK (with LLVM)
         run: .github/install-zephyr-sdk.sh
@@ -494,7 +494,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: /home/runner/zephyr-sdk-1.0.1
-          key: zephyr-sdk-1.0.1-arm-riscv-llvm
+          key: zephyr-sdk-1.0.1-arm-riscv-aarch64-llvm
 
       - name: Install Zephyr SDK (with LLVM)
         run: .github/install-zephyr-sdk.sh
@@ -561,7 +561,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: /home/runner/zephyr-sdk-1.0.1
-          key: zephyr-sdk-1.0.1-arm-riscv-llvm
+          key: zephyr-sdk-1.0.1-arm-riscv-aarch64-llvm
 
       - name: Install Zephyr SDK (with LLVM)
         run: .github/install-zephyr-sdk.sh
@@ -587,6 +587,64 @@ jobs:
           OZ_CLANG=$ZEPHYR_SDK_INSTALL_DIR/llvm/bin/clang
           west twister -T samples/ -p mps2/an385 --inline-logs
           -x=EXTRA_CONF_FILE=$GITHUB_WORKSPACE/samples/overlay-spin-validate.conf
+
+  # The two-core leg. `qemu_cortex_a53/smp` is the only board in the tree
+  # with more than one core, and `samples/smp_shared` is `platform_allow`-ed
+  # to it alone -- so `just test` (mps2/an385) and `just test-riscv`
+  # (qemu_riscv32) filter that sample out entirely and it was in no gate at
+  # all. It accumulated three independent failures that way (#434): #290's
+  # dispatched return-type check, two `-retainCount` sends, and a bare
+  # `K_THREAD_DEFINE`. Its `count=4000 expected=4000` assertion is the only
+  # thing in the project that puts `@synchronized` under real contention --
+  # it is what caught the lock being per-thread rather than per-object -- and
+  # it had not run since #290 (#443).
+  smp-tests:
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.target == 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build gperf device-tree-compiler gcc-multilib g++-multilib
+
+      - name: Install west
+        run: pip install west
+
+      - name: Cache Zephyr SDK
+        uses: actions/cache@v4
+        with:
+          path: /home/runner/zephyr-sdk-1.0.1
+          key: zephyr-sdk-1.0.1-arm-riscv-aarch64-llvm
+
+      # Installs aarch64-zephyr-elf as well, which this job is the only
+      # consumer of. See the cache-key note in the script.
+      - name: Install Zephyr SDK (with LLVM)
+        run: .github/install-zephyr-sdk.sh
+
+      - name: Initialize workspace
+        run: |
+          west init -l .
+          west update --fetch-opt=--depth=1
+
+      - name: Install Zephyr deps
+        run: |
+          pip install -r ../zephyr/scripts/requirements-base.txt \
+                      -r ../zephyr/scripts/requirements-build-test.txt \
+                      natsort tabulate
+          pip install jinja2 tree-sitter tree-sitter-objc
+
+      - name: Samples on two cores (qemu_cortex_a53/smp)
+        run: >
+          PYTHONPATH=tools
+          OZ_CLANG=$ZEPHYR_SDK_INSTALL_DIR/llvm/bin/clang
+          west twister -T samples/ -p qemu_cortex_a53/qemu_cortex_a53/smp --inline-logs
 
   # Zephyr integration tests (native_sim)
   #
@@ -619,7 +677,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: /home/runner/zephyr-sdk-1.0.1
-          key: zephyr-sdk-1.0.1-arm-riscv-llvm
+          key: zephyr-sdk-1.0.1-arm-riscv-aarch64-llvm
 
       - name: Install Zephyr SDK (with LLVM)
         run: .github/install-zephyr-sdk.sh
