@@ -338,7 +338,7 @@ fn collect_local_decls_inner(node: Node, ctx: &mut EmitCtx) {
 /// -- exactly the pointer the first overwrite would then release. A
 /// multi-declarator line is therefore left alone rather than half-handled,
 /// which also keeps it out of `arc_managed_locals`' release paths (see
-/// `owned_locals_of_in`, which is reached through the same declarator kind).
+/// `owned_locals_of`, which is reached through the same declarator kind).
 fn declares_bare_managed_local(decl: Node, ctx: &EmitCtx) -> bool {
     let mut cursor = decl.walk();
     let declarators: Vec<Node> = decl
@@ -658,9 +658,12 @@ fn stores_to_local(
 /// Making those strong is a larger change to observable refcounts and is not
 /// what this fix is for.
 ///
-/// A local the body releases by hand is excluded throughout, keeping the
-/// standing rule that ARC defers to manual retain/release -- see
-/// `released_by_hand`.
+/// There is no "the body releases this one by hand" exclusion, and there
+/// used to be: `released_by_hand` kept ARC away from any local the author
+/// released, which made manual retain/release a second ownership model.
+/// ARC is always enabled and a `-release` send is now a located error
+/// wherever it appears (`staticbar::check_manual_memory_sends`), so the
+/// question cannot arise -- every object local here is ARC's (#428).
 /// Does this `declaration` carry `static` storage?
 ///
 /// The distinction ARC draws and oz_static did not: a `static` local is
@@ -764,7 +767,7 @@ pub(crate) fn managed_object_locals(
                         continue;
                     }
                     let name = crate::collect::find_declared_name(child, src);
-                    if name.is_empty() || released_by_hand(&name, body, src) {
+                    if name.is_empty() {
                         continue;
                     }
                     // Every store has to be one the renderer can emit, or
@@ -4952,46 +4955,6 @@ fn render_block(node: Node, ctx: &mut EmitCtx) -> (String, String) {
 /// load-bearing: `(Thing *)[u init]` hands back `u`'s own +1, and
 /// releasing it here as well frees one pointer twice (#332).
 fn owned_locals_of(decl: Node, ctx: &EmitCtx) -> Vec<String> {
-    owned_locals_of_in(decl, decl.parent(), ctx)
-}
-
-/// Is `name` released by hand somewhere under `root`?
-///
-/// oz_static supports manual retain/release as a feature of its own (see
-/// `behavior_memory`), and a variable cannot be managed both ways: adding an
-/// automatic release to code that already releases is a double free. So ARC
-/// defers to the author wherever the author took control.
-///
-/// The oracle never has to make this choice -- its sources are compiled with
-/// `-fobjc-arc`, under which an explicit `release` is a compile error, and
-/// indeed no `.m` under tests/behavior/cases/ contains one. oz_static
-/// accepts both styles, so it has to decide, and deferring is the only
-/// option that cannot corrupt memory.
-///
-/// The search covers `root`'s whole subtree, so a release in a nested
-/// `if`/loop counts. A release in a *sibling* scope after the declaring
-/// block has ended would be missed, but such code cannot be reached anyway
-/// -- the variable is out of scope there.
-fn released_by_hand(name: &str, root: Node, src: &str) -> bool {
-    if root.kind() == "message_expression" {
-        let mut cursor = root.walk();
-        let parts: Vec<Node> = root
-            .children(&mut cursor)
-            .filter(|c| c.kind() != "[" && c.kind() != "]")
-            .collect();
-        if parts.len() == 2
-            && &src[parts[1].byte_range()] == "release"
-            && &src[parts[0].byte_range()] == name
-        {
-            return true;
-        }
-    }
-    let mut cursor = root.walk();
-    let children: Vec<Node> = root.children(&mut cursor).collect();
-    children.into_iter().any(|child| released_by_hand(name, child, src))
-}
-
-fn owned_locals_of_in(decl: Node, search_root: Option<Node>, ctx: &EmitCtx) -> Vec<String> {
     if node_text(decl, ctx.src).contains("__unsafe_unretained") {
         return Vec::new();
     }
@@ -5067,9 +5030,6 @@ fn owned_locals_of_in(decl: Node, search_root: Option<Node>, ctx: &EmitCtx) -> V
         if name.is_empty() {
             continue;
         }
-        if search_root.is_some_and(|root| released_by_hand(&name, root, ctx.src)) {
-            continue;
-        }
         out.push(name);
     }
     out
@@ -5111,9 +5071,11 @@ fn owned_locals_of_in(decl: Node, search_root: Option<Node>, ctx: &EmitCtx) -> V
 ///   - an initialiser that is **not already owning**. One that is has
 ///     taken over a `+1` of its own and is an owned local already;
 ///     retaining it would be the leak this function exists to avoid.
-///   - not `static`, not `__unsafe_unretained`, and not released by hand
-///     -- the three exclusions `owned_locals_of_in` makes, for its
-///     reasons (#359, and ARC deferring to an author who took control).
+///   - not `static` and not `__unsafe_unretained` -- the two exclusions
+///     `owned_locals_of` makes, for its reason (#359). There used to be
+///     a third, "not released by hand", which went with
+///     `released_by_hand` when a manual `-release` send became a located
+///     error (#428).
 fn retained_bindings(decl: Node, ctx: &EmitCtx) -> Vec<String> {
     if node_text(decl, ctx.src).contains("__unsafe_unretained") {
         return Vec::new();
@@ -5161,9 +5123,6 @@ fn retained_bindings(decl: Node, ctx: &EmitCtx) -> Vec<String> {
          * exhaust a pool a statement-scoped release would have recycled. */
         let is_object = ctx.scope.get(&name).is_some_and(|ty| class_name_from_type(ty).is_some());
         if !is_object || !crate::arc::declares_pointer(child) {
-            continue;
-        }
-        if released_by_hand(&name, decl.parent().unwrap_or(decl), ctx.src) {
             continue;
         }
         out.push(name);
@@ -5822,7 +5781,7 @@ fn for_header_owning_operands<'a>(
 /// Both guards are load-bearing, and they are the same pair every other
 /// binding position reads:
 ///
-///   - `owned_locals_of_in` for provenance, so a **borrowed** initialiser
+///   - `owned_locals_of` for provenance, so a **borrowed** initialiser
 ///     (`for (Thing *t = [owned itself]; ...)`) is left alone -- releasing
 ///     one is a use-after-free on whatever still names the object. It
 ///     also brings the three exclusions it makes anywhere else: a
@@ -5842,7 +5801,7 @@ fn for_header_owned_declaration<'a>(
     if init.kind() != "declaration" || !crate::arc::declares_pointer(init) {
         return None;
     }
-    let owned = owned_locals_of_in(init, init.parent(), ctx);
+    let owned = owned_locals_of(init, ctx);
     if owned.is_empty() {
         return None;
     }

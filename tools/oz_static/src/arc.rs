@@ -514,7 +514,7 @@ fn return_hands_back_ownership(
 /// Not folded into `binds_ownership`, deliberately. That predicate is
 /// consulted about expressions whose value may not be an object at all
 /// --  `int m = [h sum:makeThing()];` is this same shape returning an
-/// `int` -- and `emit::owned_locals_of_in` trusts it without a type
+/// `int` -- and `emit::owned_locals_of` trusts it without a type
 /// check, so a blanket widening would have had a scope release an `int`.
 /// Each caller adds the pointer check its own position needs.
 pub fn hoists_owning_operand(
