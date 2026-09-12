@@ -62,6 +62,7 @@ void printk(const char *fmt, ...);
 - (void)dealloc
 {
 	printk("Led dealloc %d\n", _pin);
-	[super dealloc];
+	/* No [super dealloc]: ARC owns that send (#428), and the chain above
+	 * an override is called automatically. */
 }
 @end
