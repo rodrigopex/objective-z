@@ -233,8 +233,19 @@ void smp_shared_worker_entry(void *p1, void *p2, void *p3)
 	printk("worker done\n");
 }
 
-K_THREAD_DEFINE(smp_shared_worker, 2048, smp_shared_worker_entry,
-		NULL, NULL, NULL, 5, 0, 0);
+/* `OZM` rather than the bare macro: `K_THREAD_DEFINE` expands to file-scope
+ * declarations that do not parse as Objective-C, so Clang's AST dump failed
+ * on it with `expected identifier` and `type specifier missing` -- two of the
+ * four diagnostics that made this sample unbuildable (#434). `OZM` hides the
+ * whole invocation from the dump and emits it verbatim into the generated C.
+ *
+ * `OZM` and not `OZFN`: `OZFN` hides an *expression*, and here the entire
+ * definition has to go. The usual cost -- Clang not seeing what the macro
+ * declares, so a reference needs an `#ifdef __OBJC__` twin -- is nil here,
+ * because nothing in this file names `smp_shared_worker`. `samples/arc_demo`
+ * carries the same shape for the same reason. */
+OZM(K_THREAD_DEFINE, smp_shared_worker, 2048, smp_shared_worker_entry,
+    NULL, NULL, NULL, 5, 0, 0);
 
 int main(void)
 {
