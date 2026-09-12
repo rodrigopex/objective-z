@@ -18,6 +18,18 @@
 // refcount assertions below pin down; the abort-or-not cases pass under
 // either mechanism.
 //
+// **Every case here drives `oz_static_retain`/`oz_static_release` as C
+// functions rather than as `[s retain]`/`[s release]` sends, which ARC
+// refuses (#428).** That is the faithful translation and not a workaround:
+// immortality is a property of those two functions -- the `immortal` check
+// is inside them, before the decrement -- and they are exactly what the
+// sends lowered to and what ARC itself emits. `main` here is plain C, which
+// ARC has no opinion about. Three of the receivers are objects ARC would
+// otherwise release as well (two collection literals and one `+alloc`), so
+// those locals are `__unsafe_unretained`: `released_by_hand` used to hold
+// ARC off a hand-released variable implicitly, and the qualifier is how
+// that is said out loud.
+//
 // The abort asymmetry is what made a dictionary literal abort on release
 // while an array literal released cleanly: dictionary *keys* here are string
 // literals, whereas `@[ @10, @20 ]`'s elements are heap-allocated OZNumber
@@ -98,9 +110,11 @@ fn releasing_dictionary_literal_with_string_keys_does_not_abort() {
         "\
 #include <stdio.h>
 int main(void) {
-	OZDictionary *scores = @{ @\"alpha\" : @100, @\"beta\" : @200 };
+	/* Opted out of ARC so the release under test is the only one
+	 * (#428): `released_by_hand` used to do that implicitly. */
+	__unsafe_unretained OZDictionary *scores = @{ @\"alpha\" : @100, @\"beta\" : @200 };
 	printf(\"count=%zu\\n\", [scores count]);
-	[scores release];
+	oz_static_release((struct OZObject *)scores);
 	printf(\"released_ok\\n\");
 	return 0;
 }
@@ -122,9 +136,10 @@ fn releasing_array_of_string_literals_does_not_abort() {
         "\
 #include <stdio.h>
 int main(void) {
-	OZArray *names = @[ @\"zephyr\", @\"objective-z\" ];
+	/* Opted out of ARC so the release under test is the only one (#428). */
+	__unsafe_unretained OZArray *names = @[ @\"zephyr\", @\"objective-z\" ];
 	printf(\"count=%zu\\n\", [names count]);
-	[names release];
+	oz_static_release((struct OZObject *)names);
 	printf(\"released_ok\\n\");
 	return 0;
 }
@@ -147,7 +162,7 @@ fn literal_survives_release_to_zero() {
 int main(void) {
 	OZString *s = @\"hello\";
 	printf(\"len_before=%zu\\n\", [s length]);
-	[s release];
+	oz_static_release((struct OZObject *)s);
 	printf(\"cstr_after=%s\\n\", [s cString]);
 	printf(\"len_after=%zu\\n\", [s length]);
 	return 0;
@@ -185,10 +200,10 @@ fn releasing_a_literal_does_not_consume_its_refcount() {
 int main(void) {
 	OZString *s = @\"hello\";
 	printf(\"rc_before=%d\\n\", [s retainCount]);
-	[s release];
+	oz_static_release((struct OZObject *)s);
 	printf(\"rc_after=%d\\n\", [s retainCount]);
-	[s release];
-	[s release];
+	oz_static_release((struct OZObject *)s);
+	oz_static_release((struct OZObject *)s);
 	printf(\"rc_settled=%d\\n\", [s retainCount]);
 	printf(\"still=%s\\n\", [s cString]);
 	return 0;
@@ -221,13 +236,13 @@ fn retaining_a_literal_does_not_move_its_refcount() {
 int main(void) {
 	OZString *s = @\"hello\";
 	printf(\"rc_before=%d\\n\", [s retainCount]);
-	[s retain];
-	[s retain];
-	[s retain];
+	(void)oz_static_retain((struct OZObject *)s);
+	(void)oz_static_retain((struct OZObject *)s);
+	(void)oz_static_retain((struct OZObject *)s);
 	printf(\"rc_retained=%d\\n\", [s retainCount]);
-	[s release];
-	[s release];
-	[s release];
+	oz_static_release((struct OZObject *)s);
+	oz_static_release((struct OZObject *)s);
+	oz_static_release((struct OZObject *)s);
 	printf(\"rc_settled=%d\\n\", [s retainCount]);
 	printf(\"still=%s\\n\", [s cString]);
 	return 0;
@@ -251,8 +266,8 @@ fn retaining_a_singleton_does_not_move_its_refcount() {
         "\
 int main(void) {
 	Config *c = [Config sharedInstance];
-	[c retain];
-	[c retain];
+	(void)oz_static_retain((struct OZObject *)c);
+	(void)oz_static_retain((struct OZObject *)c);
 	printf(\"rc=%d\\n\", [c retainCount]);
 	printf(\"rate=%d\\n\", [c rate]);
 	return 0;
@@ -409,7 +424,7 @@ fn releasing_a_singleton_does_not_deallocate_it() {
 int main(void) {
 	Config *c = [Config sharedInstance];
 	printf(\"rate_before=%d\\n\", [c rate]);
-	[c release];
+	oz_static_release((struct OZObject *)c);
 	printf(\"rate_after=%d\\n\", [[Config sharedInstance] rate]);
 	printf(\"rc=%d\\n\", [c retainCount]);
 	printf(\"done\\n\");
@@ -488,13 +503,15 @@ fn heap_allocated_object_still_freed_normally() {
 
 #include <stdio.h>
 int main(void) {
-	Counted *c = [Counted alloc];
+	/* Opted out of ARC so the releases under test are the only ones
+	 * (#428) -- the last of them is what frees the object. */
+	__unsafe_unretained Counted *c = [Counted alloc];
 	printf(\"rc=%d\\n\", [c retainCount]);
-	[c retain];
+	(void)oz_static_retain((struct OZObject *)c);
 	printf(\"rc2=%d\\n\", [c retainCount]);
-	[c release];
+	oz_static_release((struct OZObject *)c);
 	printf(\"rc3=%d\\n\", [c retainCount]);
-	[c release];
+	oz_static_release((struct OZObject *)c);
 	printf(\"freed_ok\\n\");
 	return 0;
 }

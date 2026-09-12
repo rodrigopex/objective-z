@@ -323,32 +323,30 @@ int main(void) {
 /// The double-free half of #322, and the reason `arc::creates_reference`
 /// is narrower than `arc::is_owning_selector`.
 ///
-/// Two of the convention-named +1 selectors hand back a reference
-/// something else already accounts for. `-retain` returns its own
-/// receiver, and a bare `[c retain];` is the manual-retain/release idiom
-/// whose balancing `[c release];` is written by hand -- `samples/smp_shared`
-/// does exactly that in its contention loop, so releasing the discarded
-/// result would have freed the shared Counter out from under two cores.
-/// `-init` *consumes* the receiver's +1, which here belongs to a local
-/// scope-based ARC already releases.
+/// `-init` *consumes* its receiver's +1 and hands it back, so a discarded
+/// `-init` result must not be released: here the reference belongs to a
+/// local scope-based ARC already releases, and releasing it again is one
+/// pointer freed twice.
+///
+/// **Coverage removed (#428).** This case used to carry a second half for
+/// the other convention-named pass-through: a bare `[c retain];` balanced
+/// by a hand-written `[c release];`, the idiom `samples/smp_shared` wrote
+/// in its contention loop. A send of `-retain` is a located error now, so
+/// the discarded-`-retain`-result arm of `arc::created_by` /
+/// `arc::accounts_for_its_receiver` has no reachable input left and is
+/// exercised by nothing. The arm is kept as defence rather than deleted,
+/// and that it is now unreachable is recorded on #428 rather than
+/// discovered later.
 ///
 /// A leak is a bug and a double free is memory corruption, so this is the
 /// direction that has to fail closed.
 #[test]
-fn discarded_retain_and_init_on_an_owned_receiver_are_left_alone() {
+fn a_discarded_init_on_an_owned_receiver_is_left_alone() {
     let src = format!(
-        "/* oz-pool: Counter=1,Widget=1 */\n{}{}",
+        "/* oz-pool: Widget=1 */\n{}{}",
         PREAMBLE(),
         "\
 static int g_deallocs = 0;
-
-@interface Counter : OZObject
-@end
-@implementation Counter
-- (void)dealloc {
-	g_deallocs = g_deallocs + 1;
-}
-@end
 
 @interface Widget : OZObject
 @end
@@ -360,12 +358,6 @@ static int g_deallocs = 0;
 
 #include <stdio.h>
 int main(void) {
-	Counter *c = [Counter alloc];
-	/* Balanced by hand, exactly as samples/smp_shared writes it. */
-	[c retain];
-	[c release];
-	printf(\"after_retain=%d\\n\", g_deallocs);
-
 	Widget *w = [Widget alloc];
 	/* The +1 this hands back is `w`'s, and `w` is released at the end of
 	 * this scope. */
@@ -375,10 +367,10 @@ int main(void) {
 }
 "
     );
-    let out = compile_and_run(&src, "discarded_retain_and_init");
+    let out = compile_and_run(&src, "discarded_init_on_an_owned_receiver");
     assert_eq!(
-        out, "after_retain=0\nafter_init=0\n",
-        "neither receiver may be released twice: {}",
+        out, "after_init=0\n",
+        "the receiver may not be released twice: {}",
         out
     );
 }
@@ -474,46 +466,37 @@ int main(void) {
 /// The double-free half of #327, and the reason the cast is looked through
 /// in `arc::discarded_value` rather than in `arc::is_owning_expr`.
 ///
-/// #322's `discarded_retain_and_init_on_an_owned_receiver_are_left_alone`
-/// has to keep holding once a cast can no longer hide the send inside it.
-/// `-retain` returns its own receiver -- `samples/smp_shared` balances a
-/// bare `[c retain];` by hand -- and `-init...` consumes the receiver's
-/// +1, which here belongs to a local scope-based ARC already releases.
-/// Wrapping either in `(void)` changes nothing about who owns the
-/// reference, so neither may be released.
+/// #322's `a_discarded_init_on_an_owned_receiver_is_left_alone` has to
+/// keep holding once a cast can no longer hide the send inside it.
+/// `-init...` consumes the receiver's +1, which here belongs to a local
+/// scope-based ARC already releases, and wrapping it in `(void)` changes
+/// nothing about who owns the reference.
+///
+/// This case, like its #322 predecessor, used to carry a `-retain` half as
+/// well -- `(void)[c retain];` balanced by a hand-written `[c release];`.
+/// That shape is a located error now (#428), so it is gone and the
+/// `-retain` arm behind the cast peel is unreachable with it.
 ///
 /// Getting this wrong is memory corruption where #327 itself is only a
 /// leak, so it is the direction that has to fail closed.
 #[test]
-fn discarded_retain_and_init_through_a_cast_are_left_alone() {
+fn discarded_init_through_a_cast_is_left_alone() {
     let src = format!(
-        "/* oz-pool: Counter=1,Widget=1 */\n{}{}",
+        "/* oz-pool: Widget=1 */\n{}{}",
         PREAMBLE(),
         "\
 static int g_deallocs = 0;
 
-@interface Counter : OZObject
+@interface Widget : OZObject
 @end
-@implementation Counter
+@implementation Widget
 - (void)dealloc {
 	g_deallocs = g_deallocs + 1;
 }
 @end
 
-@interface Widget : OZObject
-@end
-@implementation Widget
-@end
-
 #include <stdio.h>
 int main(void) {
-	Counter *c = [Counter alloc];
-	/* Balanced by hand, as samples/smp_shared writes it -- with the
-	 * cast the idiom often carries to silence an unused result. */
-	(void)[c retain];
-	[c release];
-	printf(\"after_retain=%d\\n\", g_deallocs);
-
 	Widget *w = [Widget alloc];
 	/* The +1 this hands back is `w`'s, and `w` is released at the end
 	 * of this scope. */
@@ -525,9 +508,9 @@ int main(void) {
 }
 "
     );
-    let out = compile_and_run(&src, "discarded_retain_and_init_through_cast");
+    let out = compile_and_run(&src, "discarded_init_through_cast");
     assert_eq!(
-        out, "after_retain=0\nafter_init=0\n",
+        out, "after_init=0\n",
         "no cast-wrapped receiver may be released twice: {}",
         out
     );
@@ -1314,10 +1297,15 @@ static int g_deallocs = 0;
 
 #include <stdio.h>
 int main(void) {
-	Holder *h = [Holder alloc];
-	int v = [h run];
-	int during = g_deallocs;
-	[h release];
+	int v;
+	int during;
+	/* Braced so the holder's teardown is ordered between the two reads
+	 * of `g_deallocs` -- the point a hand release used to fix (#428). */
+	{
+		Holder *h = [Holder alloc];
+		v = [h run];
+		during = g_deallocs;
+	}
 	printf(\"v=%d during=%d after=%d\\n\", v, during, g_deallocs);
 	return 0;
 }
@@ -1335,14 +1323,17 @@ int main(void) {
 /// this change and memory corruption.**
 ///
 /// The naive reading of an argument is `arc::is_owning_expr`, which is +1
-/// *by shape* and says yes to `[e retain]` and `[u init]`. Both hand back a
-/// reference something else already accounts for -- `-retain` its own
-/// receiver, whose balancing `[e release]` is written by hand, and
-/// `-init...` its receiver's `+1`, which scope-based ARC already releases.
-/// Taking a call-site temporary for either and releasing it would free one
-/// pointer twice. `arc::owning_argument_value` goes through `created_by`
-/// instead, which excludes `-retain` outright and follows an `-init...`
-/// send back to its receiver (#322).
+/// *by shape* and says yes to `[u init]`. It hands back a reference
+/// something else already accounts for -- its receiver's `+1`, which
+/// scope-based ARC already releases -- so taking a call-site temporary for
+/// it and releasing that would free one pointer twice.
+/// `arc::owning_argument_value` goes through `created_by` instead, which
+/// follows an `-init...` send back to its receiver (#322).
+///
+/// **Coverage removed (#428).** The other half was `[self setFoo:[e retain]]`
+/// with a hand-written `[e release]` below it, covering `created_by`'s
+/// outright exclusion of `-retain` in an *argument* position. A `-retain`
+/// send is a located error now, so that position has no reachable input.
 ///
 /// Asserted on the **emitted C**, deliberately, and this is the trap the
 /// predecessors documented: an over-release is invisible to a dealloc
@@ -1351,9 +1342,9 @@ int main(void) {
 /// at 0. So a counter and a slot count are both blind here. What is
 /// checkable is that no call-site temporary was taken at all.
 #[test]
-fn retained_and_init_arguments_are_left_alone() {
+fn init_arguments_are_left_alone() {
     let src = format!(
-        "/* oz-pool: Foo=2,Holder=1 */\n{}{}",
+        "/* oz-pool: Foo=1,Holder=1 */\n{}{}",
         PREAMBLE(),
         "\
 @interface Foo : OZObject
@@ -1367,11 +1358,6 @@ fn retained_and_init_arguments_are_left_alone() {
 @end
 @implementation Holder
 - (void)run {
-	Foo *e = [Foo alloc];
-	/* The manual retain/release idiom: the +1 is `e`'s, and the
-	 * balancing release below is written by hand. */
-	[self setFoo:[e retain]];
-	[e release];
 	Foo *u = [Foo alloc];
 	/* -init consumes its receiver's +1 and hands it back, so this is
 	 * `u`'s reference and `u`'s scope exit releases it. */
@@ -1397,16 +1383,14 @@ int main(void) { return 0; }
          call-site temporary and released; got:\n{}",
         body
     );
-    // Exactly the two releases the source already owed: the hand-written
-    // `[e release]`, and `u` at scope exit. `e` gets no scope-exit release
-    // of its own -- `emit::released_by_hand` sees the manual one and ARC
-    // defers to the author for that variable throughout, which is the
-    // standing rule and the reason the idiom is safe here at all. A third
-    // release would be one pointer freed twice.
+    /* Exactly the one release the source owes: `u` at scope exit. The
+     * strong-property store retains what it is given and the ivar's own
+     * release happens in `Holder_oz_release_ivars`, not here. A second
+     * release in this body would be one pointer freed twice. */
     assert_eq!(
         body.matches("oz_static_release").count(),
-        2,
-        "only the releases the source already owed; got:\n{}",
+        1,
+        "only the release the source already owed; got:\n{}",
         body
     );
 }
@@ -1673,8 +1657,13 @@ int main(void) {
 /// `[Foo alloc]` and releases *there*. Releasing the receiver as well frees
 /// one pointer twice.
 ///
-/// `[[f retain] poke]` is the other pass-through, excluded by `created_by`
-/// outright, and `[f poke]` is an ordinary borrowed receiver.
+/// `[f poke]` is an ordinary borrowed receiver, for contrast.
+///
+/// **Coverage removed (#428).** A third receiver used to sit here:
+/// `[[f retain] poke]`, the other pass-through, excluded by `created_by`
+/// outright and balanced by a hand-written `[f release]`. A `-retain` send
+/// is a located error now, so `created_by`'s exclusion of it in a
+/// *receiver* position has no reachable input either.
 ///
 /// Asserted on the **emitted C**, and for the reason the four predecessors
 /// recorded: an over-release is invisible to a dealloc counter, because the
@@ -1685,7 +1674,7 @@ int main(void) {
 #[test]
 fn a_receiver_whose_reference_travels_out_is_left_alone() {
     let src = format!(
-        "/* oz-pool: Foo=3,Runner=1 */\n{}{}",
+        "/* oz-pool: Foo=2,Runner=1 */\n{}{}",
         PREAMBLE(),
         "\
 @interface Foo : OZObject
@@ -1706,10 +1695,6 @@ fn a_receiver_whose_reference_travels_out_is_left_alone() {
 	Foo *f = [Foo alloc];
 	/* An ordinary borrowed receiver: `f`'s scope exit owns it. */
 	[f poke];
-	/* -retain hands back the receiver too, and its balancing release
-	 * is written by hand below. */
-	[[f retain] poke];
-	[f release];
 }
 @end
 
@@ -1727,16 +1712,13 @@ int main(void) { return 0; }
         .unwrap_or("");
     assert!(
         !body.contains("_oz_recv_"),
-        "none of these three receivers abandons a reference, so none may be \
+        "neither of these receivers abandons a reference, so neither may be \
          held in a call-site temporary and released; got:\n{}",
         body
     );
-    // Exactly the two the source already owed: `[Foo alloc] init`'s
-    // reference, released by #322's discarded-result arm, and the
-    // hand-written `[f release]`. `f` gets no scope-exit release of its
-    // own -- `emit::released_by_hand` sees the manual one and ARC defers to
-    // the author for that variable throughout. A third release would be one
-    // pointer freed twice.
+    /* Exactly the two the source owes: `[Foo alloc] init`'s reference,
+     * released by #322's discarded-result arm, and `f` at scope exit. A
+     * third release would be one pointer freed twice. */
     assert_eq!(
         body.matches("oz_static_release").count(),
         2,
