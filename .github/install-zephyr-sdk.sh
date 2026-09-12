@@ -21,6 +21,14 @@
 # Expects ZEPHYR_SDK_VERSION and ZEPHYR_SDK_INSTALL_DIR from the
 # workflow's env. Idempotent: skips the download on a cache hit, but
 # always rewrites the symlink, which the cache does not carry.
+#
+# `aarch64-zephyr-elf` is here for `qemu_cortex_a53/smp`, the only board in
+# the tree with two cores and so the only one that can run
+# `samples/smp_shared` (#443). **Adding a toolchain here means changing the
+# workflow's cache key in the same commit**: on a cache hit the whole
+# `setup.sh` block is skipped, so an unchanged key restores an SDK built
+# before the new `-t` and the toolchain never appears -- a green cache and a
+# missing compiler, which is the quiet half of this kind of change.
 
 set -euo pipefail
 
@@ -32,7 +40,7 @@ BUNDLE="zephyr-sdk-${ZEPHYR_SDK_VERSION}_${HOST_ARCH}_minimal.tar.xz"
 BASE="https://github.com/zephyrproject-rtos/sdk-ng/releases/download/v${ZEPHYR_SDK_VERSION}"
 
 if [ ! -d "${ZEPHYR_SDK_INSTALL_DIR}" ]; then
-        echo "Installing Zephyr SDK ${ZEPHYR_SDK_VERSION} (arm, riscv64, LLVM)"
+        echo "Installing Zephyr SDK ${ZEPHYR_SDK_VERSION} (arm, riscv64, aarch64, LLVM)"
         wget -q "${BASE}/${BUNDLE}"
         tar xf "${BUNDLE}" -C "$(dirname "${ZEPHYR_SDK_INSTALL_DIR}")"
         rm -f "${BUNDLE}"
@@ -40,6 +48,7 @@ if [ ! -d "${ZEPHYR_SDK_INSTALL_DIR}" ]; then
         "${ZEPHYR_SDK_INSTALL_DIR}/setup.sh" \
                 -t arm-zephyr-eabi \
                 -t riscv64-zephyr-elf \
+                -t aarch64-zephyr-elf \
                 -l -h -c
 else
         echo "Zephyr SDK ${ZEPHYR_SDK_VERSION} restored from cache"

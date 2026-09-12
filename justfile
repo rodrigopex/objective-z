@@ -133,10 +133,15 @@ test-riscv: oz2c
 test-smp: oz2c
     west twister -T samples/ -p {{ smp_board }} -c -O {{ outdir }}-smp
 
-# Both supported boards, so an architecture-specific regression cannot hide.
+# Every board, so neither an architecture-specific regression nor a
+# core-count-specific one can hide. `test-smp` is here as of #443: it existed
+# and was in no aggregate recipe, which is how `samples/smp_shared` -- the
+# only sample that runs on two cores, and the only place `@synchronized`
+# faces real contention -- stayed unbuildable without anything saying so.
 test-boards:
     just test
     just test-riscv
+    just test-smp
 
 # `-Wall -Wextra` clean is not the same as valid C: a bare `;` at file scope
 # lived in every generated program until #264 and passed that sweep, the corpus

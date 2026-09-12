@@ -4147,12 +4147,6 @@ fn render_message(node: Node, ctx: &mut EmitCtx) -> (String, String) {
             "void".to_string(),
         );
     }
-    if parts.selector == "retainCount" && parts.args.is_empty() {
-        return (
-            format!("oz_static_retain_count((struct {} *)({}))", root, recv_text),
-            "int".to_string(),
-        );
-    }
     if parts.selector == "alloc" && parts.args.is_empty() {
         if let Some(cls) = recv_type.strip_prefix("class:") {
             return (format!("{}_oz_alloc()", cls), format!("struct {} *", cls));

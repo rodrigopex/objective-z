@@ -1146,13 +1146,26 @@ fn reserved_name_err(diags: &mut Vec<Diagnostic>, src: &str, node: Node) {
 /// parses with tree-sitter rather than Clang, which is the only reason they
 /// were ever reachable (#428).
 ///
-/// `retainCount` is deliberately absent. It takes and gives no ownership, so
-/// it is not a second ownership model -- it lowers to
-/// `oz_static_retain_count`, which #418 made the single entry point for
-/// reading a refcount, and the fixtures that observe one need it.
-const ARC_OWNED_SELECTORS: &[&str] = &["retain", "release", "autorelease", "dealloc"];
+/// `retainCount` is here too, as of #436, and adding it is what made the
+/// list's rule statable in one line: **this is exactly the set Clang refuses
+/// under `-fobjc-arc`.** Nothing is weighed per selector any more.
+///
+/// It was left out originally on the grounds that reading a count takes and
+/// gives no ownership, so it is not a second ownership model. True, and not
+/// the question -- ARC forbids the *send* regardless, which a probe settles
+/// rather than an argument: declared or undeclared, Clang answers
+/// `ARC forbids explicit message send of 'retainCount'`. Reading a refcount
+/// is still supported, through the spelling that was always the sanctioned
+/// one: `oz_static_retain_count()`, a plain C call, which #418 made the
+/// single entry point and which `include/oz_sdk/Foundation/OZObject.h` has
+/// described as "the only refcount entry point Objective-C source may spell"
+/// all along. That sentence was true of the design and false of the
+/// implementation until #436.
+const ARC_FORBIDDEN_SELECTORS: &[&str] =
+    &["retain", "release", "autorelease", "dealloc", "retainCount"];
 
-/// Reject a send of `-retain`, `-release`, `-autorelease` or `-dealloc`.
+/// Reject a send of `-retain`, `-release`, `-autorelease`, `-dealloc` or
+/// `-retainCount` -- the selectors Clang refuses under `-fobjc-arc`.
 ///
 /// **Deliberate, not accidental.** `[obj autorelease]` was already refused
 /// before this check existed, but only as a by-product of method lookup
@@ -1187,8 +1200,8 @@ pub fn check_manual_memory_sends(root: Node, src: &str) -> Vec<Diagnostic> {
 fn walk_manual_memory_sends(node: Node, src: &str, diags: &mut Vec<Diagnostic>) {
     if node.kind() == "message_expression" {
         if let Some(selector) = unary_selector(node, src) {
-            if ARC_OWNED_SELECTORS.contains(&selector.as_str()) {
-                err(diags, src, node, arc_owned_selector_message(&selector));
+            if ARC_FORBIDDEN_SELECTORS.contains(&selector.as_str()) {
+                err(diags, src, node, arc_forbidden_selector_message(&selector));
             }
         }
     }
@@ -1201,7 +1214,7 @@ fn walk_manual_memory_sends(node: Node, src: &str, diags: &mut Vec<Diagnostic>) 
      * path calls it, and an override is how a class does its own teardown. */
     if matches!(node.kind(), "method_declaration" | "method_definition") {
         if let Some(name) = unary_method_name(node, src) {
-            if ARC_OWNED_SELECTORS.contains(&name.as_str()) && name != "dealloc" {
+            if ARC_FORBIDDEN_SELECTORS.contains(&name.as_str()) && name != "dealloc" {
                 err(
                     diags,
                     src,
@@ -1247,7 +1260,7 @@ fn unary_selector(node: Node, src: &str) -> Option<String> {
 /// The name of a method that takes no arguments -- a `method_declaration`
 /// or `method_definition` with no `method_parameter` child at all.
 ///
-/// A parameterized selector cannot be one of `ARC_OWNED_SELECTORS`, and
+/// A parameterized selector cannot be one of `ARC_FORBIDDEN_SELECTORS`, and
 /// only the unary shape needs recognising, so the test is "no
 /// `method_parameter`, and exactly one `identifier`". Read off the node's
 /// own children the way `collect::extract_method_sig` does, so the two
@@ -1266,17 +1279,28 @@ fn unary_method_name(node: Node, src: &str) -> Option<String> {
     Some(node_text(*first, src).trim().to_string())
 }
 
-/// What to say about a send of one of `ARC_OWNED_SELECTORS`.
+/// What to say about a send of one of `ARC_FORBIDDEN_SELECTORS`.
 ///
 /// Worded to agree with #430's `@autoreleasepool` rejection, since a reader
 /// who hits one will hit the other: name the mechanism that is missing, and
 /// name the thing to write instead.
-fn arc_owned_selector_message(selector: &str) -> String {
+fn arc_forbidden_selector_message(selector: &str) -> String {
     let head = format!(
         "'-{}' cannot be sent: ARC is always enabled in the static subset (every Clang path \
          here passes -fobjc-arc, under which this is a compile error)",
         selector
     );
+    if selector == "retainCount" {
+        /* The one forbidden selector with a direct replacement, so the
+         * remedy is a rewrite rather than a deletion. */
+        return format!(
+            "{head}. Reading a refcount is still supported -- call \
+             'oz_static_retain_count(obj)', a plain C function, which is the only refcount \
+             entry point Objective-C source may spell (#418). It takes and gives no \
+             ownership, so nothing about the lifetime changes; only the spelling does.",
+            head = head
+        );
+    }
     if selector == "dealloc" {
         format!(
             "{head}, and the deallocation path calls '-dealloc' for you (oz_static_release) \
@@ -1292,8 +1316,8 @@ fn arc_owned_selector_message(selector: &str) -> String {
              is released at the end of its scope, a store into a strong slot releases what it \
              replaced, and an owned object ivar is released with its owner. Declare a \
              reference '__unsafe_unretained' to opt one slot out; read a refcount with \
-             'oz_static_retain_count' (or '-retainCount', which lowers to it), which takes and \
-             gives no ownership.",
+             'oz_static_retain_count(obj)', a plain C call, which takes and gives no \
+             ownership.",
             head = head
         )
     }

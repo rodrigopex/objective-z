@@ -38,7 +38,7 @@ int main(void) {{
 	OZHeap *ret = [h initWithBuffer:g_buf size:256];
 	printf(\"init_returned_self=%d\\n\", ret == h);
 	printf(\"used=%zu\\n\", [h usedBytes]);
-	printf(\"rc=%d\\n\", [h retainCount]);
+	printf(\"rc=%d\\n\", oz_static_retain_count(h));
 	printf(\"released_ok\\n\");
 	return 0;
 }}
