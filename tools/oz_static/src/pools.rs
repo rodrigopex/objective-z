@@ -480,21 +480,24 @@ fn walk_sites(
 /// `[ClassName selector]` where the class declares that class method --
 /// the only send whose callee pools can name without tracking types.
 fn class_method_callee(node: Node, src: &str, program: &Program) -> Option<Owner> {
+    /* Through `parse_message` rather than extracting the receiver here: this
+     * was the third place that filtered the brackets and took `children[0]`,
+     * and the one in `staticbar::message_selector` got it wrong for eight
+     * years' worth of receiver shapes (#435). This copy was correct, which
+     * is exactly why the duplication was invisible. */
     let mut cursor = node.walk();
-    let children: Vec<Node> =
-        node.children(&mut cursor).filter(|c| c.kind() != "[" && c.kind() != "]").collect();
-    if children.len() < 2 {
+    if node.children(&mut cursor).filter(|c| c.kind() != "[" && c.kind() != "]").count() < 2 {
         return None;
     }
-    let receiver = &src[children[0].byte_range()];
+    let parts = crate::emit::parse_message(node, src);
+    let receiver = &src[parts.receiver.byte_range()];
     if !program.is_class(receiver) {
         return None;
     }
-    let selector = crate::staticbar::message_selector(node, src);
-    if selector.is_empty() {
+    if parts.selector.is_empty() {
         return None;
     }
-    Some(Owner::Method(receiver.to_string(), selector))
+    Some(Owner::Method(receiver.to_string(), parts.selector))
 }
 
 /// `f(...)` where `f` is a plain identifier.

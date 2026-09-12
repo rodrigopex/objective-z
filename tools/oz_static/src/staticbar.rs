@@ -59,39 +59,34 @@ fn err(diags: &mut Vec<Diagnostic>, src: &str, node: Node, message: impl Into<St
     diags.push(Diagnostic::new(message, line, col));
 }
 
+/// The selector of a `message_expression`, whatever shape its receiver has.
+///
+/// Delegates to `emit::parse_message`, which is the point: this function
+/// used to answer the question a second time and answered it wrongly. It
+/// found the receiver by taking the first `identifier` child and skipping
+/// it, which is only correct when the receiver *is* a bare identifier. For
+/// `[self->_ivar foo]`, `[arr[0] foo]`, `[[Thing alloc] foo]` and
+/// `[(Thing *)t foo]` the receiver is a `field_expression`,
+/// `subscript_expression`, `message_expression` or `cast_expression`, so the
+/// skip consumed the *selector's* identifier instead and the function
+/// returned `""` (#435).
+///
+/// `emit::parse_message` reads the same node correctly -- filter the
+/// brackets and `children[0]` is the receiver however it is spelled -- and
+/// `pools::class_method_callee` had already written that extraction inline a
+/// third time. One question, one answer now.
+///
+/// Returns `""` for a node with fewer than two non-bracket children, which
+/// `parse_message` would index past. A well-formed `message_expression`
+/// always has a receiver and a selector piece; a node inside a syntax error
+/// need not, and this runs on user input.
 pub(crate) fn message_selector(node: Node, src: &str) -> String {
-    // message_expression: [ receiver piece1 : arg1 piece2 : arg2 ... ]
-    // Selector pieces are `identifier` children immediately followed by a
-    // `:` sibling; the very first identifier is the receiver, so skip it.
     let mut cursor = node.walk();
-    let children: Vec<Node> = node.children(&mut cursor).collect();
-    let mut selector = String::new();
-    let mut seen_receiver = false;
-    let mut i = 0;
-    while i < children.len() {
-        let c = children[i];
-        if c.kind() == "identifier" {
-            if !seen_receiver {
-                seen_receiver = true;
-                i += 1;
-                continue;
-            }
-            // A selector piece is an identifier followed by ':'.
-            if children.get(i + 1).map(|n| n.kind()) == Some(":") {
-                selector.push_str(node_text(c, src));
-                selector.push(':');
-                i += 2;
-                continue;
-            }
-            // Bare identifier with no following ':' and no ':' anywhere in
-            // this message -> unary selector (only valid as the sole piece).
-            if selector.is_empty() {
-                selector.push_str(node_text(c, src));
-            }
-        }
-        i += 1;
+    let n = node.children(&mut cursor).filter(|c| c.kind() != "[" && c.kind() != "]").count();
+    if n < 2 {
+        return String::new();
     }
-    selector
+    crate::emit::parse_message(node, src).selector
 }
 
 struct MethodScope<'a> {
