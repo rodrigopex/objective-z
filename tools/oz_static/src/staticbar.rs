@@ -237,12 +237,31 @@ fn is_owning_receiver_of_owning_send(node: Node, src: &str, program: &Program) -
 /// not run twice on its own sizing (#405).
 ///
 /// So the arm narrows rather than disappears, and
-/// `overlapping_unless_released_first` asks the emitter which it is. Note
-/// that this is not only an over-rejection being lifted: the refused shape
-/// hoists its temporary through `ctx.pre_stmts`, which a loop lifts out
-/// entirely, so accepting *that* shape would miscompile rather than merely
-/// exhaust. The rejection was load-bearing for one shape and wrong for the
-/// other two.
+/// `overlapping_unless_released_first` asks the emitter which it is. The
+/// refused shape is refused because **two objects are briefly live and one
+/// slab slot cannot hold both**, and that is now the whole of the reason.
+///
+/// It used to be more than that, and the change is worth recording because
+/// it moves what a bigger pool could do. Until #424 the `Unsupported`
+/// lowering pushed its temporary's *initialiser* through `ctx.pre_stmts`,
+/// which a loop lifts above itself, so the temporary read the destination
+/// once while it was still nil and every iteration released that same
+/// stale pointer -- accepting the shape would have miscompiled, not merely
+/// exhausted the pool. #424 made the lowering shared
+/// (`emit::render_overlapping_strong_store`) and split it: `pre_stmts`
+/// carries a bare declaration, and the assignment is the comma
+/// expression's first operand, inside the loop. A declaration with no
+/// initialiser evaluates nothing, so lifting it reorders nothing.
+///
+/// The consequence for *this* rule is a pure capacity refusal, measured:
+/// with the predicate temporarily relaxed, `_thing = [_thing dup]` over
+/// four iterations runs correctly on a pool of two -- five allocations,
+/// five frees, no nil -- and is short of slots on one. So a bigger pool
+/// would genuinely serve this shape, which is exactly what
+/// `LoopEscape::OverlappingStore`'s message used to advise and cannot
+/// deliver, because this check never reads `PoolSizes` (#425). Making it
+/// pool-aware is now sound where it previously was not; it is a
+/// behavioural change and deliberately not made here.
 ///
 /// #405 reached two destination spellings of three and left the subscript
 /// one answering `OverlappingStore` unconditionally, so an array-element
@@ -391,11 +410,22 @@ fn loop_escape(
 ///
 /// The bar asks `emit::classify_store` rather than re-deriving the answer,
 /// because the two have to agree exactly: a shape the emitter lowers
-/// release-first needs one slot and must be accepted, and a shape it lowers
-/// with a hoisted temporary needs two *and* has that temporary lifted out
-/// of the loop by `ctx.pre_stmts`. Refusing the first over-rejects; accepting
-/// the second miscompiles. One predicate is the only thing that keeps them
-/// from drifting apart (#405).
+/// release-first needs one slot and must be accepted, and a shape it
+/// lowers through a temporary keeps the previous object alive while the new
+/// one is allocated, so it needs two. Refusing the first over-rejects;
+/// accepting the second hands the second allocation a full slab, which is
+/// a nil the program never checks. One predicate is the only thing that
+/// keeps them from drifting apart (#405).
+///
+/// The second half of that used to read "*and* has that temporary lifted
+/// out of the loop by `ctx.pre_stmts` ... accepting the second
+/// miscompiles", and #424 retired that reason rather than this rule: the
+/// shared lowering now pushes a bare declaration and assigns inside the
+/// comma expression, so nothing is evaluated outside the loop. The
+/// rejection stands on capacity alone, and it still has to be the emitter
+/// that is asked -- a predicate keyed on the store's shape is what makes
+/// the bar and the lowering answer one question, whatever the lowering
+/// happens to be this month.
 ///
 /// Before #405 a strong ivar always evaluated the new value first, so every
 /// store to one was refused here. Two of the three shapes now need no
@@ -460,12 +490,24 @@ fn ivar_slot_escape(
 /// for (i = 0; i < 4; i++) { self->_ivar = [_ivar dup]; }
 /// ```
 ///
-/// That was accepted, and the emitter lowered it with the hoisted
-/// temporary: `ctx.pre_stmts` put `_oz_prev` *above* the loop, so it
-/// captured the ivar once while it was still nil and released that same
-/// stale pointer on every iteration. So this was not an over-rejection but
-/// the miscompile the `OverlappingStore` arm exists to prevent, reached
-/// through the one spelling that arm could not see.
+/// That was accepted, and the emitter lowered it through a temporary --
+/// the shape that keeps the previous object alive across the new one's
+/// allocation. So this was not an over-rejection being lifted but a
+/// rejection failing to fire, reached through the one spelling the arm
+/// could not see: on a pool sized for one live instance the second
+/// allocation gets a full slab and hands back nil, which nothing checks.
+///
+/// When this was found the symptom was worse than that. The lowering then
+/// pushed the temporary's initialiser through `ctx.pre_stmts`, so a loop
+/// lifted it above itself, captured the ivar once while still nil and
+/// released that stale pointer every iteration -- a miscompile, and the
+/// emitted C is in `docs/STATUS.md`. #424 fixed the lowering generally
+/// (`emit::render_overlapping_strong_store` declares the temporary through
+/// `pre_stmts` and assigns it inside the comma expression), so the
+/// consequence of the gap is now a nil rather than a stale release.
+/// **The gap itself is unchanged, and so is this fix**: the bar and the
+/// emitter still have to key on the same name, or this spelling is
+/// accepted on a pool that cannot serve it.
 ///
 /// Fourth site of the cause #351, #352, #360 and #405 each fixed once: a
 /// decision keyed on a spelling rather than on the reference (#423). The

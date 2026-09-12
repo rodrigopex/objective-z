@@ -31,8 +31,18 @@
 // of the three now need one slot. `staticbar::overlapping_unless_released_first`
 // asks `emit::classify_store` which it is, so the bar and the emitter
 // cannot drift: refusing a release-first store over-rejects, and accepting
-// a temporary-hoisting one miscompiles, because a loop lifts that
-// temporary out of itself.
+// a store lowered through a temporary hands the second allocation a full
+// slab, because the previous object is still live while the new one is
+// being made.
+//
+// That second half used to say such a store "miscompiles, because a loop
+// lifts that temporary out of itself", and it did until #424: the lowering
+// pushed the temporary's initialiser through `ctx.pre_stmts`, which a loop
+// lifts above itself. The shared lowering now pushes a bare declaration
+// and assigns inside the comma expression, so the refusal is about slab
+// capacity and nothing else. Measured with the predicate relaxed: the
+// refused shape runs correctly on a pool of two -- five allocations, five
+// frees, no nil.
 //
 // #405 reached two of the three destination spellings. The subscript one
 // kept answering `OverlappingStore` unconditionally, so an array-element
@@ -41,9 +51,12 @@
 // defect, which is why the case that used to claim "two slab slots" for a
 // constant index now runs four iterations on one instead (#423). The same
 // change found the spelling that was wrong in the *other* direction:
-// `self->_ivar = [_ivar dup]` was accepted and miscompiled, because the
-// destination extractor answered `self`. All three spellings now go
-// through `staticbar::assigned_slot_name`.
+// `self->_ivar = [_ivar dup]` was accepted although the emitter lowers it
+// through a temporary, because the destination extractor answered `self`.
+// All three spellings now go through `staticbar::assigned_slot_name`. When
+// that was found it miscompiled outright, for the #424 reason above; it
+// now yields a nil from the second iteration instead, which is the same
+// gap with a milder symptom and the same fix.
 //
 // The old rule was wrong in **both** directions, and each direction has
 // cases here. It refused the operand positions, which the emitter releases
@@ -234,11 +247,17 @@ int main(void)
 /// pool, because raising it is the fix.
 ///
 /// The ternary is what puts this shape in `LocalStore::Unsupported`: the
-/// `+1` is real, but the store can read `_ivar`, so the emitter keeps the
-/// hoisted temporary. Accepting it would do more than exhaust the pool --
-/// that temporary goes through `ctx.pre_stmts`, which a loop lifts out of
-/// the loop entirely, so it would read the ivar once while still nil and
-/// release nil on every iteration.
+/// `+1` is real, but the store can read `_ivar`, so the emitter lowers it
+/// through a temporary and the previous object is still live while the new
+/// one is allocated. On one slot the second allocation gets a full slab.
+///
+/// Until #424 accepting it would have done more than exhaust the pool: the
+/// temporary's initialiser went through `ctx.pre_stmts`, which a loop lifts
+/// out of the loop entirely, so it read the ivar once while still nil and
+/// released nil every iteration. The shared lowering now pushes a bare
+/// declaration and assigns inside the comma expression, so the only reason
+/// left is capacity -- and that reason is sufficient, which is why this
+/// case is unchanged.
 #[test]
 fn an_ivar_store_that_reads_the_ivar_names_the_two_slot_overlap() {
     let src = program(
@@ -434,11 +453,12 @@ int main(void)
 ///
 /// `classify_store` puts this in `LocalStore::Unsupported`, and
 /// `render_strong_array_element_assign` makes that a located error rather
-/// than emitting a hoisted temporary -- so unlike the ivar path there is no
-/// `ctx.pre_stmts` to be lifted out of the loop here. Refusing it at the
-/// bar as well is what keeps the message about the loop rather than about
-/// the store, and what stops a later relaxation of the emitter from
-/// silently making the shape reachable.
+/// than lowering it at all -- so unlike the ivar and local slots, the array
+/// element has no temporary of any kind here, and #424's shared lowering
+/// (`emit::render_overlapping_strong_store`) deliberately did not reach
+/// this path. Refusing it at the bar as well is what keeps the message
+/// about the loop rather than about the store, and what stops a later
+/// relaxation of the emitter from silently making the shape reachable.
 #[test]
 fn a_constant_index_store_that_reads_the_element_stays_refused() {
     let src = program(
@@ -480,8 +500,14 @@ int main(void) { return 0; }
 /// `identifier` -- and then asked `classify_store` whether the right-hand
 /// side mentions `self`. It does not, so the shape looked release-first
 /// while `emit::assigned_ivar_name` keyed the actual store on `_ivar` and
-/// lowered it with the hoisted temporary. `ctx.pre_stmts` put that
-/// temporary *above* the loop:
+/// lowered it through a temporary, which keeps the previous object live
+/// across the new one's allocation. On this file's one-slot pool the second
+/// iteration's allocation therefore finds a full slab.
+///
+/// It was worse than that when found, and the history is why this case
+/// exists rather than being folded into the one above. The lowering then
+/// put the temporary's *initialiser* in `ctx.pre_stmts`, so a loop lifted
+/// it above itself:
 ///
 /// ```c
 /// struct OZObject *_oz_prev_L381_C3_1 = (struct OZObject *)(self->_ivar);
@@ -491,11 +517,19 @@ int main(void) { return 0; }
 /// ```
 ///
 /// -- captured once while the ivar was still nil, then released again on
-/// every iteration. So this spelling did not merely exhaust the pool, it
-/// miscompiled, and it did so through the one destination spelling the
-/// rejection could not see. `assigned_slot_name` is what closes it, and it
-/// is the same function the subscript arm above uses, so there is no
-/// fifth spelling to find.
+/// every iteration: a miscompile, not an exhausted pool. #424 replaced that
+/// lowering with `emit::render_overlapping_strong_store`, which pushes a
+/// bare declaration through `ctx.pre_stmts` and assigns inside the comma
+/// expression, so a loop now lifts something that evaluates nothing.
+///
+/// **The gap this case guards is unchanged by that.** What the bar must not
+/// do is call a store release-first when the emitter lowers it through a
+/// temporary, because the two then disagree about how many slots the shape
+/// needs. Only the symptom of getting it wrong moved -- from a stale
+/// release to a nil from the second iteration -- and a silent nil is
+/// precisely what this rule exists to prevent. `assigned_slot_name` is what
+/// closes it, and it is the same function the subscript arm above uses, so
+/// there is no fifth spelling to find.
 #[test]
 fn the_self_arrow_ivar_spelling_cannot_hide_a_store_that_reads_the_ivar() {
     let src = program(
