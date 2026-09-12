@@ -708,6 +708,49 @@ class parsed with ivars, and hard-error naming the class and the `.m` to add.
 
 ## How measurements mislead
 
+### Every host gate green over C that is not C (#428)
+
+`__unsafe_unretained` reached the generated `.c` from ten positions and
+**Apple clang accepts it in plain C mode.** Verified directly, with no
+flag able to change the answer:
+
+```sh
+$ printf '__unsafe_unretained struct S *p;\nint main(void){(void)p;return 0;}\n' > uu.c
+$ cc -c uu.c                            # Apple clang 21 -- accepted, silent
+$ cc -std=c17 -pedantic-errors -c uu.c   # still accepted
+$ cc -Weverything -Werror -c uu.c        # still accepted
+$ aarch64-zephyr-elf-gcc -fsyntax-only uu.c
+uu.c:1:20: error: expected ';' before 'struct'
+```
+
+So `cargo test` (602), the 81-case behaviour corpus, the 40 adapted cases,
+ASan, UBSan, `just test` on ARM, `just test-riscv`, `just test-zephyr` and
+`just test-pedantic` were all green on macOS, and `rust-tests` failed on
+`ubuntu-latest` at the first compile -- because that job's `cc` is gcc,
+which answers `'__unsafe_unretained' undeclared`.
+
+This is a **new axis** of "host green is not enough", and the one already
+recorded does not cover it. The existing lesson is host-versus-target: a
+construct valid on the host and a constraint violation on Zephyr (gap Y's
+item-pool `;`), answered by running the board sweeps. This one is
+**macOS-clang-versus-Linux-gcc**, and *both* compilers here are hosts. Every
+board sweep passed too, because the sample corpus contains no
+`__unsafe_unretained` and the qualifier only became reachable when #428 put
+it on locals in the Rust fixtures -- which no board gate compiles.
+
+What it costs, and what to do instead: on this machine there is a real GCC
+in the Zephyr SDK (`~/.local/zephyr-sdk-*/gnu/*/bin/*-gcc`, GCC 14.3.0),
+and it was the only local compiler that could see the defect -- 15
+diagnostics naming the qualifier before the fix, 0 errors after. Reach for
+it whenever a change puts a new *spelling* into the generated C, rather
+than trusting `cc`. And note which check would have caught it without any
+compiler at all: an assertion that no ARC ownership qualifier survives
+outside a `/* original */` provenance comment, which is now the first of
+the two assertions in
+`unlowered_spellings::arc_qualifiers_are_stripped_from_every_emitted_position`.
+A text match is weaker than a compile everywhere except where the compiler
+is wrong about the language.
+
 ### A CI filter that never once said no, and read as success (#409)
 
 #387 added a `changes` job so a pull request that cannot affect a target build

@@ -1066,7 +1066,7 @@ fn render_block_type_param_list(node: Node, ctx: &mut EmitCtx, root: Option<&str
         if contains_bare_id_type(child, ctx.src) {
             return Some(render_block_type_param_list(child, ctx, root));
         }
-        if needs_translation(child) {
+        if needs_translation(child, ctx.src) {
             return Some(render_expr(child, ctx).0);
         }
         None
@@ -1461,17 +1461,36 @@ fn rebuild(node: Node, ctx: &mut EmitCtx, render_child: &mut dyn FnMut(Node, &mu
     let children: Vec<Node> = node.children(&mut cursor).collect();
     for child in children {
         out.push_str(&ctx.src[pos..child.start_byte()]);
+        pos = child.end_byte();
         match render_child(child, ctx) {
-            Some(rendered) => out.push_str(&rendered),
+            Some(rendered) => {
+                out.push_str(&rendered);
+                /* A qualifier that renders to nothing takes the run of
+                 * spaces or tabs that followed it with it. Without this,
+                 * stripping an ARC qualifier leaves `static  struct Thing
+                 * *s;` where it was preceded by a storage class and
+                 * ` struct Thing *t;` where it opened the declaration --
+                 * both valid C and both noise in every diff. Keyed on the
+                 * node kind as well as on the empty render, so no other
+                 * renderer's output can be changed by it. Spaces and tabs
+                 * only: a newline is structure, not padding. */
+                if rendered.is_empty() && child.kind() == "type_qualifier" {
+                    let bytes = ctx.src.as_bytes();
+                    while pos < node.end_byte()
+                        && (bytes[pos] == b' ' || bytes[pos] == b'\t')
+                    {
+                        pos += 1;
+                    }
+                }
+            }
             None => out.push_str(node_text(child, ctx.src)),
         }
-        pos = child.end_byte();
     }
     out.push_str(&ctx.src[pos..node.end_byte()]);
     out
 }
 
-fn needs_translation(node: Node) -> bool {
+fn needs_translation(node: Node, src: &str) -> bool {
     if matches!(
         node.kind(),
         "message_expression"
@@ -1507,6 +1526,15 @@ fn needs_translation(node: Node) -> bool {
     ) {
         return true;
     }
+    /* An ARC ownership qualifier is not C and has to come out of every
+     * declaration that is emitted (see `render_expr`'s `type_qualifier`
+     * arm). Without this the enclosing declaration reports "no
+     * translation needed", `rebuild_or_text` copies its source text
+     * verbatim, and `__unsafe_unretained` reaches the generated `.c`
+     * (#428). The same family as #367's unlowered `id<Proto>` parameter. */
+    if node.kind() == "type_qualifier" && is_arc_qualifier(node_text(node, src)) {
+        return true;
+    }
     if is_autoreleasepool_shape(node) {
         return true;
     }
@@ -1514,7 +1542,7 @@ fn needs_translation(node: Node) -> bool {
         return is_boxed_string_literal(node);
     }
     let mut cursor = node.walk();
-    let any_child = node.children(&mut cursor).any(needs_translation);
+    let any_child = node.children(&mut cursor).any(|child| needs_translation(child, src));
     any_child
 }
 
@@ -1668,11 +1696,11 @@ fn render_expr(node: Node, ctx: &mut EmitCtx) -> (String, String) {
                 node.children(&mut cursor).any(|c| c.kind() == "protocol_reference_list");
             if has_protocol_list {
                 ("void *".to_string(), "id".to_string())
-            } else if !needs_translation(node) {
+            } else if !needs_translation(node, ctx.src) {
                 (node_text(node, ctx.src).to_string(), "id".to_string())
             } else {
                 let rebuilt = rebuild(node, ctx, &mut |child, ctx| {
-                    if needs_translation(child) {
+                    if needs_translation(child, ctx.src) {
                         Some(render_expr(child, ctx).0)
                     } else {
                         None
@@ -1713,7 +1741,7 @@ fn render_expr(node: Node, ctx: &mut EmitCtx) -> (String, String) {
         // return;`), so nil makes that first release a no-op.
         "declaration" if declares_bare_managed_local(node, ctx) => {
             let text = rebuild(node, ctx, &mut |child, ctx| {
-                if needs_translation(child) {
+                if needs_translation(child, ctx.src) {
                     Some(render_expr(child, ctx).0)
                 } else {
                     None
@@ -1751,7 +1779,7 @@ fn render_expr(node: Node, ctx: &mut EmitCtx) -> (String, String) {
                 if child.kind() == "parameter_list" {
                     return Some(render_block_type_param_list(child, ctx, root.as_deref()));
                 }
-                if needs_translation(child) {
+                if needs_translation(child, ctx.src) {
                     Some(render_expr(child, ctx).0)
                 } else {
                     None
@@ -1771,7 +1799,7 @@ fn render_expr(node: Node, ctx: &mut EmitCtx) -> (String, String) {
             let text = rebuild(node, ctx, &mut |child, ctx| {
                 if child.kind() == "^" {
                     Some("*".to_string())
-                } else if needs_translation(child) {
+                } else if needs_translation(child, ctx.src) {
                     Some(render_expr(child, ctx).0)
                 } else {
                     None
@@ -1916,6 +1944,30 @@ fn render_expr(node: Node, ctx: &mut EmitCtx) -> (String, String) {
          * `rebuild_or_text` is that arm's body, factored out -- because
          * nothing about how a call is written changes here. Only its type
          * was missing. */
+        /* An ARC ownership qualifier is not C, and oz_static substitutes
+         * source text in place -- so left alone it travels verbatim into
+         * the generated `.c`, where gcc rejects it (`'__unsafe_unretained'
+         * undeclared`). It was latent until #428 put the qualifier on
+         * *locals*: the only position that carried one before was an ivar
+         * block, which `lower_ivar_decl` already strips.
+         *
+         * Here rather than in each declaration renderer, and keyed on the
+         * qualifier node rather than on any of the positions it can sit
+         * in: `rebuild` walks every child of every emitted construct, so
+         * one arm covers a local, a `static` local, a file-scope
+         * declaration, a `for`-header declaration, a plain C function's
+         * parameter and a plain C struct's field alike. Stripping only
+         * where the failing tests needed it is the mistake #405 made and
+         * #423 had to finish.
+         *
+         * `__weak` is *not* stripped -- it falls through to the
+         * catch-all and stays in the output, so it keeps failing loudly
+         * rather than being silently accepted as an unretained strong
+         * reference, which is the exact bug the qualifier exists to
+         * prevent. `lower_ivar_decl` rejects it outright for an ivar. */
+        "type_qualifier" if is_arc_qualifier(node_text(node, ctx.src)) => {
+            (String::new(), "void".to_string())
+        }
         "call_expression" if !unhoisted_owning_operands(node, ctx).is_empty() => {
             let values = unhoisted_owning_operands(node, ctx);
             render_comma_operand_expr(node, ctx, values)
@@ -1933,11 +1985,11 @@ fn render_expr(node: Node, ctx: &mut EmitCtx) -> (String, String) {
 /// behaviour, factored out so the `call_expression` arm can reuse it
 /// verbatim and differ from the default in the *type* alone.
 fn rebuild_or_text(node: Node, ctx: &mut EmitCtx) -> String {
-    if !needs_translation(node) {
+    if !needs_translation(node, ctx.src) {
         return node_text(node, ctx.src).to_string();
     }
     rebuild(node, ctx, &mut |child, ctx| {
-        if needs_translation(child) {
+        if needs_translation(child, ctx.src) {
             Some(render_expr(child, ctx).0)
         } else {
             None
@@ -2548,7 +2600,7 @@ fn render_subscript_expression(node: Node, ctx: &mut EmitCtx) -> (String, String
     let close = children.iter().position(|c| c.kind() == "]");
     let pass_through = |ctx: &mut EmitCtx| {
         let rebuilt = rebuild(node, ctx, &mut |child, ctx| {
-            if needs_translation(child) {
+            if needs_translation(child, ctx.src) {
                 Some(render_expr(child, ctx).0)
             } else {
                 None
@@ -2693,7 +2745,7 @@ fn accessor_selector(ctx: &EmitCtx, class: &str, field: &str, writing: bool) -> 
 fn render_field_expression(node: Node, ctx: &mut EmitCtx) -> (String, String) {
     let pass_through = |ctx: &mut EmitCtx| {
         let rebuilt = rebuild(node, ctx, &mut |child, ctx| {
-            if needs_translation(child) {
+            if needs_translation(child, ctx.src) {
                 Some(render_expr(child, ctx).0)
             } else {
                 None
@@ -3423,7 +3475,7 @@ fn render_assignment_expression(node: Node, ctx: &mut EmitCtx) -> (String, Strin
     let children: Vec<Node> = node.children(&mut cursor).collect();
     let pass_through = |ctx: &mut EmitCtx| {
         let rebuilt = rebuild(node, ctx, &mut |child, ctx| {
-            if needs_translation(child) {
+            if needs_translation(child, ctx.src) {
                 Some(render_expr(child, ctx).0)
             } else {
                 None
@@ -3851,11 +3903,11 @@ fn render_return_statement(node: Node, ctx: &mut EmitCtx) -> (String, String) {
     // Outside any @synchronized, behave exactly as the catch-all in
     // `render_expr` would: byte-identical when nothing needs translating.
     if ctx.sync_cleanups.is_empty() && arc_releases.is_empty() && !needs_retain {
-        if !needs_translation(node) {
+        if !needs_translation(node, ctx.src) {
             return (node_text(node, ctx.src).to_string(), "id".to_string());
         }
         let rebuilt = rebuild(node, ctx, &mut |child, ctx| {
-            if needs_translation(child) {
+            if needs_translation(child, ctx.src) {
                 Some(render_expr(child, ctx).0)
             } else {
                 None
@@ -4710,7 +4762,7 @@ fn render_cast_expression(node: Node, ctx: &mut EmitCtx) -> (String, String) {
         // Not the shape this handles (e.g. a compound literal); fall back
         // to the generic rebuild the catch-all would have done.
         let rebuilt = rebuild(node, ctx, &mut |child, ctx| {
-            if needs_translation(child) {
+            if needs_translation(child, ctx.src) {
                 Some(render_expr(child, ctx).0)
             } else {
                 None
@@ -5867,7 +5919,7 @@ fn render_for_header_owned_declaration(
              * the empty initialiser has to put one back. */
             return Some(";".to_string());
         }
-        if needs_translation(child) {
+        if needs_translation(child, ctx.src) {
             Some(render_expr(child, ctx).0)
         } else {
             None
@@ -6400,9 +6452,27 @@ fn render_stmt_with_comment(node: Node, ctx: &mut EmitCtx, indent: &str) -> Stri
 /// (OZ-096) keeps them apart, routing them to a per-origin `.h`/`.c`
 /// respectively.
 /// ARC ownership qualifiers, meaningless without a runtime that honors
-/// them, so dropped from a generated ivar. `__weak` is deliberately
-/// absent -- it is rejected rather than stripped (see `lower_ivar_decl`).
-const STRIPPED_IVAR_QUALIFIERS: &[&str] = &["__strong", "__unsafe_unretained", "__autoreleasing"];
+/// them, so dropped from every declaration that is emitted. `__weak` is
+/// deliberately absent -- it is rejected rather than stripped (see
+/// `lower_ivar_decl` for an ivar, `render_expr`'s `type_qualifier` arm for
+/// everywhere else).
+const STRIPPED_ARC_QUALIFIERS: &[&str] = &["__strong", "__unsafe_unretained", "__autoreleasing"];
+
+/// Is this qualifier's text one oz_static drops on the way out?
+///
+/// One predicate rather than two `contains` calls over two lists, because
+/// the ivar path and the everywhere-else path must not drift: an ivar
+/// declaration is lowered by `lower_ivar_decl` and every other declaration
+/// by `render_expr`, and a qualifier stripped in one place and not the
+/// other is a qualifier that reaches the C compiler from whichever
+/// position was forgotten (#428).
+///
+/// `const`, `volatile`, `restrict` and `_Atomic` are real C qualifiers and
+/// are never touched; `__weak` is deliberately not here, so it keeps
+/// failing rather than being silently accepted.
+fn is_arc_qualifier(text: &str) -> bool {
+    STRIPPED_ARC_QUALIFIERS.contains(&text.trim())
+}
 
 /// An ivar declaration is copied into the generated struct essentially
 /// verbatim, but two ObjC-only spellings are not valid C and have to be
@@ -6632,7 +6702,7 @@ fn collect_ivar_lowering_edits(
                      runtime, so it would silently behave as an unretained strong ivar) -- use \
                      '__unsafe_unretained' and clear it explicitly",
                 );
-            } else if STRIPPED_IVAR_QUALIFIERS.contains(&text) {
+            } else if is_arc_qualifier(text) {
                 edits.push((node.start_byte() - origin..node.end_byte() - origin, String::new()));
             }
             return;
@@ -7768,6 +7838,7 @@ fn walk_top_level<'a>(
                      * typed `id` or `id<Proto>` is as unrepresentable in C
                      * as an untagged class name. */
                     let mut field_edits = class_tag_edits(node, source, program);
+                    field_edits.extend(arc_qualifier_edits(node, source));
                     if let Some(root) = program.root_class() {
                         rewrite_id_types(
                             node,
@@ -7820,6 +7891,9 @@ fn walk_top_level<'a>(
                 // `^` reached GCC (#272). A method's equivalent parameter
                 // has always been lowered.
                 sig_edits.extend(block_pointer_edits(node, source, program.root_class()));
+                // And an ARC ownership qualifier, for the fourth time in
+                // this same list -- see `arc_qualifier_edits` (#428).
+                sig_edits.extend(arc_qualifier_edits(node, source));
                 // And `id` -- bare or protocol-qualified -- lowered the way
                 // a method's parameter and a block literal's already are.
                 // Missing here, `void f(id<Marker> m)` was copied through
@@ -7871,7 +7945,7 @@ fn walk_top_level<'a>(
                         signature,
                         apply_edits(source, node.start_byte(), body.start_byte(), &sig_edits)
                     );
-                    if needs_translation(body) {
+                    if needs_translation(body, source) {
                         // Same scan as the single-file arm above; both
                         // `function_definition` paths need it, and an earlier
                         // shape of this change had it in only one.
@@ -7970,7 +8044,12 @@ fn walk_top_level<'a>(
                 }
 
                 let mut edits = if node.kind() == "declaration" {
-                    class_tag_edits(node, source, program)
+                    let mut e = class_tag_edits(node, source, program);
+                    /* A file-scope `__unsafe_unretained Thing *g;` is the
+                     * third patched-text position an ARC qualifier can
+                     * reach (#428). */
+                    e.extend(arc_qualifier_edits(node, source));
+                    e
                 } else {
                     Vec::new()
                 };
@@ -8378,6 +8457,54 @@ pub fn emit_split(
 /// (#331). Nothing is lost by not descending -- `render_block` renders that
 /// subtree, and patches the hoisted signature's own parameter list through
 /// this same helper (#326).
+/// Every ARC ownership qualifier under `node`, as an edit deleting it and
+/// the padding it sat in.
+///
+/// The patched-text twin of `render_expr`'s `type_qualifier` arm, which
+/// covers everything `rebuild` walks. Three top-level positions are
+/// assembled by `apply_edits` over the author's own bytes instead and so
+/// are not reached by it: a plain C function's signature, a plain C
+/// struct's field, and a file-scope declaration. **This is the fourth
+/// instance of that asymmetry in the same signature** -- the class tags
+/// were #326's, the block pointers #272's, `id<Proto>` was #367's, and the
+/// ARC qualifier is #428's. Each was a lowering methods and bodies had and
+/// patched text did not.
+///
+/// Skips a `block_literal` for the reason `block_pointer_edits` states at
+/// length: `top_level_block_edits` replaces the whole literal, so an edit
+/// inside its range would be discarded or would collide, and `apply_edits`
+/// asserts disjointness rather than trusting it. The literal's own body is
+/// rendered through `render_expr`, which strips the qualifier there.
+///
+/// The trailing run of spaces and tabs goes with the qualifier, so
+/// `static __unsafe_unretained Thing *p;` comes out `static struct Thing
+/// *p;` rather than with a double space. A newline is left alone: it is
+/// structure, not padding.
+fn arc_qualifier_edits(node: Node, src: &str) -> Vec<(Range<usize>, String)> {
+    fn walk(node: Node, src: &str, out: &mut Vec<(Range<usize>, String)>) {
+        if node.kind() == "block_literal" {
+            return;
+        }
+        if node.kind() == "type_qualifier" && is_arc_qualifier(&src[node.byte_range()]) {
+            let mut end = node.end_byte();
+            let bytes = src.as_bytes();
+            while end < src.len() && (bytes[end] == b' ' || bytes[end] == b'\t') {
+                end += 1;
+            }
+            out.push((node.start_byte()..end, String::new()));
+            return;
+        }
+        let mut cursor = node.walk();
+        let children: Vec<Node> = node.children(&mut cursor).collect();
+        for child in children {
+            walk(child, src, out);
+        }
+    }
+    let mut out = Vec::new();
+    walk(node, src, &mut out);
+    out
+}
+
 fn class_tag_edits(node: Node, src: &str, program: &Program) -> Vec<(Range<usize>, String)> {
     fn walk(
         node: Node,
