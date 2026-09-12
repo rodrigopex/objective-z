@@ -1957,12 +1957,18 @@ from an expression that is not the thing stored.
   `Accumulates` was briefly reworded to advise "release each instance before the
   next iteration allocates", which no author can do — ARC is always enabled
   (`-fobjc-arc` on every path that produces the Clang AST oracle) and an explicit
-  `[x release]` is a Clang error, so such a source never reaches `oz2c`. That
-  `emit::released_by_hand` exists, and that `oz2c` tolerates manual
-  retain/release as a feature of its own, is not a licence to recommend it. So an
+  `[x release]` is a Clang error, so such a source never reaches `oz2c`. So an
   unactionable remedy had been replaced with an unwritable one — the same defect
   twice, caught by review rather than by a test, which is why there is now a test
   asserting no loop-escape diagnostic tells the author to release anything.
+
+  One sentence of that entry has since been overtaken and is corrected here
+  rather than left to contradict the code: it read "That
+  `emit::released_by_hand` exists, and that `oz2c` tolerates manual
+  retain/release as a feature of its own, is not a licence to recommend it."
+  Both halves are gone. #428 made every one of those sends a located error and
+  deleted `released_by_hand`, so there is no tolerance left to mistake for a
+  licence — the rule below is the one that now says so.
 - **Key ownership on the reference, never on a syntactic form, and route every
   spelling through one function.** Eight defects in a row came from a decision
   keyed on a form (#351, #352, #359, #360, #365, #398, #400, #423). #423 is the
@@ -1972,6 +1978,102 @@ from an expression that is not the thing stored.
   a shape the emitter already lowered release-first, and a `self->_ivar`
   accepting one it lowered with a hoisted temporary. Fixing the site that was
   reported is not the fix; enumerating its siblings is.
+- **ARC is the only ownership model, and the four selectors it owns cannot be
+  written.** A send of `retain`, `release`, `autorelease` or `dealloc` is a
+  hard, located error, and so is *declaring or defining* one of the first three
+  (#428). Every Clang path in this project passes `-fobjc-arc` --
+  `cmake/oz_static.cmake`, `cmake/ObjcClang.cmake`,
+  `tests/tools/compile_and_run.py`, `tools/oz_static/tests/common/mod.rs`,
+  `scripts/regen_zephyr_tests.py`, and `scripts/objz_check_compile_db.py`'s
+  `REQUIRED_FLAGS` -- under which each of those sends is a compile error.
+  oz_static parses with tree-sitter rather than Clang, which is the only
+  reason they were ever reachable; `emit::released_by_hand` was then built to
+  *accommodate* one, so that ARC stood back from any local the author
+  released. Its own doc comment called that "a feature of its own", which is
+  what made it a second ownership model rather than a tolerance.
+
+  It reached memory corruption. `managed_object_locals` consulted the
+  predicate and `static_object_locals`/`is_file_scope_object` did not, so a
+  hand release into a `static` slot emitted **two** releases of one reference
+  -- signal 11 on the host. Adding the missing filter to the other two paths
+  was the first proposal and was the wrong direction: it would have extended
+  the second model, and a third slot kind added later would have reintroduced
+  the bug. Rejecting the input removes the decision instead.
+
+  Three consequences worth stating rather than leaving to be rediscovered:
+
+  - **Rejecting `[super dealloc]` required synthesizing the chain it drove.**
+    `oz_static_release`'s dispatch called `find_defining_dealloc(class)` and
+    nothing else, so only the *most-derived* `-dealloc` ever ran and a
+    superclass's own body ran only because a subclass spelled the send.
+    Without `companion::dealloc_chain` there would have been no spelling that
+    runs a superclass's cleanup and no error saying so -- this rule's own
+    violation. A `-dealloc` override is therefore still supported and is the
+    one exception in both directions. Every `[super dealloc]` in the tree
+    resolved to an empty function, so the three deletions in `samples/` were
+    behaviour-identical; the chain is what keeps that true for a superclass
+    that has a body.
+  - **`retainCount` stays.** It takes and gives no ownership, and lowers to
+    `oz_static_retain_count`, which #418 made the single entry point for
+    reading a refcount. Clang under `-fobjc-arc` refuses the send as
+    unavailable; oz_static accepts it, which is a divergence recorded here
+    deliberately rather than an oversight.
+  - **The C API is not rejected and cannot be.** `oz_static_retain` and
+    `oz_static_release` are declared in the generated companion header, so
+    a `.m` file's plain C can still drive a refcount by hand. That is what
+    the migrated fixtures use where the subject *is* the runtime's
+    arithmetic, and what `samples/smp_shared` uses to keep two cores
+    contending on one refcount. ARC has no opinion about a C call, which is
+    the point -- but it means the rejection is a rule about Objective-C, not
+    an enforced invariant.
+
+  **Reversals (#428), stated out loud.** Three fixture assertions were
+  reversed or deleted rather than adapted:
+
+  - `static_bar_rejects::releasing_unretained_ivar_in_dealloc_accepted`
+    asserted that `[_seen release]` on an `__unsafe_unretained` ivar was
+    *accepted*, on the grounds that nothing releases such an ivar
+    automatically. It is now rejected, under the opposite name: the qualifier
+    means "this slot does not participate in ARC's retain/release", not
+    "manual sends are legal on it", and Clang refuses the send whatever the
+    qualifier.
+  - `arc_strong_locals::manual_release_suppresses_arc` is **deleted**. Its
+    whole subject was `released_by_hand`, and it asserted the *absence* of
+    ARC's management. Reversing it would have duplicated
+    `bare_declaration_gets_arcs_implicit_nil` in the same file.
+  - `selector_ownership_matrix` loses **three** consume-set rows, with the
+    record left where they were. One of them expected *no* dealloc for a
+    balanced `[t retain]; [t release];` -- a leak, asserted as design,
+    because one manual release handed the predicate the whole local.
+    `staticbar::check_dealloc_body` is removed with them: the general rule
+    covers what it rejected, and its advice (declare the ivar
+    `__unsafe_unretained`) is no longer true.
+
+  **Coverage genuinely lost, and not papered over.** Two things nothing
+  exercises any more:
+
+  - `arc::created_by`'s outright exclusion of `-retain` as a pass-through,
+    in all four positions `arc_leak_regressions` covered it in: a discarded
+    result, behind a `(void)` cast, in an argument, and as a receiver. The
+    arms stay in `arc.rs` as defence; they have no reachable input.
+  - the dealloc **re-entrancy guard** (`_meta.deallocating`). Reaching it
+    needs a release *during* the object's own teardown, and the only way to
+    write that was `[self retain]; [self release];` inside `-dealloc`: a
+    retain cycle cannot do it, because holding the object means its refcount
+    never reached zero in the first place.
+    `behavior_lifecycle::dealloc_reentrant_guard` keeps the coverage by
+    calling `oz_static_retain`/`oz_static_release` directly, which is exactly
+    what the two sends lowered to -- so the guard is still exercised, but no
+    longer by anything an ARC-legal Objective-C program can write.
+
+  **Blast radius, measured.** Both corpora (81 behaviour + 40 adapted) through
+  the pre-change `oz2c` and this one, with `corpus_parity.rs`'s flags: **94 of
+  121 byte-identical, 0 newly rejected, 0 newly accepted.** Every line of the
+  27 diffs is an added `*_dealloc((struct * *)self)` chain call -- 107 added
+  lines, 0 removed, nothing else. A rejection should change nothing that
+  compiled correctly before, and the only movement is the chain the rejection
+  required.
+
 - **A release is only ever emitted for an expression that is an object
   pointer.** Both operand sites used to take the expression's own type where it
   ended in `*` and the root pointer otherwise, reasoning that "`id` is the one

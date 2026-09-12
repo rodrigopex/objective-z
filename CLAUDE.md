@@ -203,10 +203,18 @@ from an AST, which is why unexpanded macros survive into the output.
   `tests/tools/oz_static_build.py` reports its first line as the reason a transpile failed
 - Tests: `cargo test --manifest-path tools/oz_static/Cargo.toml`
 
-Two standing design rules, easy to violate with good intentions:
+Three standing design rules, easy to violate with good intentions:
 
 - **It never silently degrades.** Anything outside the supported subset is a hard, *located*
   error. That is deliberate — do not add a soft-diagnostic or best-effort mode.
+- **ARC is the only ownership model.** A send of `retain`, `release`, `autorelease` or
+  `dealloc` is a hard located error, and so is declaring or defining one of the first
+  three (`staticbar::check_manual_memory_sends`, #428) — every Clang path here passes
+  `-fobjc-arc`, under which each is a compile error. A `-dealloc` *override* is the one
+  exception: it is the cleanup hook, and the chain above it is called automatically
+  (`companion::dealloc_chain`), so `[super dealloc]` is redundant rather than required.
+  Reading a refcount is permitted (`oz_static_retain_count`, or `-retainCount`, which
+  lowers to it). See [docs/STATUS.md](docs/STATUS.md), "Standing design rules".
 - **The Python pipeline is a reference, not an authority.** It has real defects (a
   double-release in synthesized dealloc, no variadic support, item-slot sizing that ignores
   loops); matching them would be a regression dressed as parity.
