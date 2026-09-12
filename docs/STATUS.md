@@ -439,6 +439,19 @@ answering the question themselves. All four now go through
 `staticbar::assigned_slot_name`, which mirrors `emit::assigned_ivar_name`
 (it cannot call it — that needs an `EmitCtx` the bar does not have).
 
+**The emitted C above is history, and #424 is why.** That lowering pushed
+the temporary's initialiser through `ctx.pre_stmts`; the shared
+`render_overlapping_strong_store` now pushes a bare declaration and assigns
+inside the comma expression, so a loop lifts something that evaluates
+nothing. Landing after this issue, it means the gap this section describes
+now shows up as a nil from the second iteration rather than as a stale
+release. The gap and the fix are unchanged — a bar that calls a store
+release-first while the emitter lowers it through a temporary disagrees
+with the emitter about how many slots the shape needs — but anyone reading
+the block above should not go looking for it in the current output. See "A
+temporary an expression needs is declared through `ctx.pre_stmts` and
+assigned inside the expression" under Standing design rules.
+
 A third defect fell out of giving the subscript arm the same gate as the
 others: the bar asked `scope.class_ivars`, which is *every* ivar, where
 both emitters gate on `Program::owned_object_ivar_names`, which is fewer.
