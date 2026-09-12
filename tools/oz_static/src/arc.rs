@@ -1139,12 +1139,16 @@ pub fn binds_ownership(
 /// it is the whole question. Two of `is_owning_selector`'s entries hand
 /// back a reference something else is already accounting for:
 ///
-///   - `-retain` returns its own receiver, and a bare `[c retain];` is the
-///     manual-retain/release idiom whose balancing `[c release];` is
-///     written by hand -- `samples/smp_shared` does exactly that, twice per
-///     iteration. Releasing the discarded result would undo the retain and
-///     free the object out from under the sample. Real ARC has nothing to
-///     match here either: it makes an explicit `retain` a compile error.
+///   - `-retain` returns its own receiver, so releasing the discarded
+///     result would undo the retain and free the object out from under
+///     whoever still holds it. **This arm is now unreachable from source**
+///     (#428): a `-retain` send is a located error, exactly as real ARC
+///     makes it a compile error, so nothing can ask this question any
+///     more. It is kept as defence rather than deleted, and that it is
+///     unexercised is recorded in docs/STATUS.md rather than left to be
+///     rediscovered. `samples/smp_shared` used to be the live example,
+///     twice per iteration; it drives `oz_static_retain`/
+///     `oz_static_release` directly now.
 ///   - `-init...` *consumes* the receiver's +1 and hands it back, so the
 ///     reference is the receiver's. In `[[Foo alloc] init]` that receiver
 ///     is a temporary nothing tracks, and the result is genuinely

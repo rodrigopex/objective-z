@@ -81,9 +81,13 @@ fn declares_a_class(source: &str) -> bool {
 /// *this* harness's inputs rather than the corpus's:
 ///
 ///   * `-ferror-limit=0`. These fixtures are deliberately not valid ARC
-///     Objective-C -- they send `-release` explicitly, reach into
-///     `w->base._meta` and name `OZ_STATIC_CLASS_*` constants that only the
-///     generated C defines. Every one of those is an *ordinary* error, which
+///     Objective-C -- they reach into `w->base._meta`, call
+///     `oz_static_retain`/`oz_static_release`/`oz_static_retain_count`, and
+///     name `OZ_STATIC_CLASS_*` constants that only the generated C
+///     defines. (They used to send `-release` explicitly as well; #428 made
+///     that a located error in oz_static too, so the one kind of error this
+///     flag existed for that oz_static also refused is gone -- the rest
+///     remain.) Every one of those is an *ordinary* error, which
 ///     Clang reports and carries on past, leaving the declarations intact.
 ///     At the default limit of 20, though, the twenty-first becomes
 ///     `fatal error: too many errors emitted, stopping now` -- and a fatal
@@ -674,8 +678,9 @@ pub fn ozstring_src() -> String {
 /// (`common::ozobject_src`) in scope as the root class; oz_static has no
 /// full ARC (tracked separately as #189), but an owned object ivar *is*
 /// released automatically when its owner is deallocated
-/// (`companion::render_release_ivars`), so an owner's `-dealloc` must not
-/// release it by hand -- that is rejected as a double free.
+/// (`companion::render_release_ivars`), so an owner's `-dealloc` does not
+/// release it by hand -- and since #428 cannot: a `-release` send is a
+/// located error wherever it appears.
 pub fn ozdefer_src() -> String {
     assemble(
         include_str!("../../../../include/oz_sdk/Foundation/OZDefer.h"),
@@ -751,10 +756,13 @@ pub fn ozarray_src() -> String {
 /// alloc/free machinery oz_static synthesizes -- see #199 for that
 /// separate, Zephyr-only concern). Subclasses `OZString`
 /// (`common::ozstring_src`), inheriting `_data`/`_length` and
-/// overriding `-dealloc` to free `_data` (correct without an explicit
-/// `[super dealloc]`: `OZString` has none of its own to chain to -- only
-/// boxed literals ever produce an `OZString` instance in this port, and
-/// those are static, not heap-allocated). Requires `OZObject`
+/// overriding `-dealloc` to free `_data`. No `[super dealloc]`, which is
+/// a located error since #428 -- and needs none: `companion::dealloc_chain`
+/// calls the chain above an override automatically, and what it reaches
+/// here (`OZString.m`'s `-dealloc`, then `OZObject.m`'s) is empty in both
+/// cases. The claim this comment used to make -- that `OZString` "has none
+/// of its own to chain to" -- was simply wrong: `src/OZString.m:76` has
+/// one. Requires `OZObject`
 /// (`common::ozobject_src`) and `OZString` (`common::ozstring_src`) in
 /// scope.
 pub fn ozmutablestring_src() -> String {

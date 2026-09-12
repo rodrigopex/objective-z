@@ -5784,10 +5784,11 @@ fn for_header_owning_operands<'a>(
 ///   - `owned_locals_of` for provenance, so a **borrowed** initialiser
 ///     (`for (Thing *t = [owned itself]; ...)`) is left alone -- releasing
 ///     one is a use-after-free on whatever still names the object. It
-///     also brings the three exclusions it makes anywhere else: a
-///     `static` slot, `__unsafe_unretained`, and a name the author
-///     already releases by hand. The search root is the `for_statement`,
-///     so a manual `[t release]` in the loop *body* counts.
+///     also brings the two exclusions it makes anywhere else: a
+///     `static` slot and `__unsafe_unretained`. There used to be a third,
+///     a name the author released by hand, reached from a search root of
+///     the whole `for_statement`; it went with `released_by_hand` when a
+///     `-release` send became a located error (#428).
 ///   - `arc::declares_pointer` for the type, so a plain
 ///     `for (int i = 0; ...)` -- by far the most common thing this is
 ///     asked about -- comes out byte-identical. The type check is left to
