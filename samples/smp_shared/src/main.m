@@ -59,6 +59,15 @@
  * no lock. Worth re-running (delete the `@synchronized` and watch it fail)
  * before trusting this file.
  *
+ * The accessor is `-total`, not `-count`, and that is not taste. This file
+ * imports the Foundation umbrella, so `OZArray` is in the program, and
+ * `OZArray` declares `- (size_t)count`. Two implementors of one selector
+ * with incompatible return types cannot share the single
+ * `OZ_PROTOCOL_SEND_count` shim, which `generics::check_dispatch_signature_agreement`
+ * refuses with a located error -- and it did, so this sample did not
+ * configure at all on `main` at 3d91af4, independently of anything to do
+ * with #428. Renaming the accessor is the fix that check itself names.
+ *
  * What this sample does *not* establish: that the refcount atomics are
  * necessary. `rc_after=1` held even in the unlocked build, because
  * retain/release go through real atomics rather than a plain
@@ -76,6 +85,17 @@
  * samples/transpiled_led on the first ARM cross-build. */
 void printk(const char *fmt, ...);
 
+/* The generated companion header declares these two, but it does not exist
+ * yet when the Clang AST dump is taken -- so they are declared here for the
+ * same reason `printk` is, with exactly the companion's signatures (a
+ * differing one would be a conflicting redeclaration in the generated C).
+ * `hammer` calls them directly because there is no ARC-legal Objective-C
+ * spelling that drives one shared object's refcount up and down without
+ * also serializing on a slot; see the loop. */
+struct OZObject;
+struct OZObject *oz_static_retain(struct OZObject *self);
+void oz_static_release(struct OZObject *self);
+
 #define ITERATIONS 2000
 #define RETAIN_ITERATIONS 20000
 
@@ -84,7 +104,7 @@ void printk(const char *fmt, ...);
 }
 - (void)bump;
 - (void)bumpNested;
-- (int)count;
+- (int)total;
 @end
 
 @implementation Counter
@@ -132,7 +152,7 @@ void printk(const char *fmt, ...);
 	}
 }
 
-- (int)count
+- (int)total
 {
 	return _count;
 }
@@ -184,8 +204,8 @@ static void hammer(Counter *c)
 		 * ownership, which is why this is the C API and not a
 		 * strong-slot store: a store would serialize on the slot
 		 * as well and stop being a refcount test. */
-		(void)oz_static_retain((struct OZObject *)c);
-		oz_static_release((struct OZObject *)c);
+		(void)oz_static_retain((__bridge struct OZObject *)c);
+		oz_static_release((__bridge struct OZObject *)c);
 	}
 }
 
@@ -239,12 +259,12 @@ int main(void)
 
 	/* The whole point. Exact, not approximate: every one of the 2 *
 	 * ITERATIONS increments has to have survived. */
-	printk("count=%d expected=%d\n", [shared_counter count], 2 * ITERATIONS);
+	printk("count=%d expected=%d\n", [shared_counter total], 2 * ITERATIONS);
 
 	/* Back to +1 after equal numbers of retain and release from two
 	 * cores, and still alive to answer. */
 	printk("rc_after=%d\n", [shared_counter retainCount]);
-	printk("still usable, count=%d\n", [shared_counter count]);
+	printk("still usable, count=%d\n", [shared_counter total]);
 
 	printk("=== Demo complete ===\n");
 	return 0;
