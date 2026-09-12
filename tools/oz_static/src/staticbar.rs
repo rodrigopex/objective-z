@@ -325,29 +325,44 @@ impl LoopEscape {
     /// measured on the issue's own example the rejection stood unchanged at
     /// `Foo=1`, `Foo=2` and `Foo=8`.
     ///
-    /// Making it pool-aware instead was the issue's preferred answer and is
-    /// the wrong one, which only became visible once #423 had narrowed the
-    /// arm. The shapes that need two slots *because two are briefly live*
-    /// are already accepted at one slot now: they release first, so nothing
-    /// overlaps. What still reaches `OverlappingStore` from
-    /// `overlapping_unless_released_first` is `LocalStore::Unsupported` --
-    /// the store that reads its own destination and therefore keeps a
-    /// hoisted temporary. `ctx.pre_stmts` lifts that temporary *out of the
-    /// loop*, so it captures the destination once, while it is still nil,
-    /// and releases that same stale pointer on every iteration. Accepting
-    /// it on a pool of two would not fit two live objects, it would
-    /// miscompile. No pool size makes a hoisted temporary land inside the
-    /// loop.
+    /// Making it pool-aware instead was the issue's preferred answer, and
+    /// what that answer is worth changed twice while this was being
+    /// written, so the current state is worth being exact about.
     ///
-    /// `Accumulates` had the same false remedy for a different reason: the
-    /// loop's bound is not something this pass knows, so "size the pool for
-    /// the loop's own bound" is not a number the author can be told and not
-    /// one any directive could express for a loop whose trip count is
-    /// dynamic.
+    /// What still reaches `OverlappingStore` from
+    /// `overlapping_unless_released_first` is `LocalStore::Unsupported` --
+    /// the store that reads its own destination, which the emitter lowers
+    /// through a temporary. #423 is why that is the only thing left: the
+    /// shapes that release first are accepted at one slot, so they never
+    /// get here. Until #424 that remaining shape could not be accepted at
+    /// *any* pool size, because `ctx.pre_stmts` lifted the temporary's
+    /// initialiser out of the loop and every iteration released a stale
+    /// pointer -- pool-awareness would have turned a refusal into a
+    /// miscompile. #424's shared lowering pushes a bare declaration and
+    /// assigns inside the comma expression, so that hazard is gone and
+    /// **pool-awareness is now sound for this arm** -- measured: with the
+    /// predicate relaxed, the shape runs correctly on a pool of two, five
+    /// allocations and five frees, and is short of slots on one.
+    ///
+    /// It is still not *implemented*, and that is the only reason the
+    /// remedy cannot be offered. So the message states the narrower fact
+    /// that held before #424 and still holds: raising the pool does not
+    /// lift this rejection, because this check never reads `PoolSizes`. It
+    /// deliberately does not claim the shape would be wrong at any pool
+    /// size, which is what it said when this fix was first written and is
+    /// no longer true. Making the arm pool-aware is a behavioural change
+    /// and wants its own issue.
+    ///
+    /// `Accumulates` had the same false remedy for a different reason, and
+    /// that reason has not moved: the loop's bound is not something this
+    /// pass knows, so "size the pool for the loop's own bound" is not a
+    /// number the author can be told and not one any directive could
+    /// express for a loop whose trip count is dynamic.
     ///
     /// So both keep only the advice that works. The pool remains the right
-    /// tool for a *site* that needs more than one live instance; it is not
-    /// a tool for either of these.
+    /// tool for a *site* that needs more than one live instance, and for
+    /// `OverlappingStore` it would be the right tool again the day this
+    /// check can read the size.
     fn describe(&self, what: &str) -> String {
         match self {
             LoopEscape::OverlappingStore(dest) => format!(
@@ -356,8 +371,7 @@ impl LoopEscape {
                  one exists, so both are briefly live. Bind it to a local declared before the \
                  loop and store that -- a local's previous value is released *before* the next \
                  allocation, so one slot serves it. Raising this class's pool does not lift \
-                 this: the store keeps a temporary that is hoisted out of the loop, so the \
-                 shape would be wrong at any pool size"
+                 this rejection: the loop check does not read pool sizes"
             ),
             LoopEscape::Accumulates(dest) => format!(
                 "{what} inside a loop is stored into {dest}, so each iteration keeps its own \
