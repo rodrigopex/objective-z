@@ -11,6 +11,26 @@
 // tests/behavior/cases/memory/heap_alloc.m is covered in
 // behavior_foundation_heap.rs instead, alongside the rest of OZHeap, now
 // that `+dynamicAllocWithHeap:` is implemented.
+//
+// **Where the refcount arithmetic is the subject -- `nested_retain_release`,
+// `release_decrements_refcount`, `retain_count_query`,
+// `retain_increments_refcount` -- the cases drive
+// `oz_static_retain`/`oz_static_release` as C functions rather than as
+// retain/release *sends*, which ARC refuses (#428).** The claim
+// those cases make is about the runtime's two refcount functions, which is
+// where the arithmetic lives; the sends lowered to exactly these calls, and
+// these calls are what ARC itself emits. `main` here is plain C, so ARC has
+// no opinion about them. The receivers are `__unsafe_unretained` so the
+// releases under test are the only ones -- `emit::released_by_hand` used to
+// hold ARC off a hand-released variable implicitly, and the qualifier says
+// it out loud.
+//
+// The cases whose subject is *ownership* rather than arithmetic
+// (`release_frees_at_zero`, `strong_ivar_assignment_takes_ownership`,
+// `strong_ivar_assigned_a_fresh_object_is_not_retained_twice`) use braced
+// scopes instead: scope exit is where ARC releases an owned local, so it is
+// as determinate a point as the explicit send was, and the ownership
+// itself stays ARC's.
 
 mod common;
 use common::{compile_and_run, ozobject_src as PREAMBLE};
@@ -30,17 +50,17 @@ fn nested_retain_release() {
          #include <stdio.h>\n\
          \n\
          int main(void) {{\n\
-         \tHandle *h = [Handle alloc];\n\
+         \t__unsafe_unretained Handle *h = [Handle alloc];\n\
          \tprintf(\"rc1=%d\\n\", [h retainCount]);\n\
-         \t[h retain];\n\
+         \t(void)oz_static_retain((struct OZObject *)h);\n\
          \tprintf(\"rc2=%d\\n\", [h retainCount]);\n\
-         \t[h retain];\n\
+         \t(void)oz_static_retain((struct OZObject *)h);\n\
          \tprintf(\"rc3=%d\\n\", [h retainCount]);\n\
-         \t[h release];\n\
+         \toz_static_release((struct OZObject *)h);\n\
          \tprintf(\"rc4=%d\\n\", [h retainCount]);\n\
-         \t[h release];\n\
+         \toz_static_release((struct OZObject *)h);\n\
          \tprintf(\"rc5=%d\\n\", [h retainCount]);\n\
-         \t[h release];\n\
+         \toz_static_release((struct OZObject *)h);\n\
          \treturn 0;\n\
          }}\n",
         PREAMBLE()
@@ -63,15 +83,15 @@ fn release_decrements_refcount() {
          #include <stdio.h>\n\
          \n\
          int main(void) {{\n\
-         \tCounter *c = [Counter alloc];\n\
-         \t[c retain];\n\
-         \t[c retain];\n\
+         \t__unsafe_unretained Counter *c = [Counter alloc];\n\
+         \t(void)oz_static_retain((struct OZObject *)c);\n\
+         \t(void)oz_static_retain((struct OZObject *)c);\n\
          \tprintf(\"rc1=%d\\n\", [c retainCount]);\n\
-         \t[c release];\n\
+         \toz_static_release((struct OZObject *)c);\n\
          \tprintf(\"rc2=%d\\n\", [c retainCount]);\n\
-         \t[c release];\n\
+         \toz_static_release((struct OZObject *)c);\n\
          \tprintf(\"rc3=%d\\n\", [c retainCount]);\n\
-         \t[c release];\n\
+         \toz_static_release((struct OZObject *)c);\n\
          \treturn 0;\n\
          }}\n",
         PREAMBLE()
@@ -100,12 +120,18 @@ fn release_frees_at_zero() {
          #include <stdio.h>\n\
          \n\
          int main(void) {{\n\
-         \tToken *t1 = [Token alloc];\n\
-         \tprintf(\"t1_nonnull=%d\\n\", t1 != 0);\n\
-         \t[t1 release];\n\
-         \tToken *t2 = [Token alloc];\n\
-         \tprintf(\"t2_nonnull=%d\\n\", t2 != 0);\n\
-         \t[t2 release];\n\
+         \t/* One braced scope each: the first token must be provably\n\
+         \t * destroyed before the second is allocated, which a hand\n\
+         \t * release used to establish (#428). Ownership stays ARC's\n\
+         \t * here -- only the arithmetic cases above opt out. */\n\
+         \t{{\n\
+         \t\tToken *t1 = [Token alloc];\n\
+         \t\tprintf(\"t1_nonnull=%d\\n\", t1 != 0);\n\
+         \t}}\n\
+         \t{{\n\
+         \t\tToken *t2 = [Token alloc];\n\
+         \t\tprintf(\"t2_nonnull=%d\\n\", t2 != 0);\n\
+         \t}}\n\
          \treturn 0;\n\
          }}\n",
         PREAMBLE()
@@ -128,13 +154,13 @@ fn retain_count_query() {
          #include <stdio.h>\n\
          \n\
          int main(void) {{\n\
-         \tTracker *t = [Tracker alloc];\n\
+         \t__unsafe_unretained Tracker *t = [Tracker alloc];\n\
          \tprintf(\"rc1=%d\\n\", [t retainCount]);\n\
-         \t[t retain];\n\
+         \t(void)oz_static_retain((struct OZObject *)t);\n\
          \tprintf(\"rc2=%d\\n\", [t retainCount]);\n\
-         \t[t release];\n\
+         \toz_static_release((struct OZObject *)t);\n\
          \tprintf(\"rc3=%d\\n\", [t retainCount]);\n\
-         \t[t release];\n\
+         \toz_static_release((struct OZObject *)t);\n\
          \treturn 0;\n\
          }}\n",
         PREAMBLE()
@@ -182,15 +208,15 @@ fn retain_increments_refcount() {
          #include <stdio.h>\n\
          \n\
          int main(void) {{\n\
-         \tNode *n = [Node alloc];\n\
+         \t__unsafe_unretained Node *n = [Node alloc];\n\
          \tprintf(\"rc1=%d\\n\", [n retainCount]);\n\
-         \t[n retain];\n\
+         \t(void)oz_static_retain((struct OZObject *)n);\n\
          \tprintf(\"rc2=%d\\n\", [n retainCount]);\n\
-         \t[n retain];\n\
+         \t(void)oz_static_retain((struct OZObject *)n);\n\
          \tprintf(\"rc3=%d\\n\", [n retainCount]);\n\
-         \t[n release];\n\
-         \t[n release];\n\
-         \t[n release];\n\
+         \toz_static_release((struct OZObject *)n);\n\
+         \toz_static_release((struct OZObject *)n);\n\
+         \toz_static_release((struct OZObject *)n);\n\
          \treturn 0;\n\
          }}\n",
         PREAMBLE()
@@ -250,16 +276,24 @@ fn strong_ivar_assignment_takes_ownership() {
 @end
 
 int main(void) {
-	Link *first = [[Link alloc] initWithTag:1 next:nil];
-	printf(\"first_rc=%d\\n\", [first retainCount]);
-	Link *second = [[Link alloc] initWithTag:2 next:first];
-	/* `first` is now held twice: by this scope, and by second's ivar. */
-	printf(\"first_rc_held=%d\\n\", [first retainCount]);
-	[second release];
-	/* second's dealloc released its ivar, so `first` is back to just us. */
-	printf(\"first_rc_after=%d\\n\", [first retainCount]);
-	printf(\"still_alive_tag=%d\\n\", [first tag]);
-	[first release];
+	/* Two nested braced scopes, because both releases are points in the
+	 * program that later lines read across -- which is what the explicit
+	 * sends used to give (#428). Ownership stays ARC's: `second` dying at
+	 * the inner brace is exactly what has to bring `first` back to 1. */
+	{
+		Link *first = [[Link alloc] initWithTag:1 next:nil];
+		printf(\"first_rc=%d\\n\", [first retainCount]);
+		{
+			Link *second = [[Link alloc] initWithTag:2 next:first];
+			/* `first` is now held twice: by the outer scope, and by
+			 * second's ivar. */
+			printf(\"first_rc_held=%d\\n\", [first retainCount]);
+		}
+		/* second's dealloc released its ivar, so `first` is back to
+		 * just us. */
+		printf(\"first_rc_after=%d\\n\", [first retainCount]);
+		printf(\"still_alive_tag=%d\\n\", [first tag]);
+	}
 	printf(\"done\\n\");
 	return 0;
 }
@@ -315,9 +349,12 @@ fn strong_ivar_assigned_a_fresh_object_is_not_retained_twice() {
 @end
 
 int main(void) {
-	Holder *h = [[Holder alloc] init];
-	printf(\"leaf_rc=%d\\n\", [h leafCount]);
-	[h release];
+	/* Braced so the holder's teardown -- and with it the leaf's -- is
+	 * ordered before `done` (#428). */
+	{
+		Holder *h = [[Holder alloc] init];
+		printf(\"leaf_rc=%d\\n\", [h leafCount]);
+	}
 	printf(\"done\\n\");
 	return 0;
 }
