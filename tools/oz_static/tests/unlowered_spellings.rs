@@ -417,7 +417,7 @@ fn an_unsafe_unretained_local_in_main_compiles() {
 int main(void)
 {
 \t__unsafe_unretained Counted *c = [Counted alloc];
-\tprintf(\"rc=%d\\n\", [c retainCount]);
+\tprintf(\"rc=%d\\n\", oz_static_retain_count(c));
 \toz_static_release((struct OZObject *)c);
 \tprintf(\"freed_ok\\n\");
 \treturn 0;

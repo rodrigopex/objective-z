@@ -91,9 +91,9 @@ int main(void) {{
 	OZObject *b = [OZObject alloc];
 	Holder *h = [Holder alloc];
 	[h setThing:a];
-	printf(\"a=%d b=%d\\n\", [a retainCount], [b retainCount]);
+	printf(\"a=%d b=%d\\n\", oz_static_retain_count(a), oz_static_retain_count(b));
 	[h setThing:b];
-	printf(\"a=%d b=%d\\n\", [a retainCount], [b retainCount]);
+	printf(\"a=%d b=%d\\n\", oz_static_retain_count(a), oz_static_retain_count(b));
 	return 0;
 }}
 ",

@@ -242,7 +242,7 @@ int main(void)
 
 	shared_counter = [[Counter alloc] init];
 	counter_ready = 1;
-	printk("counter created, rc=%d\n", [shared_counter retainCount]);
+	printk("counter created, rc=%d\n", oz_static_retain_count(shared_counter));
 
 	/* main is the second contender, so both cores are busy on the same
 	 * object rather than one core working while the other waits. */
@@ -263,7 +263,7 @@ int main(void)
 
 	/* Back to +1 after equal numbers of retain and release from two
 	 * cores, and still alive to answer. */
-	printk("rc_after=%d\n", [shared_counter retainCount]);
+	printk("rc_after=%d\n", oz_static_retain_count(shared_counter));
 	printk("still usable, count=%d\n", [shared_counter total]);
 
 	printk("=== Demo complete ===\n");

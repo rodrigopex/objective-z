@@ -199,12 +199,12 @@ fn releasing_a_literal_does_not_consume_its_refcount() {
 #include <stdio.h>
 int main(void) {
 	OZString *s = @\"hello\";
-	printf(\"rc_before=%d\\n\", [s retainCount]);
+	printf(\"rc_before=%d\\n\", oz_static_retain_count(s));
 	oz_static_release((struct OZObject *)s);
-	printf(\"rc_after=%d\\n\", [s retainCount]);
+	printf(\"rc_after=%d\\n\", oz_static_retain_count(s));
 	oz_static_release((struct OZObject *)s);
 	oz_static_release((struct OZObject *)s);
-	printf(\"rc_settled=%d\\n\", [s retainCount]);
+	printf(\"rc_settled=%d\\n\", oz_static_retain_count(s));
 	printf(\"still=%s\\n\", [s cString]);
 	return 0;
 }
@@ -235,15 +235,15 @@ fn retaining_a_literal_does_not_move_its_refcount() {
 #include <stdio.h>
 int main(void) {
 	OZString *s = @\"hello\";
-	printf(\"rc_before=%d\\n\", [s retainCount]);
+	printf(\"rc_before=%d\\n\", oz_static_retain_count(s));
 	(void)oz_static_retain((struct OZObject *)s);
 	(void)oz_static_retain((struct OZObject *)s);
 	(void)oz_static_retain((struct OZObject *)s);
-	printf(\"rc_retained=%d\\n\", [s retainCount]);
+	printf(\"rc_retained=%d\\n\", oz_static_retain_count(s));
 	oz_static_release((struct OZObject *)s);
 	oz_static_release((struct OZObject *)s);
 	oz_static_release((struct OZObject *)s);
-	printf(\"rc_settled=%d\\n\", [s retainCount]);
+	printf(\"rc_settled=%d\\n\", oz_static_retain_count(s));
 	printf(\"still=%s\\n\", [s cString]);
 	return 0;
 }
@@ -268,7 +268,7 @@ int main(void) {
 	Config *c = [Config sharedInstance];
 	(void)oz_static_retain((struct OZObject *)c);
 	(void)oz_static_retain((struct OZObject *)c);
-	printf(\"rc=%d\\n\", [c retainCount]);
+	printf(\"rc=%d\\n\", oz_static_retain_count(c));
 	printf(\"rate=%d\\n\", [c rate]);
 	return 0;
 }
@@ -426,7 +426,7 @@ int main(void) {
 	printf(\"rate_before=%d\\n\", [c rate]);
 	oz_static_release((struct OZObject *)c);
 	printf(\"rate_after=%d\\n\", [[Config sharedInstance] rate]);
-	printf(\"rc=%d\\n\", [c retainCount]);
+	printf(\"rc=%d\\n\", oz_static_retain_count(c));
 	printf(\"done\\n\");
 	return 0;
 }
@@ -506,11 +506,11 @@ int main(void) {
 	/* Opted out of ARC so the releases under test are the only ones
 	 * (#428) -- the last of them is what frees the object. */
 	__unsafe_unretained Counted *c = [Counted alloc];
-	printf(\"rc=%d\\n\", [c retainCount]);
+	printf(\"rc=%d\\n\", oz_static_retain_count(c));
 	(void)oz_static_retain((struct OZObject *)c);
-	printf(\"rc2=%d\\n\", [c retainCount]);
+	printf(\"rc2=%d\\n\", oz_static_retain_count(c));
 	oz_static_release((struct OZObject *)c);
-	printf(\"rc3=%d\\n\", [c retainCount]);
+	printf(\"rc3=%d\\n\", oz_static_retain_count(c));
 	oz_static_release((struct OZObject *)c);
 	printf(\"freed_ok\\n\");
 	return 0;
