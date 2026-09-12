@@ -51,15 +51,15 @@ fn nested_retain_release() {
          \n\
          int main(void) {{\n\
          \t__unsafe_unretained Handle *h = [Handle alloc];\n\
-         \tprintf(\"rc1=%d\\n\", [h retainCount]);\n\
+         \tprintf(\"rc1=%d\\n\", oz_static_retain_count(h));\n\
          \t(void)oz_static_retain((struct OZObject *)h);\n\
-         \tprintf(\"rc2=%d\\n\", [h retainCount]);\n\
+         \tprintf(\"rc2=%d\\n\", oz_static_retain_count(h));\n\
          \t(void)oz_static_retain((struct OZObject *)h);\n\
-         \tprintf(\"rc3=%d\\n\", [h retainCount]);\n\
+         \tprintf(\"rc3=%d\\n\", oz_static_retain_count(h));\n\
          \toz_static_release((struct OZObject *)h);\n\
-         \tprintf(\"rc4=%d\\n\", [h retainCount]);\n\
+         \tprintf(\"rc4=%d\\n\", oz_static_retain_count(h));\n\
          \toz_static_release((struct OZObject *)h);\n\
-         \tprintf(\"rc5=%d\\n\", [h retainCount]);\n\
+         \tprintf(\"rc5=%d\\n\", oz_static_retain_count(h));\n\
          \toz_static_release((struct OZObject *)h);\n\
          \treturn 0;\n\
          }}\n",
@@ -86,11 +86,11 @@ fn release_decrements_refcount() {
          \t__unsafe_unretained Counter *c = [Counter alloc];\n\
          \t(void)oz_static_retain((struct OZObject *)c);\n\
          \t(void)oz_static_retain((struct OZObject *)c);\n\
-         \tprintf(\"rc1=%d\\n\", [c retainCount]);\n\
+         \tprintf(\"rc1=%d\\n\", oz_static_retain_count(c));\n\
          \toz_static_release((struct OZObject *)c);\n\
-         \tprintf(\"rc2=%d\\n\", [c retainCount]);\n\
+         \tprintf(\"rc2=%d\\n\", oz_static_retain_count(c));\n\
          \toz_static_release((struct OZObject *)c);\n\
-         \tprintf(\"rc3=%d\\n\", [c retainCount]);\n\
+         \tprintf(\"rc3=%d\\n\", oz_static_retain_count(c));\n\
          \toz_static_release((struct OZObject *)c);\n\
          \treturn 0;\n\
          }}\n",
@@ -155,11 +155,11 @@ fn retain_count_query() {
          \n\
          int main(void) {{\n\
          \t__unsafe_unretained Tracker *t = [Tracker alloc];\n\
-         \tprintf(\"rc1=%d\\n\", [t retainCount]);\n\
+         \tprintf(\"rc1=%d\\n\", oz_static_retain_count(t));\n\
          \t(void)oz_static_retain((struct OZObject *)t);\n\
-         \tprintf(\"rc2=%d\\n\", [t retainCount]);\n\
+         \tprintf(\"rc2=%d\\n\", oz_static_retain_count(t));\n\
          \toz_static_release((struct OZObject *)t);\n\
-         \tprintf(\"rc3=%d\\n\", [t retainCount]);\n\
+         \tprintf(\"rc3=%d\\n\", oz_static_retain_count(t));\n\
          \toz_static_release((struct OZObject *)t);\n\
          \treturn 0;\n\
          }}\n",
@@ -185,7 +185,7 @@ fn retain_count_nil_returns_zero() {
          \n\
          int main(void) {{\n\
          \tTracker *nilT = 0;\n\
-         \tprintf(\"nil_rc=%d\\n\", [nilT retainCount]);\n\
+         \tprintf(\"nil_rc=%d\\n\", oz_static_retain_count(nilT));\n\
          \treturn 0;\n\
          }}\n",
         PREAMBLE()
@@ -209,11 +209,11 @@ fn retain_increments_refcount() {
          \n\
          int main(void) {{\n\
          \t__unsafe_unretained Node *n = [Node alloc];\n\
-         \tprintf(\"rc1=%d\\n\", [n retainCount]);\n\
+         \tprintf(\"rc1=%d\\n\", oz_static_retain_count(n));\n\
          \t(void)oz_static_retain((struct OZObject *)n);\n\
-         \tprintf(\"rc2=%d\\n\", [n retainCount]);\n\
+         \tprintf(\"rc2=%d\\n\", oz_static_retain_count(n));\n\
          \t(void)oz_static_retain((struct OZObject *)n);\n\
-         \tprintf(\"rc3=%d\\n\", [n retainCount]);\n\
+         \tprintf(\"rc3=%d\\n\", oz_static_retain_count(n));\n\
          \toz_static_release((struct OZObject *)n);\n\
          \toz_static_release((struct OZObject *)n);\n\
          \toz_static_release((struct OZObject *)n);\n\
@@ -282,16 +282,16 @@ int main(void) {
 	 * the inner brace is exactly what has to bring `first` back to 1. */
 	{
 		Link *first = [[Link alloc] initWithTag:1 next:nil];
-		printf(\"first_rc=%d\\n\", [first retainCount]);
+		printf(\"first_rc=%d\\n\", oz_static_retain_count(first));
 		{
 			Link *second = [[Link alloc] initWithTag:2 next:first];
 			/* `first` is now held twice: by the outer scope, and by
 			 * second's ivar. */
-			printf(\"first_rc_held=%d\\n\", [first retainCount]);
+			printf(\"first_rc_held=%d\\n\", oz_static_retain_count(first));
 		}
 		/* second's dealloc released its ivar, so `first` is back to
 		 * just us. */
-		printf(\"first_rc_after=%d\\n\", [first retainCount]);
+		printf(\"first_rc_after=%d\\n\", oz_static_retain_count(first));
 		printf(\"still_alive_tag=%d\\n\", [first tag]);
 	}
 	printf(\"done\\n\");
@@ -342,7 +342,7 @@ fn strong_ivar_assigned_a_fresh_object_is_not_retained_twice() {
 	return self;
 }
 - (int)leafCount {
-	return [_leaf retainCount];
+	return oz_static_retain_count(_leaf);
 }
 - (void)dealloc {
 }

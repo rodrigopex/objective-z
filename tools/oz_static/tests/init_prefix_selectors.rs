@@ -138,7 +138,7 @@ int main(void) {
 \t * release used to do (#428). */
 \t{
 \t\tSensor *s = [[Sensor alloc] initWithValue:7];
-\t\tprintf(\"v=%d rc=%d\\n\", [s value], [s retainCount]);
+\t\tprintf(\"v=%d rc=%d\\n\", [s value], oz_static_retain_count(s));
 \t}
 \tprintf(\"done\\n\");
 \treturn 0;
@@ -170,7 +170,7 @@ fn plain_init_still_pairs_with_alloc() {
 int main(void) {
 \t{
 \t\tPlain *p = [[Plain alloc] init];
-\t\tprintf(\"rc=%d\\n\", [p retainCount]);
+\t\tprintf(\"rc=%d\\n\", oz_static_retain_count(p));
 \t}
 \tprintf(\"done\\n\");
 \treturn 0;

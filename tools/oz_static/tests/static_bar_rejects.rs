@@ -666,21 +666,37 @@ int main(void)
     assert_eq!(stdout, "alive=1\nderived cleanup\nbase cleanup\ndone\n");
 }
 
-/// `-retainCount` is **not** rejected. It takes and gives no ownership, so
-/// it is not a second ownership model: it lowers to `oz_static_retain_count`,
-/// which #418 made the single entry point for reading a refcount, and the
-/// fixtures that observe one depend on it.
+/// `-retainCount` is rejected too -- the fifth selector, added in #436.
+///
+/// This test asserted the opposite until then, and the reversal is the
+/// record worth keeping. #428 ruled on four selectors and left this one out
+/// on the grounds that reading a count takes and gives no ownership, so it
+/// is not a second ownership model. That reasoning is sound and answers a
+/// different question: ARC forbids the *send* regardless of ownership, and a
+/// probe settles it where an argument could not -- declared or undeclared,
+/// Clang under `-fobjc-arc` answers `ARC forbids explicit message send of
+/// 'retainCount'`. The rule the list now follows is one line, with nothing
+/// weighed per selector: **exactly what Clang refuses.**
+///
+/// Reading a refcount is not lost, and never depended on the message
+/// spelling. `include/oz_sdk/Foundation/OZObject.h` has called
+/// `oz_static_retain_count()` "the only refcount entry point Objective-C
+/// source may spell" since #418 -- a sentence true of the design and false
+/// of the implementation until this change. The second half of this test is
+/// that claim, compiled.
 #[test]
-fn retain_count_is_still_accepted() {
-    let src = format!(
-        "{}{}",
-        PREAMBLE(),
-        "\
+fn sending_retain_count_is_rejected_and_the_c_call_replaces_it() {
+    let body = "\
 @interface Thing : OZObject
 @end
 @implementation Thing
 @end
-
+";
+    let rejected = format!(
+        "{}{}{}",
+        PREAMBLE(),
+        body,
+        "\
 #include <stdio.h>
 int main(void)
 {
@@ -690,7 +706,29 @@ int main(void)
 }
 "
     );
-    let stdout = compile_and_run(&src, "retain_count_is_still_accepted");
+    let diags = common::expect_reject(&rejected);
+    assert!(
+        diags.contains("retainCount") && diags.contains("oz_static_retain_count"),
+        "the rejection must name the selector and the call that replaces it, got:\n{}",
+        diags
+    );
+
+    /* The positive control: the same program, the sanctioned spelling. */
+    let accepted = format!(
+        "{}{}{}",
+        PREAMBLE(),
+        body,
+        "\
+#include <stdio.h>
+int main(void)
+{
+	Thing *t = [Thing alloc];
+	printf(\"rc=%d\\n\", oz_static_retain_count(t));
+	return 0;
+}
+"
+    );
+    let stdout = compile_and_run(&accepted, "retain_count_via_c_call");
     assert_eq!(stdout, "rc=1\n");
 }
 
