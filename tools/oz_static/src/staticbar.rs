@@ -1135,6 +1135,126 @@ fn reserved_name_err(diags: &mut Vec<Diagnostic>, src: &str, node: Node) {
     );
 }
 
+/// The four selectors ARC owns, and which user code therefore cannot send.
+///
+/// Not a list of "discouraged" spellings: ARC is always enabled here, and
+/// every Clang path in this repo passes `-fobjc-arc`
+/// (`cmake/oz_static.cmake`, `cmake/ObjcClang.cmake`,
+/// `tests/tools/compile_and_run.py`, `tests/common/mod.rs`,
+/// `scripts/regen_zephyr_tests.py`, and `scripts/objz_check_compile_db.py`'s
+/// `REQUIRED_FLAGS`), under which each of these is a compile error. oz_static
+/// parses with tree-sitter rather than Clang, which is the only reason they
+/// were ever reachable (#428).
+///
+/// `retainCount` is deliberately absent. It takes and gives no ownership, so
+/// it is not a second ownership model -- it lowers to
+/// `oz_static_retain_count`, which #418 made the single entry point for
+/// reading a refcount, and the fixtures that observe one need it.
+const ARC_OWNED_SELECTORS: &[&str] = &["retain", "release", "autorelease", "dealloc"];
+
+/// Reject a send of `-retain`, `-release`, `-autorelease` or `-dealloc`.
+///
+/// **Deliberate, not accidental.** `[obj autorelease]` was already refused
+/// before this check existed, but only as a by-product of method lookup
+/// ("class 'X' has no method matching 'autorelease'"), which says nothing
+/// about the rule being broken; `[obj release]` was not refused at all, and
+/// `emit::released_by_hand` was built to *accommodate* it, making manual
+/// retain/release a second ownership model reachable only because the
+/// primary parser is more permissive than the oracle (#428).
+///
+/// Here rather than in one of the three body-scoped entry points
+/// (`check_method_body`, `check_function_body`, `check_macro_body`), for the
+/// same reason `check_reserved_names` is: this is a fact about the *send*
+/// and not about any body. `walk_for_reject` stops at a `block_literal`
+/// (the block is opaque to the capture check), never sees an ivar block or a
+/// file-scope initializer, and would have to be entered twice; a whole-root
+/// walk sees every position there is, which is what "enumerate the
+/// siblings rather than fixing the one" requires of a rejection that must
+/// catch every spelling.
+///
+/// The receiver's shape is not consulted at all, which is the point. A
+/// plain local, `self`, `super`, a bare ivar, `self->_ivar`, a subscript, a
+/// chained send, a cast and an `id`-typed reference all reach the same arm,
+/// because the question is which selector was sent and not what it was sent
+/// to -- the "key ownership on the reference, never on a syntactic form"
+/// rule, applied to a rejection.
+pub fn check_manual_memory_sends(root: Node, src: &str) -> Vec<Diagnostic> {
+    let mut diags = Vec::new();
+    walk_manual_memory_sends(root, src, &mut diags);
+    diags
+}
+
+fn walk_manual_memory_sends(node: Node, src: &str, diags: &mut Vec<Diagnostic>) {
+    if node.kind() == "message_expression" {
+        if let Some(selector) = unary_selector(node, src) {
+            if ARC_OWNED_SELECTORS.contains(&selector.as_str()) {
+                err(diags, src, node, arc_owned_selector_message(&selector));
+            }
+        }
+    }
+    /* No early return on any kind: a send inside a block literal, inside a
+     * `@synchronized` body, inside a nested initializer or inside a
+     * `-dealloc` override is the same send. */
+    let mut cursor = node.walk();
+    let children: Vec<Node> = node.children(&mut cursor).collect();
+    for child in children {
+        walk_manual_memory_sends(child, src, diags);
+    }
+}
+
+/// The selector of a message that takes no arguments, whatever its
+/// receiver looks like.
+///
+/// Deliberately *not* `message_selector`: that one finds the receiver by
+/// looking for the first `identifier` child, so a receiver that is not a
+/// bare identifier -- `self->_ivar`, `arr[0]`, `[Thing alloc]`, `(Thing *)t`
+/// -- leaves the selector's own identifier to be mistaken for the receiver
+/// and yields an empty string. This reads the shape the grammar actually
+/// produces, the way `emit::parse_message` does: `[`, receiver, selector,
+/// `]`, so exactly two children once the brackets are filtered out.
+fn unary_selector(node: Node, src: &str) -> Option<String> {
+    let mut cursor = node.walk();
+    let parts: Vec<Node> =
+        node.children(&mut cursor).filter(|c| c.kind() != "[" && c.kind() != "]").collect();
+    if parts.len() != 2 {
+        return None;
+    }
+    Some(node_text(parts[1], src).trim().to_string())
+}
+
+/// What to say about a send of one of `ARC_OWNED_SELECTORS`.
+///
+/// Worded to agree with #430's `@autoreleasepool` rejection, since a reader
+/// who hits one will hit the other: name the mechanism that is missing, and
+/// name the thing to write instead.
+fn arc_owned_selector_message(selector: &str) -> String {
+    let head = format!(
+        "'-{}' cannot be sent: ARC is always enabled in the static subset (every Clang path \
+         here passes -fobjc-arc, under which this is a compile error)",
+        selector
+    );
+    if selector == "dealloc" {
+        format!(
+            "{head}, and the deallocation path calls '-dealloc' for you (oz_static_release) \
+             with the superclass chain above an override called automatically -- so \
+             '[super dealloc]' is redundant, not required. Delete this line; keep the rest of \
+             the '-dealloc' body for cleanup that is not a reference release.",
+            head = head
+        )
+    } else {
+        format!(
+            "{head}, so manual retain/release is a second ownership model and a release ARC \
+             also emits is a double free. Let scope-based ARC manage the lifetime -- a local \
+             is released at the end of its scope, a store into a strong slot releases what it \
+             replaced, and an owned object ivar is released with its owner. Declare a \
+             reference '__unsafe_unretained' to opt one slot out; read a refcount with \
+             'oz_static_retain_count' (or '-retainCount', which lowers to it), which takes and \
+             gives no ownership.",
+            head = head
+        )
+    }
+}
+
 fn declared_name_nodes<'a>(decl: Node<'a>, out: &mut Vec<Node<'a>>) {
     let mut cursor = decl.walk();
     for child in decl.children(&mut cursor) {
@@ -1192,74 +1312,6 @@ fn find_capture(
     for child in node.children(&mut cursor) {
         find_capture(child, src, scope, own_names, diags);
     }
-}
-
-/// Reject `[_ivar release]` inside `-dealloc` for an ivar the class already
-/// owns, because that release is emitted automatically
-/// (`companion::render_release_ivars`) and doing both is a double free.
-///
-/// This is the one place oz_static deliberately diverges from the oracle
-/// rather than following it. `emit.py::_emit_user_dealloc` appends the
-/// owned-ivar releases *after* the user's body, so a `-dealloc` written in
-/// ordinary manual-retain/release style -- releasing what it owns -- has
-/// every one of those ivars released twice, silently. Real ARC does not
-/// paper over that: it makes an explicit `release` a compile error, and the
-/// safety comes from the rejection. Rejecting is also the only option
-/// consistent with never silently degrading.
-///
-/// Only owned object ivars are rejected. Releasing a local, a parameter, or
-/// an `__unsafe_unretained` ivar the author manages by hand is untouched --
-/// nothing releases those automatically.
-fn check_dealloc_body(
-    body: Node,
-    src: &str,
-    program: &Program,
-    class_info: &ClassInfo,
-    diags: &mut Vec<Diagnostic>,
-) {
-    let owned = program.owned_object_ivar_names(&class_info.name);
-    if owned.is_empty() {
-        return;
-    }
-    fn walk(
-        node: Node,
-        src: &str,
-        owned: &[String],
-        class_name: &str,
-        diags: &mut Vec<Diagnostic>,
-    ) {
-        if node.kind() == "message_expression" {
-            let mut cursor = node.walk();
-            let parts: Vec<Node> = node
-                .children(&mut cursor)
-                .filter(|c| c.kind() != "[" && c.kind() != "]")
-                .collect();
-            if parts.len() == 2 && node_text(parts[1], src) == "release" {
-                let receiver = node_text(parts[0], src);
-                if owned.iter().any(|ivar| ivar == receiver) {
-                    err(
-                        diags,
-                        src,
-                        node,
-                        format!(
-                            "'{recv}' is released automatically when a {class} is deallocated, so \
-                             releasing it here would release it twice -- drop this line (the \
-                             generated {class}_oz_release_ivars does it). Declare the ivar \
-                             '__unsafe_unretained' if this class does not own it.",
-                            recv = receiver,
-                            class = class_name
-                        ),
-                    );
-                }
-            }
-        }
-        let mut cursor = node.walk();
-        let children: Vec<Node> = node.children(&mut cursor).collect();
-        for child in children {
-            walk(child, src, owned, class_name, diags);
-        }
-    }
-    walk(body, src, &owned, &class_info.name, diags);
 }
 
 /// Objective-C node kinds that must not appear inside a `#define` body.
@@ -1434,9 +1486,6 @@ pub fn check_method_body(
             ),
         );
     }
-    if selector == "dealloc" {
-        check_dealloc_body(body, src, program, class_info, &mut diags);
-    }
     let ivar_names: HashSet<String> =
         program.all_ivars(&class_info.name).into_iter().map(|(n, _)| n).collect();
     let owned_ivars: HashSet<String> =
@@ -1482,8 +1531,7 @@ pub fn check_method_body(
 /// which is what those arms then conclude. Seeding it from some nearby class instead would
 /// invent captures: `samples/gpio_demo`'s `[led toggle]` inside a block in
 /// `main` would be flagged the moment any class in that file declared an ivar
-/// named `led`. `check_dealloc_body` is likewise inapplicable and is gated on
-/// the selector, not called here.
+/// named `led`.
 pub fn check_function_body(body: Node, src: &str, program: &Program) -> Vec<Diagnostic> {
     let mut diags = Vec::new();
     let no_ivars: HashSet<String> = HashSet::new();

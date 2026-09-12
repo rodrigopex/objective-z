@@ -178,7 +178,7 @@ fn fresh_local_alloc_in_loop_accepted() {
          - (void)ping {{\n}}\n@end\n\
          @interface Foo : OZObject\n- (void)test;\n@end\n@implementation Foo\n\
          - (void)test {{\n    int i;\n    for (i = 0; i < 3; i++) {{\n\
-         \x20       Item *it = [Item alloc];\n        [it ping];\n        [it release];\n    }}\n}}\n@end\n",
+         \x20       Item *it = [Item alloc];\n        [it ping];\n    }}\n}}\n@end\n",
         PREAMBLE()
     );
     oz_static::transpile(&src).unwrap_or_else(|diags| {
@@ -289,16 +289,13 @@ fn protocol_literal_expression_rejected() {
     assert!(diags.contains("@protocol(...)"), "diagnostics: {}", diags);
 }
 
-/// Releasing an owned object ivar by hand inside `-dealloc` is rejected,
-/// because the release is already emitted automatically
-/// (`companion::render_release_ivars`) and running both is a double free.
+/// Releasing an owned object ivar by hand inside `-dealloc` is rejected.
 ///
-/// A deliberate divergence from the oracle rather than a port of it:
-/// `emit.py::_emit_user_dealloc` appends the automatic releases *after* the
-/// user's body, so ordinary manual-retain/release teardown has every owned
-/// ivar released twice, silently. Real ARC does not compensate for that
-/// either -- it makes the explicit `release` a compile error, which is the
-/// rule taken here.
+/// It used to be rejected for a narrower reason -- the release is already
+/// emitted automatically (`companion::render_release_ivars`) and running
+/// both is a double free -- by a check scoped to `-dealloc` and to ivars the
+/// class owns. It is now rejected by the general rule (#428): ARC is always
+/// enabled, so `-release` cannot be sent anywhere, whatever the receiver.
 #[test]
 fn releasing_owned_ivar_in_dealloc_rejected() {
     let src = format!(
@@ -323,15 +320,22 @@ fn releasing_owned_ivar_in_dealloc_rejected() {
 "
     );
     let diags = expect_reject(&src);
-    assert!(diags.contains("released automatically"), "diagnostics: {}", diags);
-    assert!(diags.contains("_held"), "diagnostics: {}", diags);
+    assert!(diags.contains("'-release' cannot be sent"), "diagnostics: {}", diags);
+    assert!(diags.contains("ARC is always enabled"), "diagnostics: {}", diags);
 }
 
-/// The contrast: an `__unsafe_unretained` ivar is *not* released
-/// automatically, so releasing it by hand stays legal. The rejection is
-/// scoped to ivars the class actually owns.
+/// **Reversal (#428).** This case used to assert the opposite: that
+/// releasing an `__unsafe_unretained` ivar by hand was *accepted*, on the
+/// grounds that nothing releases such an ivar automatically so the author
+/// must. That reasoning does not survive ARC being unconditional -- the
+/// qualifier says "this slot does not participate in ARC's retain/release",
+/// not "manual sends are legal on it", and under `-fobjc-arc` Clang refuses
+/// `[_seen release]` regardless of how `_seen` is qualified.
+///
+/// Kept as a rejection rather than deleted, because the shape is the one a
+/// reader is most likely to believe is still allowed.
 #[test]
-fn releasing_unretained_ivar_in_dealloc_accepted() {
+fn releasing_unretained_ivar_in_dealloc_rejected() {
     let src = format!(
         "{}{}",
         PREAMBLE(),
@@ -353,12 +357,251 @@ fn releasing_unretained_ivar_in_dealloc_accepted() {
 @end
 "
     );
-    assert!(
-        oz_static::transpile(&src).is_ok(),
-        "releasing an __unsafe_unretained ivar should be accepted"
-    );
+    let diags = expect_reject(&src);
+    assert!(diags.contains("'-release' cannot be sent"), "diagnostics: {}", diags);
+    assert!(diags.contains("__unsafe_unretained"), "diagnostics: {}", diags);
 }
 
+// ---------------------------------------------------------------------
+// Manual retain/release/autorelease/dealloc (#428)
+//
+// ARC is always enabled, so these four selectors are the runtime's to
+// emit and not the author's to send. The rejection is keyed on the
+// *selector*, never on the receiver's shape, so the matrix below is the
+// standing record that no spelling of a receiver escapes it -- a plain
+// local, `self`, `super`, a bare ivar, `self->_ivar`, a cross-instance
+// ivar, a property through dot syntax, an array element, a chained send,
+// a parenthesized receiver, a cast receiver and an `id`-typed one. Miss
+// one and the second ownership model comes back through it.
+// ---------------------------------------------------------------------
+
+/// Every receiver spelling, one row each, as `(label, receiver text)`.
+const RECEIVER_SPELLINGS: &[(&str, &str)] = &[
+    ("plain local", "t"),
+    ("parenthesized local", "(t)"),
+    ("cast local", "(Thing *)t"),
+    ("id-typed local", "u"),
+    ("self", "self"),
+    ("super", "super"),
+    ("bare ivar", "_kid"),
+    ("ivar through self", "self->_kid"),
+    ("ivar of another instance", "t->_kid"),
+    ("property through dot syntax", "self.kid"),
+    ("array element", "_arr[0]"),
+    ("chained send", "[Thing alloc]"),
+];
+
+fn manual_send_source(receiver: &str, selector: &str) -> String {
+    format!(
+        "{}{}",
+        PREAMBLE(),
+        format!(
+            "\
+@interface Thing : OZObject {{
+	Thing *_kid;
+	Thing *_arr[2];
+}}
+@property (nonatomic) Thing *kid;
+- (void)go;
+@end
+@implementation Thing
+@synthesize kid = _kid;
+- (void)go
+{{
+	Thing *t = [Thing alloc];
+	id u = [Thing alloc];
+	[{receiver} {selector}];
+	(void)t;
+	(void)u;
+}}
+@end
+",
+            receiver = receiver,
+            selector = selector
+        )
+    )
+}
+
+#[test]
+fn every_receiver_spelling_of_a_manual_send_is_rejected() {
+    for selector in ["retain", "release", "autorelease", "dealloc"] {
+        for (label, receiver) in RECEIVER_SPELLINGS {
+            let diags = expect_reject(&manual_send_source(receiver, selector));
+            assert!(
+                diags.contains(&format!("'-{}' cannot be sent", selector)),
+                "[{} {}] ({}) was not rejected by the ARC rule; diagnostics: {}",
+                receiver,
+                selector,
+                label,
+                diags
+            );
+        }
+    }
+}
+
+/// A send nested inside a construct the bar's body scan treats as opaque or
+/// never enters at all. `staticbar::walk_for_reject` returns at a
+/// `block_literal`, which is why the rejection is a whole-root walk driven
+/// from `collect` rather than an arm in that scan.
+#[test]
+fn manual_send_inside_a_block_or_nested_scope_is_rejected() {
+    let bodies = [
+        ("block literal", "\tvoid (^b)(void) = ^{ [t release]; };\n\t(void)b;"),
+        ("synchronized body", "\t@synchronized(self) { [t release]; }"),
+        ("if body", "\tif (t != 0) { [t release]; }"),
+        ("for body", "\tfor (int i = 0; i < 1; i++) { [t release]; }"),
+        ("ternary operand", "\tint n = (t != 0) ? ([t release], 1) : 0;\n\t(void)n;"),
+    ];
+    for (label, body) in bodies {
+        let src = format!(
+            "{}{}",
+            PREAMBLE(),
+            format!(
+                "\
+@interface Thing : OZObject
+- (void)go;
+@end
+@implementation Thing
+- (void)go
+{{
+	Thing *t = [Thing alloc];
+{body}
+	(void)t;
+}}
+@end
+",
+                body = body.replace("\\t", "\t")
+            )
+        );
+        let diags = expect_reject(&src);
+        assert!(
+            diags.contains("'-release' cannot be sent"),
+            "a release in a {} was not rejected; diagnostics: {}",
+            label,
+            diags
+        );
+    }
+}
+
+/// A send from a **free function** rather than a method body, which the bar
+/// enters through a different function (`check_function_body`) -- and which
+/// the whole-root walk does not have to be entered twice for.
+#[test]
+fn manual_send_in_a_free_function_is_rejected() {
+    let src = format!(
+        "{}{}",
+        PREAMBLE(),
+        "\
+@interface Thing : OZObject
+@end
+@implementation Thing
+@end
+
+void tick(void)
+{
+	Thing *t = [Thing alloc];
+	[t release];
+}
+"
+    );
+    let diags = expect_reject(&src);
+    assert!(diags.contains("'-release' cannot be sent"), "diagnostics: {}", diags);
+}
+
+/// The defect that surfaced #428: a hand release into a `static` slot.
+///
+/// `emit::managed_object_locals` consulted `released_by_hand` and so left
+/// the slot alone; `static_object_locals` and `is_file_scope_object` did
+/// not, so both releases were emitted for the *same* reference:
+///
+/// ```c
+/// if (cached != nil) { oz_static_release((struct OZObject *)(cached)); }
+/// (oz_static_release((struct OZObject *)(cached)), cached = Thing_oz_alloc());
+/// ```
+///
+/// Two releases of one reference -- a segfault on the host, not a leak.
+/// Adding the missing filter to both slot paths would have silenced it while
+/// leaving the second ownership model in place, and a third slot kind added
+/// later would have reintroduced it. Rejecting the input removes the
+/// question: there is no longer a program whose double release has to be
+/// avoided.
+#[test]
+fn hand_release_into_a_static_slot_is_rejected_not_miscompiled() {
+    let src = format!(
+        "{}{}",
+        PREAMBLE(),
+        "\
+@interface Thing : OZObject
+@end
+@implementation Thing
+@end
+
+void tick(void)
+{
+	static Thing *cached;
+
+	[cached release];
+	cached = [Thing alloc];
+}
+"
+    );
+    let diags = expect_reject(&src);
+    assert!(diags.contains("'-release' cannot be sent"), "diagnostics: {}", diags);
+}
+
+/// The same shape at **file scope**, the other slot path `released_by_hand`
+/// never reached (`emit::is_file_scope_object`).
+#[test]
+fn hand_release_into_a_file_scope_slot_is_rejected_not_miscompiled() {
+    let src = format!(
+        "{}{}",
+        PREAMBLE(),
+        "\
+@interface Thing : OZObject
+@end
+@implementation Thing
+@end
+
+static Thing *g_cached;
+
+void tock(void)
+{
+	[g_cached release];
+	g_cached = [Thing alloc];
+}
+"
+    );
+    let diags = expect_reject(&src);
+    assert!(diags.contains("'-release' cannot be sent"), "diagnostics: {}", diags);
+}
+
+/// `-retainCount` is **not** rejected. It takes and gives no ownership, so
+/// it is not a second ownership model: it lowers to `oz_static_retain_count`,
+/// which #418 made the single entry point for reading a refcount, and the
+/// fixtures that observe one depend on it.
+#[test]
+fn retain_count_is_still_accepted() {
+    let src = format!(
+        "{}{}",
+        PREAMBLE(),
+        "\
+@interface Thing : OZObject
+@end
+@implementation Thing
+@end
+
+#include <stdio.h>
+int main(void)
+{
+	Thing *t = [Thing alloc];
+	printf(\"rc=%d\\n\", [t retainCount]);
+	return 0;
+}
+"
+    );
+    let stdout = compile_and_run(&src, "retain_count_is_still_accepted");
+    assert_eq!(stdout, "rc=1\n");
+}
 
 // ---------------------------------------------------------------------
 // Collection literals that escape a loop iteration (OZ-098)

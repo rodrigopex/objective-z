@@ -762,6 +762,16 @@ pub fn collect(source: &str) -> (Program, Vec<crate::model::Diagnostic>) {
      */
     diagnostics.extend(crate::staticbar::check_reserved_names(root, source));
 
+    /*
+     * And for the same reason: a send of `-retain`, `-release`,
+     * `-autorelease` or `-dealloc` is a fact about the send, not about the
+     * body it sits in. ARC is always enabled, so those four are the
+     * runtime's to emit and not the author's to write (#428), and none of
+     * `staticbar`'s body-scoped entry points sees every position one can
+     * appear in -- `walk_for_reject` treats a block literal as opaque.
+     */
+    diagnostics.extend(crate::staticbar::check_manual_memory_sends(root, source));
+
     // A `superclass` reference that doesn't resolve to a class actually
     // collected above (e.g. a real Foundation class only ever pulled in
     // via `#import <Foundation/Foundation.h>` -- oz_static has no import

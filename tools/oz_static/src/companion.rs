@@ -51,6 +51,36 @@ fn find_defining_dealloc(program: &Program, start: &str) -> Option<String> {
     find_defining_method(program, start, "dealloc", false)
 }
 
+/// Every `-dealloc` an instance of `start` must run, most-derived first.
+///
+/// This is the `[super dealloc]` chain, synthesized. It used to be the
+/// author's to write: the dispatch called `find_defining_dealloc(start)` and
+/// nothing else, so a superclass's own `-dealloc` body ran only because a
+/// subclass spelled `[super dealloc]` at the end of its own. With that send
+/// rejected (#428 -- ARC is always enabled, and under `-fobjc-arc` Clang
+/// refuses it), there would otherwise be **no** spelling that runs a
+/// superclass's cleanup and no error saying so, which is the silent
+/// degradation this project forbids. Real ARC emits the super call itself;
+/// so does this.
+///
+/// Only classes that define `-dealloc` *themselves* appear, so a class with
+/// none anywhere in its chain yields an empty list and the caller falls back
+/// to the root's (synthesized, no-op) one exactly as before -- which is what
+/// keeps the generated C byte-identical for every class that never had a
+/// `-dealloc` to chain from.
+fn dealloc_chain(program: &Program, start: &str) -> Vec<String> {
+    let mut chain = Vec::new();
+    let mut cur = Some(start.to_string());
+    while let Some(name) = cur {
+        let Some(info) = program.classes.get(&name) else { break };
+        if info.methods.iter().any(|m| !m.is_class_method && m.selector == "dealloc") {
+            chain.push(name.clone());
+        }
+        cur = info.superclass.clone();
+    }
+    chain
+}
+
 /// Order classes so a superclass's struct always precedes its subclasses'
 /// (C requires a struct's members to be complete types when embedded by
 /// value, e.g. `struct Base base;`), regardless of the order they appeared
@@ -352,7 +382,8 @@ fn render_slab_free(name: &str, slots: usize) -> String {
 /// avoids that by making `[_ivar release]` in `-dealloc` a compile error
 /// rather than by adding a second release, and that is the rule followed
 /// here: the release is automatic, and an explicit one is rejected
-/// (`staticbar::check_dealloc_body`).
+/// (`staticbar::check_manual_memory_sends`, #428 -- which refuses a
+/// `-release` send wherever it appears, not only inside `-dealloc`).
 ///
 /// Lives in the owning class's own file because the companion header only
 /// forward-declares non-root structs and so cannot reach an ivar through
@@ -1209,9 +1240,9 @@ pub fn render(
     introspection_used: &crate::emit::IntrospectionUse,
 ) -> (String, String) {
     let root = program.root_class().map(|s| s.to_string());
-    // The root class always terminates the [super dealloc] chain. If the
-    // user didn't write one, synthesize a no-op so every subclass's chain
-    // still resolves statically.
+    // The root class terminates the dealloc chain `dealloc_chain` walks. If
+    // the user didn't write one, synthesize a no-op, so a class with no
+    // `-dealloc` anywhere in its chain still has something to call.
     let root_needs_synthetic_dealloc =
         root.as_deref().is_some_and(|r| find_defining_dealloc(program, r).is_none());
     let struct_order = topological_order(program);
@@ -1540,8 +1571,8 @@ sized by counting literal sites (see pools.rs). Override with the\n * \
 
         if root_needs_synthetic_dealloc {
             c.push_str(&format!(
-                "/* synthesized: {root} has no -dealloc in source -- a no-op so every\n * \
-subclass's [super dealloc] chain still resolves statically (not from source) */\n\
+                "/* synthesized: {root} has no -dealloc in source -- a no-op so a class\n * \
+with no -dealloc anywhere in its chain still has one to call (not from source) */\n\
 void {root}_dealloc(struct {root} *self)\n{{\n\t(void)self;\n}}\n\n",
                 root = root
             ));
@@ -1616,10 +1647,20 @@ vtable\") -- never mutated at runtime. */\n",
             root = root
         ));
         for name in &program.class_order {
-            let defining =
-                find_defining_dealloc(program, name).unwrap_or_else(|| root.clone());
             c.push_str(&format!("\tcase OZ_STATIC_CLASS_{}: /* {} */\n", name, name));
-            c.push_str(&format!("\t\t{}_dealloc((struct {} *)self);\n", defining, defining));
+            /* The whole `[super dealloc]` chain, most-derived first,
+             * because that send is rejected in source now and something
+             * still has to run a superclass's own cleanup (#428 -- see
+             * `dealloc_chain`). A class with no `-dealloc` anywhere in its
+             * chain calls the root's, which is where the synthesized no-op
+             * comes in, and that is the case whose output is unchanged. */
+            let mut chain = dealloc_chain(program, name);
+            if chain.is_empty() {
+                chain.push(root.clone());
+            }
+            for defining in &chain {
+                c.push_str(&format!("\t\t{}_dealloc((struct {} *)self);\n", defining, defining));
+            }
             // Owned object ivars are released after the class's own
             // -dealloc body has run, so that body can still read them --
             // the order the oracle uses too. The releases cannot be inlined
