@@ -575,6 +575,97 @@ void tock(void)
     assert!(diags.contains("'-release' cannot be sent"), "diagnostics: {}", diags);
 }
 
+/// Declaring or defining `-retain`, `-release` or `-autorelease` is
+/// refused as well, for the reason `INTRINSIC_SELECTORS` gives: with every
+/// send of them a located error, such a body could never run, and silently
+/// ignoring a method someone wrote is the degradation this module exists to
+/// prevent. Real ARC refuses the override too.
+///
+/// Found by the fixtures rather than reasoned about: `selector_ownership_matrix`
+/// carried `- (id)autorelease { return self; }`, which is what made its
+/// `[[[Thing alloc] init] autorelease]` row work at all. Rejecting only the
+/// send would have left that definition accepted and uncallable.
+#[test]
+fn declaring_a_selector_arc_owns_is_rejected() {
+    for (kind, decl) in [
+        ("declaration", "- (id)retain;\n- (void)release;\n- (id)autorelease;"),
+        (
+            "definition",
+            "- (id)retain { return self; }\n- (void)release { }\n- (id)autorelease { return self; }",
+        ),
+    ] {
+        let (interface_extra, impl_extra) = if kind == "declaration" {
+            (decl, "")
+        } else {
+            ("", decl)
+        };
+        let src = format!(
+            "{}@interface Thing : OZObject\n{}\n@end\n@implementation Thing\n{}\n@end\n",
+            PREAMBLE(),
+            interface_extra,
+            impl_extra
+        );
+        let diags = expect_reject(&src);
+        for selector in ["retain", "release", "autorelease"] {
+            assert!(
+                diags.contains(&format!("'-{}' cannot be declared or defined", selector)),
+                "the {} of '-{}' was not rejected; diagnostics: {}",
+                kind,
+                selector,
+                diags
+            );
+        }
+    }
+}
+
+/// The contrast, and the one exception: a `-dealloc` override is supported.
+/// It is the cleanup hook, the deallocation path calls it, and the chain
+/// above it is called automatically (`companion::dealloc_chain`) -- so a
+/// body that does real cleanup still works, without `[super dealloc]`.
+#[test]
+fn a_dealloc_override_is_still_supported_and_chains_automatically() {
+    let src = format!(
+        "{}{}",
+        PREAMBLE(),
+        "\
+@interface Base : OZObject
+- (void)dealloc;
+@end
+@implementation Base
+- (void)dealloc {
+\tprintf(\"base cleanup\\n\");
+}
+@end
+
+@interface Derived : Base
+- (void)dealloc;
+@end
+@implementation Derived
+- (void)dealloc {
+\tprintf(\"derived cleanup\\n\");
+}
+@end
+
+#include <stdio.h>
+int main(void)
+{
+\t{
+\t\tDerived *d = [Derived alloc];
+\t\tprintf(\"alive=%d\\n\", d != 0);
+\t}
+\tprintf(\"done\\n\");
+\treturn 0;
+}
+"
+    );
+    let stdout = compile_and_run(&src, "a_dealloc_override_is_still_supported_and_chains_automatically");
+    /* Most-derived first, then the chain above it, then the root's -- the
+     * order `[super dealloc]` at the end of each body produced, now
+     * synthesized. `OZObject`'s own `-dealloc` is empty and prints
+     * nothing. */
+    assert_eq!(stdout, "alive=1\nderived cleanup\nbase cleanup\ndone\n");
+}
+
 /// `-retainCount` is **not** rejected. It takes and gives no ownership, so
 /// it is not a second ownership model: it lowers to `oz_static_retain_count`,
 /// which #418 made the single entry point for reading a refcount, and the

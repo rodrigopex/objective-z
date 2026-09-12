@@ -1192,6 +1192,28 @@ fn walk_manual_memory_sends(node: Node, src: &str, diags: &mut Vec<Diagnostic>) 
             }
         }
     }
+    /* Declaring or defining one of the three is refused as well, and for
+     * the reason `INTRINSIC_SELECTORS` gives: with every send of it a
+     * located error, such a body could never run, and silently ignoring a
+     * method someone wrote is the degradation this module exists to
+     * prevent. Real ARC refuses the override too. `-dealloc` is the
+     * exception in both places -- it is the cleanup hook, the deallocation
+     * path calls it, and an override is how a class does its own teardown. */
+    if matches!(node.kind(), "method_declaration" | "method_definition") {
+        if let Some(name) = unary_method_name(node, src) {
+            if ARC_OWNED_SELECTORS.contains(&name.as_str()) && name != "dealloc" {
+                err(
+                    diags,
+                    src,
+                    node,
+                    format!(
+                        "'-{name}' cannot be declared or defined: ARC is always enabled in the                          static subset and owns that selector, so every send of it is a located                          error -- this body could never run. Real ARC refuses the override too.                          (A '-dealloc' override *is* supported: it is the cleanup hook, and the                          chain above it is called automatically.)",
+                        name = name
+                    ),
+                );
+            }
+        }
+    }
     /* No early return on any kind: a send inside a block literal, inside a
      * `@synchronized` body, inside a nested initializer or inside a
      * `-dealloc` override is the same send. */
@@ -1220,6 +1242,28 @@ fn unary_selector(node: Node, src: &str) -> Option<String> {
         return None;
     }
     Some(node_text(parts[1], src).trim().to_string())
+}
+
+/// The name of a method that takes no arguments -- a `method_declaration`
+/// or `method_definition` with no `method_parameter` child at all.
+///
+/// A parameterized selector cannot be one of `ARC_OWNED_SELECTORS`, and
+/// only the unary shape needs recognising, so the test is "no
+/// `method_parameter`, and exactly one `identifier`". Read off the node's
+/// own children the way `collect::extract_method_sig` does, so the two
+/// agree about what a selector is.
+fn unary_method_name(node: Node, src: &str) -> Option<String> {
+    let mut cursor = node.walk();
+    let children: Vec<Node> = node.children(&mut cursor).collect();
+    if children.iter().any(|c| c.kind() == "method_parameter") {
+        return None;
+    }
+    let mut names = children.iter().filter(|c| c.kind() == "identifier");
+    let first = names.next()?;
+    if names.next().is_some() {
+        return None;
+    }
+    Some(node_text(*first, src).trim().to_string())
 }
 
 /// What to say about a send of one of `ARC_OWNED_SELECTORS`.

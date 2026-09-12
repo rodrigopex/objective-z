@@ -35,7 +35,10 @@ fn dispatch_refcounting_super_and_ivars() {
 	}
 }
 - (void)dealloc {
-	[super dealloc];
+	/* An empty override, kept because the point of this case is that the
+	 * dealloc dispatch reaches it. `[super dealloc]` used to be its whole
+	 * body; the chain above an override is called automatically now
+	 * (companion::dealloc_chain), and the send is a located error (#428). */
 }
 @end
 
@@ -45,10 +48,14 @@ int main(void) {
 	Sensor *s = [Sensor alloc];
 	[s setValue:10];
 	[s bump:5 andLog:1];
-	[s retain];
-	[s release];
+	/* The balanced retain/release pair this case is named for, spelled
+	 * the way ARC gives it instead of `[s retain]; [s release];` (#428):
+	 * a store into a strong slot retains, and storing nil over it
+	 * releases. `s` survives both, which is the claim. */
+	static Sensor *held;
+	held = s;
+	held = 0;
 	printf(\"value=%d\\n\", [s value]);
-	[s release];
 	return 0;
 }
 "
@@ -140,7 +147,6 @@ int main(void) {
 	[l bumpCount];
 	[l bumpCount];
 	printf(\"count=%d\\n\", [l count]);
-	[l release];
 	return 0;
 }
 "

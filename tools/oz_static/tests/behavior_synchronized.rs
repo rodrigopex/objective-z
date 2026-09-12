@@ -57,7 +57,6 @@ int main(void) {
 	printf(\"flag_before=%d\\n\", [t flag]);
 	[t run];
 	printf(\"flag_after=%d\\n\", [t flag]);
-	[t release];
 	return 0;
 }
 "
@@ -99,7 +98,6 @@ int main(void) {
 		[c increment];
 	}
 	printf(\"count=%d\\n\", [c count]);
-	[c release];
 	return 0;
 }
 "
@@ -162,9 +160,6 @@ int main(void) {
 	printf(\"self_outer=%d\\n\", [n outer]);
 	printf(\"self_inner=%d\\n\", [n inner]);
 
-	[a release];
-	[b release];
-	[n release];
 	return 0;
 }
 "
@@ -193,7 +188,6 @@ fn locals_declared_inside_synchronized() {
 	@synchronized(self) {
 		SyncLocal *tmp = [SyncLocal alloc];
 		_marker = 1;
-		[tmp release];
 	}
 }
 - (int)marker {
@@ -206,7 +200,6 @@ int main(void) {
 	SyncLocal *s = [SyncLocal alloc];
 	[s run];
 	printf(\"marker=%d\\n\", [s marker]);
-	[s release];
 	return 0;
 }
 "
@@ -250,7 +243,6 @@ int main(void) {
 	printf(\"value=%d\\n\", [e value]);
 	/* Entering again must still work -- proof the lock was released. */
 	printf(\"computed_again=%d\\n\", [e compute]);
-	[e release];
 	return 0;
 }
 "
@@ -322,7 +314,6 @@ int main(void) {
 	LoopSync *l = [LoopSync alloc];
 	[l run];
 	printf(\"n=%d\\n\", [l n]);
-	[l release];
 	return 0;
 }
 "

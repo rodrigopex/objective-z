@@ -292,8 +292,10 @@ int main(void)
  *
  * Measured on `main` before the fix, with these exact programs: the static
  * local and the global both printed `deallocs=0` where they now print 1,
- * and the borrowed-call row's `[g_slot tag]` after `[a release]` was a
- * read of freed memory. A leak in two rows and a use-after-free in the
+ * and the borrowed-call row's `[g_slot tag]` after the caller let go of
+ * `a` was a read of freed memory (`[a release]` as the fixture then spelled
+ * it; a braced scope since #428). A leak in two rows and a use-after-free
+ * in the
  * third, and nothing in the tree said those slots were only partly
  * managed.
  */
@@ -374,9 +376,11 @@ int main(void)
 /// `g_slot = a` already did. The two spell the same reference, and keying
 /// on the spelling is what left them different.
 ///
-/// The retain is what the last line proves: after the caller's own
-/// `[a release]` the slot is the only owner left, so reading the tag is a
-/// live read. Before the fix it was a read of freed memory.
+/// The retain is what the last line proves: once the caller's own scope
+/// has let go of `a` -- the braced scope in the fixture, which replaced an
+/// explicit `[a release]` when #428 made that a located error -- the slot
+/// is the only owner left, so reading the tag is a live read. Before the
+/// fix it was a read of freed memory.
 #[test]
 fn a_global_retains_a_borrowed_call_result_and_releases_what_it_replaced() {
     let src = program(
@@ -397,13 +401,19 @@ static void stash(Thing *t)
 
 int main(void)
 {
-	Thing *a = [[Thing alloc] initWithTag:1];
+	/* `a` lives in a braced scope so that the point where the caller
+	 * lets go of its own reference is determinate -- it used to be
+	 * spelled `[a release]`, which #428 made a located error. Scope
+	 * exit is where ARC releases an owned local, so the last line is
+	 * still read *after* the caller's reference is gone. */
+	{
+		Thing *a = [[Thing alloc] initWithTag:1];
 
-	g_slot = [[Thing alloc] initWithTag:2];
-	printf(\"first deallocs=%d\\n\", g_deallocs);
-	stash(a);
-	printf(\"stashed deallocs=%d tag=%d\\n\", g_deallocs, [g_slot tag]);
-	[a release];
+		g_slot = [[Thing alloc] initWithTag:2];
+		printf(\"first deallocs=%d\\n\", g_deallocs);
+		stash(a);
+		printf(\"stashed deallocs=%d tag=%d\\n\", g_deallocs, [g_slot tag]);
+	}
 	printf(\"released deallocs=%d tag=%d\\n\", g_deallocs, [g_slot tag]);
 	return 0;
 }
@@ -455,14 +465,15 @@ static Thing *pick(Thing *t)
 
 int main(void)
 {
-	Thing *a = [[Thing alloc] initWithTag:1];
+	{
+		Thing *a = [[Thing alloc] initWithTag:1];
 
-	g_slot = [[Thing alloc] initWithTag:2];
-	for (int i = 0; i < 3; i++) {
-		g_slot = pick(a);
+		g_slot = [[Thing alloc] initWithTag:2];
+		for (int i = 0; i < 3; i++) {
+			g_slot = pick(a);
+		}
+		printf(\"loop deallocs=%d tag=%d\\n\", g_deallocs, [g_slot tag]);
 	}
-	printf(\"loop deallocs=%d tag=%d\\n\", g_deallocs, [g_slot tag]);
-	[a release];
 	printf(\"end deallocs=%d tag=%d\\n\", g_deallocs, [g_slot tag]);
 	return 0;
 }

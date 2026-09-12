@@ -45,7 +45,6 @@ fn autoreleasepool_unwraps_to_plain_block() {
 int main(void) {{
 	Foo *f = [Foo alloc];
 	printf(\"compute=%d\\n\", [f compute]);
-	[f release];
 	return 0;
 }}
 ",
@@ -90,7 +89,6 @@ fn autoreleasepool_with_message_sends_inside() {
 		Bar *b = [Bar alloc];
 		[b setValue:5];
 		total = [b value] * 2;
-		[b release];
 	}}
 	return total;
 }}
@@ -101,7 +99,6 @@ fn autoreleasepool_with_message_sends_inside() {
 int main(void) {{
 	Baz *z = [Baz alloc];
 	printf(\"run=%d\\n\", [z run]);
-	[z release];
 	return 0;
 }}
 ",
@@ -147,7 +144,6 @@ int main(void) {{
 	Seq *s = [Seq alloc];
 	[s run];
 	printf(\"total=%d\\n\", [s total]);
-	[s release];
 	return 0;
 }}
 ",
