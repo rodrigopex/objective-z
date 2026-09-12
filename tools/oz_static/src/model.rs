@@ -328,8 +328,13 @@ impl Program {
         false
     }
 
-    /// `owned_object_ivars` as plain ivar names rather than access paths --
-    /// what `staticbar` needs to recognise one being released by hand.
+    /// `owned_object_ivars` as plain ivar names rather than access paths.
+    ///
+    /// It existed for `staticbar::check_dealloc_body`, which recognised an
+    /// owned ivar being released by hand; that check went when a
+    /// `-release` send became a located error wherever it appears (#428).
+    /// The live reader is `companion::render_release_ivars`, through
+    /// `owned_object_ivars`.
     ///
     /// With a Clang AST supplied (`--ast`), Clang decides: it resolves types
     /// and, under `-fobjc-arc`, states each ivar's ownership outright, so an
