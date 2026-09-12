@@ -427,7 +427,6 @@ int main(void) {
 	Box *b = [Box alloc];
 	[b frob];
 	printf(\"ok\\n\");
-	[b release];
 	return 0;
 }
 "

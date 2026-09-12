@@ -135,7 +135,6 @@ int main(void) {
 	buf[n] = 0;
 	printf(\"desc=%s\\n\", buf);
 	printf(\"len=%d\\n\", n);
-	[nums release];
 	return 0;
 }
 "
@@ -179,7 +178,6 @@ int main(void) {
 		}
 	}];
 	printf(\"calls_until_stop=%d\\n\", g_calls);
-	[nums release];
 	return 0;
 }
 "

@@ -83,7 +83,6 @@ int main(void) {
 	[o build];
 	printf(\"bare=%d\\n\", [o bareV]);
 	printf(\"tagged=%d\\n\", [o taggedV]);
-	[o release];
 	return 0;
 }
 "
@@ -119,7 +118,6 @@ int main(void) {
 	printf(\"erased_non_null=%d\\n\", erased != 0);
 	marker();
 	printf(\"ran=%d\\n\", g_ran);
-	[b release];
 	return 0;
 }
 "
@@ -142,7 +140,6 @@ fn send_through_cast_resolves_receiver() {
 int main(void) {
 	id boxed = [OZNumber numberWithInt32:42];
 	printf(\"val=%d\\n\", [((OZNumber *)boxed) int32Value]);
-	[boxed release];
 	return 0;
 }
 "

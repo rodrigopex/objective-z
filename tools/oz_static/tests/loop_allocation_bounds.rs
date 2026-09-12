@@ -24,8 +24,11 @@
 //   | ivar that is not an owned slot       | yes    | n/a, no release | loop |
 //
 // The ivar overlap was called inherent here, on the grounds that the new
-// value must be evaluated before the old is released or
-// `_ivar = [_ivar retain]` would free a live object. That holds only for a
+// value must be evaluated before the old is released or a store whose
+// right-hand side reads the ivar (`_ivar = [_ivar itself]`) would free a
+// live object -- an illustration that used to be spelled
+// `_ivar = [_ivar retain]`, which #428 made a located error. That holds
+// only for a
 // store that *reads* the ivar. `_ivar = [Foo make]` does not, and #405
 // gave the ivar path the release-first shape locals had since #234, so two
 // of the three now need one slot. `staticbar::overlapping_unless_released_first`

@@ -45,7 +45,6 @@ int main(void) {{
 \tBlockBasicTest *t = [BlockBasicTest alloc];
 \t[t run];
 \tprintf(\"result=%d\\n\", [t result]);
-\t[t release];
 \treturn 0;
 }}
 ",
@@ -91,7 +90,6 @@ int main(void) {{
 \tStaticBlockTest *t = [StaticBlockTest alloc];
 \t[t run];
 \tprintf(\"result=%d\\n\", [t result]);
-\t[t release];
 \treturn 0;
 }}
 ",
@@ -140,7 +138,6 @@ int main(void) {{
 \t\treturn x * 2;
 \t}} toValue:21];
 \tprintf(\"computed=%d\\n\", [t computed]);
-\t[t release];
 \treturn 0;
 }}
 ",
@@ -191,7 +188,6 @@ int main(void) {{
 \tCounterTest *t = [CounterTest alloc];
 \t[t run];
 \tprintf(\"result=%d\\n\", [t result]);
-\t[t release];
 \treturn 0;
 }}
 ",

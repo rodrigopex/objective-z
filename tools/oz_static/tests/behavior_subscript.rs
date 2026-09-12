@@ -39,7 +39,6 @@ int main(void) {
 	printf(\"first=%d\\n\", [first int32Value]);
 	printf(\"third=%d\\n\", [third int32Value]);
 	printf(\"count=%d\\n\", [nums count]);
-	[nums release];
 	return 0;
 }
 "
@@ -65,7 +64,6 @@ int main(void) {
 	OZNumber *beta = scores[@\"beta\"];
 	printf(\"alpha=%d\\n\", [alpha int32Value]);
 	printf(\"beta=%d\\n\", [beta int32Value]);
-	[scores release];
 	return 0;
 }
 "
@@ -96,9 +94,6 @@ int main(void) {
 	OZArray *secondRow = matrix[1];
 	OZNumber *m10 = secondRow[0];
 	printf(\"m10=%d\\n\", [m10 int32Value]);
-	[matrix release];
-	[row0 release];
-	[row1 release];
 	return 0;
 }
 "
@@ -141,7 +136,6 @@ int main(void) {
 	printf(\"v0=%d\\n\", [b at:0]);
 	printf(\"v1=%d\\n\", [b at:1]);
 	printf(\"local0=%d\\n\", local[0]);
-	[b release];
 	return 0;
 }
 "

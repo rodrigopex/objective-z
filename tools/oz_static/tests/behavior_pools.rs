@@ -83,7 +83,6 @@ int main(void) {
 		if (c) {
 			ok = ok + 1;
 		}
-		[c release];
 	}
 	printf(\"ok=%d\\n\", ok);
 	return 0;

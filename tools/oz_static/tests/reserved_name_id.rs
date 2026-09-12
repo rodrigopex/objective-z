@@ -283,7 +283,6 @@ int main(void) {{
 \t\t(void)obj;
 \t}}];
 \tprintf(\"hits=%d\\n\", [t hits]);
-\t[t release];
 \treturn 0;
 }}
 ",
@@ -372,7 +371,6 @@ int main(void) {{
 \tBlkv *v = [Blkv alloc];
 \t[v hold:v];
 \tprintf(\"seen=%d\\n\", [v run]);
-\t[v release];
 \treturn 0;
 }}
 ",
@@ -433,7 +431,6 @@ void adv_write_id(struct adv_param *p, unsigned char v) {{
 int main(void) {{
 \tFgn *f = [Fgn alloc];
 \tprintf(\"id=%d\\n\", [f run]);
-\t[f release];
 \treturn 0;
 }}
 ",
@@ -462,7 +459,6 @@ fn names_containing_id_still_accepted() {
 int main(void) {{
 \tSub *s = [Sub alloc];
 \tprintf(\"sum=%d\\n\", [s runWithIdx:1 valid:2 identity:3]);
-\t[s release];
 \treturn 0;
 }}
 ",

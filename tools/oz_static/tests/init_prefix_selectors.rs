@@ -134,9 +134,12 @@ fn a_real_init_with_selector_still_consumes_the_allocation() {
 ",
                 "\
 int main(void) {
-\tSensor *s = [[Sensor alloc] initWithValue:7];
-\tprintf(\"v=%d rc=%d\\n\", [s value], [s retainCount]);
-\t[s release];
+\t/* Braced so the dealloc is ordered before `done`, which a hand
+\t * release used to do (#428). */
+\t{
+\t\tSensor *s = [[Sensor alloc] initWithValue:7];
+\t\tprintf(\"v=%d rc=%d\\n\", [s value], [s retainCount]);
+\t}
 \tprintf(\"done\\n\");
 \treturn 0;
 }
@@ -165,9 +168,10 @@ fn plain_init_still_pairs_with_alloc() {
 ",
                 "\
 int main(void) {
-\tPlain *p = [[Plain alloc] init];
-\tprintf(\"rc=%d\\n\", [p retainCount]);
-\t[p release];
+\t{
+\t\tPlain *p = [[Plain alloc] init];
+\t\tprintf(\"rc=%d\\n\", [p retainCount]);
+\t}
 \tprintf(\"done\\n\");
 \treturn 0;
 }

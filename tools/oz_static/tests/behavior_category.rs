@@ -57,7 +57,6 @@ int main(void) {
 	printf(\"base=%d\\n\", [g base]);
 	printf(\"extra=%d\\n\", [g extra]);
 	printf(\"extraPlus=%d\\n\", [g extraPlus:2]);
-	[g release];
 	return 0;
 }
 "
@@ -102,7 +101,6 @@ int main(void) {
 	[h setSlot2:7];
 	printf(\"slot2=%d\\n\", [h slot2]);
 	printf(\"slot_untouched=%d\\n\", [h slot]);
-	[h release];
 	return 0;
 }
 "
@@ -143,7 +141,6 @@ int main(void) {
 	Dup *d = [Dup alloc];
 	printf(\"val=%d\\n\", [d val]);
 	printf(\"twice=%d\\n\", [d twice]);
-	[d release];
 	return 0;
 }
 "
