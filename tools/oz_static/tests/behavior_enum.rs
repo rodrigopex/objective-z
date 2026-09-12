@@ -57,7 +57,6 @@ int main(void) {{
 	printf(\"dir1=%d\\n\", [t direction]);
 	[t setDirection:0];
 	printf(\"dir2=%d\\n\", [t direction]);
-	[t release];
 	return 0;
 }}
 ",
@@ -105,12 +104,10 @@ int main(void) {{
 	EnumHeaderTest *hi = [EnumHeaderTest alloc];
 	[hi setPriority:10];
 	printf(\"high=%d\\n\", [hi isHighPriority]);
-	[hi release];
 
 	EnumHeaderTest *lo = [EnumHeaderTest alloc];
 	[lo setPriority:1];
 	printf(\"low=%d\\n\", [lo isHighPriority]);
-	[lo release];
 	return 0;
 }}
 ",
@@ -165,17 +162,14 @@ int main(void) {{
 	EnumSwitchTest *red = [EnumSwitchTest alloc];
 	[red classifyColor:0];
 	printf(\"red=%d\\n\", [red result]);
-	[red release];
 
 	EnumSwitchTest *green = [EnumSwitchTest alloc];
 	[green classifyColor:1];
 	printf(\"green=%d\\n\", [green result]);
-	[green release];
 
 	EnumSwitchTest *blue = [EnumSwitchTest alloc];
 	[blue classifyColor:2];
 	printf(\"blue=%d\\n\", [blue result]);
-	[blue release];
 	return 0;
 }}
 ",
@@ -231,7 +225,6 @@ int main(void) {{
 	printf(\"red=%d\\n\", AnonRed);
 	printf(\"pick=%d\\n\", [t pick]);
 	printf(\"blue=%d\\n\", AnonBlue);
-	[t release];
 	return 0;
 }}
 ",
@@ -374,7 +367,6 @@ int main(void) {{
 	printf(\"level=%d\\n\", (int)[n level]);
 	[n setLevel:LevelLow];
 	printf(\"level2=%d\\n\", (int)[n level]);
-	[n release];
 	return 0;
 }}
 ",
@@ -421,7 +413,6 @@ int main(void) {{
 	[a setup];
 	printf(\"mode=%d\\n\", [a mode]);
 	printf(\"px=%d\\n\", [a px]);
-	[a release];
 	return 0;
 }}
 ",

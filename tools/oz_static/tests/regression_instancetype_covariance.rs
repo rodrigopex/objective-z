@@ -54,7 +54,6 @@ int main(void) {
 	Sub *s = [[Sub alloc] init];
 	[s setTag:42];
 	printf(\"tag=%d\\n\", [s tag]);
-	[s release];
 	return 0;
 }
 "
@@ -93,7 +92,6 @@ int main(void) {
 	Vehicle *v = [Vehicle alloc];
 	v = [v init];
 	printf(\"speed=%d\\n\", [v speed]);
-	[v release];
 	return 0;
 }
 "
@@ -158,16 +156,12 @@ int main(void) {
 	OZObject *wg = (OZObject *)w;
 	OZObject *wc = [wg clone];
 	printf(\"widget_clone=%d\\n\", [wc fingerprint]);
-	[w release];
-	[wc release];
 
 	Gadget *g = [Gadget alloc];
 	[g setSerial:9];
 	OZObject *gg = (OZObject *)g;
 	OZObject *gc = [gg clone];
 	printf(\"gadget_clone=%d\\n\", [gc fingerprint]);
-	[g release];
-	[gc release];
 	return 0;
 }
 "

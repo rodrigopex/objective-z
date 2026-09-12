@@ -86,7 +86,6 @@ int main(void) {
 	Car *c = [Car alloc];
 	c = [c init];
 	printf(\"speed=%d\\n\", [c speed]);
-	[c release];
 	return 0;
 }
 "
@@ -127,11 +126,9 @@ fn method_override_dispatch() {
 int main(void) {
 	Dog *d = [Dog alloc];
 	printf(\"dog_sound=%d\\n\", [d sound]);
-	[d release];
 
 	Animal *a = [Animal alloc];
 	printf(\"animal_sound=%d\\n\", [a sound]);
-	[a release];
 	return 0;
 }
 "
@@ -173,7 +170,6 @@ int main(void) {
 	printf(\"before=%d\\n\", [s spoken]);
 	[s speak];
 	printf(\"after=%d\\n\", [s spoken]);
-	[s release];
 	return 0;
 }
 "
@@ -234,7 +230,6 @@ int main(void) {
 	c = [c init];
 	printf(\"baseVal=%d\\n\", [c baseVal]);
 	printf(\"childVal=%d\\n\", [c childVal]);
-	[c release];
 	return 0;
 }
 "
@@ -309,14 +304,12 @@ int main(void) {
 	[b init];
 	printf(\"speak_through_base=%d\\n\", [b speak]);
 	printf(\"tag_through_base=%d\\n\", [b tag]);
-	[b release];
 
 	/* A real Base is unaffected by the subclass's overrides. */
 	Base *plain = [Base alloc];
 	[plain init];
 	printf(\"speak_plain=%d\\n\", [plain speak]);
 	printf(\"tag_plain=%d\\n\", [plain tag]);
-	[plain release];
 	return 0;
 }
 "

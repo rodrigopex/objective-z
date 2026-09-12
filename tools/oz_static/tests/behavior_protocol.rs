@@ -48,8 +48,6 @@ int main(void) {{
 	OZObject *ls = (OZObject *)[LightSwitch alloc];
 	OZObject *f = (OZObject *)[Fan alloc];
 	printf(\"light=%d fan=%d\\n\", [ls toggle], [f toggle]);
-	[ls release];
-	[f release];
 	return 0;
 }}
 ",
@@ -84,7 +82,6 @@ fn protocol_inheritance_exposes_super_protocol_methods() {
 int main(void) {{
 	OZObject *a = (OZObject *)[Athlete alloc];
 	printf(\"run=%d sprint=%d\\n\", [a run], [a sprint]);
-	[a release];
 	return 0;
 }}
 ",
@@ -118,7 +115,6 @@ fn multiple_protocol_conformance() {
 int main(void) {{
 	OZObject *s = (OZObject *)[Stream alloc];
 	printf(\"read=%d write=%d\\n\", [s read], [s write]);
-	[s release];
 	return 0;
 }}
 ",
@@ -157,8 +153,6 @@ int main(void) {{
 	OZObject *r = (OZObject *)[Ruler alloc];
 	OZObject *sc = (OZObject *)[Scale alloc];
 	printf(\"ruler=%d scale=%d\\n\", [r measure], [sc measure]);
-	[r release];
-	[sc release];
 	return 0;
 }}
 ",

@@ -61,14 +61,12 @@ const DECLS: &str = "\
 @interface Thing : OZObject
 - (instancetype)copy;
 - (instancetype)mutableCopy;
-- (id)autorelease;
 - (int)initialValue;
 + (instancetype)new;
 @end
 @implementation Thing
 - (instancetype)copy { return [[Thing alloc] init]; }
 - (instancetype)mutableCopy { return [[Thing alloc] init]; }
-- (id)autorelease { return self; }
 - (int)initialValue { return 42; }
 + (instancetype)new { return [[Thing alloc] init]; }
 - (void)dealloc { printf(\"d\\n\"); }
@@ -82,7 +80,6 @@ const DECLS: &str = "\
 {
 \tThing *base = [[Thing alloc] init];
 \tThing *c = [base copy];
-\t[base release];
 \treturn c;
 }
 @end
@@ -193,50 +190,29 @@ fn the_owning_set() {
 #[test]
 fn the_consume_set() {
         for cell in [
-                Cell {
-                        // The sharp edge in `released_by_hand`, and the reason
-                        // this row exists: *one* manual release hands ARC the
-                        // whole local. It does not subtract one reference and
-                        // keep managing the rest -- it stops managing `t`
-                        // entirely. So `retain` + `release` balance each other
-                        // and the `alloc`'s reference is the author's, unreleased
-                        // here, exactly as manual retain/release behaves without
-                        // ARC. No dealloc, and that is the design rather than a
-                        // defect: an author who took control keeps it.
-                        what: "-retain by hand, balanced by a manual release -- ARC \
-                               stops managing the local entirely",
-                        // `live %d` is not decoration. This is the one cell
-                        // that expects *no* dealloc, so without a non-null
-                        // check a failed allocation would produce the same
-                        // output and the cell would pass vacuously -- the
-                        // fixture's `-copy` allocates, so a cell can exhaust
-                        // a slab. Every other cell is protected by the
-                        // dealloc it asserts: a `d` cannot print for an
-                        // object that was never allocated.
-                        body: "\tThing *t = [[Thing alloc] init];\n\tprintf(\"live %d\\n\", t != 0);\n\t[t retain];\n\t[t release];\n\tprintf(\"ok\\n\");\n",
-                        expect: "live 1\nok\n",
-                        needs_reflection: false,
-                        needs_heap: false,
-                        known_defect: None,
-                },
-                Cell {
-                        what: "-release by hand over an ARC-managed local -- ARC defers \
-                               to the author (`released_by_hand`)",
-                        body: "\tThing *t = [[Thing alloc] init];\n\t[t release];\n\tprintf(\"ok\\n\");\n",
-                        expect: "d\nok\n",
-                        needs_reflection: false,
-                        needs_heap: false,
-                        known_defect: None,
-                },
-                Cell {
-                        what: "-autorelease by hand -- implemented nowhere outside \
-                               runtime_legacy, so a class must supply its own",
-                        body: "\tThing *t = [[[Thing alloc] init] autorelease];\n\tprintf(\"ok %d\\n\", t != 0);\n",
-                        expect: "ok 1\nd\n",
-                        needs_reflection: false,
-                        needs_heap: false,
-                        known_defect: None,
-                },
+                /* THREE ROWS REMOVED (#428), and this note is the record
+                 * a removal owes rather than a silent gap:
+                 *
+                 *  - "-retain by hand, balanced by a manual release -- ARC
+                 *    stops managing the local entirely". It expected *no*
+                 *    dealloc, because one manual release handed
+                 *    `released_by_hand` the whole local and the `alloc`'s
+                 *    reference was then nobody's. That expectation was a
+                 *    leak, asserted as design.
+                 *  - "-release by hand over an ARC-managed local -- ARC
+                 *    defers to the author (`released_by_hand`)".
+                 *  - "-autorelease by hand -- implemented nowhere outside
+                 *    runtime_legacy, so a class must supply its own". The
+                 *    fixture's own `- (id)autorelease { return self; }` was
+                 *    what made it work, and declaring that is refused now
+                 *    too: nothing could ever send it.
+                 *
+                 * All three spell a send of a selector ARC owns, which is a
+                 * located error wherever it appears, so there is no shape
+                 * left for a row to assert about. The rejection is the
+                 * standing record instead, in
+                 * `static_bar_rejects::every_receiver_spelling_of_a_manual_send_is_rejected`.
+                 */
                 Cell {
                         what: "a selector that merely begins with `init` is not an \
                                initialiser (#398)",
@@ -267,8 +243,9 @@ fn the_autoreleasepool_construct() {
                 },
                 Cell {
                         what: "a +1 escaping the pool through an outer local is not \
-                               released at the pool's end",
-                        body: "\tThing *e = 0;\n\t@autoreleasepool {\n\t\te = [[Thing alloc] init];\n\t}\n\tprintf(\"alive %d\\n\", e != 0);\n\t[e release];\n",
+                               released at the pool's end -- the enclosing \
+                               scope releases it instead",
+                        body: "\tThing *e = 0;\n\t@autoreleasepool {\n\t\te = [[Thing alloc] init];\n\t}\n\tprintf(\"alive %d\\n\", e != 0);\n",
                         expect: "alive 1\nd\n",
                         needs_reflection: false,
                         needs_heap: false,

@@ -38,7 +38,6 @@ int main(void) {{
 	Calc *m = [Calc alloc];
 	printf(\"sum=%d\\n\", [m addA:10 b:20 c:30]);
 	printf(\"sum2=%d\\n\", [m addA:-5 b:3 c:2]);
-	[m release];
 	return 0;
 }}
 ",
@@ -52,31 +51,34 @@ int main(void) {{
 fn nil_returns_zero() {
     // Ported from tests/behavior/cases/edge/nil_returns_zero.m / _test.c.
     // The Python pipeline's version also checks
-    // `OZObject_retainCount((struct OZObject *)0) == 0`; oz_static has no
-    // retainCount equivalent at all (retain/release are the only
-    // refcount operations the static subset models -- there is no
-    // generated per-class or root `_retainCount` C API to call), so that
-    // third assertion is skipped as genuinely out of scope rather than
-    // faked. The other two (retaining nil is a no-op that yields nil;
-    // releasing nil never dereferences it) port directly onto
-    // oz_static_retain/oz_static_release.
+    // `OZObject_retainCount((struct OZObject *)0) == 0`, which used to be
+    // skipped here for want of any retainCount equivalent -- #418 supplied
+    // one, `oz_static_retain_count`, so the third assertion is back.
+    //
+    // All three are written as calls to the generated runtime's own
+    // functions rather than as `[r retain]` / `[r release]`, which ARC
+    // refuses (#428). That is not a workaround: nil-safety is a property
+    // of those functions, they are what the sends lowered to, and they
+    // are what ARC itself emits. `main` here is plain C, which ARC has no
+    // opinion about.
     let src = format!(
         "{}\n\
 #include <stdio.h>
 
 int main(void) {{
 	OZObject *r = 0;
-	OZObject *result = [r retain];
+	OZObject *result = oz_static_retain(r);
 	printf(\"retain_nil_is_null=%d\\n\", result == 0);
-	[r release];
+	oz_static_release(r);
 	printf(\"release_nil_ok\\n\");
+	printf(\"retain_count_nil=%d\\n\", oz_static_retain_count(r));
 	return 0;
 }}
 ",
         PREAMBLE()
     );
     let stdout = compile_and_run(&src, "nil_returns_zero");
-    assert_eq!(stdout, "retain_nil_is_null=1\nrelease_nil_ok\n");
+    assert_eq!(stdout, "retain_nil_is_null=1\nrelease_nil_ok\nretain_count_nil=0\n");
 }
 
 #[test]
@@ -102,7 +104,6 @@ int main(void) {{
 	printf(\"nonnull=%d\\n\", obj != 0);
 	printf(\"class_id=%d\\n\", obj->base._meta.class_id == OZ_STATIC_CLASS_EmptyClass);
 	printf(\"refcount=%d\\n\", oz_atomic_get(&obj->base.oz_refcount));
-	[obj release];
 	return 0;
 }}
 ",
@@ -166,9 +167,6 @@ int main(void) {{
 	printf(\"level4=%d\\n\", [l4 depth]);
 	printf(\"level3=%d\\n\", [l3 depth]);
 	printf(\"level1=%d\\n\", [l1 depth]);
-	[l4 release];
-	[l3 release];
-	[l1 release];
 	return 0;
 }}
 ",

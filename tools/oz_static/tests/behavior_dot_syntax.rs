@@ -64,7 +64,6 @@ int main(void) {
 	printf(\"reading=%d\\n\", g.reading);
 	printf(\"ticks=%d\\n\", g.tickCount);
 	printf(\"doubled=%d\\n\", g.doubled);
-	[g release];
 	return 0;
 }
 "
@@ -103,7 +102,6 @@ int main(void) {
 	printf(\"value=%d limit=%d\\n\", s.value, [s limit]);
 	s.value = s.value + 5;
 	printf(\"value=%d\\n\", s.value);
-	[s release];
 	return 0;
 }
 "
@@ -150,7 +148,6 @@ int main(void) {
 	[l setTag:5];
 	printf(\"own=%d\\n\", [l tag]);
 	printf(\"dot=%d\\n\", l.tag);
-	[l release];
 	return 0;
 }
 "
@@ -192,8 +189,6 @@ int main(void) {
 	Outer *o = [Outer alloc];
 	o.inner = i;
 	printf(\"depth=%d\\n\", o.inner.depth);
-	[o release];
-	[i release];
 	return 0;
 }
 "
@@ -234,7 +229,6 @@ int main(void) {
 	p.y = 6;
 	Plotter *plot = [Plotter alloc];
 	printf(\"sum=%d\\n\", [plot sumOf:p]);
-	[plot release];
 	return 0;
 }
 "
@@ -334,7 +328,6 @@ int main(void) {
 	t.total += 5;
 	t.total *= 2;
 	printf(\"total=%d\\n\", t.total);
-	[t release];
 	return 0;
 }
 "
