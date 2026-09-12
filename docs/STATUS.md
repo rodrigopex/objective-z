@@ -480,16 +480,35 @@ diagnostics and requires them to be the same string.
 The issue's *preferred* answer was to make the rejection pool-aware and
 accept an `OverlappingStore` whose class has two or more slots, on the
 grounds that #405 had noted this becomes sound once the hoisted temporary
-is gone for the shapes that do not need one. That reasoning is correct and
-its conclusion is not, and the gap between them is exactly what #423
-closed: the shapes that do not need the temporary are **already accepted at
-one slot**, because they release first. What is left refused is the
-complement — `LocalStore::Unsupported`, the store that reads its own
-destination — and there the pool is not the constraint. `ctx.pre_stmts`
-hoists that store's temporary out of the loop, so it reads the destination
-once while still nil and releases the same stale pointer every iteration.
-Accepting it on a pool of two would not fit two live objects; it would
-miscompile. No pool size moves a hoisted temporary back inside the loop.
+is gone for the shapes that do not need one. Whether that answer is right
+changed twice in the space of two issues, and the sequence is the
+interesting part.
+
+#423 narrowed the arm, so the shapes that release first are accepted at one
+slot and never reach it. What is left refused is the complement —
+`LocalStore::Unsupported`, the store that reads its own destination, which
+the emitter lowers through a temporary. At that point pool-awareness was
+**unsound**: `ctx.pre_stmts` hoisted the temporary's initialiser out of the
+loop, so it read the destination once while still nil and released the same
+stale pointer every iteration. Accepting it on a pool of two would not have
+fitted two live objects; it would have miscompiled.
+
+Then #424 landed, for its own reasons, and removed that hazard generally —
+the shared lowering declares the temporary through `pre_stmts` and assigns
+it inside the comma expression, so a loop lifts something that evaluates
+nothing. **Pool-awareness is therefore sound now**, and measured: with the
+predicate relaxed in a throwaway build, `_thing = [_thing dup]` over four
+iterations runs correctly on a pool of two — five allocations, five frees,
+no nil — and is short of slots on one. Two objects are briefly live, one
+slab slot cannot hold both, and a second slot is exactly what fixes that.
+
+So the diagnostic fix stands but its justification does not. The remedy is
+withheld because the check **cannot act on it**, not because the remedy
+would be wrong: `staticbar` never reads `PoolSizes`. The message says that
+and no more; it used to say the shape "would be wrong at any pool size",
+which was true when written and is not true now. Making the arm pool-aware
+is a behavioural change and wants its own issue — it is the one place in
+this area where a bigger pool is the genuine answer.
 
 So the general lesson is not "the message was wrong". It is that a remedy
 offered in a diagnostic is a claim about the checker's own behaviour, and
@@ -1841,14 +1860,30 @@ from an expression that is not the thing stored.
   offers it has to be the check that can act on it.** The loop-escape rejection
   told authors to raise the class's pool for four releases while having no pool
   awareness at all -- it never reads `PoolSizes`, so the same program was refused
-  identically at `Foo=1`, `Foo=2` and `Foo=8` (#425). Worse, the shape it was
-  refusing is one no pool size can fix: its temporary is hoisted out of the loop
-  by `ctx.pre_stmts`, so accepting it on two slots would miscompile rather than
-  fit. Two tests hold the line -- one compares the diagnostic across three pool
-  sizes and requires one string, the other holds all three escapes to the rule so
-  a fourth cannot be added without answering it. This is narrower than "don't
-  mention the pool": `pools.rs` and `companion.rs` name it for real sizing and
-  exhaustion, where it is the fix.
+  identically at `Foo=1`, `Foo=2` and `Foo=8` (#425). Note what makes the rule
+  bite: a bigger pool is, since #424, the *genuinely correct* remedy for that
+  shape -- two objects are briefly live and a second slot fits them, measured at
+  five allocations and five frees on a pool of two. The advice was still wrong to
+  give, because this check cannot read the size and so cannot act on it. Being
+  right about the fix is not enough; the checker offering it has to be able to
+  honour it, or the author changes their source and nothing happens. Two tests
+  hold the line -- one compares the diagnostic across three pool sizes and
+  requires one string, the other holds all three escapes to the rule so a fourth
+  cannot be added without answering it. This is narrower than "don't mention the
+  pool": `pools.rs` and `companion.rs` name it for real sizing and exhaustion,
+  where it is the fix and they can act on it.
+
+  The same rule has a second edge, and the fix for #425 walked straight into it
+  before landing: **a remedy must also be writable in ARC source.**
+  `Accumulates` was briefly reworded to advise "release each instance before the
+  next iteration allocates", which no author can do — ARC is always enabled
+  (`-fobjc-arc` on every path that produces the Clang AST oracle) and an explicit
+  `[x release]` is a Clang error, so such a source never reaches `oz2c`. That
+  `emit::released_by_hand` exists, and that `oz2c` tolerates manual
+  retain/release as a feature of its own, is not a licence to recommend it. So an
+  unactionable remedy had been replaced with an unwritable one — the same defect
+  twice, caught by review rather than by a test, which is why there is now a test
+  asserting no loop-escape diagnostic tells the author to release anything.
 - **Key ownership on the reference, never on a syntactic form, and route every
   spelling through one function.** Eight defects in a row came from a decision
   keyed on a form (#351, #352, #359, #360, #365, #398, #400, #423). #423 is the

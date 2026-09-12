@@ -449,6 +449,20 @@ int main(void) { return 0; }
             escape,
             diags
         );
+        /* And must not advise anything ARC forbids the author writing.
+         * `Accumulates` briefly said "release each instance before the
+         * next iteration allocates" -- unwritable, since ARC is always on
+         * and `[x release]` is a Clang error under `-fobjc-arc`, so such a
+         * source never reaches oz2c. Replacing an unactionable remedy with
+         * an unwritable one is the same defect twice. */
+        assert!(
+            !diags.contains("release each")
+                && !diags.contains("release it")
+                && !diags.contains("release the instance"),
+            "{} advises calling release, which ARC forbids the author writing (#425); got:\n{}",
+            escape,
+            diags
+        );
     }
 }
 
