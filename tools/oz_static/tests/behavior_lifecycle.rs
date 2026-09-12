@@ -62,7 +62,8 @@ int main(void) {
 	printf(\"nonnull=%d\\n\", w != 0);
 	printf(\"class_id_matches=%d\\n\", w->base._meta.class_id == OZ_STATIC_CLASS_Widget);
 	printf(\"refcount=%d\\n\", oz_atomic_get(&w->base.oz_refcount));
-	[w release];
+	/* No release by hand (#428): `w` is an owned local, so ARC releases
+	 * it when main's scope ends. */
 	return 0;
 }
 "
@@ -94,13 +95,19 @@ fn release_then_realloc_succeeds() {
 #include <stdio.h>
 
 int main(void) {
-	Slot *s1 = [Slot alloc];
-	printf(\"first_nonnull=%d\\n\", s1 != 0);
-	[s1 release];
-
-	Slot *s2 = [Slot alloc];
-	printf(\"second_nonnull=%d\\n\", s2 != 0);
-	[s2 release];
+	/* One braced scope each, so the first instance is provably destroyed
+	 * before the second is allocated -- which is the precondition this
+	 * case is about and which a hand release used to establish (#428).
+	 * Scope exit is where ARC releases an owned local, so the ordering is
+	 * as determinate as the explicit release was. */
+	{
+		Slot *s1 = [Slot alloc];
+		printf(\"first_nonnull=%d\\n\", s1 != 0);
+	}
+	{
+		Slot *s2 = [Slot alloc];
+		printf(\"second_nonnull=%d\\n\", s2 != 0);
+	}
 	return 0;
 }
 "
@@ -129,18 +136,32 @@ fn dealloc_reentrant_guard() {
 @end
 @implementation Probe
 - (void)dealloc {
-	[self retain];
-	[self release];
-	[super dealloc];
+	/* The nested release the guard exists for. It used to be spelled
+	 * `[self retain]; [self release];`, which ARC forbids (#428) -- so it
+	 * is written here as the pair of C functions those two sends lowered
+	 * to. That is not the manual ownership model coming back: these are
+	 * the generated runtime's own functions, the same ones ARC itself
+	 * emits, and ARC has no opinion about a C call. Nothing an
+	 * ARC-legal *Objective-C* program can write reaches this guard, which
+	 * is recorded as a coverage note on #428.
+	 *
+	 * No [super dealloc] either: the chain above an override is called
+	 * automatically now (companion::dealloc_chain). */
+	oz_static_retain((struct OZObject *)self);
+	oz_static_release((struct OZObject *)self);
 }
 @end
 
 #include <stdio.h>
 
 int main(void) {
-	Probe *p = [Probe alloc];
-	printf(\"nonnull=%d\\n\", p != 0);
-	[p release];
+	/* The braced scope is what makes the release a point in the program
+	 * rather than something that happens at the end of main: the
+	 * `survived` line has to print *after* the dealloc ran (#428). */
+	{
+		Probe *p = [Probe alloc];
+		printf(\"nonnull=%d\\n\", p != 0);
+	}
 	printf(\"survived_reentrant_dealloc=1\\n\");
 	return 0;
 }
@@ -173,9 +194,12 @@ fn release_completes_without_crash() {
 #include <stdio.h>
 
 int main(void) {
-	Item *item = [Item alloc];
-	printf(\"nonnull=%d\\n\", item != 0);
-	[item release];
+	/* Braced so the release is ordered before the `survived` line, which
+	 * is the whole assertion (#428). */
+	{
+		Item *item = [Item alloc];
+		printf(\"nonnull=%d\\n\", item != 0);
+	}
 	printf(\"survived_release=1\\n\");
 	return 0;
 }
@@ -229,7 +253,6 @@ int main(void) {
 	g = [g init];
 	printf(\"value=%d\\n\", [g value]);
 	printf(\"ready=%d\\n\", [g ready]);
-	[g release];
 	return 0;
 }
 "

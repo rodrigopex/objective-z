@@ -75,13 +75,20 @@ static void *g_fired_owner = 0;
 
 #include <stdio.h>
 int main(void) {{
-	DeferTest *t = [DeferTest alloc];
-	[t initWithCleanup];
-	printf(\"marker=%d\\n\", [t marker]);
-	printf(\"fired_before_release=%d\\n\", g_fired);
-	[t release];
+	/* Braced so the dealloc is ordered between the two `g_fired` reads,
+	 * which a hand release used to do (#428). `seen` carries the pointer
+	 * *value* out of the scope for the identity comparison -- it is a
+	 * `void *`, so nothing manages it and nothing dereferences it. */
+	void *seen = 0;
+	{{
+		DeferTest *t = [DeferTest alloc];
+		[t initWithCleanup];
+		printf(\"marker=%d\\n\", [t marker]);
+		printf(\"fired_before_release=%d\\n\", g_fired);
+		seen = (void *)t;
+	}}
 	printf(\"fired_after_release=%d\\n\", g_fired);
-	printf(\"owner_was_self=%d\\n\", g_fired_owner == (void *)t);
+	printf(\"owner_was_self=%d\\n\", g_fired_owner == seen);
 	return 0;
 }}
 ",
@@ -125,9 +132,11 @@ static void *g_owner_seen = (void *)1;
 
 #include <stdio.h>
 int main(void) {{
-	OwnerlessTest *t = [OwnerlessTest alloc];
-	[t setup];
-	[t release];
+	/* Braced so the dealloc runs before the reads below (#428). */
+	{{
+		OwnerlessTest *t = [OwnerlessTest alloc];
+		[t setup];
+	}}
 	printf(\"fired=%d\\n\", g_fired);
 	printf(\"owner_is_null=%d\\n\", g_owner_seen == 0);
 	return 0;
@@ -174,7 +183,6 @@ int main(void) {{
 	d->_block(d->_owner);
 	printf(\"called=%d\\n\", g_block_called);
 	printf(\"owner_field_is_null=%d\\n\", d->_owner == 0);
-	[d release];
 	return 0;
 }}
 ",

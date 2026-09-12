@@ -17,12 +17,20 @@ fn release_and_retain_nil_are_safe() {
     // Ported from release_nil_safe.m / release_nil_safe_test.c:
     //   - test_release_nil_no_crash: releasing nil must not crash.
     //   - test_retain_nil_returns_null: retaining nil must return null.
+    //   - test_retain_count_nil_is_zero: the refcount of nil is 0. This
+    //     used to be skipped as having "no oz_static equivalent -- no
+    //     public retainCount accessor at all", which #418 made untrue:
+    //     `oz_static_retain_count` is the single entry point for reading
+    //     one, and `-retainCount` lowers to it.
     //
-    // Skipped: test_retain_count_nil_is_zero (OZObject_retainCount(nil) ==
-    // 0) has no oz_static equivalent -- oz_static exposes no public
-    // retainCount accessor at all; the refcount is an internal field
-    // touched only by retain/release, never surfaced as a selector or
-    // function. See OZ-092 (#190).
+    // The two sends this used to be written with -- `[m release]` and
+    // `[m retain]` -- are located errors now that ARC is unconditional
+    // (#428), so the case drives the generated runtime's own functions
+    // instead. That is the same code the sends lowered to, and it is what
+    // ARC itself emits; nil-safety is a property of those functions, not
+    // of a source spelling, so this is where it belongs. A C call is not
+    // the manual ownership model coming back -- ARC has no opinion about
+    // one, and `main` here is plain C.
     let src = format!(
         "{}{}",
         ozobject_src(),
@@ -36,16 +44,17 @@ fn release_and_retain_nil_are_safe() {
 
 int main(void) {
 	Marker *m = 0;
-	[m release];
-	Marker *r = [m retain];
+	oz_static_release((struct OZObject *)m);
+	Marker *r = (Marker *)oz_static_retain((struct OZObject *)m);
 	printf(\"release_nil_ok=1\\n\");
 	printf(\"retain_nil_is_null=%d\\n\", r == 0 ? 1 : 0);
+	printf(\"retain_count_nil=%d\\n\", oz_static_retain_count((struct OZObject *)m));
 	return 0;
 }
 "
     );
     let stdout = compile_and_run(&src, "release_and_retain_nil_are_safe");
-    assert_eq!(stdout, "release_nil_ok=1\nretain_nil_is_null=1\n");
+    assert_eq!(stdout, "release_nil_ok=1\nretain_nil_is_null=1\nretain_count_nil=0\n");
 }
 
 #[test]
@@ -85,15 +94,20 @@ fn alloc_free_alloc_yields_independent_fresh_object() {
 #include <stdio.h>
 
 int main(void) {
-	Gadget *g1 = [Gadget alloc];
-	[g1 setTag:99];
-	printf(\"tag1=%d\\n\", [g1 tag]);
-	[g1 release];
-
-	Gadget *g2 = [Gadget alloc];
-	printf(\"g2_not_null=%d\\n\", g2 != 0 ? 1 : 0);
-	printf(\"tag2_default=%d\\n\", [g2 tag]);
-	[g2 release];
+	/* One braced scope each, so the first Gadget is provably destroyed
+	 * before the second is allocated -- the precondition this case is
+	 * about, which a hand release used to establish (#428). Scope exit
+	 * is where ARC releases an owned local. */
+	{
+		Gadget *g1 = [Gadget alloc];
+		[g1 setTag:99];
+		printf(\"tag1=%d\\n\", [g1 tag]);
+	}
+	{
+		Gadget *g2 = [Gadget alloc];
+		printf(\"g2_not_null=%d\\n\", g2 != 0 ? 1 : 0);
+		printf(\"tag2_default=%d\\n\", [g2 tag]);
+	}
 	return 0;
 }
 "

@@ -50,9 +50,10 @@
 // double free, and an early 1 is the use-after-free this fixes.
 //
 // The caller is always a *nested function* that lets the reference go by
-// falling off its own end, never an explicit `[t release]`. That is not
-// style: these functions hand back `+1`, so the caller's scope exit
-// already releases, and an explicit release on top is a second one. Written
+// falling off its own end, never an explicit `[t release]` -- which #428
+// made a located error outright. It was never style even before that:
+// these functions hand back `+1`, so the caller's scope exit already
+// releases, and an explicit release on top is a second one. Written
 // that way the tests still passed -- the `deallocating` flag in
 // `oz_static_release` absorbs the extra -- which would have made this file
 // blind to exactly the double free it is meant to guard against.

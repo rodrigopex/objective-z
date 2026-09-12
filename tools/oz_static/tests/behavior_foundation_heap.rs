@@ -39,7 +39,6 @@ int main(void) {{
 	printf(\"init_returned_self=%d\\n\", ret == h);
 	printf(\"used=%zu\\n\", [h usedBytes]);
 	printf(\"rc=%d\\n\", [h retainCount]);
-	[h release];
 	printf(\"released_ok\\n\");
 	return 0;
 }}
@@ -53,9 +52,12 @@ int main(void) {{
     assert_eq!(stdout, "init_returned_self=1\nused=0\nrc=1\nreleased_ok\n");
 }
 
-/// OZHeap as a strong ivar of another class, released from that class's
-/// own `-dealloc`. The release is written by hand here, which ARC defers to
-/// (see `emit::released_by_hand`).
+/// OZHeap as a strong ivar of another class, released when that class is
+/// deallocated -- automatically, by the generated `Pool_oz_release_ivars`
+/// (`companion::render_release_ivars`). The owner's own release used to be
+/// written by hand in `main`; ARC releases the owned local at scope exit
+/// instead (#428), so the braced scope below is what orders the dealloc
+/// between the two `g_owner_dealloc_ran` reads.
 #[test]
 fn heap_held_as_ivar_and_released_by_owner() {
     let src = format!(
@@ -99,11 +101,12 @@ static int g_owner_dealloc_ran = 0;
 @end
 
 int main(void) {{
-	Pool *p = [Pool alloc];
-	[p setup];
-	printf(\"used=%zu\\n\", [p heapUsed]);
-	printf(\"dealloc_before=%d\\n\", g_owner_dealloc_ran);
-	[p release];
+	{{
+		Pool *p = [Pool alloc];
+		[p setup];
+		printf(\"used=%zu\\n\", [p heapUsed]);
+		printf(\"dealloc_before=%d\\n\", g_owner_dealloc_ran);
+	}}
 	printf(\"dealloc_after=%d\\n\", g_owner_dealloc_ran);
 	return 0;
 }}
@@ -160,7 +163,6 @@ int main(void) {{
 \t\tprintf(\"during=%d\\n\", [h usedBytes] > 0);
 \t}}
 \tprintf(\"after=%zu\\n\", [h usedBytes]);
-\t[h release];
 \treturn 0;
 }}
 ",

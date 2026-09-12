@@ -256,54 +256,21 @@ int main(void) {
     assert_eq!(stdout, "alive=1\n");
 }
 
-/// ARC defers to manual retain/release: a local the body releases by hand is
-/// left entirely to the body, because adding an automatic release to code
-/// that already releases is a double free. oz_static supports manual memory
-/// management as a feature of its own, so this is not a corner case.
-#[test]
-fn manual_release_suppresses_arc() {
-    let src = format!(
-        "{}{}",
-        PREAMBLE(),
-        "\
-@interface Counter : OZObject {
-	int _n;
-}
-- (void)run;
-@end
-@implementation Counter
-- (void)run {
-	Counter *c;
-	c = [Counter alloc];
-	[c release];
-}
-@end
-int main(void) { return 0; }
-"
-    );
-    let out = oz_static::transpile(&src).expect("should transpile");
-    // The *definition*, not the companion prototype that precedes it.
-    let run = out
-        .source_c
-        .split("void Counter_run(struct Counter *self)\n{")
-        .nth(1)
-        .unwrap_or_else(|| panic!("no Counter_run definition in:\n{}", out.source_c))
-        .split("\n}")
-        .next()
-        .unwrap_or("");
-    assert!(
-        !run.contains("_oz_prevloc") && !run.contains(", c = "),
-        "a hand-released local must not also be ARC-managed; got:\n{}",
-        run
-    );
-    // Exactly one release: the author's own.
-    assert_eq!(
-        run.matches("oz_static_release").count(),
-        1,
-        "expected only the hand-written release; got:\n{}",
-        run
-    );
-}
+// DELETED (#428): `manual_release_suppresses_arc`.
+//
+// Its subject was `emit::released_by_hand` -- "ARC defers to manual
+// retain/release: a local the body releases by hand is left entirely to
+// the body" -- and it asserted the *absence* of ARC's management
+// (`!run.contains("_oz_prevloc")`) plus exactly one release, the author's
+// own. Both halves are void now: ARC is always enabled, a `-release` send
+// is a located error, and there is no such thing as a hand-released local
+// for ARC to defer to.
+//
+// Reversing it rather than deleting it would have duplicated
+// `bare_declaration_gets_arcs_implicit_nil` above, which already pins the
+// positive claim for exactly this shape (`Counter *c;` followed by an
+// owning assignment is ARC-managed). The rejection itself is pinned in
+// `static_bar_rejects::every_receiver_spelling_of_a_manual_send_is_rejected`.
 
 /// A `+0` right-hand side that is not a plain identifier would need a
 /// temporary to be retained exactly once, and a temporary cannot be placed
