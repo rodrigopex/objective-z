@@ -24,9 +24,11 @@
  *     rather than a per-object lock, or if the PAL's spinlock is broken on
  *     this target.
  *
- *   - both sides also retain and release the shared object in a loop, so
- *     `oz_atomic_inc` / `oz_atomic_dec_and_test` are driven concurrently
- *     from two cores. A lost increment here would drop the refcount to zero
+ *   - both sides also retain and release the shared object in a loop --
+ *     through `oz_static_retain` / `oz_static_release` directly since #428
+ *     made the two sends a located error, which is the same code they
+ *     lowered to -- so `oz_atomic_inc` / `oz_atomic_dec_and_test` are
+ *     driven concurrently from two cores. A lost increment here would drop the refcount to zero
  *     early and free an object both cores are still using; the final
  *     retainCount check catches the arithmetic, and the object still being
  *     usable afterwards catches the free.
@@ -169,8 +171,21 @@ static void hammer(Counter *c)
 		}
 	}
 	for (int i = 0; i < RETAIN_ITERATIONS; i++) {
-		[c retain];
-		[c release];
+		/* The refcount contention, driven through the generated
+		 * runtime's own two functions rather than through
+		 * `[c retain]; [c release];`, which ARC refuses (#428).
+		 * These *are* what those sends lowered to -- the same
+		 * `oz_atomic_inc` / `oz_atomic_dec_and_test` on the same
+		 * word from the same two cores -- so nothing about the
+		 * contention this loop creates has moved. `hammer` is a
+		 * plain C function and ARC has no opinion about a C call.
+		 * There is no ARC-legal *Objective-C* spelling that drives
+		 * a refcount up and down without also transferring
+		 * ownership, which is why this is the C API and not a
+		 * strong-slot store: a store would serialize on the slot
+		 * as well and stop being a refcount test. */
+		(void)oz_static_retain((struct OZObject *)c);
+		oz_static_release((struct OZObject *)c);
 	}
 }
 

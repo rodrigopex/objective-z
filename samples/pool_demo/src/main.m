@@ -57,7 +57,8 @@ void printk(const char *fmt, ...);
 - (void)dealloc
 {
 	printk("Sensor dealloc (value=%d)\n", _value);
-	[super dealloc];
+	/* No [super dealloc]: ARC owns that send (#428), and the chain above
+	 * an override is called automatically. */
 }
 
 @end
