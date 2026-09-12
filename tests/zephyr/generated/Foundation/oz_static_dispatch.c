@@ -163,6 +163,7 @@ void oz_static_release(struct OZObject *self)
 		break;
 	case OZ_STATIC_CLASS_OZNumber: /* OZNumber */
 		OZNumber_dealloc((struct OZNumber *)self);
+		OZObject_dealloc((struct OZObject *)self);
 		OZNumber_oz_free((struct OZNumber *)self);
 		break;
 	case OZ_STATIC_CLASS_BoxedTest: /* BoxedTest */
