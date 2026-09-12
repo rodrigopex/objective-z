@@ -359,6 +359,20 @@ impl LoopEscape {
     /// number the author can be told and not one any directive could
     /// express for a loop whose trip count is dynamic.
     ///
+    /// **A remedy also has to be writable in ARC source, and that ruled out
+    /// the first replacement tried here.** `Accumulates` briefly advised
+    /// "release each instance before the next iteration allocates", which
+    /// is unwritable: ARC is always on -- `-fobjc-arc` is passed on every
+    /// path that produces the Clang AST oracle -- and under it an explicit
+    /// `[x release]` is a Clang error, so such a source never reaches
+    /// `oz2c` at all. That `emit::released_by_hand` exists, and that
+    /// `oz2c` tolerates manual retain/release as a feature of its own, is
+    /// not a licence to *recommend* it. The advice is now the two things an
+    /// ARC author can actually write: overwrite one local per iteration and
+    /// let ARC release the previous instance, or allocate once outside the
+    /// loop. Same lesson as the pool half, one step further in: a remedy
+    /// must be one the author can express **and** the checker can honour.
+    ///
     /// So both keep only the advice that works. The pool remains the right
     /// tool for a *site* that needs more than one live instance, and for
     /// `OverlappingStore` it would be the right tool again the day this
@@ -377,9 +391,10 @@ impl LoopEscape {
                 "{what} inside a loop is stored into {dest}, so each iteration keeps its own \
                  instance and nothing is released; the static subset sizes one slab slot per \
                  allocation site and cannot bound how many the loop needs. Store it in a local \
-                 that each iteration overwrites, or release each instance before the next \
-                 iteration allocates. Raising this class's pool does not lift this either: the \
-                 loop's bound is not a number this pass knows"
+                 that each iteration overwrites, so ARC releases the previous instance, or \
+                 allocate outside the loop and reuse the one instance. Raising this class's \
+                 pool does not lift this either: the loop's bound is not a number this pass \
+                 knows"
             ),
             LoopEscape::Returned => format!(
                 "{what} inside a loop is returned, so the iteration does not end its life and \
