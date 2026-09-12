@@ -3,7 +3,7 @@
 // integer_slot_ownership.rs -- a scope releases only slots that can hold
 // a reference (#380).
 //
-// `emit::owned_locals_of_in` decided what a scope releases from
+// `emit::owned_locals_of` decided what a scope releases from
 // `arc::binds_ownership` alone, with no check that the slot is a pointer.
 // That is sound only if `binds_ownership` never answers yes for an
 // expression whose value is not an object -- and it does, because it looks

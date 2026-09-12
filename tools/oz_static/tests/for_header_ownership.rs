@@ -335,7 +335,7 @@ int main(void)
 /// it cannot be released as an object. Measured rather than reasoned --
 /// the statement-level twin of this shape, `long n = (long)makeThing();`,
 /// emits `oz_static_release((struct OZObject *)(n))` against a `long`
-/// today, because `owned_locals_of_in` has no such check of its own.
+/// today, because `owned_locals_of` has no such check of its own.
 /// That is a separate defect; the guard here is what keeps this arm from
 /// reproducing it.
 ///
