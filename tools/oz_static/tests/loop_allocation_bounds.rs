@@ -28,9 +28,9 @@
 // right-hand side reads the ivar (`_ivar = [_ivar itself]`) would free a
 // live object -- an illustration that used to be spelled
 // `_ivar = [_ivar retain]`, which #428 made a located error. That holds
-// only for a
-// store that *reads* the ivar. `_ivar = [Foo make]` does not, and #405
-// gave the ivar path the release-first shape locals had since #234, so two
+// only for a store that *reads* the ivar. `_ivar = [Foo make]` does not,
+// and #405 gave the ivar path the release-first shape locals had since
+// #234, so two
 // of the three now need one slot. `staticbar::overlapping_unless_released_first`
 // asks `emit::classify_store` which it is, so the bar and the emitter
 // cannot drift: refusing a release-first store over-rejects, and accepting
@@ -103,7 +103,9 @@ int g_freed = 0;
 - (void)dealloc
 {
 	g_freed++;
-	[super dealloc];
+	/* No [super dealloc]: ARC owns that send (#428), and the chain above
+	 * an override is called automatically. `g_freed` is what every case
+	 * in this file counts, and it is unaffected. */
 }
 @end
 ";
