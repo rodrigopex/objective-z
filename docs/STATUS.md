@@ -2056,19 +2056,36 @@ from an expression that is not the thing stored.
     resolved to an empty function, so the three deletions in `samples/` were
     behaviour-identical; the chain is what keeps that true for a superclass
     that has a body.
-  - **`retainCount` stays.** It takes and gives no ownership, and lowers to
-    `oz_static_retain_count`, which #418 made the single entry point for
-    reading a refcount. Clang under `-fobjc-arc` refuses the send as
-    unavailable; oz_static accepts it, which is a divergence recorded here
-    deliberately rather than an oversight.
-  - **The C API is not rejected and cannot be.** `oz_static_retain` and
-    `oz_static_release` are declared in the generated companion header, so
-    a `.m` file's plain C can still drive a refcount by hand. That is what
-    the migrated fixtures use where the subject *is* the runtime's
-    arithmetic, and what `samples/smp_shared` uses to keep two cores
-    contending on one refcount. ARC has no opinion about a C call, which is
-    the point -- but it means the rejection is a rule about Objective-C, not
-    an enforced invariant.
+  - **`retainCount` went the same way, one issue later (#436).** #428 left it
+    out because it takes and gives no ownership, so it is not a second
+    ownership model -- sound, and an answer to a different question. ARC
+    forbids the *send* regardless of ownership, which a probe settles where
+    an argument could not: declared or undeclared, Clang under `-fobjc-arc`
+    answers `ARC forbids explicit message send of 'retainCount'`. Adding it
+    is what made the list's rule statable in one line, **exactly what Clang
+    refuses**, with nothing weighed per selector -- hence
+    `ARC_FORBIDDEN_SELECTORS`, since `retainCount` is forbidden without being
+    owned and the old name could not say that. Reading a refcount never
+    depended on the message spelling: `oz_static_retain_count()` is the plain
+    C call #418 made the single entry point. The divergence this bullet used
+    to record is gone.
+  - **The C API is a deliberate escape hatch, decided rather than tolerated
+    (#437).** `oz_static_retain` and `oz_static_release` are declared in the
+    generated companion header, so a `.m` file's plain C can drive a refcount
+    by hand. **ARC governs Objective-C; it has no opinion about a C call**, so
+    the rejection is a rule about the source language and not an enforced
+    invariant -- and that is the chosen answer, not an admission. Narrowing
+    the exports to `oz_static_retain_count` alone was the alternative and was
+    rejected for a concrete reason worth recording: **there is no ARC-legal
+    Objective-C spelling that drives one shared object's refcount up and down
+    without also serialising on a slot.** A strong-slot store is ARC's way to
+    change a refcount and serialises on the slot as well, so it stops being a
+    refcount test. A two-core refcount-contention test -- which is what
+    `samples/smp_shared` exists for -- therefore cannot be written in
+    Objective-C at all, and the migrated fixtures whose subject *is* the
+    runtime's arithmetic have nowhere else to go either. Using the C API means
+    taking ownership manually and deliberately, in a file that has stepped
+    outside the language ARC governs.
 
   **Reversals (#428), stated out loud.** Three fixture assertions were
   reversed or deleted rather than adapted:

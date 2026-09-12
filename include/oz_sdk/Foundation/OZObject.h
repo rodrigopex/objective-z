@@ -62,6 +62,27 @@
  * forbids `[obj retainCount]` outright, and the retain/release pair is
  * ARC's to insert, so this is a plain C function rather than a method.
  *
+ * That sentence was true of the design and false of the implementation
+ * until #428 and #436: oz_static parses with tree-sitter rather than Clang,
+ * so `[obj retain]`, `[obj release]` and `[obj retainCount]` were all
+ * reachable, and one of them had an emitter accommodation built for it. All
+ * five selectors ARC refuses are now hard located errors, and this
+ * declaration is what the diagnostics point at.
+ *
+ * **The companion's C API is the escape hatch, and it is a decision (#437).**
+ * `oz_static_retain` and `oz_static_release` are emitted into the generated
+ * companion header, so plain C in a `.m` file can drive a refcount by hand.
+ * ARC governs Objective-C and has no opinion about a C call, so the
+ * rejection is a rule about the source language rather than an enforced
+ * invariant. Narrowing those exports away was considered and refused:
+ * there is no ARC-legal Objective-C spelling that drives one shared
+ * object's refcount up and down without also serialising on a slot, so a
+ * two-core refcount-contention test -- `samples/smp_shared` -- could not be
+ * written at all. Reaching for them means taking ownership manually and on
+ * purpose. `oz_static_retain_count` below is different in kind: it reads,
+ * and takes and gives no ownership, which is why it is the one an ordinary
+ * program is expected to call.
+ *
  * Declared here so Clang can resolve calls to it while dumping the AST,
  * which runs before any generated header exists. The companion
  * (`companion.rs`) emits the definition, with this exact signature so the
