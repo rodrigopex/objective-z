@@ -1462,6 +1462,34 @@ impl<'a> EmitCtx<'a> {
             node.start_byte()..node.end_byte(),
         ));
     }
+
+    /// `err`, with the reason and the remedies on their own tiers.
+    ///
+    /// `note` is why, and each `help` is one thing the author can do --
+    /// rendered one per line (#457). Routed through the same
+    /// `Diagnostic::spanning` as `err`, so a refusal added later cannot
+    /// invent a second way to record a span.
+    ///
+    /// Reach for this rather than folding a remedy into the message: a
+    /// fused sentence is what #457 had to take apart, and the `-retain`
+    /// rejection reached 90 words that way.
+    fn err_detailed(
+        &mut self,
+        node: Node,
+        message: impl Into<String>,
+        note: Option<String>,
+        help: Vec<String>,
+    ) {
+        let mut d =
+            Diagnostic::spanning(message, self.src, node.start_byte()..node.end_byte());
+        if let Some(note) = note {
+            d = d.with_note(note);
+        }
+        for h in help {
+            d = d.with_help(h);
+        }
+        self.diags.push(d);
+    }
 }
 
 /// Which introspection support the emitted code actually referenced.
@@ -4327,12 +4355,35 @@ fn render_message(node: Node, ctx: &mut EmitCtx) -> (String, String) {
             }
         }
         None => {
-            ctx.err(
+            /* The remedy split out of the message (#457). This is the
+             * rejection a px-keyboard author lost hours to: a `dim`
+             * defined on another class, sent to a receiver that reached
+             * the method as a `void *` out of a k_timer slot. The
+             * message named the selector and the type all along -- what
+             * it never said is that the fix is to give the receiver its
+             * real declared type, because dispatch is resolved from the
+             * declared type and nothing else. */
+            ctx.err_detailed(
                 node,
                 format!(
-                    "cannot statically resolve the receiver type for selector '{}' (receiver type is '{}'); the static subset requires a known declared type",
+                    "cannot statically resolve the receiver type for selector '{}' (receiver type is '{}')",
                     parts.selector, recv_type
                 ),
+                Some(
+                    "the static subset resolves a send from the receiver's *declared* type, \
+                     so a receiver of this type names no class to dispatch to"
+                        .to_string(),
+                ),
+                vec![
+                    format!(
+                        "declare the receiver as the class that implements '{}', or cast it \
+                         to that class at the send",
+                        parts.selector
+                    ),
+                    "a receiver arriving as an untyped pointer -- out of a k_timer or \
+                     k_work user-data slot, say -- has to be cast back before the send"
+                        .to_string(),
+                ],
             );
             ("0".to_string(), "int".to_string())
         }
