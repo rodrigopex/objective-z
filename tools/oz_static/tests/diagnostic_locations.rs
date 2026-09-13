@@ -209,6 +209,6 @@ fn an_unanchored_diagnostic_reports_no_file() {
     let d = diags.iter().find(|d| d.message.contains("--pool-sizes names")).unwrap_or_else(
         || panic!("expected the unknown-override diagnostic, got {:?}", diags),
     );
-    assert_eq!(d.offset, None, "this check has no node to anchor to");
+    assert_eq!(d.span, None, "this check has no node to anchor to");
     assert_eq!(d.file, None, "an unanchored diagnostic must not name a file");
 }

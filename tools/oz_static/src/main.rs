@@ -577,7 +577,12 @@ fn main() -> ExitCode {
              * arrived with. */
             for mut d in diags {
                 d.resolve_in(&resolved.source_map);
-                oz_err!("{}", d);
+                /* `render` carries the `oz2c error:` prefix itself, and
+                 * emits its own trailing newline, so this goes out with
+                 * `eprint!` rather than through `oz_err!` (#457). The
+                 * first line is still a self-contained summary, which is
+                 * what `oz_static_build.py` reads. */
+                eprint!("{}", oz_static::render::render(&d, &resolved.text));
             }
             ExitCode::FAILURE
         }
