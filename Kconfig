@@ -85,6 +85,47 @@ config OBJZ_REFLECTION
 	  Set n to forbid selectors outright. All four constructs then
 	  become located transpile errors naming this option.
 
+config OBJZ_DEBUG_REFCOUNT
+	bool "Refcount traps: catch an over-release or a stale pointer"
+	default n
+	help
+	  Emit the refcount instruments as OZ_DEBUG_REFCOUNT, which is
+	  off by default because each one costs a branch on every retain and
+	  release.
+
+	  What it catches, and why each is otherwise silent:
+
+	  An over-release. oz_atomic_dec_and_test is a fetch-sub compared
+	  against 1, so releasing an object at refcount 0 leaves -1 and
+	  returns as though nothing happened. A dealloc counter cannot see it
+	  either, because the refcount never reaches 0 again, and nor can a
+	  slot count, because oz_slab_free clamps rather than underflowing.
+	  The trap checks before the decrement, where the evidence still
+	  exists.
+
+	  A retain during dealloc, which resurrects a reference the dealloc
+	  switch has already passed, so the object is freed under its new
+	  owner.
+
+	  A release whose class_id matches no live class -- a freed or corrupt
+	  pointer. That arm of the dealloc switch was a silent break, which
+	  returns as though the object had been deallocated.
+
+	  This is the only instrument that catches a double free on target,
+	  where AddressSanitizer does not exist. On the host the sanitizers
+	  are the stronger tool and the corpora already run under them; this
+	  is what covers the boards.
+
+	  OZ_DEBUG_REFCOUNT is the macro name, and a -D flag is the one
+	  interface here with no deprecation path. An out-of-tree build
+	  passing the pre-#472 spelling gets no diagnostic -- just an #ifdef
+	  that never fires and instruments that silently are not there. That
+	  is the same reason OZ_TRAP_POOL_EXHAUSTION kept a name it had
+	  outgrown. Renaming this macro again means saying so in a release
+	  note, because nothing in the build can say it for you. The retired
+	  spelling is written out once, in docs/STATUS.md, which is the only
+	  file permitted to carry it.
+
 config OBJZ_DEBUG_LINES
 	bool "#line directives back to the Objective-C source"
 	depends on DEBUG
