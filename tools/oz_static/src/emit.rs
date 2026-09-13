@@ -1432,8 +1432,7 @@ impl<'a> EmitCtx<'a> {
     }
 
     fn err(&mut self, node: Node, message: impl Into<String>) {
-        let (line, col) = line_col(self.src, node.start_byte());
-        self.diags.push(Diagnostic::new(message, line, col));
+        self.diags.push(Diagnostic::at(message, self.src, node.start_byte()));
     }
 }
 
