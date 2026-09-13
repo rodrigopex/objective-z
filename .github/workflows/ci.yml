@@ -220,6 +220,37 @@ jobs:
           --opt=O0
           --sanitize=address,undefined
 
+      # Two cells that were empty (#455).
+      #
+      # `-O2` because a sanitizer at `-O0` only proves the shape the
+      # optimiser was not allowed to touch, and every ARC elision this
+      # backend performs is a decision about code the optimiser then
+      # rewrites.
+      - name: Run with AddressSanitizer + UBSan at -O2
+        run: >
+          PYTHONPATH=tools
+          python3 -m pytest tests/behavior/ -v
+          --backend=static
+          --compiler=gcc
+          --opt=O2
+          --sanitize=address,undefined
+
+      # ASan and LSan in the same process, which ran nowhere at all. The
+      # step above passes `--sanitize` with no `--check-leaks`, and
+      # `compile_and_run.py:276-279` reads that as `detect_leaks=0` -- so
+      # the ASan leg had leak detection explicitly *off*, and the
+      # `leak-check` job runs standalone LSan with no ASan. Neither saw
+      # what the other sees.
+      - name: Run with AddressSanitizer + LeakSanitizer together
+        run: >
+          PYTHONPATH=tools
+          python3 -m pytest tests/behavior/ -v
+          --backend=static
+          --compiler=gcc
+          --opt=O0
+          --sanitize=address,undefined
+          --check-leaks
+
   # C coverage (gcov)
   c-coverage:
     runs-on: ubuntu-latest
@@ -340,6 +371,31 @@ jobs:
         run: >
           PYTHONPATH=tools
           python3 -m pytest tests/behavior/ -v
+          --backend=static
+          --compiler=gcc
+          --opt=O0
+          --check-leaks
+
+      # gcc and clang disagree about which allocations are still reachable
+      # at exit, so one compiler's clean run is not the other's (#455).
+      - name: Run behavior tests with LeakSanitizer under clang
+        run: >
+          PYTHONPATH=tools
+          python3 -m pytest tests/behavior/ -v
+          --backend=static
+          --compiler=clang
+          --opt=O0
+          --check-leaks
+
+      # The adapted corpus, which could not be leak-checked by any
+      # invocation until this change: `tests/adapted/conftest.py` read six
+      # options and not `--check-leaks`, so the flag was accepted by the
+      # CLI and dropped on the floor. Thirteen of the forty cases are about
+      # ARC.
+      - name: Run adapted tests with LeakSanitizer
+        run: >
+          PYTHONPATH=tools
+          python3 -m pytest tests/adapted/ -v
           --backend=static
           --compiler=gcc
           --opt=O0
