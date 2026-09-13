@@ -1329,7 +1329,12 @@ fn walk_bridging_casts(node: Node, src: &str, diags: &mut Vec<Diagnostic>) {
                 src,
                 node,
                 format!(
-                    "'{kind}' is not supported: ARC would {verb}, and oz_static emits no such                      traffic -- {direction}, {consequence}. Use a plain '(__bridge T)' cast,                      which transfers no ownership, and keep the object alive on the                      Objective-C side independently -- an instance variable, or a singleton                      adopting 'OZSingletonProtocol', which is what 'px-keyboard' does for the                      pointer it hands to a Zephyr callback"
+                    "'{kind}' is not supported: ARC would {verb}, and oz_static emits no \
+                     such traffic -- {direction}, {consequence}. Use a plain '(__bridge T)' \
+                     cast, which transfers no ownership, and keep the object alive on the \
+                     Objective-C side independently -- an instance variable, or a singleton \
+                     adopting 'OZSingletonProtocol', which is what 'px-keyboard' does for \
+                     the pointer it hands to a Zephyr callback"
                 ),
             );
             return;
