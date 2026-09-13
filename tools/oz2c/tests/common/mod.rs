@@ -251,6 +251,7 @@ pub fn compile_and_run_with_heap(source: &str, stem: &str) -> String {
         stem,
         &["-DOZ_HEAP_SUPPORT"],
         oz2c::Options { heap_support: true, ..Default::default() },
+        true,
     )
 }
 
@@ -275,6 +276,7 @@ pub fn compile_and_run_with_heap_and_cc_flags(
         stem,
         &flags,
         oz2c::Options { heap_support: true, ..Default::default() },
+        true,
     )
 }
 
@@ -291,6 +293,7 @@ pub fn compile_and_run_with_introspection(source: &str, stem: &str) -> String {
         stem,
         &[],
         oz2c::Options { introspection: true, ..Default::default() },
+        true,
     )
 }
 
@@ -302,6 +305,7 @@ pub fn compile_and_run_with_reflection(source: &str, stem: &str) -> String {
         stem,
         &[],
         oz2c::Options { reflection: true, ..Default::default() },
+        true,
     )
 }
 
@@ -348,7 +352,7 @@ pub fn compile_and_run_with_cc_flags(
 }
 
 fn compile_and_run_with_flags(source: &str, stem: &str, extra_cc_flags: &[&str]) -> String {
-    compile_and_run_inner(source, stem, extra_cc_flags, oz2c::Options::default())
+    compile_and_run_inner(source, stem, extra_cc_flags, oz2c::Options::default(), true)
 }
 
 /// Transpile, compile, link, run.
@@ -363,6 +367,7 @@ fn compile_and_run_inner(
     stem: &str,
     extra_cc_flags: &[&str],
     mut options: oz2c::Options,
+    expect_success: bool,
 ) -> String {
     /* Before the transpile, not after: the dump has to exist to be passed,
      * and the scratch directory is where it goes. Wiping first keeps a
@@ -415,10 +420,38 @@ fn compile_and_run_inner(
     cc(&[main_o.to_str().unwrap(), dispatch_o.to_str().unwrap(), "-o", bin.to_str().unwrap()]);
 
     let run = Command::new(&bin).output().unwrap_or_else(|e| panic!("failed to run binary: {}", e));
-    assert!(run.status.success(), "binary exited non-zero: {:?}\nstdout: {}\nstderr: {}",
-            run.status, String::from_utf8_lossy(&run.stdout), String::from_utf8_lossy(&run.stderr));
+    if expect_success {
+        assert!(run.status.success(), "binary exited non-zero: {:?}\nstdout: {}\nstderr: {}",
+                run.status, String::from_utf8_lossy(&run.stdout), String::from_utf8_lossy(&run.stderr));
+    } else {
+        assert!(
+            !run.status.success(),
+            "expected this program to abort, and it exited 0.\nstdout: {}\nstderr: {}",
+            String::from_utf8_lossy(&run.stdout),
+            String::from_utf8_lossy(&run.stderr)
+        );
+    }
 
-    String::from_utf8(run.stdout).unwrap()
+    /* Both streams, because a trap's evidence is split across them: the class
+     * name goes to stdout via `oz_platform_print` and the assertion text to
+     * stderr. A caller checking only one would miss half the claim. */
+    let mut both = String::from_utf8_lossy(&run.stdout).into_owned();
+    both.push_str(&String::from_utf8_lossy(&run.stderr));
+    both
+}
+
+/// Compile with `extra_cc_flags`, run, and require the program to **abort**.
+///
+/// Every other run helper asserts `status.success()`, which makes a trap
+/// unprovable: the existing exhaustion-trap test compiles with the macro and
+/// deliberately does not run, because a firing trap aborts. That proves the
+/// trap is *real C* and says nothing about whether it fires (#452).
+///
+/// Returns stdout and stderr concatenated, so an assertion can name both the
+/// class printed by `oz_platform_print` and the message given to
+/// `oz_assert_msg`.
+pub fn expect_trap(source: &str, stem: &str, extra_cc_flags: &[&str]) -> String {
+    compile_and_run_inner(source, stem, extra_cc_flags, oz2c::Options::default(), false)
 }
 
 fn cc(args: &[&str]) {
