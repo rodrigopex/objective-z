@@ -54,7 +54,33 @@ fn node_text<'a>(node: Node, src: &'a str) -> &'a str {
 }
 
 fn err(diags: &mut Vec<Diagnostic>, src: &str, node: Node, message: impl Into<String>) {
-    diags.push(Diagnostic::at(message, src, node.start_byte()));
+    diags.push(Diagnostic::spanning(message, src, node.start_byte()..node.end_byte()));
+}
+
+/// A rejection split into its three parts: what is wrong, why, and what
+/// to do instead.
+///
+/// One diagnosis, at most one reason, and any number of remedies -- the
+/// ARC rejections carry three.
+struct Rejection {
+    message: String,
+    note: Option<String>,
+    help: Vec<String>,
+}
+
+/// `err` for a rejection that has a reason and remedies to offer.
+///
+/// Routed through the same `Diagnostic::spanning` as `err`, so the two
+/// cannot drift on how a span is recorded.
+fn err_detailed(diags: &mut Vec<Diagnostic>, src: &str, node: Node, rejection: Rejection) {
+    let mut d = Diagnostic::spanning(rejection.message, src, node.start_byte()..node.end_byte());
+    if let Some(note) = rejection.note {
+        d = d.with_note(note);
+    }
+    for help in rejection.help {
+        d = d.with_help(help);
+    }
+    diags.push(d);
 }
 
 /// The selector of a `message_expression`, whatever shape its receiver has.
@@ -1486,7 +1512,7 @@ fn walk_manual_memory_sends(node: Node, src: &str, diags: &mut Vec<Diagnostic>) 
     if node.kind() == "message_expression" {
         if let Some(selector) = unary_selector(node, src) {
             if ARC_FORBIDDEN_SELECTORS.contains(&selector.as_str()) {
-                err(diags, src, node, arc_forbidden_selector_message(&selector));
+                err_detailed(diags, src, node, arc_forbidden_selector(&selector));
             }
         }
     }
@@ -1569,42 +1595,70 @@ fn unary_method_name(node: Node, src: &str) -> Option<String> {
 /// Worded to agree with #430's `@autoreleasepool` rejection, since a reader
 /// who hits one will hit the other: name the mechanism that is missing, and
 /// name the thing to write instead.
-fn arc_forbidden_selector_message(selector: &str) -> String {
-    let head = format!(
-        "'-{}' cannot be sent: ARC is always enabled in the static subset (every Clang path \
-         here passes -fobjc-arc, under which this is a compile error)",
-        selector
-    );
+/// The rejection for a send of a selector ARC owns.
+///
+/// Was one string with the diagnosis and every remedy fused into it --
+/// 90 words for `-retain`, and a reader had to find the imperative
+/// clause inside the prose. The parts are separate now, so the renderer
+/// can put each on its own line (#457). The *text* of each is unchanged,
+/// which is what keeps the suite's assertions about the remedy being
+/// offered describing the same thing.
+fn arc_forbidden_selector(selector: &str) -> Rejection {
+    let message = format!("'-{}' cannot be sent here -- ARC owns this reference", selector);
+    let note = "ARC is always enabled in the static subset: every Clang path here passes \
+                -fobjc-arc, under which this is a compile error"
+        .to_string();
+
     if selector == "retainCount" {
         /* The one forbidden selector with a direct replacement, so the
          * remedy is a rewrite rather than a deletion. */
-        return format!(
-            "{head}. Reading a refcount is still supported -- call \
-             'oz_static_retain_count(obj)', a plain C function, which is the only refcount \
-             entry point Objective-C source may spell (#418). It takes and gives no \
-             ownership, so nothing about the lifetime changes; only the spelling does.",
-            head = head
-        );
+        return Rejection {
+            message,
+            note: Some(note),
+            help: vec![
+                "reading a refcount is still supported -- call \
+                 'oz_static_retain_count(obj)', a plain C function, which is the only \
+                 refcount entry point Objective-C source may spell (#418)"
+                    .to_string(),
+                "it takes and gives no ownership, so nothing about the lifetime changes; \
+                 only the spelling does"
+                    .to_string(),
+            ],
+        };
     }
+
     if selector == "dealloc" {
-        format!(
-            "{head}, and the deallocation path calls '-dealloc' for you (oz_static_release) \
-             with the superclass chain above an override called automatically -- so \
-             '[super dealloc]' is redundant, not required. Delete this line; keep the rest of \
-             the '-dealloc' body for cleanup that is not a reference release.",
-            head = head
-        )
-    } else {
-        format!(
-            "{head}, so manual retain/release is a second ownership model and a release ARC \
-             also emits is a double free. Let scope-based ARC manage the lifetime -- a local \
-             is released at the end of its scope, a store into a strong slot releases what it \
-             replaced, and an owned object ivar is released with its owner. Declare a \
-             reference '__unsafe_unretained' to opt one slot out; read a refcount with \
-             'oz_static_retain_count(obj)', a plain C call, which takes and gives no \
-             ownership.",
-            head = head
-        )
+        return Rejection {
+            message,
+            note: Some(format!(
+                "{note}, and the deallocation path calls '-dealloc' for you \
+                 (oz_static_release) with the superclass chain above an override called \
+                 automatically -- so '[super dealloc]' is redundant, not required",
+                note = note
+            )),
+            help: vec!["delete this line; keep the rest of the '-dealloc' body for cleanup \
+                        that is not a reference release"
+                .to_string()],
+        };
+    }
+
+    Rejection {
+        message,
+        note: Some(format!(
+            "{note}, so manual retain/release is a second ownership model -- and a release \
+             ARC also emits is a double free",
+            note = note
+        )),
+        help: vec![
+            "let scope-based ARC manage the lifetime: a local is released at the end of its \
+             scope, a store into a strong slot releases what it replaced, and an owned \
+             object ivar is released with its owner"
+                .to_string(),
+            "to opt one slot out, declare the reference '__unsafe_unretained'".to_string(),
+            "to read a refcount without taking ownership, call \
+             'oz_static_retain_count(obj)', a plain C call"
+                .to_string(),
+        ],
     }
 }
 

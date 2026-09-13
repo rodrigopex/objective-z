@@ -851,7 +851,27 @@ pub struct Diagnostic {
     /// unsizable slab cycle. Those keep the `(1, 1)` they always had;
     /// giving them a real anchor needs one threaded from upstream and is
     /// tracked separately.
-    pub offset: Option<usize>,
+    ///
+    /// A *range*, not a start, so the renderer can underline the whole
+    /// offending construct rather than put a single caret under its first
+    /// byte. One field rather than a start plus an end, because two
+    /// fields can disagree and this one cannot (#457).
+    pub span: Option<std::ops::Range<usize>>,
+    /// What is wrong beyond the one-line message: the reason, where the
+    /// reason is neither the diagnosis nor the remedy.
+    ///
+    /// Rendered as rustc's `note:`. `None` when the message says all
+    /// there is.
+    pub note: Option<String>,
+    /// What the author can do about it, one entry per distinct remedy.
+    ///
+    /// A `Vec`, not an `Option`, because a single diagnostic can carry
+    /// several genuinely different fixes: the `-retain` rejection offers
+    /// three (let ARC manage it, opt the slot out with
+    /// `__unsafe_unretained`, or read the count with
+    /// `oz_static_retain_count`), and they were one 90-word sentence
+    /// before this (#457).
+    pub help: Vec<String>,
     /// The source file `line`/`col` refer to, once `resolve_in` has run.
     ///
     /// `None` means they are still merged-buffer positions: either
@@ -868,7 +888,15 @@ impl Diagnostic {
     /// Prefer `at`. This spelling cannot be resolved to a file, so it is
     /// the one that still reports a position no reader can open.
     pub fn new(message: impl Into<String>, line: usize, col: usize) -> Self {
-        Diagnostic { message: message.into(), line, col, offset: None, file: None }
+        Diagnostic {
+            message: message.into(),
+            line,
+            col,
+            span: None,
+            note: None,
+            help: Vec::new(),
+            file: None,
+        }
     }
 
     /// A diagnostic at `offset` in `src`, the merged buffer.
@@ -880,8 +908,43 @@ impl Diagnostic {
     /// calls `new` instead produces a diagnostic that cannot be resolved
     /// -- which is the defect #456 fixed, so do not reintroduce it.
     pub fn at(message: impl Into<String>, src: &str, offset: usize) -> Self {
-        let (line, col) = crate::parse::line_col(src, offset);
-        Diagnostic { message: message.into(), line, col, offset: Some(offset), file: None }
+        Diagnostic::spanning(message, src, offset..offset)
+    }
+
+    /// `at`, underlining `span` rather than pointing a caret at its start.
+    ///
+    /// The span is a merged-buffer byte range, so it survives the repair
+    /// for the same reason a single offset does. An empty range renders
+    /// as a one-column caret, which is what a site with no end to offer
+    /// gets.
+    pub fn spanning(
+        message: impl Into<String>,
+        src: &str,
+        span: std::ops::Range<usize>,
+    ) -> Self {
+        let (line, col) = crate::parse::line_col(src, span.start);
+        Diagnostic {
+            message: message.into(),
+            line,
+            col,
+            span: Some(span),
+            note: None,
+            help: Vec::new(),
+            file: None,
+        }
+    }
+
+    /// Attach the reason, which is neither diagnosis nor remedy.
+    pub fn with_note(mut self, note: impl Into<String>) -> Self {
+        self.note = Some(note.into());
+        self
+    }
+
+    /// Attach one remedy. Called more than once for a diagnostic with
+    /// more than one, which is why `help` is a `Vec`.
+    pub fn with_help(mut self, help: impl Into<String>) -> Self {
+        self.help.push(help.into());
+        self
     }
 
     /// `at` when the anchor was found, and an unlocatable `(1, 1)` when it
@@ -906,7 +969,7 @@ impl Diagnostic {
     /// holds is the most that can honestly be said, so it is left alone
     /// rather than replaced with a guess.
     pub fn resolve_in(&mut self, map: &crate::imports::SourceMap) {
-        let Some(offset) = self.offset else { return };
+        let Some(offset) = self.span.as_ref().map(|s| s.start) else { return };
         let Some((file, line, col)) = map.source_position(offset) else { return };
         self.file = Some(file.to_path_buf());
         self.line = line;
@@ -914,13 +977,31 @@ impl Diagnostic {
     }
 }
 
+/// The whole diagnostic as plain text, one tier per line.
+///
+/// This is not the rendered form -- `render::render` draws the snippet and
+/// the caret for a terminal. This is the unrendered text, and it carries
+/// `note`/`help` because they are *part of the diagnostic*: a remedy moved
+/// out of `message` into `help` must still be visible to anything asking
+/// whether the remedy was offered, and ~400 assertions in the suite ask
+/// exactly that (#457).
+///
+/// The first line stays self-contained, so a caller that reads one line
+/// still gets a complete summary.
 impl std::fmt::Display for Diagnostic {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match &self.file {
             Some(path) => {
-                write!(f, "{}:{}:{}: {}", path.display(), self.line, self.col, self.message)
+                write!(f, "{}:{}:{}: {}", path.display(), self.line, self.col, self.message)?
             }
-            None => write!(f, "{}:{}: {}", self.line, self.col, self.message),
+            None => write!(f, "{}:{}: {}", self.line, self.col, self.message)?,
         }
+        if let Some(note) = &self.note {
+            write!(f, "\n  note: {}", note)?;
+        }
+        for help in &self.help {
+            write!(f, "\n  help: {}", help)?;
+        }
+        Ok(())
     }
 }

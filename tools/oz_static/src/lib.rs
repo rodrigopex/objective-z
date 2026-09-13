@@ -14,6 +14,7 @@ pub mod model;
 pub mod parse;
 pub mod pools;
 pub mod progress;
+pub mod render;
 pub mod staticbar;
 
 pub use model::{Diagnostic, Program};

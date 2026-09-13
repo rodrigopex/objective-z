@@ -1456,7 +1456,11 @@ impl<'a> EmitCtx<'a> {
     }
 
     fn err(&mut self, node: Node, message: impl Into<String>) {
-        self.diags.push(Diagnostic::at(message, self.src, node.start_byte()));
+        self.diags.push(Diagnostic::spanning(
+            message,
+            self.src,
+            node.start_byte()..node.end_byte(),
+        ));
     }
 }
 
