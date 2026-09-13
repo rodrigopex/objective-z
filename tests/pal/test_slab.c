@@ -67,6 +67,50 @@ void test_slab_reuse_after_free(void)
 	oz_slab_free(&reuse_slab, second);
 }
 
+/* ------------------------------------------------------------------ */
+/* Leak detection — the two the census is built on                     */
+/* ------------------------------------------------------------------ */
+
+/*
+ * `oz_slab_outstanding_count` and `oz_slab_check_leaks` had lived in
+ * `include/platform/oz_platform_host.h` with **zero** call sites anywhere
+ * in the tree -- tests, src, samples, tools, cmake and the workflows
+ * (#451). The tests above reach past both and read `test_slab.num_used`
+ * directly, which is why nothing noticed. These two cover the accessors
+ * themselves, so the census built on them rests on something tested.
+ */
+
+void test_slab_outstanding_count_follows_the_slab(void)
+{
+	OZ_SLAB_DEFINE(census_slab, 16, 2, 4);
+	void *a = NULL;
+
+	TEST_ASSERT_EQUAL_UINT32(0, oz_slab_outstanding_count(&census_slab));
+	oz_slab_alloc(&census_slab, &a);
+	TEST_ASSERT_EQUAL_UINT32(1, oz_slab_outstanding_count(&census_slab));
+	oz_slab_free(&census_slab, a);
+	TEST_ASSERT_EQUAL_UINT32(0, oz_slab_outstanding_count(&census_slab));
+}
+
+void test_slab_check_leaks_answers_both_ways(void)
+{
+	OZ_SLAB_DEFINE(leak_slab, 16, 2, 4);
+	void *a = NULL;
+
+	/* Absence first, then presence: a 0 from `check_leaks` is also what
+	 * a broken implementation that always returns 0 would say, so the
+	 * clean answer is only worth having next to a dirty one. */
+	TEST_ASSERT_EQUAL_INT(0, oz_slab_check_leaks(&leak_slab, "leak_slab"));
+
+	oz_slab_alloc(&leak_slab, &a);
+	/* This prints `LEAK: leak_slab has 1 outstanding allocation(s)` on
+	 * stderr. That line is this case's expected output, not a failure. */
+	TEST_ASSERT_EQUAL_INT(1, oz_slab_check_leaks(&leak_slab, "leak_slab"));
+
+	oz_slab_free(&leak_slab, a);
+	TEST_ASSERT_EQUAL_INT(0, oz_slab_check_leaks(&leak_slab, "leak_slab"));
+}
+
 void test_slab_free_at_zero_safe(void)
 {
 	OZ_SLAB_DEFINE(zero_slab, 16, 2, 4);

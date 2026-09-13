@@ -225,6 +225,44 @@ void oz_release(struct OZObject *self)
 	}
 }
 
+/* synthesized: exit-time live-object census (#451). Answers "was every
+ * object freed?" by counting allocations against frees, which -- unlike a
+ * leak sanitizer -- sees an object that is still reachable from a static
+ * root, needs no sanitizer to run, and works on target where the slab is
+ * static memory. A heap instance ('[X dynamicAlloc]') comes from no slab
+ * and is not counted here (not from source) */
+extern oz_slab_t oz_slab_Widget;
+extern oz_slab_t oz_slab_Base;
+extern oz_slab_t oz_slab_Child;
+extern oz_slab_t oz_slab_Node;
+extern oz_slab_t oz_slab_LightSwitch;
+extern oz_slab_t oz_slab_Fan;
+extern oz_slab_t oz_slab_Level1;
+extern oz_slab_t oz_slab_Level2;
+extern oz_slab_t oz_slab_Level3;
+extern oz_slab_t oz_slab_Level4;
+extern oz_slab_t oz_slab_OZNumber;
+extern oz_slab_t oz_slab_BoxedTest;
+int oz_check_all_slabs(void)
+{
+	int leaked = 0;
+
+	leaked += oz_slab_check_leaks(&oz_slab_Widget, "Widget");
+	leaked += oz_slab_check_leaks(&oz_slab_Base, "Base");
+	leaked += oz_slab_check_leaks(&oz_slab_Child, "Child");
+	leaked += oz_slab_check_leaks(&oz_slab_Node, "Node");
+	leaked += oz_slab_check_leaks(&oz_slab_LightSwitch, "LightSwitch");
+	leaked += oz_slab_check_leaks(&oz_slab_Fan, "Fan");
+	leaked += oz_slab_check_leaks(&oz_slab_Level1, "Level1");
+	leaked += oz_slab_check_leaks(&oz_slab_Level2, "Level2");
+	leaked += oz_slab_check_leaks(&oz_slab_Level3, "Level3");
+	leaked += oz_slab_check_leaks(&oz_slab_Level4, "Level4");
+	leaked += oz_slab_check_leaks(&oz_slab_OZNumber, "OZNumber");
+	leaked += oz_slab_check_leaks(&oz_slab_BoxedTest, "BoxedTest");
+
+	return leaked;
+}
+
 /* protocol dispatch: routes 'init' to whichever class implements it
  * (not from source) */
 void * OZ_PROTOCOL_SEND_init(struct OZObject *self)

@@ -1318,6 +1318,109 @@ fn render_introspection(
     (h, c)
 }
 
+/// `oz_check_all_slabs()` -- the exit-time live-object census (#451).
+///
+/// One `oz_slab_check_leaks` call per class that reserves a slab, returning
+/// the number of classes whose slab still holds an outstanding allocation
+/// and naming each on stderr (host) or the console (Zephyr). Nothing in the
+/// tree used to answer "was every object freed?": `oz_slab_check_leaks` had
+/// existed in the host PAL since the beginning with **zero** call sites,
+/// and the corpus's oracle was a one-block-slab exhaustion proxy -- alloc,
+/// release, alloc again, assert non-NULL -- which is blind three ways. It
+/// needs the pool sized to exactly 1 (the harness defaults every class to
+/// 4, so three leaks fit in the spare slots unnoticed), it cannot see a
+/// leak in any *other* class, and an over-release makes the slab *more*
+/// available, so freeing a block twice still passes.
+///
+/// Why this rather than more LeakSanitizer, which is the other obvious
+/// answer and already runs in one CI job:
+///
+///   * LSan reports *unreachable* blocks. An object still held by a
+///     file-scope `static Thing *g`, by a static-storage ivar chain, or by
+///     the slab bookkeeping itself is reachable from a root, and LSan is
+///     silent. This counts allocations against frees, so reachability does
+///     not enter into it.
+///   * `-fsanitize=leak` does not exist on arm64 macOS, so that gate is
+///     unreachable on a maintainer's machine. This needs no sanitizer.
+///   * It runs at every compiler and `-O` cell, not just the one gcc/-O0
+///     job, and on target -- where `k_mem_slab` is static memory and an
+///     unreleased object is otherwise invisible by construction.
+///
+/// Two exclusions, both by construction rather than by heuristic:
+///
+///   * a class with `slots == 0` reserves no slab at all
+///     (`render_slab_define`), so there is no counter to read and no
+///     `oz_slab_{name}` symbol to name;
+///   * a class conforming to `OZSingletonProtocol`, because
+///     `render_immortal_marker` marks *every* instance of such a class
+///     immortal at alloc and `oz_release` returns before the decrement --
+///     the slot is held for the life of the program by design. Immortality
+///     is a per-class property here, which is what makes a static
+///     exclusion exact rather than approximate; counting these would
+///     report px-keyboard's four singletons as four leaks. The excluded
+///     classes are still *named* in the emitted comment, so a reader can
+///     see what was skipped and why.
+///
+/// A heap instance (`[X dynamicAlloc]`) draws from no slab and is outside
+/// what this can see; LSan remains the instrument for those. An element
+/// buffer from `oz_item_pool` is not counted either, and does not need to
+/// be: a buffer is owned by the OZArray/OZDictionary that allocated it, so
+/// a leaked buffer implies a leaked object, and the object's slot is
+/// counted here.
+fn render_leak_census(program: &Program, pools: &crate::pools::PoolSizes) -> (String, String) {
+    let with_slab: Vec<&str> = program
+        .class_order
+        .iter()
+        .filter(|name| pools.for_class(name) > 0)
+        .map(|name| name.as_str())
+        .collect();
+    let (immortal, counted): (Vec<&str>, Vec<&str>) = with_slab
+        .iter()
+        .partition(|name| program.class_conforms_to(name, SINGLETON_PROTOCOL));
+
+    let h = "/* synthesized: the exit-time live-object census -- the number of classes\n * \
+whose slab still holds an outstanding allocation, each named on stderr.\n * \
+Zero means every slab block this program handed out was handed back.\n * \
+Defined in oz2c_dispatch.c (not from source) */\nint oz_check_all_slabs(void);\n\n"
+        .to_string();
+
+    let mut c = String::from(
+        "/* synthesized: exit-time live-object census (#451). Answers \"was every\n * \
+object freed?\" by counting allocations against frees, which -- unlike a\n * \
+leak sanitizer -- sees an object that is still reachable from a static\n * \
+root, needs no sanitizer to run, and works on target where the slab is\n * \
+static memory. A heap instance ('[X dynamicAlloc]') comes from no slab\n * \
+and is not counted here (not from source) */\n",
+    );
+    for name in &counted {
+        c.push_str(&format!("extern oz_slab_t oz_slab_{};\n", name));
+    }
+    c.push_str("int oz_check_all_slabs(void)\n{\n");
+    for name in &immortal {
+        c.push_str(&format!(
+            "\t/* {name} is excluded: it conforms to {proto}, so every instance\n\
+             \t * is immortal and keeps its slab slot for the life of the\n\
+             \t * program -- by design, not a leak */\n",
+            name = name,
+            proto = SINGLETON_PROTOCOL
+        ));
+    }
+    if counted.is_empty() {
+        c.push_str("\t/* no class in this program reserves a countable slab */\n\treturn 0;\n");
+    } else {
+        c.push_str("\tint leaked = 0;\n\n");
+        for name in &counted {
+            c.push_str(&format!(
+                "\tleaked += oz_slab_check_leaks(&oz_slab_{name}, \"{name}\");\n",
+                name = name
+            ));
+        }
+        c.push_str("\n\treturn leaked;\n");
+    }
+    c.push_str("}\n\n");
+    (h, c)
+}
+
 pub fn render(
     program: &Program,
     hoisted_structs: &[(String, String)],
@@ -1828,6 +1931,14 @@ live class -- a freed, poisoned or corrupt pointer reached oz_release\");\n\
              \t\tbreak;\n\t}\n}\n\n",
         );
     }
+
+    /* Beside the class_id switch, and outside the `root` guard: a program
+     * with no class has no switch, and the census still has to exist for
+     * the generated main() that calls it unconditionally -- it just
+     * answers zero. */
+    let (census_h, census_c) = render_leak_census(program, pools);
+    h.push_str(&census_h);
+    c.push_str(&census_c);
 
     for name in &program.class_order {
         if program.classes[name].has_class_initialize {
