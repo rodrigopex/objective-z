@@ -61,7 +61,6 @@ Built on Zephyr primitives (`k_mem_slab`, `SYS_INIT`, `k_spinlock_t`, `atomic_t`
 
 - **Compile-time ARC** — scope-based retain/release, auto-dealloc, break/continue cleanup
 - **Per-class slab pools** — auto-generated from AST analysis, zero heap overhead
-- **`@autoreleasepool`** — scoped memory management
 - **An object is allocated once and may be initialised more than once** —
   `+alloc` is the slab get and returns a fully-formed, zeroed instance;
   `-init` is an ordinary method. Sending `-init` twice costs no extra slab
@@ -202,7 +201,7 @@ Hello, world from object
 | `hello_category`       | Category extensions (adding methods to classes)     |
 | `arc_demo`             | ARC lifecycle, scoped cleanup, singletons, threads  |
 | `mem_demo`             | ARC memory management, autorelease pools            |
-| `pool_demo`            | Static slab pools, `@autoreleasepool`, `@synchronized` |
+| `pool_demo`            | Static slab pools, scoped reclaim, `@synchronized`     |
 | `transpiled_blocks`    | Blocks, `__block` variables, fast enumeration       |
 | `transpiled_literals`  | Boxed literals (`@42`) and collection literals (`@[]`, `@{}`) |
 | `transpiled_generics`  | Lightweight generics with typed collections         |
@@ -512,6 +511,8 @@ rather than emitting code that misbehaves, so the authoritative list is
 The notable exclusions:
 
 - **No `@try`/`@catch`/`@throw`** — exception handling is not supported
+- **No `@autoreleasepool`** — a hard located error; there is no `-autorelease` and no
+  pool object, so use a plain braced scope (#430)
 - **No Objective-C inside a `#define` body** — a macro body is one opaque
   token to the parser, so it is a located error rather than C that will not
   compile (#238). Objective-C in a macro *argument* is fine and the
@@ -526,7 +527,7 @@ The notable exclusions:
 
 ## ARC Guide
 
-Automatic Reference Counting (ARC) is always enabled. The transpiler inserts `retain`/`release` calls at compile time — you never call them manually, and since #428 you *cannot*: a send of `retain`, `release`, `autorelease` or `dealloc` is a hard, located error, and so is declaring or defining one of the first three. That is not a style preference. Every Clang path in this project passes `-fobjc-arc`, under which each of those sends is a compile error, and accepting them made manual retain/release a second ownership model reachable only because the primary parser (tree-sitter) is more permissive than Clang. Reading a refcount is fine — `oz_static_retain_count`, or the `-retainCount` send that lowers to it — because it takes and gives no ownership. To opt one slot out of ARC, declare the reference `__unsafe_unretained`.
+Automatic Reference Counting (ARC) is always enabled. The transpiler inserts `retain`/`release` calls at compile time — you never call them manually, and since #428 you *cannot*: a send of `retain`, `release`, `autorelease`, `dealloc` or `retainCount` is a hard, located error, and so is declaring or defining any of them but `dealloc`, whose override is the cleanup hook. That is not a style preference. Every Clang path in this project passes `-fobjc-arc`, under which each of those sends is a compile error, and accepting them made manual retain/release a second ownership model reachable only because the primary parser (tree-sitter) is more permissive than Clang. Reading a refcount is fine, but only through `oz_static_retain_count` — a plain C call, and the only refcount entry point Objective-C source may spell. The `-retainCount` *send* joined the forbidden set in #436: ARC refuses it whatever it does with ownership, and the rule the set follows is exactly what Clang refuses. To opt one slot out of ARC, declare the reference `__unsafe_unretained`.
 
 ### How it works
 
@@ -588,38 +589,40 @@ void demo(void)
 }
 ```
 
-### `@autoreleasepool`
+### No autorelease pool
 
-Critical in loops that create temporary objects — without it, temporaries accumulate until the enclosing scope ends:
+**`@autoreleasepool` is a hard located error** (#430). There is no
+`-autorelease` -- ARC forbids the send, so nothing can ever be *pending* --
+and no pool object, so a drain would have nothing to drain. The construct
+was accepted for its syntax alone until #430, which is the thing the
+never-silently-degrade rule forbids even when the behaviour happens to be
+right.
+
+**A braced scope is the replacement, and it is what the pool block compiled
+to anyway.** ARC releases everything a scope owns at its closing brace, so
+deleting the keyword and keeping the braces is behaviour-identical -- which
+is why the five samples that used it each needed one token removed.
+
+A loop body is already such a scope, so a per-iteration temporary is
+already released per iteration and needs nothing added:
 
 ```objc
-/* BAD: all 1000 temporaries live until function returns */
-void process_bad(void)
+void process(void)
 {
-    for (int i = 0; i < 1000; i++) {
-        id tmp = [SomeFactory create];
-    }
-    /* all 1000 objects released here — peak memory is huge */
-}
-
-/* GOOD: each iteration drains its pool */
-void process_good(void)
-{
-    for (int i = 0; i < 1000; i++) {
-        @autoreleasepool {
-            id tmp = [SomeFactory create];
-            /* tmp released at end of @autoreleasepool block */
-        }
-    }
-    /* peak memory: only 1 object at a time */
+	for (int i = 0; i < 1000; i++) {
+		Thing *tmp = [Thing alloc];   /* released at the end of
+		                               * *this* iteration */
+	}
+	/* peak: one object at a time, with no pool and no extra braces */
 }
 ```
 
-Use `@autoreleasepool` when:
-
-- **Loops** create temporary objects
-- **Worker threads** — each thread needs its own pool
-- **Batch processing** — any code path that allocates many short-lived objects
+This section previously advised `@autoreleasepool` "in loops that create
+temporary objects", contrasting a "BAD" loop whose 1000 temporaries
+supposedly lived until the function returned with a "GOOD" one that drained
+a pool each iteration. **Both halves were wrong**: the mechanism did not
+exist, and the two loops behaved identically, because the `for` body is a
+scope and ARC was already releasing each iteration's object at its end.
 
 ### Retain cycles
 
@@ -693,7 +696,7 @@ Rules:
 | --------------------------------------- | ---------------------------------------------- |
 | Use `objz_transpile_sources()` in CMake | Call `retain`, `release`, or `autorelease`      |
 | Let the compiler manage object lifetime | Call `[super dealloc]` — ARC inserts it         |
-| Use `@autoreleasepool` in loops/threads | Create strong reference cycles                  |
+| Let a loop body's own scope reclaim     | Write `@autoreleasepool` (refused, #430)        |
 | Use `strong` properties for ownership   | Assume temporaries are released immediately     |
 | Use `__bridge` for C API interop        | Cast objects to `void *` without `__bridge`     |
 | Break cycles manually before scope exit | Use `__weak` (not supported, panics at runtime) |
