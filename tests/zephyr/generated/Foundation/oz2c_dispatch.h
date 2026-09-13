@@ -61,7 +61,7 @@ typedef const struct oz_selector *SEL;
 
 /* OZLog -- formatted logging with %@ object support; defined in src/OZLog.c */
 void OZLog(const char *fmt, ...);
-int _oz_get_log_precision(void);
+int oz_log_precision(void);
 
 /* -- OZObject (id 0, root) -- */
 #define OZ_CLASS_OZObject 0

@@ -3,7 +3,7 @@
 
 /* Weak default: returns -1 (no precision override).
  * src/OZLog.c provides the strong definition where it is linked. */
-__attribute__((weak)) int _oz_get_log_precision(void) { return -1; }
+__attribute__((weak)) int oz_log_precision(void) { return -1; }
 
 /* synthesized: no slab for OZObject -- nothing in this program sends
  * '[OZObject alloc]', so no k_mem_slab and no static storage is reserved for
