@@ -369,11 +369,15 @@ fn a_released_object_leaves_the_census_clean() {
 /// asserted: the census reports 1 for a program whose only fault is the
 /// missing scope-end release.
 ///
-/// **This case pins a known defect, so it must flip when #453 is fixed.**
-/// When ARC learns to release a `+1` in value position, the expectation
-/// below becomes `census=0` -- and that is the *success* signal, not a
-/// regression here. Changing the number is the whole edit; the case is
-/// worth keeping either way, because it then becomes a second control.
+/// **This case asserts the defective behaviour `KNOWN_DEFECTS`-style, and
+/// the fix for it is in flight: #477's M1.** When that lands, ARC releases
+/// the `+1` in value position and this case goes red. **A failure here
+/// means M1 landed and is the success signal, not a regression.** The
+/// whole edit is changing the expectation to `"used=1\ncensus=0\n"`; keep
+/// the row rather than deleting it, because it then becomes a second
+/// control -- the census staying silent over a shape that used to leak is
+/// worth pinning too. #449 carries a row phrased the same way for the same
+/// fix.
 const VALUE_POSITION_LEAK: &str = "\
 @interface Thing : OZObject
 @end
@@ -405,9 +409,12 @@ fn the_census_catches_a_real_arc_leak_no_sanitizer_can_see() {
     let out = compile_and_run(&src, "census_value_position");
     assert_eq!(
         out, "used=1\ncensus=1\nLEAK: Thing has 1 outstanding allocation(s)\n",
-        "the +1 from the ternary's true arm is never released (#453). If this \
-         now reports census=0 with no LEAK line, #453 has been fixed -- change \
-         the expectation to \"used=1\\ncensus=0\\n\" and keep the case as a \
-         control."
+        "the +1 from the ternary's true arm is never released (#453), asserted \
+         KNOWN_DEFECTS-style. A FAILURE HERE IS EXPECTED AND GOOD once #477's \
+         M1 lands: it means ARC now releases a +1 in value position. Change \
+         the expectation to \"used=1\\ncensus=0\\n\" and KEEP this row -- it \
+         becomes the control proving the census stays silent over a shape that \
+         used to leak. Do not delete it, and do not read it as a regression in \
+         the census."
     );
 }
