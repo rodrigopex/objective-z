@@ -227,25 +227,32 @@ fn the_consume_set() {
         }
 }
 
-/* ---- @autoreleasepool ---------------------------------------------- */
+/* ---- nested braced scopes -------------------------------------------
+ *
+ * These two cells were spelled `@autoreleasepool` until #430 refused the
+ * keyword. The shapes they pin are unchanged and still worth a row -- the
+ * pool block compiled to exactly this plain scope, which is why the
+ * rejection was mechanical. What is gone is the spelling, not the
+ * behaviour.
+ */
 
 #[test]
-fn the_autoreleasepool_construct() {
+fn the_nested_scope_construct() {
         for cell in [
                 Cell {
-                        what: "@autoreleasepool is a scope: a +1 declared inside is \
+                        what: "a nested braced scope: a +1 declared inside is \
                                released at its end, not the function's",
-                        body: "\t@autoreleasepool {\n\t\tThing *t = [[Thing alloc] init];\n\t\tprintf(\"in %d\\n\", t != 0);\n\t}\n\tprintf(\"out\\n\");\n",
+                        body: "\t{\n\t\tThing *t = [[Thing alloc] init];\n\t\tprintf(\"in %d\\n\", t != 0);\n\t}\n\tprintf(\"out\\n\");\n",
                         expect: "in 1\nd\nout\n",
                         needs_reflection: false,
                         needs_heap: false,
                         known_defect: None,
                 },
                 Cell {
-                        what: "a +1 escaping the pool through an outer local is not \
-                               released at the pool's end -- the enclosing \
-                               scope releases it instead",
-                        body: "\tThing *e = 0;\n\t@autoreleasepool {\n\t\te = [[Thing alloc] init];\n\t}\n\tprintf(\"alive %d\\n\", e != 0);\n",
+                        what: "a +1 escaping a nested scope through an outer local is \
+                               not released at the inner scope's end -- the \
+                               enclosing scope releases it instead",
+                        body: "\tThing *e = 0;\n\t{\n\t\te = [[Thing alloc] init];\n\t}\n\tprintf(\"alive %d\\n\", e != 0);\n",
                         expect: "alive 1\nd\n",
                         needs_reflection: false,
                         needs_heap: false,

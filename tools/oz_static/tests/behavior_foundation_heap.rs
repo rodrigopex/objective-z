@@ -126,6 +126,9 @@ int main(void) {{
 /// is visible earlier. Compiling and linking both passed while every object
 /// allocated this way leaked: `@autoreleasepool` had its own renderer that
 /// skipped ARC entirely, so nothing released them (see `emit::arc_enter`).
+/// The fixtures below use a plain braced scope now -- the keyword is refused
+/// outright as of #430, and the scope is what it compiled to anyway, so the
+/// shape this test covers is unchanged.
 /// The heap's own accounting is what makes that observable at all.
 #[test]
 fn dynamic_alloc_with_heap_takes_storage_from_the_heap_and_gives_it_back() {
@@ -156,7 +159,7 @@ static char g_buf[1024];
 int main(void) {{
 \tOZHeap *h = [[OZHeap alloc] initWithBuffer:g_buf size:1024];
 \tprintf(\"before=%zu\\n\", [h usedBytes]);
-\t@autoreleasepool {{
+\t{{
 \t\tWidget *w = [[Widget dynamicAllocWithHeap:h] init];
 \t\t[w setTag:7];
 \t\tprintf(\"tag=%d\\n\", [w tag]);
@@ -236,7 +239,7 @@ static int g_dealloc_count;
 
 int main(void) {{
 \tprintf(\"before=%d\\n\", g_dealloc_count);
-\t@autoreleasepool {{
+\t{{
 \t\tWidget *w = [Widget dynamicAlloc];
 \t\t[w setTag:7];
 \t\tprintf(\"tag=%d\\n\", [w tag]);
