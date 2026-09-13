@@ -295,7 +295,6 @@ Zero-cost `static inline` abstraction in `include/platform/`:
 | `oz_platform_zephyr.h`  | `k_mem_slab`, Zephyr atomics, `k_spinlock_t`, `printk` |
 | `oz_platform_host.h`    | malloc-backed slab, C11 `stdatomic`, `printf`  |
 | `oz_platform_types.h`   | Shared type definitions                        |
-| `oz_lock.h`             | OZSpinLock RAII spinlock for `@synchronized`    |
 | `oz_assert.h`           | Assertion macros                               |
 
 All PAL functions vanish at `-O1+` — zero runtime overhead.
