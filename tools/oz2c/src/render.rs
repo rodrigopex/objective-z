@@ -40,7 +40,7 @@ const PREFIX: &str = "oz2c error: ";
 /// ```
 ///
 /// The first line is self-contained on purpose:
-/// `tests/tools/oz_static_build.py` reports the first stderr line as the
+/// `tests/tools/oz2c_build.py` reports the first stderr line as the
 /// reason a transpile failed, so the summary has to stand alone.
 ///
 /// A diagnostic with no span, or one whose position could not be
@@ -48,7 +48,7 @@ const PREFIX: &str = "oz2c error: ";
 /// a frame around nothing.
 pub fn render(diag: &Diagnostic, merged: &str) -> String {
     /* Internal whitespace is collapsed. The summary stays on one line
-     * -- `oz_static_build.py` reads it whole -- so a run of spaces in
+     * -- `oz2c_build.py` reads it whole -- so a run of spaces in
      * the middle of a message is printed rather than reflowed away, and
      * #460 shipped one: a multi-line Rust string literal written without
      * `\` continuations left 22 consecutive spaces inside the

@@ -69,7 +69,7 @@ int main(void) {
 /// class-object pointer.
 ///
 /// Pins the fix at the level the defect lived at: `[Widget class]` has to
-/// become `OZ_STATIC_CLASS_Widget`, not a call to a function that exists
+/// become `OZ_CLASS_Widget`, not a call to a function that exists
 /// nowhere. Without the fix the previous test fails too, but as a linker
 /// error whose message names no source line -- this one says why.
 #[test]
@@ -91,7 +91,7 @@ fn class_emits_a_constant_rather_than_a_call() {
     );
     let out = oz2c::transpile(&src).expect("should transpile");
     assert!(
-        out.source_c.contains("return OZ_STATIC_CLASS_Widget;"),
+        out.source_c.contains("return OZ_CLASS_Widget;"),
         "[Widget class] must emit the class constant:\n{}",
         out.source_c
     );
@@ -146,7 +146,7 @@ int main(void) {
 /// Asserted through its consequence rather than by naming `Nil`, which
 /// deliberately has no Objective-C spelling: `Class` is a pointer to
 /// Clang, which rejects the cast under ARC, so a test written against
-/// `[w class] == Nil` would pass here -- this harness runs oz_static
+/// `[w class] == Nil` would pass here -- this harness runs oz2c
 /// alone -- while the same source failed the real build's AST dump. See
 /// the comment in `include/oz_sdk/Foundation/OZObject.h`.
 #[test]
@@ -181,7 +181,7 @@ int main(void) {
 fn overriding_an_intrinsic_selector_is_rejected() {
     for selector in ["class", "isMemberOfClass:"] {
         let body = if selector == "class" {
-            "- (Class)class {\n\treturn OZ_STATIC_CLASS_Widget;\n}"
+            "- (Class)class {\n\treturn OZ_CLASS_Widget;\n}"
         } else {
             "- (BOOL)isMemberOfClass:(Class)aClass {\n\treturn NO;\n}"
         };

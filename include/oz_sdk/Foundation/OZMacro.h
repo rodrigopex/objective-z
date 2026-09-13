@@ -35,7 +35,7 @@
  * In the generated C the other half takes over --
  * `#define OZM(target, ...) target(__VA_ARGS__)` in
  * `include/platform/oz_platform.h`, which every generated translation
- * unit reaches through the companion header. By then oz_static has
+ * unit reaches through the companion header. By then oz2c has
  * replaced the block literal with the name of the function it hoisted out
  * of it, so the line becomes an ordinary
  *

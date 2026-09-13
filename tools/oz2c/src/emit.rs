@@ -61,7 +61,7 @@ fn node_text<'a>(node: Node, src: &'a str) -> &'a str {
 ///     offset but eats a newline per repair, so the repaired text has
 ///     fewer lines than the buffer the map describes while the offsets
 ///     still agree. Counting locally is the exact bug #305 was filed for.
-///   - `reset`, for code oz_static synthesized -- a slab definition, a
+///   - `reset`, for code oz2c synthesized -- a slab definition, a
 ///     dispatch thunk, a hoisted prototype. That code genuinely lives in
 ///     the generated `.c`, and without a directive handing attribution
 ///     back it would inherit whatever `.m` line preceded it.
@@ -391,7 +391,7 @@ fn declares_bare_managed_local(decl: Node, ctx: &EmitCtx) -> bool {
 /// (`OZ003: unhandled AST node 'ImplicitValueInitExpr'`) and so needs the
 /// explicit form.
 ///
-/// `oz_static_release` is null-safe, so a first overwrite releasing this is a
+/// `oz_release` is null-safe, so a first overwrite releasing this is a
 /// no-op either way.
 fn is_null_initializer(node: Node, src: &str) -> bool {
     let text = node_text(node, src).trim();
@@ -442,7 +442,7 @@ fn unused_param_acks(
 }
 
 /// The name-list form, shared with `render_block`: a hoisted block literal is
-/// a function oz_static synthesizes outright, signature included, so its own
+/// a function oz2c synthesizes outright, signature included, so its own
 /// unused parameters are its to acknowledge. `samples/gpio_demo`'s
 /// `blockCallback:^(const struct device *port, struct gpio_callback *cb,
 /// gpio_port_pins_t pins)` accounts for three of them and
@@ -677,7 +677,7 @@ fn stores_to_local(
 ///   release-on-overwrite.
 ///
 /// A **borrowed initializer** (`Counter *c = [arr objectAtIndex:0];`) is
-/// excluded. Real ARC would retain it, but oz_static does not, so its value
+/// excluded. Real ARC would retain it, but oz2c does not, so its value
 /// is unowned and releasing it on overwrite would be that same double free.
 /// Making those strong is a larger change to observable refcounts and is not
 /// what this fix is for.
@@ -690,7 +690,7 @@ fn stores_to_local(
 /// question cannot arise -- every object local here is ARC's (#428).
 /// Does this `declaration` carry `static` storage?
 ///
-/// The distinction ARC draws and oz_static did not: a `static` local is
+/// The distinction ARC draws and oz2c did not: a `static` local is
 /// `__strong` like any other object local -- a store into it retains and
 /// releases what it replaced -- but its storage duration is the
 /// program's, so it must **not** be released when the scope ends. Doing
@@ -1308,7 +1308,7 @@ struct EmitCtx<'a> {
     /// }
     /// ```
     ///
-    /// correct on one slab slot instead of leaking 99 objects. oz_static
+    /// correct on one slab slot instead of leaking 99 objects. oz2c
     /// already did retain-new/release-old for strong *ivars*
     /// (`render_strong_ivar_assign`) and for properties (a synthesized
     /// setter); a plain local was the one strong storage class left doing
@@ -1805,8 +1805,8 @@ fn render_expr(node: Node, ctx: &mut EmitCtx) -> (String, String) {
         // initializer. Real ARC zero-initializes every strong variable, and
         // here it is load-bearing rather than tidy: the first
         // `c = [Counter alloc]` releases whatever `c` held, so an
-        // indeterminate `c` would be passed to `oz_static_release` and
-        // dereferenced. `oz_static_release` is null-safe (`if (!self)
+        // indeterminate `c` would be passed to `oz_release` and
+        // dereferenced. `oz_release` is null-safe (`if (!self)
         // return;`), so nil makes that first release a no-op.
         "declaration" if declares_bare_managed_local(node, ctx) => {
             let text = rebuild(node, ctx, &mut |child, ctx| {
@@ -2010,7 +2010,7 @@ fn render_expr(node: Node, ctx: &mut EmitCtx) -> (String, String) {
          * `rebuild_or_text` is that arm's body, factored out -- because
          * nothing about how a call is written changes here. Only its type
          * was missing. */
-        /* An ARC ownership qualifier is not C, and oz_static substitutes
+        /* An ARC ownership qualifier is not C, and oz2c substitutes
          * source text in place -- so left alone it travels verbatim into
          * the generated `.c`, where gcc rejects it (`'__unsafe_unretained'
          * undeclared`). It was latent until #428 put the qualifier on
@@ -2417,7 +2417,7 @@ fn render_boxed_string_literal(node: Node, ctx: &mut EmitCtx) -> (String, String
     // `companion`'s release path runs `{class}_oz_free` once a refcount hits
     // zero, and a literal's refcount does reach zero, because a collection
     // that absorbed it (`@[ @"a" ]`, or a dictionary key) releases its
-    // elements when it is itself deallocated. `oz_static_release` returns on
+    // elements when it is itself deallocated. `oz_release` returns on
     // the immortal bit before it even decrements, matching the real
     // `OZString.m`'s own `-dealloc` ("compile-time constant, never freed")
     // and the oracle's `emit.py` literal, which sets the same bit.
@@ -2442,7 +2442,7 @@ fn render_boxed_string_literal(node: Node, ctx: &mut EmitCtx) -> (String, String
     // serve literals and heap strings alike, which is the same reason the
     // refcount field survives at all.
     let definition = format!(
-        "const struct OZString {} = {{ .base = {{ ._meta = {{ .class_id = OZ_STATIC_CLASS_OZString, .immortal = 1 }}, .oz_refcount = 1 }}, ._length = {}, ._data = {} }};\n",
+        "const struct OZString {} = {{ .base = {{ ._meta = {{ .class_id = OZ_CLASS_OZString, .immortal = 1 }}, .oz_refcount = 1 }}, ._length = {}, ._data = {} }};\n",
         name, byte_len, c_literal
     );
     ctx.hoisted_string_literals.push((prototype, definition));
@@ -2509,7 +2509,7 @@ fn render_boxed_array_literal(node: Node, ctx: &mut EmitCtx) -> (String, String)
         if fresh {
             elem_refs.push(format!("(void *){}", text));
         } else {
-            elem_refs.push(format!("(void *)oz_static_retain((struct {} *)({}))", root, text));
+            elem_refs.push(format!("(void *)oz_retain((struct {} *)({}))", root, text));
         }
     }
 
@@ -2560,7 +2560,7 @@ fn render_boxed_dictionary_literal(node: Node, ctx: &mut EmitCtx) -> (String, St
             if fresh {
                 refs.push(format!("(void *){}", text));
             } else {
-                refs.push(format!("(void *)oz_static_retain((struct {} *)({}))", root, text));
+                refs.push(format!("(void *)oz_retain((struct {} *)({}))", root, text));
             }
         }
     }
@@ -2857,7 +2857,7 @@ fn render_field_expression(node: Node, ctx: &mut EmitCtx) -> (String, String) {
 /// scope-exit release destroyed the object immediately, and the
 /// synthesized dealloc later released the freed block a second time. One
 /// missing retain, three defects, and `-fsanitize=address` reports
-/// `heap-use-after-free` inside `oz_static_release`.
+/// `heap-use-after-free` inside `oz_release`.
 ///
 /// Restricted to `self`. `other->_x = value` is direct ivar access on
 /// *another* object, which needs that object's class to resolve the ivar
@@ -2903,7 +2903,7 @@ fn assigned_ivar_name(left: Node, ctx: &EmitCtx) -> Option<String> {
 /// the new value and gives up the old one, the way assigning to a `__strong`
 /// ivar does under ARC. `None` when this is not that.
 ///
-/// oz_static had the release half of strong-ivar ownership without the
+/// oz2c had the release half of strong-ivar ownership without the
 /// retain half: `{Class}_oz_release_ivars` releases every owned object ivar
 /// when an instance dies, but nothing ever retained what was stored there.
 /// `samples/transpiled_led` is a chain of six OZHelpers, each holding the
@@ -2986,7 +2986,7 @@ fn render_strong_ivar_assign(
          * ground from under the value being computed.
          */
         LocalStore::Owning => format!(
-            "(oz_static_release((struct {root} *)(self->{path})), self->{path} = {value})",
+            "(oz_release((struct {root} *)(self->{path})), self->{path} = {value})",
             root = root,
             path = path,
             value = value
@@ -2997,8 +2997,8 @@ fn render_strong_ivar_assign(
          * what `classify_store` checked.
          */
         LocalStore::BorrowedIdent => format!(
-            "(oz_static_retain((struct {root} *)({value})), \
-             oz_static_release((struct {root} *)(self->{path})), self->{path} = {value})",
+            "(oz_retain((struct {root} *)({value})), \
+             oz_release((struct {root} *)(self->{path})), self->{path} = {value})",
             root = root,
             path = path,
             value = value
@@ -3055,7 +3055,7 @@ fn render_strong_ivar_assign(
 /// /* struct OZObject *_oz_prev_L9_C2_1;  -- hoisted declaration */
 /// (_oz_prev_L9_C2_1 = (struct OZObject *)(cached),
 ///  cached = Thing_copy((struct Thing *)(cached)),
-///  oz_static_release(_oz_prev_L9_C2_1))
+///  oz_release(_oz_prev_L9_C2_1))
 /// ```
 ///
 /// The temporary is **declared** through `ctx.pre_stmts` and **assigned**
@@ -3094,7 +3094,7 @@ fn render_overlapping_strong_store(
     let retain = if takes_ownership {
         String::new()
     } else {
-        format!("oz_static_retain((struct {root} *)({target})), ", root = root, target = target)
+        format!("oz_retain((struct {root} *)({target})), ", root = root, target = target)
     };
     /* The comma expression yields the stored value only where something
      * can use it. As a bare statement -- which is nearly always -- a
@@ -3111,7 +3111,7 @@ fn render_overlapping_strong_store(
     };
     format!(
         "({prev} = (struct {root} *)({target}), {target} = {value}, \
-         {retain}oz_static_release({prev}){yields})",
+         {retain}oz_release({prev}){yields})",
         prev = prev,
         root = root,
         target = target,
@@ -3234,7 +3234,7 @@ fn render_strong_local_assign(
         // known not to read the variable (`classify_store`), so freeing it
         // first cannot pull the ground from under the value being computed.
         LocalStore::Owning => format!(
-            "(oz_static_release((struct {root} *)({name})), {name} = {value})",
+            "(oz_release((struct {root} *)({name})), {name} = {value})",
             root = root,
             name = name,
             value = value
@@ -3245,8 +3245,8 @@ fn render_strong_local_assign(
         // free of consequence only because it is an identifier, which is
         // exactly what `classify_store` checked.
         LocalStore::BorrowedIdent => format!(
-            "(oz_static_retain((struct {root} *)({value})), \
-             oz_static_release((struct {root} *)({name})), {name} = {value})",
+            "(oz_retain((struct {root} *)({value})), \
+             oz_release((struct {root} *)({name})), {name} = {value})",
             root = root,
             name = name,
             value = value
@@ -3382,7 +3382,7 @@ fn render_strong_array_element_assign(
 
     if is_null_initializer(right, ctx.src) {
         let expr = format!(
-            "(oz_static_release((struct {root} *)({target})), {target} = ((void *)0))",
+            "(oz_release((struct {root} *)({target})), {target} = ((void *)0))",
             root = root,
             target = target
         );
@@ -3406,14 +3406,14 @@ fn render_strong_array_element_assign(
 
     let expr = match kind {
         LocalStore::Owning => format!(
-            "(oz_static_release((struct {root} *)({target})), {target} = {value})",
+            "(oz_release((struct {root} *)({target})), {target} = {value})",
             root = root,
             target = target,
             value = value
         ),
         LocalStore::BorrowedIdent => format!(
-            "(oz_static_retain((struct {root} *)({value})), \
-             oz_static_release((struct {root} *)({target})), {target} = {value})",
+            "(oz_retain((struct {root} *)({value})), \
+             oz_release((struct {root} *)({target})), {target} = {value})",
             root = root,
             target = target,
             value = value
@@ -3427,7 +3427,7 @@ fn render_strong_array_element_assign(
 /// field, rather than emitting the plain store that silently frees it
 /// (#359).
 ///
-/// The three strong slots oz_static tracks -- an ivar, a managed local,
+/// The three strong slots oz2c tracks -- an ivar, a managed local,
 /// and a file-scope or `static` slot -- all reach the lowerings above. A C
 /// struct's field reaches none of them, so the store was plain C and
 /// whatever ARC was managing on the right-hand side was released when its
@@ -3720,9 +3720,9 @@ fn send_to_resolved_class(
 ///         _oz_sync_key_... = oz_spin_lock(&_oz_sync_obj_...->oz_sync_lock);
 ///         _oz_sync_obj_...->oz_sync_owner = oz_current_thread();
 ///     }
-///     oz_static_retain(_oz_sync_obj_...);
+///     oz_retain(_oz_sync_obj_...);
 ///     ... body ...
-///     oz_static_release(_oz_sync_obj_...);
+///     oz_release(_oz_sync_obj_...);
 ///     if (_oz_sync_held_...) {
 ///         _oz_sync_obj_...->oz_sync_owner = (void *)0;
 ///         oz_spin_unlock(&_oz_sync_obj_...->oz_sync_lock, _oz_sync_key_...);
@@ -3823,12 +3823,12 @@ fn render_synchronized_statement(node: Node, ctx: &mut EmitCtx) -> (String, Stri
     let obj_var = format!("_oz_sync_obj_{}", suffix);
     let held = format!("_oz_sync_held_{}", suffix);
     let bind = format!("struct {} *{} = (struct {} *)({});", root, obj_var, root, obj_text);
-    let retain = format!("oz_static_retain({});", obj_var);
+    let retain = format!("oz_retain({});", obj_var);
     // Only the block that actually acquired the lock releases it. `held` is a
     // per-block local, so nesting to any depth unwinds correctly without a
     // counter: the inner blocks never acquired and never unlock.
     let cleanup = format!(
-        "oz_static_release({obj});\n\
+        "oz_release({obj});\n\
          \tif ({held}) {{\n\
          \t\t{obj}->{owner_field} = (void *)0;\n\
          \t\toz_spin_unlock(&{obj}->{lock_field}, {key});\n\
@@ -4011,13 +4011,13 @@ fn render_return_statement(node: Node, ctx: &mut EmitCtx) -> (String, String) {
             // function as `+1` from the same call, so the caller releases
             // what is retained here (#351).
             //
-            // Cast back to the return type because `oz_static_retain`
+            // Cast back to the return type because `oz_retain`
             // answers in the root class's pointer type, the same round trip
             // every other retain-bearing expression here makes.
             let value_text = if needs_retain && class_name_from_type(&ret_ty).is_some() {
                 match ctx.program.root_class() {
                     Some(root) => format!(
-                        "({ty})oz_static_retain((struct {root} *)({value}))",
+                        "({ty})oz_retain((struct {root} *)({value}))",
                         ty = ret_ty,
                         root = root,
                         value = value_text
@@ -4133,13 +4133,13 @@ fn render_message(node: Node, ctx: &mut EmitCtx) -> (String, String) {
         let cast_back =
             if recv_type == "id" { format!("struct {} *", root) } else { recv_type.clone() };
         return (
-            format!("(({})oz_static_retain((struct {} *)({})))", cast_back, root, recv_text),
+            format!("(({})oz_retain((struct {} *)({})))", cast_back, root, recv_text),
             recv_type,
         );
     }
     if parts.selector == "release" && parts.args.is_empty() {
         return (
-            format!("oz_static_release((struct {} *)({}))", root, recv_text),
+            format!("oz_release((struct {} *)({}))", root, recv_text),
             "void".to_string(),
         );
     }
@@ -4162,7 +4162,7 @@ fn render_message(node: Node, ctx: &mut EmitCtx) -> (String, String) {
     // `[X class]`, which is why it went unnoticed (#226).
     if parts.selector == "class" && parts.args.is_empty() {
         if let Some(cls) = recv_type.strip_prefix("class:") {
-            return (format!("OZ_STATIC_CLASS_{}", cls), "Class".to_string());
+            return (format!("OZ_CLASS_{}", cls), "Class".to_string());
         }
         return (format!("oz_class_of({})", recv_text), "Class".to_string());
     }
@@ -4271,7 +4271,7 @@ fn render_message(node: Node, ctx: &mut EmitCtx) -> (String, String) {
     // function is generated.
     //
     // The two differ only in where the heap comes from. `+dynamicAlloc`
-    // passes a null heap, which is what `oz_static_heap_alloc` routes to
+    // passes a null heap, which is what `oz_heap_alloc` routes to
     // `oz_sys_heap_alloc` (`k_malloc` on Zephyr, `malloc` on host) -- so it
     // needs no allocator of its own, and reusing
     // `{cls}_oz_dynamic_alloc_with_heap` is what keeps the memset, the
@@ -4652,7 +4652,7 @@ fn block_parameter_list(node: Node) -> Option<Node> {
 ///
 /// What is deliberately *not* here is the shape #303 was filed for:
 /// `.fn = OZFN(^(int seed) { ... })` in a designated initializer, whose
-/// type is a field of a C struct. oz_static cannot reach it and no amount
+/// type is a field of a C struct. oz2c cannot reach it and no amount
 /// of work here changes that -- see the note on `render_block`. Such a
 /// block still gets source 3, but it keeps its parameters now, and writing
 /// the return type on the literal (source 1) is the fix for it.
@@ -5075,7 +5075,7 @@ fn owned_locals_of(decl: Node, ctx: &EmitCtx) -> Vec<String> {
          * scope released through an **integer** (#380). `binds_ownership`
          * looks through a non-bridging cast (#332), deliberately, so
          * `int n = (int)makeThing();` reached here and emitted
-         * `oz_static_release((struct OZObject *)(n))` -- the cast in the
+         * `oz_release((struct OZObject *)(n))` -- the cast in the
          * release is what let it compile, and then the decrement landed
          * at whatever address the integer held. On a 64-bit host the
          * pointer is truncated to 32 bits first, so it is a wrong store;
@@ -5195,12 +5195,12 @@ fn retained_bindings(decl: Node, ctx: &EmitCtx) -> Vec<String> {
     out
 }
 
-/// `oz_static_release` for each name, innermost scope first.
+/// `oz_release` for each name, innermost scope first.
 fn release_lines(names: &[String], ctx: &EmitCtx) -> Vec<String> {
     let root = ctx.program.root_class().unwrap_or("OZObject").to_string();
     names
         .iter()
-        .map(|name| format!("oz_static_release((struct {} *)({}));", root, name))
+        .map(|name| format!("oz_release((struct {} *)({}));", root, name))
         .collect()
 }
 
@@ -5403,7 +5403,7 @@ fn discards_owning_result(stmt: Node, ctx: &EmitCtx) -> bool {
 ///
 /// The release wraps the value rather than going through a temporary: the
 /// send is evaluated exactly once, in the same statement, and there is no
-/// local for a later jump to have to unwind past. `oz_static_release` is
+/// local for a later jump to have to unwind past. `oz_release` is
 /// null-safe, so an allocation that found no free slab slot needs no guard
 /// of its own.
 fn render_discarded_owning_statement(node: Node, ctx: &mut EmitCtx) -> (String, String) {
@@ -5412,13 +5412,13 @@ fn render_discarded_owning_statement(node: Node, ctx: &mut EmitCtx) -> (String, 
     };
     let root = ctx.program.root_class().unwrap_or("OZObject").to_string();
     /* The type was discarded here until #398. The release still takes the
-     * root cast -- every `oz_static_release` does -- but the expression has
+     * root cast -- every `oz_release` does -- but the expression has
      * to *be* an object pointer first, and that was never checked. The cast
      * is precisely why it could not be: it makes any type compile. */
     let (rendered, rendered_ty) = render_expr(value, ctx);
     require_object_pointer(value, &rendered_ty, ctx);
     (
-        format!("oz_static_release((struct {} *)({}));", root, rendered),
+        format!("oz_release((struct {} *)({}));", root, rendered),
         "void".to_string(),
     )
 }
@@ -5563,7 +5563,7 @@ fn unhoisted_owning_operands<'a>(node: Node<'a>, ctx: &EmitCtx) -> Vec<Node<'a>>
 ///
 /// ```c
 /// (_oz_ce_1 = makeThing(), _oz_cv_2 = Thing_n(_oz_ce_1),
-///  oz_static_release((struct OZObject *)(_oz_ce_1)), _oz_cv_2)
+///  oz_release((struct OZObject *)(_oz_ce_1)), _oz_cv_2)
 /// ```
 ///
 /// A comma expression is the only shape that puts the release where the
@@ -5603,7 +5603,7 @@ fn render_comma_operand_expr(
         let tmp = format!("_oz_ce_L{}_C{}_{}", line, col, ctx.block_counter);
         ctx.pre_stmts.push(format!("{}{};", ty, tmp));
         assigns.push(format!("{} = {}", tmp, init));
-        releases.push(format!("oz_static_release((struct {} *)({}))", root, tmp));
+        releases.push(format!("oz_release((struct {} *)({}))", root, tmp));
         ctx.arg_temps.insert(value.id(), (tmp, ty));
         held.push(value.id());
     }
@@ -5881,7 +5881,7 @@ fn for_header_owned_declaration<'a>(
 /// {
 ///         struct Thing *t = makeThing();
 ///         for (; i < 1; i++) { ... }
-///         oz_static_release((struct OZObject *)(t));
+///         oz_release((struct OZObject *)(t));
 /// }
 /// ```
 ///
@@ -6023,7 +6023,7 @@ fn collect_owning_operands_in<'a>(
      * one question, and only one of them was written.
      *
      * There is no receiver half here, and no consuming-function half
-     * either: oz_static has no way to say a C function takes ownership,
+     * either: oz2c has no way to say a C function takes ownership,
      * so every one of them borrows -- which is exactly what ARC assumes
      * of an unannotated C function too, and what
      * `ownership_matrix.rs`'s `cArgument` shape pins down. */
@@ -6075,7 +6075,7 @@ fn collect_owning_operands_in<'a>(
 /// an optimisation for the synthesized-setter case specifically.
 ///
 /// The counts work out because the setter's retain is left exactly as it
-/// was: `Foo_new()` is +1, the setter's `oz_static_retain` makes it +2, and
+/// was: `Foo_new()` is +1, the setter's `oz_retain` makes it +2, and
 /// the release here brings it back to +1 -- held by the ivar, which is what
 /// releases it at `-dealloc`. A borrowed argument reaches none of this and
 /// keeps the retain it always got.
@@ -6103,7 +6103,7 @@ fn collect_owning_operands_in<'a>(
 /// desugared -- and a statement that *also* discards a +1 result still
 /// reaches the #322 arm.
 ///
-/// `oz_static_release` is null-safe, so an allocation that found no free
+/// `oz_release` is null-safe, so an allocation that found no free
 /// slab slot needs no guard of its own.
 fn render_owning_operand_statement(
     node: Node,
@@ -6125,7 +6125,7 @@ fn render_owning_operand_statement(
         ctx.block_counter += 1;
         let tmp = format!("{}_L{}_C{}_{}", position.prefix(), line, col, ctx.block_counter);
         decls.push(format!("{}{} = {};", ty, tmp, init));
-        releases.push(format!("oz_static_release((struct {} *)({}));", root, tmp));
+        releases.push(format!("oz_release((struct {} *)({}));", root, tmp));
         names.push(tmp.clone());
         ctx.arg_temps.insert(value.id(), (tmp, ty));
         held.push(value.id());
@@ -6196,7 +6196,7 @@ fn render_owning_operand_statement(
         let already_owned = owned_locals_of(node, ctx);
         for name in retained_bindings(node, ctx) {
             retains.push(format!(
-                "oz_static_retain((struct {} *)({}));",
+                "oz_retain((struct {} *)({}));",
                 root, name
             ));
             if !already_owned.contains(&name) {
@@ -6262,7 +6262,7 @@ fn braced_group(lines: &[&String]) -> String {
 /// A nested block that owns object locals: render its statements, then
 /// release what it owns on the way out.
 ///
-/// This is oz_static's ARC. The oracle does the same job by tracking
+/// This is oz2c's ARC. The oracle does the same job by tracking
 /// `ctx.scope_vars` across its whole statement emitter
 /// (`emit.py::_emit_scope_releases`); here it is attached to the block that
 /// actually owns the locals, so a block owning none is untouched.
@@ -6463,7 +6463,7 @@ fn render_stmt_with_comment(node: Node, ctx: &mut EmitCtx, indent: &str) -> Stri
 /// as a `/* original */`-commented prototype, and a closing banner.
 ///
 /// Only the root class's full struct is hoisted into the companion header
-/// (`ctx.hoisted_structs`) -- oz_static_retain/release/the dealloc switch
+/// (`ctx.hoisted_structs`) -- oz_retain/release/the dealloc switch
 /// need its tracking fields directly. Every other class's struct (and its
 /// alloc/free, which need it for sizeof) stays in-place right here; the
 /// companion only forward-declares it.
@@ -6478,7 +6478,7 @@ fn render_stmt_with_comment(node: Node, ctx: &mut EmitCtx, indent: &str) -> Stri
 /// everywhere else).
 const STRIPPED_ARC_QUALIFIERS: &[&str] = &["__strong", "__unsafe_unretained", "__autoreleasing"];
 
-/// Is this qualifier's text one oz_static drops on the way out?
+/// Is this qualifier's text one oz2c drops on the way out?
 ///
 /// One predicate rather than two `contains` calls over two lists, because
 /// the ivar path and the everywhere-else path must not drift: an ivar
@@ -6692,7 +6692,7 @@ fn collect_ivar_lowering_edits(
         // too, since its own `id` typedef is `struct OZObject *`.
         //
         // Not in `collect::render_type`, which keeps resolving a *method's*
-        // `id` to `void *`: a method's arguments pass through oz_static's own
+        // `id` to `void *`: a method's arguments pass through oz2c's own
         // casts at every call site, and `void *` is what lets a concrete
         // class pointer reach an `id` parameter without one. Making `id`
         // itself the root pointer everywhere was tried and is worse -- it
@@ -7056,7 +7056,7 @@ fn render_category_interface(node: Node, src: &str, name: &str, program: &Progra
 /// spinlock on Zephyr, a no-op `if` on host -- see
 /// `platform/oz_platform_{zephyr,host}.h`); a strong object setter also
 /// retains the incoming value and releases the old one, via this
-/// codebase's own `oz_static_retain`/`oz_static_release` (not Python's
+/// codebase's own `oz_retain`/`oz_release` (not Python's
 /// `{root}_retain`, which doesn't exist here -- see `render_message`'s
 /// `-retain`/`-release` translation for the same pattern).
 ///
@@ -7112,7 +7112,7 @@ fn render_synthesized_accessor(
         if is_strong_obj {
             if let Some(lock) = &lock_path {
                 body.push_str(&format!(
-                    "\t{ty} old = {{0}};\n\toz_static_retain((struct {root} *){param});\n\tOZ_SPINLOCK(&{lock}) {{\n\t\told = self->{ivar};\n\t\tself->{ivar} = {param};\n\t}}\n\toz_static_release((struct {root} *)old);\n",
+                    "\t{ty} old = {{0}};\n\toz_retain((struct {root} *){param});\n\tOZ_SPINLOCK(&{lock}) {{\n\t\told = self->{ivar};\n\t\tself->{ivar} = {param};\n\t}}\n\toz_release((struct {root} *)old);\n",
                     ty = c_type,
                     root = root,
                     param = param_name,
@@ -7121,7 +7121,7 @@ fn render_synthesized_accessor(
                 ));
             } else {
                 body.push_str(&format!(
-                    "\t{ty} old = self->{ivar};\n\tself->{ivar} = {param};\n\toz_static_retain((struct {root} *){param});\n\toz_static_release((struct {root} *)old);\n",
+                    "\t{ty} old = self->{ivar};\n\tself->{ivar} = {param};\n\toz_retain((struct {root} *){param});\n\toz_release((struct {root} *)old);\n",
                     ty = c_type,
                     ivar = ivar_path,
                     param = param_name,
@@ -7226,7 +7226,7 @@ fn render_method_definition(
     };
 
     // `(void)x;` for each parameter the body never mentions -- see
-    // `unused_param_acks`. Only for a body oz_static itself produced: a plain C
+    // `unused_param_acks`. Only for a body oz2c itself produced: a plain C
     // function's body is the author's own text, patched in place, and adding
     // acknowledgements to code someone wrote is not this pass's business.
     let body_text = if translated {
@@ -7306,7 +7306,7 @@ pub fn emit(
     let strings = per_stem(&walked.hoisted_strings_by_stem);
 
     let mut out = String::from(
-        "/* Auto-generated by oz_static -- do not edit */\n#include \"oz_static_dispatch.h\"\n\n",
+        "/* Auto-generated by oz2c -- do not edit */\n#include \"oz2c_dispatch.h\"\n\n",
     );
 
     /* Attribution of everything synthesized here belongs to this file, not
@@ -7675,14 +7675,14 @@ fn walk_top_level<'a>(
                     .map(|c| node_text(c, source))
                     .collect();
                 bodies.entry(stem.clone()).or_default().push(format!(
-                    "/* @compatibility_alias {} -- not needed, oz_static resolves classes by their own name only */",
+                    "/* @compatibility_alias {} -- not needed, oz2c resolves classes by their own name only */",
                     names.join(" ")
                 ));
             }
             "protocol_declaration" => {
                 let (name, _, _) = crate::collect::class_header(node, source);
                 bodies.entry(stem.clone()).or_default().push(format!(
-                    "/* @protocol {} -- compile-time only, see oz_static_dispatch.h/.c */",
+                    "/* @protocol {} -- compile-time only, see oz2c_dispatch.h/.c */",
                     name
                 ));
             }
@@ -7808,7 +7808,7 @@ fn walk_top_level<'a>(
                 // to the shared companion header rather than staying in
                 // this origin's own `.h`: the header a real method
                 // prototype needing it actually lands in is
-                // `oz_static_dispatch.h`, unconditionally, regardless of
+                // `oz2c_dispatch.h`, unconditionally, regardless of
                 // which origin's source text this forward-declare itself
                 // came from.
                 let mut c = node.walk();
@@ -8331,7 +8331,7 @@ pub fn emit_split(
     let mut files = Vec::with_capacity(stem_order.len());
     for stem in &stem_order {
         let mut h = String::from(
-            "/* Auto-generated by oz_static -- do not edit */\n#pragma once\n#include \"oz_static_dispatch.h\"\n",
+            "/* Auto-generated by oz2c -- do not edit */\n#pragma once\n#include \"oz2c_dispatch.h\"\n",
         );
         if let Some(deps) = extra_includes.get(stem) {
             let mut deps: Vec<&String> = deps.iter().collect();
@@ -8364,7 +8364,7 @@ pub fn emit_split(
         }
 
         let mut c = format!(
-            "/* Auto-generated by oz_static -- do not edit */\n#include \"oz_static_dispatch.h\"\n#include \"{}.h\"\n",
+            "/* Auto-generated by oz2c -- do not edit */\n#include \"oz2c_dispatch.h\"\n#include \"{}.h\"\n",
             stem
         );
         if let Some(deps) = body_includes.get(stem) {
@@ -8717,7 +8717,7 @@ fn block_pointer_edits(
 /// `^`. Handled here, at the one place every unclaimed node passes through,
 /// rather than per node kind: that is what gap X's bare-`;` fix chose and
 /// for the same reason, since it means a future arm gets the same treatment
-/// without knowing to ask, and oz_static needs to know no macro's name --
+/// without knowing to ask, and oz2c needs to know no macro's name --
 /// `ZBUS_LISTENER_DEFINE`, `K_TIMER_DEFINE` and any other shape are all just
 /// unclaimed text with a literal in it.
 ///

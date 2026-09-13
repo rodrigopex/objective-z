@@ -3,7 +3,7 @@
 // generics.rs - `id<Protocol>` and `Container<Arg, ...>` constraint
 // checking. Parity item for tools/oz_transpile/resolve.py's
 // `_validate_generic_types`/`_satisfies_constraint`/`_class_conforms_to`
-// (the Python oracle), which oz_static previously had no counterpart
+// (the Python oracle), which oz2c previously had no counterpart
 // for at all -- its OZArray/OZDictionary test fixtures cut the real
 // header's `<__covariant ObjectType>` generic parameter outright rather
 // than risk it (see `tests/common/mod.rs`'s doc comments before this
@@ -20,7 +20,7 @@
 // Deliberately narrower than the oracle's own scope, which itself is
 // already partial (Clang erases generics from `qualType`, so it recovers
 // them via a *second* tree-sitter pass, `collect.py::extract_source_generics`
-// -- a hack oz_static doesn't need, since it parses with tree-sitter
+// -- a hack oz2c doesn't need, since it parses with tree-sitter
 // natively and the generic argument is already sitting in the CST).
 // A constrained value's concrete class is resolved only for the two
 // shapes real source actually uses:

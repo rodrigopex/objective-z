@@ -10,7 +10,7 @@
 // selector." These tests port that same shape through real ObjC syntax
 // instead: alloc a concrete class, assign it to a root-typed variable,
 // and send the protocol-declared selector through that variable -- the
-// static type oz_static sees at the call site is the root class, not the
+// static type oz2c sees at the call site is the root class, not the
 // concrete one, so it must fall back to the same runtime dispatch the
 // oracle's OZ_PROTOCOL_SEND_* exercises directly.
 

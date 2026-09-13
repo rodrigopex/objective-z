@@ -36,7 +36,7 @@
 //     and every program sized OZNumber at 16 -- `samples/hello_category`
 //     included, which uses no OZNumber at all.
 //
-// Two differences from the oracle, both because oz_static already decided
+// Two differences from the oracle, both because oz2c already decided
 // the question elsewhere:
 //
 //   - the oracle also tracks "uncertain" sites -- an allocation inside a
@@ -55,7 +55,7 @@
 //     emitter cannot bound -- that the bar rejects. Measured in
 //     `tests/arc_strong_locals.rs`: 100 iterations on a 1-slot pool.
 //   - the oracle reserves a slot per `@synchronized` block for the
-//     OZSpinLock object it allocates. oz_static's `@synchronized` lowers
+//     OZSpinLock object it allocates. oz2c's `@synchronized` lowers
 //     to a stack-local lock with no object at all (see
 //     `emit::render_synchronized_statement`), so there is nothing to size.
 
@@ -185,9 +185,9 @@ impl PoolSizes {
     ///
     /// A source `/* oz-pool: ... */` directive is deliberately not
     /// checked. The same directive is read by both backends, and the
-    /// oracle has classes oz_static does not: every
+    /// oracle has classes oz2c does not: every
     /// `tests/behavior/cases/synchronized/*.m` names `OZSpinLock`, which
-    /// the oracle allocates per `@synchronized` block and oz_static never
+    /// the oracle allocates per `@synchronized` block and oz2c never
     /// creates at all (its lock is a stack local -- see
     /// `emit::render_synchronized_statement`). Rejecting those would fail
     /// five corpus cases over a class whose absence is the point.

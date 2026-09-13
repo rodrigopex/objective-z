@@ -1,25 +1,25 @@
 #!/usr/bin/env python3
-"""Build a behavior/adapted case through oz_static, for the pytest harnesses.
+"""Build a behavior/adapted case through oz2c, for the pytest harnesses.
 
 `compile_and_run.py` drives a case end to end -- AST dump, transpile,
 generate the Unity main, compile, run -- and only its *transpile* step is
-backend-specific. This module is that step for oz_static, plus the one thing
+backend-specific. This module is that step for oz2c, plus the one thing
 the Python backend needs no equivalent of: an ABI shim.
 
 The Unity drivers under `tests/behavior/cases/` were written against the
-Python pipeline's generated ABI, which differs from oz_static's in naming
+Python pipeline's generated ABI, which differs from oz2c's in naming
 only:
 
   * headers are named `<Class>_ozh.h` (plus `oz_dispatch.h`), where
-    oz_static emits one header per *origin file*;
-  * `+alloc` is reached as `<Class>_alloc`, where oz_static synthesizes
+    oz2c emits one header per *origin file*;
+  * `+alloc` is reached as `<Class>_alloc`, where oz2c synthesizes
     `<Class>_oz_alloc`;
-  * root retain/release/retainCount are `OZObject_*`, where oz_static emits
-    backend-wide `oz_static_*` functions;
-  * class methods are `<Class>_cls_<sel>`, where oz_static emits
+  * root retain/release/retainCount are `OZObject_*`, where oz2c emits
+    backend-wide `oz2c_*` functions;
+  * class methods are `<Class>_cls_<sel>`, where oz2c emits
     `<Class>_<sel>_cls`;
   * every dynamically-dispatched selector has an `OZ_PROTOCOL_SEND_<sel>`,
-    where oz_static emits one only when a selector really is polymorphic.
+    where oz2c emits one only when a selector really is polymorphic.
 
 `write_abi_shim` bridges exactly those, so one unmodified driver compiles
 against either backend. Anything beyond naming -- a different result, a
@@ -44,24 +44,24 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 OZ2C = REPO_ROOT / "tools" / "oz2c" / "target" / "debug" / "oz2c"
 
-#: `struct Foo *Foo_oz_alloc(void)` -- how oz_static names the allocator it
+#: `struct Foo *Foo_oz_alloc(void)` -- how oz2c names the allocator it
 #: synthesizes for each class, and the only reliable list of the classes a
 #: given run actually emitted.
 ALLOC_RE = re.compile(r"\bstruct\s+(\w+)\s*\*\s*(\w+)_oz_alloc\s*\(")
 
-#: `struct X *Class_sel_cls(` -- oz_static's spelling of a class method,
+#: `struct X *Class_sel_cls(` -- oz2c's spelling of a class method,
 #: which the drivers reach as `Class_cls_sel`.
 CLASS_METHOD_RE = re.compile(r"\b(\w+)_(\w+)_cls\s*\(")
 
 #: `OZ_PROTOCOL_SEND_foo` as referenced by a driver.
 SEND_RE = re.compile(r"\bOZ_PROTOCOL_SEND_(\w+)\b")
 
-#: An instance-method prototype in oz_static's output:
+#: An instance-method prototype in oz2c's output:
 #: `<ret> Class_sel(struct Class *self`.
 INSTANCE_METHOD_RE = re.compile(r"\b(\w+)_(\w+)\s*\(\s*struct\s+(\w+)\s*\*\s*self")
 
 def discover_classes(outdir: Path) -> list[str]:
-    """Classes oz_static emitted an allocator for, from its own output."""
+    """Classes oz2c emitted an allocator for, from its own output."""
     names: set[str] = set()
     for header in outdir.rglob("*.h"):
         for struct_name, alloc_name in ALLOC_RE.findall(header.read_text()):
@@ -73,60 +73,65 @@ def write_abi_shim(outdir: Path, classes: list[str], root: str,
                     driver_text: str) -> None:
     """Write the `<Class>_ozh.h` / `oz_dispatch.h` headers drivers include.
 
-    Every one of them gets the same body: oz_static's own generated
+    Every one of them gets the same body: oz2c's own generated
     headers, then the name bridges.  Writing identical content under each
     expected filename is deliberate -- which header a driver includes says
-    nothing about which classes it touches, and oz_static's split is by
+    nothing about which classes it touches, and oz2c's split is by
     origin file, not by class, so there is no per-class header to map onto.
     """
-    body = ["#pragma once", '#include "oz_static_dispatch.h"']
+    body = ["#pragma once", '#include "oz2c_dispatch.h"']
     # Per-origin headers after the companion: a driver may need a complete
     # struct (`struct OZDefer d;` by value), which only the origin header
     # has. The companion alone covers pointer use and prototypes.
     for header in sorted(outdir.rglob("*.h")):
         rel = header.relative_to(outdir)
-        if rel.name in ("oz_static_dispatch.h",) or rel.name.endswith("_ozh.h"):
+        if rel.name in ("oz2c_dispatch.h",) or rel.name.endswith("_ozh.h"):
             continue
         body.append(f'#include "{rel.as_posix()}"')
     body.append("")
-    body.append("/* Legacy ABI names, bridged to oz_static's. Naming only.")
+    body.append("/* Legacy ABI names, bridged to oz2c's. Naming only.")
     body.append(" * The spellings below are the retired Python pipeline's; the drivers")
     body.append(" * that include this header were written against them and are kept")
     body.append(" * unmodified. Generated by tests/tools/oz2c_build.py. */")
     for cls in classes:
         body.append(f"#define {cls}_alloc {cls}_oz_alloc")
         body.append(f"#define {cls}_free {cls}_oz_free")
-        # The oracle names the heap allocator after the selector; oz_static
+        # The oracle names the heap allocator after the selector; oz2c
         # keeps its `oz_` prefix for everything it synthesizes, as it does
         # for `_oz_alloc` itself.
         body.append(f"#define {cls}_dynamicAllocWithHeap_ {cls}_oz_dynamic_alloc_with_heap")
-        body.append(f"#define OZ_CLASS_{cls} OZ_STATIC_CLASS_{cls}")
-    body.append(f"#define {root}_retain oz_static_retain")
-    body.append(f"#define {root}_release oz_static_release")
-    body.append(f"#define {root}_retainCount oz_static_retain_count")
+        # No OZ_CLASS_ bridge any more. It used to map the oracle's
+        # OZ_CLASS_<Name> onto the transpiler's own prefixed spelling; #462
+        # retired that prefix, so OZ_CLASS_<Name> *is* the emitted name and
+        # a bridge here would define the macro to itself -- which is a
+        # redefinition to a different token sequence than the companion's
+        # `#define OZ_CLASS_<Name> <id>`, and does not compile.
+    body.append(f"#define {root}_retain oz_retain")
+    body.append(f"#define {root}_release oz_release")
+    body.append(f"#define {root}_retainCount oz_retain_count")
     # `__objc_refcount_get` was retired from the SDK and from generated C in
     # #418 (reserved identifier, `__objc_` is the internal prefix, second
-    # public name for `oz_static_retain_count`, and the last `get`-prefixed
+    # public name for `oz_retain_count`, and the last `get`-prefixed
     # getter).  This bridge is deliberately *not* retired with it: nine
     # drivers still spell it -- seven under `tests/behavior/cases/` and
     # `tests/zephyr/src/test_{lifecycle,memory}.c` -- and the rule for this
     # block is that drivers stay unmodified and the harness bridges the
     # name.  It is now the only place in the tree the spelling survives
     # outside `runtime_legacy/`.
-    body.append("#define __objc_refcount_get(o) oz_static_retain_count(o)")
+    body.append("#define __objc_refcount_get(o) oz_retain_count(o)")
 
     generated = generated_text(outdir)
     for cls, sel in sorted(set(CLASS_METHOD_RE.findall(generated))):
         if cls in classes:
             body.append(f"#define {cls}_cls_{sel} {cls}_{sel}_cls")
 
-    # A driver may send through `OZ_PROTOCOL_SEND_<sel>` where oz_static
+    # A driver may send through `OZ_PROTOCOL_SEND_<sel>` where oz2c
     # emitted no dispatch function, precisely because its hierarchy
     # analysis proved the selector is not polymorphic. If exactly one class
     # implements it, the direct call *is* what a dispatch through it would
     # resolve to, so the macro is defined to that -- with the receiver cast,
     # since the driver passes a root pointer. More than one implementor
-    # would mean oz_static should have emitted a dispatcher, so that case is
+    # would mean oz2c should have emitted a dispatcher, so that case is
     # deliberately left undefined and surfaces as a build failure.
     for sel in sorted(set(SEND_RE.findall(driver_text))):
         if f"OZ_PROTOCOL_SEND_{sel}(" in generated:
@@ -150,7 +155,7 @@ def write_abi_shim(outdir: Path, classes: list[str], root: str,
     (outdir / "oz_dispatch.h").write_text(text)
 
 def generated_text(outdir: Path) -> str:
-    """All of oz_static's generated headers, concatenated.
+    """All of oz2c's generated headers, concatenated.
 
     Read once per case; the shim needs to ask several questions of it.
     Shim headers themselves are skipped so a rerun cannot feed on its own
@@ -168,14 +173,14 @@ def transpile(case: Path, outdir: Path, pool_sizes: str, heap_support: bool,
               ast_path: Path) -> str | None:
     """Run oz2c over `case` into `outdir`. Returns an error string, or None.
 
-    Two passes, and the second is not redundant: oz_static rejects
+    Two passes, and the second is not redundant: oz2c rejects
     `--pool-sizes` naming a class it has no record of, and a directive
     written for the Python backend can name one it never creates
     (`OZSpinLock`). So the first pass reveals which classes exist and the
     second applies only the sizes that survive that filter.
 
     Both backends must be given the *same* pool sizes or a comparison
-    measures configuration rather than behaviour: oz_static would otherwise
+    measures configuration rather than behaviour: oz2c would otherwise
     size from the allocation sites it can see, and a case whose allocations
     all live in the `_test.c` driver has none -- its slab would hold one
     object, the second `alloc` would return NULL, and the test would fail on

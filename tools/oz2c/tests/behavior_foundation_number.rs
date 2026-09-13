@@ -11,7 +11,7 @@
 // `_oz_align_shift`, `_oz_q31_to_str`, `_oz_q31_div`), same method
 // bodies, including `other->_raw` cross-instance ivar access and
 // `[[OZNumber alloc] init]` chaining -- both confirmed to transpile and run
-// correctly through oz_static before this file was written. This is the
+// correctly through oz2c before this file was written. This is the
 // real oracle algorithm, not a re-derivation, so parity with the Python
 // pipeline's actual behavior is exact by construction rather than by
 // matching documented comments.
@@ -65,7 +65,7 @@ fn q31_basic_roundtrip_and_arithmetic() {
     // The count here is higher than the oracle's, though, and that gap is
     // structural rather than a tuning choice: the oracle has scope-based
     // ARC, so each temporary Q31 is released at the end of the method
-    // that made it and 16 slots recirculate. oz_static has no ARC (#189),
+    // that made it and 16 slots recirculate. oz2c has no ARC (#189),
     // so nothing releases these temporaries and every one allocated over
     // the whole run stays live. Any pool size ported from an oracle case
     // has to be raised for the same reason until ARC lands.

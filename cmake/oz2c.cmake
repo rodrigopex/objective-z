@@ -391,10 +391,10 @@ function(objz_transpile_sources_static target)
     # oz2c reads, and "ordinary errors are fine" is why nobody saw either.
     #
     # But the old rule was not merely lax. Clang parses this Objective-C
-    # under `-fobjc-arc`, and oz_static deliberately supports constructs
+    # under `-fobjc-arc`, and oz2c deliberately supports constructs
     # whose Objective-C *spelling* ARC refuses:
     #
-    #   * `ARC forbids explicit message send of 'dealloc'` -- oz_static
+    #   * `ARC forbids explicit message send of 'dealloc'` -- oz2c
     #     synthesizes the dealloc chain, and `samples/pool_demo`,
     #     `transpiled_led` and `gpio_demo` all write the send out;
     #   * `cast of a block pointer to '...' is disallowed with ARC` --
@@ -497,11 +497,11 @@ function(objz_transpile_sources_static target)
 
     # src/OZLog.c (linked in below, shared verbatim with the Python
     # backend) `#include`s "oz_dispatch.h" and "OZObject_ozh.h" -- the
-    # Python pipeline's own generated filenames. Shim both to oz_static's
-    # own names ("oz_static_dispatch.h", "OZObject.h") so the same file
+    # Python pipeline's own generated filenames. Shim both to oz2c's
+    # own names ("oz2c_dispatch.h", "OZObject.h") so the same file
     # compiles under either backend without editing it.
     file(WRITE ${_outdir}/Foundation/oz_dispatch.h
-        "/* shim: src/OZLog.c expects this name under either backend */\n#include \"oz_static_dispatch.h\"\n")
+        "/* shim: src/OZLog.c expects this name under either backend */\n#include \"oz2c_dispatch.h\"\n")
     file(WRITE ${_outdir}/Foundation/OZObject_ozh.h
         "/* shim: src/OZLog.c expects this name under either backend */\n#include \"OZObject.h\"\n")
 
@@ -642,19 +642,19 @@ function(objz_transpile_sources_static target)
 
     # Real oz_sdk headers keep ARC ownership qualifiers (__unsafe_unretained,
     # etc.) for the Python pipeline's Clang-AST analysis, which genuinely
-    # needs them -- oz_static preserves ivar declarations verbatim from
+    # needs them -- oz2c preserves ivar declarations verbatim from
     # source rather than re-synthesizing them (its "literate" design), so
     # those qualifiers reach the final GCC compile unchanged. They're a
-    # a no-op for the generated C either way: oz_static lowers the
+    # a no-op for the generated C either way: oz2c lowers the
     # qualifiers off the ivar declarations it emits, and its own ARC works
     # off the Clang AST's ownership facts rather than off these spellings
     # surviving into C. The -D covers the positions the lowering does not
     # rewrite (a method parameter, a local), and is an empty define rather
-    # than an edit to the shared headers or to oz_static's verbatim copy.
+    # than an edit to the shared headers or to oz2c's verbatim copy.
     target_compile_definitions(${target} PRIVATE __unsafe_unretained=)
 
     # Add OZLog support (pure C, matching the prototypes hardcoded into
-    # oz_static's own generated companion header -- see companion.rs). It
+    # oz2c's own generated companion header -- see companion.rs). It
     # reaches for "oz_dispatch.h" and "OZObject_ozh.h", the Python
     # pipeline's generated filenames; the two shim headers written into
     # ${_outdir}/Foundation above are what make the same file compile here,

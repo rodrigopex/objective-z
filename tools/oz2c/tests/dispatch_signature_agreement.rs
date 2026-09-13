@@ -14,8 +14,8 @@
 //     const struct alpha_spec* OZ_PROTOCOL_SEND_spec(struct OZObject *self)
 //     {
 //             switch (self->_meta.class_id) {
-//             case OZ_STATIC_CLASS_Alpha: return Alpha_spec(...);
-//             case OZ_STATIC_CLASS_Beta:  return Beta_spec(...);   /* wrong type */
+//             case OZ_CLASS_Alpha: return Alpha_spec(...);
+//             case OZ_CLASS_Beta:  return Beta_spec(...);   /* wrong type */
 //             }
 //     }
 //

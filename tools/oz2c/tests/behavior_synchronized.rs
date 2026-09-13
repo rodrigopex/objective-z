@@ -171,7 +171,7 @@ int main(void) {
 #[test]
 fn locals_declared_inside_synchronized() {
     // Ported from with_locals.m / with_locals_test.c: a local object
-    // allocated inside the body. oz_static has no ARC (#189), so the
+    // allocated inside the body. oz2c has no ARC (#189), so the
     // local is released explicitly here rather than at scope exit.
     let src = format!(
         "{}{}",

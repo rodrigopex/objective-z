@@ -689,7 +689,7 @@ int main(void) { return 0; }
 /// ```c
 /// struct OZObject *_oz_prev_L381_C3_1 = (struct OZObject *)(self->_ivar);
 /// for (i = 0; i < 4; i++) {
-///         (self->_ivar = Foo_dup(...), oz_static_release(_oz_prev_L381_C3_1));
+///         (self->_ivar = Foo_dup(...), oz_release(_oz_prev_L381_C3_1));
 /// }
 /// ```
 ///

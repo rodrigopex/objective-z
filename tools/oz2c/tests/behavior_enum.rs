@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // behavior_enum.rs - OZ-092: port of the Python-pipeline "enum" behavior
-// category (tests/behavior/cases/enum/) to oz_static.
+// category (tests/behavior/cases/enum/) to oz2c.
 //
 // Each Python fixture pairs an X.m (ObjC declarations only) with a
 // hand-written X_test.c (Unity TEST_ASSERT_* calls against the
@@ -13,7 +13,7 @@
 // All three Python fixtures declare their enum directly in the .m file
 // (none actually `#import` a separate companion header despite
 // `enum_from_header.m`'s name), so all three port over as one
-// translation unit with no adaptation needed for oz_static's
+// translation unit with no adaptation needed for oz2c's
 // single-file-per-compile limitation.
 
 mod common;

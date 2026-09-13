@@ -21,8 +21,8 @@
 // Clang's ARC: ARC never asks about escape, because retain-on-binding
 // gives every name its own reference and makes the question moot. That
 // costs an atomic pair per binding, which Clang gets back from the LLVM
-// `ObjCARCOpt` pass and this backend cannot -- `oz_static_retain` and
-// `oz_static_release` are ordinary C functions to GCC, and their pairs
+// `ObjCARCOpt` pass and this backend cannot -- `oz_retain` and
+// `oz_release` are ordinary C functions to GCC, and their pairs
 // survive -O2, inlining and whole-program LTO alike. So what lives here is
 // ARC's *optimizer*, written at the source level: emit the traffic that is
 // necessary and elide the rest. The elision is the whole value, and it has
@@ -150,7 +150,7 @@ fn returns_object_pointer(sig: &crate::model::MethodSig) -> bool {
 ///
 /// What that cost, measured on the host: `[[Thing alloc] initialValue]`
 /// treated the *`int`* as the reference the allocation handed back, so
-/// `oz_static_release` was passed the integer 42 and dereferenced it.
+/// `oz_release` was passed the integer 42 and dereferenced it.
 /// Signal 11 (#398). The allocated `Thing` leaked too, but the fault is
 /// the part that mattered.
 ///
@@ -271,7 +271,7 @@ fn create_rule_family_of(selector: &str) -> Option<&'static str> {
 /// **The guard is the whole safety argument, and the corpus already holds
 /// the counterexample.** `tests/adapted/mulle_spec/retain_release_balance.m`
 /// declares `- (int)allocOk`, which ARC's family rule puts in the `alloc`
-/// family by spelling alone. Treating it as `+1` hands `oz_static_release`
+/// family by spelling alone. Treating it as `+1` hands `oz_release`
 /// an `int` -- exactly #398, where `[[Thing alloc] initialValue]` released
 /// the integer 42 and dereferenced it. Clang is no help: it accepts
 /// `- (int)allocOk`, `- (int)newCount` and `- (int)copyFlag` under
@@ -1258,8 +1258,8 @@ pub fn binds_ownership(
 ///     more. It is kept as defence rather than deleted, and that it is
 ///     unexercised is recorded in docs/STATUS.md rather than left to be
 ///     rediscovered. `samples/smp_shared` used to be the live example,
-///     twice per iteration; it drives `oz_static_retain`/
-///     `oz_static_release` directly now.
+///     twice per iteration; it drives `oz_retain`/
+///     `oz_release` directly now.
 ///   - `-init...` *consumes* the receiver's +1 and hands it back, so the
 ///     reference is the receiver's. In `[[Foo alloc] init]` that receiver
 ///     is a temporary nothing tracks, and the result is genuinely
@@ -1283,7 +1283,7 @@ fn creates_reference(program: &Program, selector: &str) -> bool {
 ///
 /// The node handed back is the one to release, which is not always `node`
 /// itself: `(void)[t copy]` abandons the `[t copy]`, and
-/// `oz_static_release((struct OZObject *)((void)(...)))` is not C. Emit
+/// `oz_release((struct OZObject *)((void)(...)))` is not C. Emit
 /// wraps *this* node, so the two answers -- whether to release, and what
 /// -- come from one place and cannot drift apart (#327).
 pub fn discarded_owning_value<'a>(

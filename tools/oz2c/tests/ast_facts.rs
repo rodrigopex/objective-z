@@ -2,12 +2,12 @@
 //
 // ast_facts.rs - the Clang AST as the authority on ivar ownership.
 //
-// tree-sitter gives oz_static syntax, not resolved types, so on its own it
+// tree-sitter gives oz2c syntax, not resolved types, so on its own it
 // cannot tell whether `id _thing` is an object the class owns. Guessing
 // either way is unsafe: releasing a non-object corrupts memory, and skipping
 // every `id`-typed ivar silently leaks it. Clang already knows, and with
 // `-fobjc-arc` writes the answer into each declaration's `qualType`, so
-// `--ast` hands oz_static that answer (see `astinfo`).
+// `--ast` hands oz2c that answer (see `astinfo`).
 //
 // The AST JSON here is written by hand rather than produced by running
 // clang. It is a faithful excerpt -- every `qualType` string below was
@@ -83,7 +83,7 @@ fn ast_makes_owned_id_ivar_released_and_unretained_one_not() {
         ..Default::default()
     });
     assert!(
-        all.contains("void Holder_oz_release_ivars(struct Holder *self)\n{\n\toz_static_release((struct OZObject *)self->_thing);\n}"),
+        all.contains("void Holder_oz_release_ivars(struct Holder *self)\n{\n\toz_release((struct OZObject *)self->_thing);\n}"),
         "expected exactly the owned id ivar to be released, got:\n{}",
         all
     );
@@ -336,7 +336,7 @@ fn a_class_with_no_ast_is_refused_when_the_ast_is_required() {
 
 /// The refusal is *located*, and at the first class rather than at line 1.
 ///
-/// oz_static's standing rule is a hard, located error; a bare "line 1" on a
+/// oz2c's standing rule is a hard, located error; a bare "line 1" on a
 /// source assembled from several spliced files points at nothing an author
 /// can act on. `source()` puts the whole of `OZObject` ahead of `Holder`,
 /// so a diagnostic that had defaulted to 1 would be visibly wrong here.

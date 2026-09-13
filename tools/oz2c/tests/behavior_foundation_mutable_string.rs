@@ -10,7 +10,7 @@
 // the real `OZString` (`common::ozstring_src`) as OZMutableString's
 // superclass. OZMutableString itself (`common::ozmutablestring_src`) is a
 // full transplant, own `-init*`/`-dealloc` included -- unlike OZArray, it
-// needs no oz_static-side special-casing at all: its growable `_data`
+// needs no oz2c-side special-casing at all: its growable `_data`
 // buffer is already malloc-based in the real source (ordinary string-
 // growth logic, not the object's own alloc/free machinery), and
 // `[super init]`/inherited-ivar access through a base chain are both
@@ -172,7 +172,7 @@ int main(void) {{
 // and `companion.rs` resolves each class's protocol-dispatch arm by walking the
 // superclass chain -- so the arm reads
 //
-//     case OZ_STATIC_CLASS_OZMutableString:
+//     case OZ_CLASS_OZMutableString:
 //             return OZString_getDescription_maxLength_((struct OZString *)self, ...);
 //
 // and `%@` prints the contents already. That resolution is what these tests
@@ -293,7 +293,7 @@ fn the_description_dispatcher_routes_a_mutable_string_to_its_superclass() {
 
     assert!(
         c.contains(
-            "case OZ_STATIC_CLASS_OZMutableString: return \
+            "case OZ_CLASS_OZMutableString: return \
              OZString_getDescription_maxLength_("
         ),
         "OZMutableString's description arm does not reach OZString's \
@@ -302,7 +302,7 @@ fn the_description_dispatcher_routes_a_mutable_string_to_its_superclass() {
     );
     assert!(
         !c.contains(
-            "case OZ_STATIC_CLASS_OZMutableString: return \
+            "case OZ_CLASS_OZMutableString: return \
              OZObject_getDescription_maxLength_("
         ),
         "OZMutableString's description arm fell through to OZObject's \

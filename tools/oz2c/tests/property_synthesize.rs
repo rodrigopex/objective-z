@@ -74,7 +74,7 @@ fn strong_object_setter_retains_new_releases_old() {
     // Setter must retain the incoming value and release whatever the
     // ivar held before -- mirrors `emit.py::_emit_synthesized_accessor`'s
     // strong-object branch exactly (just via this codebase's own
-    // `oz_static_retain`/`oz_static_release`, not Python's `{root}_retain`).
+    // `oz_retain`/`oz_release`, not Python's `{root}_retain`).
     let src = format!(
         "{}\n\
 @interface Holder : OZObject
@@ -91,9 +91,9 @@ int main(void) {{
 	OZObject *b = [OZObject alloc];
 	Holder *h = [Holder alloc];
 	[h setThing:a];
-	printf(\"a=%d b=%d\\n\", oz_static_retain_count(a), oz_static_retain_count(b));
+	printf(\"a=%d b=%d\\n\", oz_retain_count(a), oz_retain_count(b));
 	[h setThing:b];
-	printf(\"a=%d b=%d\\n\", oz_static_retain_count(a), oz_static_retain_count(b));
+	printf(\"a=%d b=%d\\n\", oz_retain_count(a), oz_retain_count(b));
 	return 0;
 }}
 ",
@@ -163,7 +163,7 @@ fn bare_synthesize_uses_existing_bare_ivar_name() {
     // `@synthesize count;` (no explicit `= ivar`) with an ivar already
     // declared under the bare name `count` (not `_count`) -- Python's
     // oracle accepts this by default, only warning under --strict; see
-    // `collect::resolve_properties`'s comment for why oz_static (which
+    // `collect::resolve_properties`'s comment for why oz2c (which
     // has no non-fatal diagnostic channel) matches that default
     // (non-strict) behavior instead of hard-rejecting it.
     let src = format!(

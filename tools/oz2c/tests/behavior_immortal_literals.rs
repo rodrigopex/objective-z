@@ -9,7 +9,7 @@
 // literal's refcount really does reach zero. `companion`'s release path
 // calls `{class}_oz_free` at zero, which for OZString is `free(obj)` -- on a
 // static, that aborts. `emit::render_boxed_string_literal` marks literals
-// `_meta.immortal = 1`, and `oz_static_release` returns on that bit before
+// `_meta.immortal = 1`, and `oz_release` returns on that bit before
 // it even decrements (#228).
 //
 // It used to mark them `_meta.deallocating = 1` from birth instead and rely
@@ -18,7 +18,7 @@
 // refcount assertions below pin down; the abort-or-not cases pass under
 // either mechanism.
 //
-// **Every case here drives `oz_static_retain`/`oz_static_release` as C
+// **Every case here drives `oz_retain`/`oz_release` as C
 // functions rather than as `[s retain]`/`[s release]` sends, which ARC
 // refuses (#428).** That is the faithful translation and not a workaround:
 // immortality is a property of those two functions -- the `immortal` check
@@ -114,7 +114,7 @@ int main(void) {
 	 * (#428): `released_by_hand` used to do that implicitly. */
 	__unsafe_unretained OZDictionary *scores = @{ @\"alpha\" : @100, @\"beta\" : @200 };
 	printf(\"count=%zu\\n\", [scores count]);
-	oz_static_release((struct OZObject *)scores);
+	oz_release((struct OZObject *)scores);
 	printf(\"released_ok\\n\");
 	return 0;
 }
@@ -139,7 +139,7 @@ int main(void) {
 	/* Opted out of ARC so the release under test is the only one (#428). */
 	__unsafe_unretained OZArray *names = @[ @\"zephyr\", @\"objective-z\" ];
 	printf(\"count=%zu\\n\", [names count]);
-	oz_static_release((struct OZObject *)names);
+	oz_release((struct OZObject *)names);
 	printf(\"released_ok\\n\");
 	return 0;
 }
@@ -162,7 +162,7 @@ fn literal_survives_release_to_zero() {
 int main(void) {
 	OZString *s = @\"hello\";
 	printf(\"len_before=%zu\\n\", [s length]);
-	oz_static_release((struct OZObject *)s);
+	oz_release((struct OZObject *)s);
 	printf(\"cstr_after=%s\\n\", [s cString]);
 	printf(\"len_after=%zu\\n\", [s length]);
 	return 0;
@@ -183,7 +183,7 @@ int main(void) {
 /// immortal object's refcount.
 ///
 /// This test covers releases only. It said "never moves at all" until #373,
-/// which was false in the other direction -- `oz_static_retain` incremented
+/// which was false in the other direction -- `oz_retain` incremented
 /// the word with no immortal check, so the count climbed and nothing brought
 /// it back. `retaining_a_literal_does_not_move_its_refcount` below is the
 /// mirror that would have caught it.
@@ -199,12 +199,12 @@ fn releasing_a_literal_does_not_consume_its_refcount() {
 #include <stdio.h>
 int main(void) {
 	OZString *s = @\"hello\";
-	printf(\"rc_before=%d\\n\", oz_static_retain_count(s));
-	oz_static_release((struct OZObject *)s);
-	printf(\"rc_after=%d\\n\", oz_static_retain_count(s));
-	oz_static_release((struct OZObject *)s);
-	oz_static_release((struct OZObject *)s);
-	printf(\"rc_settled=%d\\n\", oz_static_retain_count(s));
+	printf(\"rc_before=%d\\n\", oz_retain_count(s));
+	oz_release((struct OZObject *)s);
+	printf(\"rc_after=%d\\n\", oz_retain_count(s));
+	oz_release((struct OZObject *)s);
+	oz_release((struct OZObject *)s);
+	printf(\"rc_settled=%d\\n\", oz_retain_count(s));
 	printf(\"still=%s\\n\", [s cString]);
 	return 0;
 }
@@ -216,8 +216,8 @@ int main(void) {
 
 /// The mirror of the test above, on the side that was missing (#373).
 ///
-/// `oz_static_release` checked the immortal bit before its decrement;
-/// `oz_static_retain` checked nothing and incremented unconditionally. So a
+/// `oz_release` checked the immortal bit before its decrement;
+/// `oz_retain` checked nothing and incremented unconditionally. So a
 /// retain moved an immortal object's refcount and no release ever moved it
 /// back: the count ratcheted upward for the life of the program, and
 /// `retainCount` reported a number that meant nothing.
@@ -235,15 +235,15 @@ fn retaining_a_literal_does_not_move_its_refcount() {
 #include <stdio.h>
 int main(void) {
 	OZString *s = @\"hello\";
-	printf(\"rc_before=%d\\n\", oz_static_retain_count(s));
-	(void)oz_static_retain((struct OZObject *)s);
-	(void)oz_static_retain((struct OZObject *)s);
-	(void)oz_static_retain((struct OZObject *)s);
-	printf(\"rc_retained=%d\\n\", oz_static_retain_count(s));
-	oz_static_release((struct OZObject *)s);
-	oz_static_release((struct OZObject *)s);
-	oz_static_release((struct OZObject *)s);
-	printf(\"rc_settled=%d\\n\", oz_static_retain_count(s));
+	printf(\"rc_before=%d\\n\", oz_retain_count(s));
+	(void)oz_retain((struct OZObject *)s);
+	(void)oz_retain((struct OZObject *)s);
+	(void)oz_retain((struct OZObject *)s);
+	printf(\"rc_retained=%d\\n\", oz_retain_count(s));
+	oz_release((struct OZObject *)s);
+	oz_release((struct OZObject *)s);
+	oz_release((struct OZObject *)s);
+	printf(\"rc_settled=%d\\n\", oz_retain_count(s));
 	printf(\"still=%s\\n\", [s cString]);
 	return 0;
 }
@@ -266,9 +266,9 @@ fn retaining_a_singleton_does_not_move_its_refcount() {
         "\
 int main(void) {
 	Config *c = [Config sharedInstance];
-	(void)oz_static_retain((struct OZObject *)c);
-	(void)oz_static_retain((struct OZObject *)c);
-	printf(\"rc=%d\\n\", oz_static_retain_count(c));
+	(void)oz_retain((struct OZObject *)c);
+	(void)oz_retain((struct OZObject *)c);
+	printf(\"rc=%d\\n\", oz_retain_count(c));
 	printf(\"rate=%d\\n\", [c rate]);
 	return 0;
 }
@@ -287,8 +287,8 @@ fn retain_checks_immortal_before_incrementing() {
     let src = format!("{}\n{}", ozobject_src(), "int main(void) { return 0; }\n");
     let c = oz2c::transpile(&src).expect("should transpile").companion_c;
     let start = c
-        .find("*oz_static_retain(")
-        .unwrap_or_else(|| panic!("no oz_static_retain in:\n{}", c));
+        .find("*oz_retain(")
+        .unwrap_or_else(|| panic!("no oz_retain in:\n{}", c));
     let body = &c[start..];
     let end = body.find("\n}").unwrap_or(body.len());
     let body = &body[..end];
@@ -313,8 +313,8 @@ fn retain_count_reports_one_for_an_immortal_object() {
     let src = format!("{}\n{}", ozobject_src(), "int main(void) { return 0; }\n");
     let c = oz2c::transpile(&src).expect("should transpile").companion_c;
     let start = c
-        .find("int oz_static_retain_count(")
-        .unwrap_or_else(|| panic!("no oz_static_retain_count in:\n{}", c));
+        .find("int oz_retain_count(")
+        .unwrap_or_else(|| panic!("no oz_retain_count in:\n{}", c));
     let body = &c[start..];
     let end = body.find("\n}").unwrap_or(body.len());
     let body = &body[..end];
@@ -395,8 +395,8 @@ fn release_checks_immortal_before_decrementing() {
     let src = format!("{}\n{}", ozobject_src(), "int main(void) { return 0; }\n");
     let c = oz2c::transpile(&src).expect("should transpile").companion_c;
     let start = c
-        .find("void oz_static_release(")
-        .unwrap_or_else(|| panic!("no oz_static_release in:\n{}", c));
+        .find("void oz_release(")
+        .unwrap_or_else(|| panic!("no oz_release in:\n{}", c));
     let body = &c[start..];
     let immortal = body.find("_meta.immortal").expect("release must check immortal");
     let dec = body.find("oz_atomic_dec_and_test").expect("release must decrement");
@@ -424,9 +424,9 @@ fn releasing_a_singleton_does_not_deallocate_it() {
 int main(void) {
 	Config *c = [Config sharedInstance];
 	printf(\"rate_before=%d\\n\", [c rate]);
-	oz_static_release((struct OZObject *)c);
+	oz_release((struct OZObject *)c);
 	printf(\"rate_after=%d\\n\", [[Config sharedInstance] rate]);
-	printf(\"rc=%d\\n\", oz_static_retain_count(c));
+	printf(\"rc=%d\\n\", oz_retain_count(c));
 	printf(\"done\\n\");
 	return 0;
 }
@@ -506,12 +506,12 @@ int main(void) {
 	/* Opted out of ARC so the releases under test are the only ones
 	 * (#428) -- the last of them is what frees the object. */
 	__unsafe_unretained Counted *c = [Counted alloc];
-	printf(\"rc=%d\\n\", oz_static_retain_count(c));
-	(void)oz_static_retain((struct OZObject *)c);
-	printf(\"rc2=%d\\n\", oz_static_retain_count(c));
-	oz_static_release((struct OZObject *)c);
-	printf(\"rc3=%d\\n\", oz_static_retain_count(c));
-	oz_static_release((struct OZObject *)c);
+	printf(\"rc=%d\\n\", oz_retain_count(c));
+	(void)oz_retain((struct OZObject *)c);
+	printf(\"rc2=%d\\n\", oz_retain_count(c));
+	oz_release((struct OZObject *)c);
+	printf(\"rc3=%d\\n\", oz_retain_count(c));
+	oz_release((struct OZObject *)c);
 	printf(\"freed_ok\\n\");
 	return 0;
 }

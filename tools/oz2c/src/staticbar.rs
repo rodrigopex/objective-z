@@ -1044,7 +1044,7 @@ const DECL_TYPE_KINDS: &[&str] = &[
 
 /// `id` is a reserved word, so nothing may be *declared* with that name.
 ///
-/// It is a type in Objective-C -- the untyped object pointer -- and oz_static
+/// It is a type in Objective-C -- the untyped object pointer -- and oz2c
 /// rewrites it as one wherever it appears in a declaration. Nothing in the
 /// emitter can tell `uint8_t id` (a parameter that happens to be called `id`)
 /// from `id obj` (a parameter typed `id`) once a declaration has been
@@ -1055,7 +1055,7 @@ const DECL_TYPE_KINDS: &[&str] = &[
 /// upstream refuses it either.
 ///
 /// Reserving the name is the fix rather than lowering it correctly. It keeps
-/// one spelling of `id` in the language oz_static accepts, and it turns a
+/// one spelling of `id` in the language oz2c accepts, and it turns a
 /// GCC error about generated C -- in a file the author did not write -- into
 /// a located error on the line that caused it. Emitting broken C is the
 /// silent degradation this bar exists to prevent.
@@ -1162,7 +1162,7 @@ fn reserved_name_err(diags: &mut Vec<Diagnostic>, src: &str, node: Node) {
 /// (`cmake/oz2c.cmake`, `cmake/ObjcClang.cmake`,
 /// `tests/tools/compile_and_run.py`, `tests/common/mod.rs`,
 /// `scripts/regen_zephyr_tests.py`, and `scripts/objz_check_compile_db.py`'s
-/// `REQUIRED_FLAGS`), under which each of these is a compile error. oz_static
+/// `REQUIRED_FLAGS`), under which each of these is a compile error. oz2c
 /// parses with tree-sitter rather than Clang, which is the only reason they
 /// were ever reachable (#428).
 ///
@@ -1176,7 +1176,7 @@ fn reserved_name_err(diags: &mut Vec<Diagnostic>, src: &str, node: Node) {
 /// rather than an argument: declared or undeclared, Clang answers
 /// `ARC forbids explicit message send of 'retainCount'`. Reading a refcount
 /// is still supported, through the spelling that was always the sanctioned
-/// one: `oz_static_retain_count()`, a plain C call, which #418 made the
+/// one: `oz_retain_count()`, a plain C call, which #418 made the
 /// single entry point and which `include/oz_sdk/Foundation/OZObject.h` has
 /// described as "the only refcount entry point Objective-C source may spell"
 /// all along. That sentence was true of the design and false of the
@@ -1285,7 +1285,7 @@ const ARC_FORBIDDEN_SELECTORS: &[&str] =
 /// Implementing them stays available and is strictly better *if* CF-style
 /// hand-off to C is meant to be supported -- that is a product question,
 /// not a correctness one, and the refusal does not foreclose it. It would
-/// also need new emission, which wants sequencing after the `oz_static_*`
+/// also need new emission, which wants sequencing after the `oz2c_*`
 /// respelling rather than before it.
 ///
 /// Plain `__bridge` is deliberately **not** here, and
@@ -1335,7 +1335,7 @@ fn walk_bridging_casts(node: Node, src: &str, diags: &mut Vec<Diagnostic>) {
                 Rejection {
                     message: format!("'{kind}' is not supported: it transfers a reference"),
                     note: Some(format!(
-                        "ARC would {verb}, and oz_static emits no such traffic -- \
+                        "ARC would {verb}, and oz2c emits no such traffic -- \
                          {direction}, {consequence}"
                     )),
                     help: vec![
@@ -1378,7 +1378,7 @@ fn transferring_bridge_kind(cast: Node, src: &str) -> Option<&'static str> {
     })
 }
 
-/// The ARC attributes that *contradict* an ownership answer oz_static
+/// The ARC attributes that *contradict* an ownership answer oz2c
 /// derives some other way, and are therefore refused rather than ignored.
 ///
 /// Each one exists to override a convention: `ns_returns_not_retained`
@@ -1387,7 +1387,7 @@ fn transferring_bridge_kind(cast: Node, src: &str) -> Option<&'static str> {
 /// `ns_consumes_self` move an argument's release to the callee, and
 /// `objc_method_family` reassigns a selector's family outright.
 ///
-/// oz_static reads none of them, and silently ignoring them is not a
+/// oz2c reads none of them, and silently ignoring them is not a
 /// harmless gap -- it is a use-after-free (#458). Measured:
 ///
 /// ```objc
@@ -1398,7 +1398,7 @@ fn transferring_bridge_kind(cast: Node, src: &str) -> Option<&'static str> {
 /// ```
 ///
 /// ARC reads the attribute and says `+0`, so the caller owes nothing.
-/// `copy` is a create-rule selector, so oz_static says `+1` and releases
+/// `copy` is a create-rule selector, so oz2c says `+1` and releases
 /// at scope exit -- freeing an object the caller never owned, while the
 /// ivar still holds it. `-dealloc` then releases the freed block again.
 /// ASan reports `heap-use-after-free`, from a source
@@ -1457,7 +1457,7 @@ fn walk_ownership_attributes(node: Node, src: &str, diags: &mut Vec<Diagnostic>)
                 src,
                 node,
                 format!(
-                    "'{name}' is not supported: it overrides an ownership answer oz_static                      derives from the selector and the method's return type, and oz_static does                      not read it -- so accepting it silently means ARC and the attribute                      disagree, which is a use-after-free rather than a leak (#458). Remove the                      attribute and let the create rule decide: name a '+1' factory 'copy',                      'new', 'mutableCopy' or 'alloc' (or any selector whose first component                      begins with one of those), and anything else is '+0'"
+                    "'{name}' is not supported: it overrides an ownership answer oz2c                      derives from the selector and the method's return type, and oz2c does                      not read it -- so accepting it silently means ARC and the attribute                      disagree, which is a use-after-free rather than a leak (#458). Remove the                      attribute and let the create rule decide: name a '+1' factory 'copy',                      'new', 'mutableCopy' or 'alloc' (or any selector whose first component                      begins with one of those), and anything else is '+0'"
                 ),
             );
             /* One diagnostic per specifier: a second identifier under the
@@ -1634,7 +1634,7 @@ fn arc_forbidden_selector(selector: &str) -> Rejection {
             note: Some(note),
             help: vec![
                 "reading a refcount is still supported -- call \
-                 'oz_static_retain_count(obj)', a plain C function, which is the only \
+                 'oz_retain_count(obj)', a plain C function, which is the only \
                  refcount entry point Objective-C source may spell (#418)"
                     .to_string(),
                 "it takes and gives no ownership, so nothing about the lifetime changes; \
@@ -1649,7 +1649,7 @@ fn arc_forbidden_selector(selector: &str) -> Rejection {
             message,
             note: Some(format!(
                 "{note}, and the deallocation path calls '-dealloc' for you \
-                 (oz_static_release) with the superclass chain above an override called \
+                 (oz_release) with the superclass chain above an override called \
                  automatically -- so '[super dealloc]' is redundant, not required",
                 note = note
             )),
@@ -1673,7 +1673,7 @@ fn arc_forbidden_selector(selector: &str) -> Rejection {
                 .to_string(),
             "to opt one slot out, declare the reference '__unsafe_unretained'".to_string(),
             "to read a refcount without taking ownership, call \
-             'oz_static_retain_count(obj)', a plain C call"
+             'oz_retain_count(obj)', a plain C call"
                 .to_string(),
         ],
     }
@@ -1806,7 +1806,7 @@ fn probe_has_errors(node: Node) -> bool {
 /// ```
 ///
 /// Loud rather than silent, so nothing was ever miscompiled -- but the error
-/// names generated code the user did not write, and no oz_static diagnostic
+/// names generated code the user did not write, and no oz2c diagnostic
 /// pointed at the `#define` responsible. The standing rule settles what to do
 /// about that: never silently degrade, so this is a named, located hard error
 /// at the `#define` itself.

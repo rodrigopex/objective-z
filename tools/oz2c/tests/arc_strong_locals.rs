@@ -2,7 +2,7 @@
 //
 // arc_strong_locals.rs -- ARC on strong object *locals* (#234).
 //
-// oz_static already did retain-new/release-old for strong ivars
+// oz2c already did retain-new/release-old for strong ivars
 // (`emit::render_strong_ivar_assign`) and for properties (a synthesized
 // setter). A plain local was the one strong storage class doing neither, so
 // reassigning one abandoned whatever it held. That is why `staticbar` had to
@@ -13,7 +13,7 @@
 // The releases these tests pin were checked against the Python pipeline,
 // which has the same transform (`emit.py::_emit_strong_local_assign`) and
 // emits the release in the same place -- release old, then assign, plus one
-// scope-exit release. Two things it cannot do that oz_static now does are
+// scope-exit release. Two things it cannot do that oz2c now does are
 // recorded in `bare_declaration_gets_arcs_implicit_nil` and
 // `reassigned_local_needs_only_one_slab_slot` below.
 
@@ -134,7 +134,7 @@ int main(void) {
 
 /// ARC zero-initializes a strong local, and here it is load-bearing rather
 /// than tidy: the first assignment releases whatever the variable held, so
-/// an indeterminate pointer would reach `oz_static_release`, which
+/// an indeterminate pointer would reach `oz_release`, which
 /// dereferences it. Reading uninitialized memory is not something a test can
 /// assert on directly, so this pins the generated text instead.
 ///

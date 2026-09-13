@@ -53,7 +53,7 @@ typedef struct sys_mem_blocks oz_mem_blocks_t;
  * with four undefined references into this header, naming neither the
  * option nor the Objective-C that needed it.
  *
- * This macro is the right home because oz_static emits it only when the
+ * This macro is the right home because oz2c emits it only when the
  * item pool is non-empty: `item_slots()` returns zero for a program with
  * no array or dictionary literal, and zero means "emit neither the pool
  * nor the builders that draw from it" (`tools/oz2c/src/pools.rs`).
@@ -296,20 +296,28 @@ static inline size_t oz_heap_used_bytes(struct oz_heap_inner *inner)
  * to be complete, which is only guaranteed after all class headers
  * have been included.
  *
- * `oz_static_`, not `oz_heap_`, and that is the point (#417). These two are
- * *declared* here and *defined* by the companion, so they belong to the
- * generated namespace the way `oz_static_retain_count` does — declared in a
- * public header for Clang's sake, synthesized in the C (#418). Under
- * `oz_heap_` they read as PAL functions and collided by word order with the
- * PAL functions they call: `oz_heap_obj_alloc` calling `oz_heap_alloc_obj`,
- * and `oz_heap_obj_free` calling `oz_heap_free_obj`. Two anagrams, two
- * layers, one concept — the worst pair in the tree.
+ * `oz_heap_`, like every other C-side name. These two are *declared* here
+ * and *defined* by the companion — in a public header for Clang's sake,
+ * synthesized in the C (#418) — and #417 gave that declare/define split a
+ * prefix of its own for a while. #462 retired it: `oz2c` names the tool,
+ * not the code it emits, so one prefix per layer is the rule — `oz_`/`OZ_`
+ * for C, `_oz_` for per-class internals.
  *
- * The PAL's own spelling is the one that stays: subsystem, verb, then
- * qualifier, as `oz_mem_blocks_alloc_contiguous` already had it.
+ * What #417 was really fixing survives the reversal, and it is the word
+ * order. The spelling before it was an anagram of the PAL function it
+ * calls: `oz_heap_obj_alloc` calling `oz_heap_alloc_obj`, and
+ * `oz_heap_obj_free` calling `oz_heap_free_obj` — two anagrams, two layers,
+ * one concept, the worst pair in the tree. The rule that replaced it is
+ * subsystem, verb, then qualifier, as `oz_mem_blocks_alloc_contiguous`
+ * already had it, which makes these `oz_heap_alloc` and `oz_heap_free`.
+ *
+ * They now sit one qualifier away from the PAL's own `oz_heap_alloc_obj`
+ * and `oz_heap_free_obj`. That is closer than #417 wanted and is the
+ * accepted cost of a single C-side prefix — not an oversight to be fixed
+ * by reintroducing a third one.
  */
-void *oz_static_heap_alloc(struct OZHeap *heap, size_t size);
-void oz_static_heap_free(void *obj);
+void *oz_heap_alloc(struct OZHeap *heap, size_t size);
+void oz_heap_free(void *obj);
 
 #endif /* OZ_HEAP_SUPPORT */
 

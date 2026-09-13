@@ -146,7 +146,7 @@ int main(void)
 		 * Python backend had no emission rule for the implicit nil
 		 * Clang gives a bare strong local (OZ003,
 		 * ImplicitValueInitExpr), and this sample had to build under
-		 * both. oz_static treats the two spellings identically, so the
+		 * both. oz2c treats the two spellings identically, so the
 		 * explicit `nil` is now a free choice rather than a
 		 * requirement -- left as-is because it also says out loud what
 		 * ARC does here.

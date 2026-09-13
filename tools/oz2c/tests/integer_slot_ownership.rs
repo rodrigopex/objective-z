@@ -11,7 +11,7 @@
 //
 //     int n = (int)makeThing();
 //
-// emitted `oz_static_release((struct OZObject *)(n))`. The cast in the
+// emitted `oz_release((struct OZObject *)(n))`. The cast in the
 // generated release is what let it compile, and then the decrement landed
 // at whatever address the integer held.
 //
@@ -91,7 +91,7 @@ int main(void)
     );
     let out = oz2c::transpile(&src).expect("should transpile");
     assert!(
-        !out.source_c.contains("oz_static_release((struct OZObject *)(n))"),
+        !out.source_c.contains("oz_release((struct OZObject *)(n))"),
         "an `int` slot cannot hold a reference and must not be released through; got:\n{}",
         out.source_c
     );
@@ -120,7 +120,7 @@ int main(void)
     );
     let out = oz2c::transpile(&src).expect("should transpile");
     assert!(
-        !out.source_c.contains("oz_static_release((struct OZObject *)(n))"),
+        !out.source_c.contains("oz_release((struct OZObject *)(n))"),
         "a `long` slot must not be released through either, however wide it is; got:\n{}",
         out.source_c
     );
@@ -154,7 +154,7 @@ int main(void)
     );
     let out = oz2c::transpile(&src).expect("should transpile");
     assert!(
-        out.source_c.contains("oz_static_release((struct OZObject *)(t))"),
+        out.source_c.contains("oz_release((struct OZObject *)(t))"),
         "a cast between object pointers still binds ownership (#332); got:\n{}",
         out.source_c
     );

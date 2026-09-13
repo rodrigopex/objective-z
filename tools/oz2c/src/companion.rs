@@ -5,8 +5,8 @@
 // never mutated at runtime) and pool/init registration, mirroring the
 // existing oz_dispatch.h/.c pattern used by the Python pipeline.
 //
-// Only the root class's full struct lives here, because oz_static_retain/
-// oz_static_release/the dealloc switch are generic (shared by every
+// Only the root class's full struct lives here, because oz_retain/
+// oz_release/the dealloc switch are generic (shared by every
 // class) and need its tracking fields (`_meta`, `oz_refcount`) directly
 // -- mirroring how the Python pipeline already
 // treats OZObject as the Foundation root's own generated pair. Every
@@ -187,12 +187,12 @@ scoped to a parameter list */\n",
 /// `+numberWithInt32:` writes through the alloc result without checking, so
 /// exhaustion surfaces as `EXC_BAD_ACCESS` inside a function that has
 /// nothing to do with the cause, with no mention of which pool ran out.
-/// Building with `-DOZ_STATIC_TRAP_POOL_EXHAUSTION` converts that into an
+/// Building with `-DOZ_TRAP_POOL_EXHAUSTION` converts that into an
 /// immediate named failure at the point of exhaustion, which is the
 /// difference between a five-minute diagnosis and a debugger session.
 fn render_exhaustion_trap(name: &str) -> String {
     format!(
-        "#ifdef OZ_STATIC_TRAP_POOL_EXHAUSTION\n\t\toz_assert_msg(0, \
+        "#ifdef OZ_TRAP_POOL_EXHAUSTION\n\t\toz_assert_msg(0, \
          \"{name} pool exhausted -- raise it with --pool-sizes {name}=N or an \
          oz-pool comment\");\n#endif\n",
         name = name
@@ -234,7 +234,7 @@ fn render_exhaustion_trap(name: &str) -> String {
 /// are the one interface with no deprecation path.
 fn render_heap_exhaustion_trap(name: &str) -> String {
     format!(
-        "#ifdef OZ_STATIC_TRAP_POOL_EXHAUSTION\n\
+        "#ifdef OZ_TRAP_POOL_EXHAUSTION\n\
          \t\tif (heap_obj) {{\n\
          \t\t\toz_assert_msg(0, \"{name} heap allocation failed -- the OZHeap passed \
 to '[{name} dynamicAllocWithHeap:]' is exhausted; give it a larger buffer\");\n\
@@ -299,7 +299,7 @@ outside the transpiled sources needs (not from source) */\n\n",
 /// every program with no `@[...]` in it.
 ///
 /// So it traps instead, named, and **not** behind
-/// `OZ_STATIC_TRAP_POOL_EXHAUSTION`: this is not exhaustion, which is a
+/// `OZ_TRAP_POOL_EXHAUSTION`: this is not exhaustion, which is a
 /// runtime condition a caller may legitimately handle by checking for nil.
 /// There is no storage here *by construction*, so reaching this function
 /// is a build-time mistake -- the sizing question was answered wrong, or a
@@ -328,7 +328,7 @@ fn render_free_banner(name: &str, slots: usize) -> String {
     if slots == 0 {
         return format!(
             "/* synthesized: releases {name}'s storage -- called only from\n * \
-oz_static_release, once the refcount reaches zero. There is no slab here,\n * \
+oz_release, once the refcount reaches zero. There is no slab here,\n * \
 so a heap is the only place an instance can go back to (not from\n * \
 source) */\n",
             name = name
@@ -336,7 +336,7 @@ source) */\n",
     }
     format!(
         "/* synthesized: returns {name}'s slot to its slab -- called only from\n * \
-oz_static_release, once the refcount reaches zero (not from source) */\n",
+oz_release, once the refcount reaches zero (not from source) */\n",
         name = name
     )
 }
@@ -344,7 +344,7 @@ oz_static_release, once the refcount reaches zero (not from source) */\n",
 /// The `oz_slab_free` line every `{name}_oz_free` ends with, or a comment
 /// where there is no slab to return a slot to.
 ///
-/// A slab-less class still needs `{name}_oz_free`: `oz_static_release`'s
+/// A slab-less class still needs `{name}_oz_free`: `oz_release`'s
 /// class_id switch calls it for every class in the program. What it must
 /// not do is name `oz_slab_{name}`, which no longer exists. Anything that
 /// reaches here came from a heap and was already returned by
@@ -374,7 +374,7 @@ fn render_slab_free(name: &str, slots: usize) -> String {
 /// `{name}_oz_release_ivars`: releases every object ivar an instance owns,
 /// called from the release path once the class's `-dealloc` body has run.
 ///
-/// This is oz_static's equivalent of the oracle's auto-dealloc
+/// This is oz2c's equivalent of the oracle's auto-dealloc
 /// (`emit.py::_emit_auto_dealloc`), but deliberately *not* a translation of
 /// it. The oracle appends these releases to a user-written `-dealloc` as
 /// well, so a class whose `-dealloc` releases its own ivars -- ordinary
@@ -393,7 +393,7 @@ fn render_release_ivars(name: &str, root: &str, owned: &[(String, Option<String>
         return String::new();
     }
     let mut c = format!(
-        "/* synthesized: releases the {} object ivar(s) a {} owns -- called from\n * oz_static_release once this class's -dealloc has run (not from source) */\n",
+        "/* synthesized: releases the {} object ivar(s) a {} owns -- called from\n * oz_release once this class's -dealloc has run (not from source) */\n",
         owned.len(),
         name
     );
@@ -417,13 +417,13 @@ fn render_release_ivars(name: &str, root: &str, owned: &[(String, Option<String>
                 "\tfor (unsigned int i = 0;\n\
                  \t     i < sizeof(self->{path}) / sizeof(self->{path}[0]);\n\
                  \t     i++) {{\n\
-                 \t\toz_static_release((struct {root} *)self->{path}[i]);\n\
+                 \t\toz_release((struct {root} *)self->{path}[i]);\n\
                  \t}}\n",
                 root = root,
                 path = path
             )),
             None => c.push_str(&format!(
-                "\toz_static_release((struct {root} *)self->{path});\n",
+                "\toz_release((struct {root} *)self->{path});\n",
                 root = root,
                 path = path
             )),
@@ -439,9 +439,9 @@ fn render_release_ivars(name: &str, root: &str, owned: &[(String, Option<String>
 /// class's slab, and the object is marked so `{name}_oz_free` knows to
 /// return it there.
 ///
-/// `oz_static_heap_alloc` is declared by the PAL and defined in the companion
+/// `oz_heap_alloc` is declared by the PAL and defined in the companion
 /// (see `render_heap_bridge`) -- it needs `struct OZHeap` complete, which
-/// only generated code has. That split is why it carries `oz_static_` rather
+/// only generated code has. That split is why it carries `oz2c_` rather
 /// than `oz_heap_`: the prefix says which layer *defines* a name, and under
 /// `oz_heap_` this pair was an anagram of the PAL pair it calls --
 /// `oz_heap_obj_alloc` calling `oz_heap_alloc_obj` (#417).
@@ -471,7 +471,7 @@ fn render_heap_inner_accessor(name: &str, heap_support: bool) -> String {
 /// Set for a class conforming to `OZSingletonProtocol`, whose own header states
 /// the contract outright: "Singleton objects are immortal -- they are never
 /// deallocated." Until #228 nothing marked them, so they relied on nobody ever
-/// releasing one; `oz_static_release` now returns on this bit before it
+/// releasing one; `oz_release` now returns on this bit before it
 /// decrements, so an accidental release is a no-op rather than handing the
 /// singleton's slab slot back for reuse while every holder keeps pointing at
 /// it.
@@ -501,13 +501,13 @@ fn render_heap_alloc(name: &str, root: &str, heap_support: bool, immortal: bool)
 backs '[{name} dynamicAllocWithHeap:h]' (not from source) */\n\
          #ifdef OZ_HEAP_SUPPORT\n\
          struct {name} *{name}_oz_dynamic_alloc_with_heap(struct {root} *heap_obj)\n{{\n\
-         \tstruct {name} *obj = (struct {name} *)oz_static_heap_alloc(\n\
+         \tstruct {name} *obj = (struct {name} *)oz_heap_alloc(\n\
          \t\t(struct OZHeap *)heap_obj, sizeof(struct {name}));\n\
          \tif (!obj) {{\n\
          {trap}\
          \t\treturn (struct {name} *)0;\n\t}}\n\
          \tmemset(obj, 0, sizeof(struct {name}));\n\
-         \t((struct {root} *)obj)->_meta.class_id = OZ_STATIC_CLASS_{name};\n\
+         \t((struct {root} *)obj)->_meta.class_id = OZ_CLASS_{name};\n\
          \t((struct {root} *)obj)->_meta.heap_allocated = 1;\n\
          {immortal}\
          \toz_atomic_init(&((struct {root} *)obj)->oz_refcount, 1);\n\
@@ -530,14 +530,14 @@ fn render_heap_free_check(root: &str, heap_support: bool) -> String {
     format!(
         "#ifdef OZ_HEAP_SUPPORT\n\
          \tif (((struct {root} *)obj)->_meta.heap_allocated) {{\n\
-         \t\toz_static_heap_free((void *)obj);\n\
+         \t\toz_heap_free((void *)obj);\n\
          \t\treturn;\n\t}}\n\
          #endif\n",
         root = root
     )
 }
 
-/// `oz_static_heap_alloc`/`oz_static_heap_free`, which
+/// `oz_heap_alloc`/`oz_heap_free`, which
 /// `platform/oz_platform_{zephyr,host}.h` declare and deliberately leave to
 /// generated code: both need `struct OZHeap` to be a complete type, and the
 /// PAL cannot see it. Same division as the oracle's `oz_dispatch.c.j2`.
@@ -563,10 +563,10 @@ fn render_heap_bridge(heap_support: bool, has_ozheap: bool) -> String {
         return String::new();
     }
     if !has_ozheap {
-        return "/* synthesized: the two heap entry points the PAL declares but leaves to\n * generated code. This program declares no OZHeap, so every allocation\n * comes from the system heap and the named-heap arms would call an\n * accessor that is never generated (not from source) */\n#ifdef OZ_HEAP_SUPPORT\nvoid *oz_static_heap_alloc(struct OZHeap *heap, size_t size)\n{\n\t(void)heap;\n\treturn oz_sys_heap_alloc(size);\n}\n\nvoid oz_static_heap_free(void *obj)\n{\n\toz_sys_heap_free(obj);\n}\n#endif\n\n"
+        return "/* synthesized: the two heap entry points the PAL declares but leaves to\n * generated code. This program declares no OZHeap, so every allocation\n * comes from the system heap and the named-heap arms would call an\n * accessor that is never generated (not from source) */\n#ifdef OZ_HEAP_SUPPORT\nvoid *oz_heap_alloc(struct OZHeap *heap, size_t size)\n{\n\t(void)heap;\n\treturn oz_sys_heap_alloc(size);\n}\n\nvoid oz_heap_free(void *obj)\n{\n\toz_sys_heap_free(obj);\n}\n#endif\n\n"
             .to_string();
     }
-    "/* synthesized: the two heap entry points the PAL declares but leaves to\n * generated code -- both need 'struct OZHeap' complete, which only this\n * file has (not from source) */\n#ifdef OZ_HEAP_SUPPORT\nvoid *oz_static_heap_alloc(struct OZHeap *heap, size_t size)\n{\n\tif (heap) {\n\t\treturn oz_heap_alloc_obj(OZHeap_oz_inner(heap), heap, size);\n\t}\n\treturn oz_sys_heap_alloc(size);\n}\n\nvoid oz_static_heap_free(void *obj)\n{\n\tstruct oz_heap_hdr *hdr = (struct oz_heap_hdr *)\n\t\t((char *)obj - offsetof(struct oz_heap_hdr, obj));\n\tif (hdr->heap) {\n\t\toz_heap_free_obj(OZHeap_oz_inner(hdr->heap), obj);\n\t} else {\n\t\toz_sys_heap_free(obj);\n\t}\n}\n#endif\n\n"
+    "/* synthesized: the two heap entry points the PAL declares but leaves to\n * generated code -- both need 'struct OZHeap' complete, which only this\n * file has (not from source) */\n#ifdef OZ_HEAP_SUPPORT\nvoid *oz_heap_alloc(struct OZHeap *heap, size_t size)\n{\n\tif (heap) {\n\t\treturn oz_heap_alloc_obj(OZHeap_oz_inner(heap), heap, size);\n\t}\n\treturn oz_sys_heap_alloc(size);\n}\n\nvoid oz_heap_free(void *obj)\n{\n\tstruct oz_heap_hdr *hdr = (struct oz_heap_hdr *)\n\t\t((char *)obj - offsetof(struct oz_heap_hdr, obj));\n\tif (hdr->heap) {\n\t\toz_heap_free_obj(OZHeap_oz_inner(hdr->heap), obj);\n\t} else {\n\t\toz_sys_heap_free(obj);\n\t}\n}\n#endif\n\n"
         .to_string()
 }
 
@@ -598,7 +598,7 @@ pub(crate) fn render_alloc_free(
             trap = render_exhaustion_trap(name)
         ));
         c.push_str(&format!(
-            "\t((struct {root} *)obj)->_meta.class_id = OZ_STATIC_CLASS_{name};\n\
+            "\t((struct {root} *)obj)->_meta.class_id = OZ_CLASS_{name};\n\
              {immortal}\
              \toz_atomic_init(&((struct {root} *)obj)->oz_refcount, 1);\n",
             root = root,
@@ -659,7 +659,7 @@ pub(crate) fn render_array_support(
             trap = render_exhaustion_trap(name)
         ));
         c.push_str(&format!(
-            "\t((struct {root} *)obj)->_meta.class_id = OZ_STATIC_CLASS_{name};\n\
+            "\t((struct {root} *)obj)->_meta.class_id = OZ_CLASS_{name};\n\
              \toz_atomic_init(&((struct {root} *)obj)->oz_refcount, 1);\n",
             root = root,
             name = name
@@ -671,14 +671,14 @@ pub(crate) fn render_array_support(
     c.push_str(&render_heap_alloc(name, root, heap_support, false));
     c.push_str(&format!(
         "/* synthesized: releases {name}'s items, its items buffer, and its own\n * \
-storage -- called only from oz_static_release, once the refcount reaches\n * \
+storage -- called only from oz_release, once the refcount reaches\n * \
 zero (not from source; OZArray.m has no -dealloc of its own) */\n",
         name = name
     ));
     c.push_str(&format!(
         "void {name}_oz_free(struct {name} *obj)\n{{\n\
          \tfor (unsigned int i = 0; i < obj->_count; i++) {{\n\
-         \t\toz_static_release((struct {root} *)obj->_items[i]);\n\
+         \t\toz_release((struct {root} *)obj->_items[i]);\n\
          \t}}\n\
          {items_free}\
          {heap_check}\
@@ -814,7 +814,7 @@ pub(crate) fn render_dict_support(
             trap = render_exhaustion_trap(name)
         ));
         c.push_str(&format!(
-            "\t((struct {root} *)obj)->_meta.class_id = OZ_STATIC_CLASS_{name};\n\
+            "\t((struct {root} *)obj)->_meta.class_id = OZ_CLASS_{name};\n\
              \toz_atomic_init(&((struct {root} *)obj)->oz_refcount, 1);\n",
             root = root,
             name = name
@@ -826,7 +826,7 @@ pub(crate) fn render_dict_support(
     c.push_str(&render_heap_alloc(name, root, heap_support, false));
     c.push_str(&format!(
         "/* synthesized: releases {name}'s keys, its values, their shared\n * \
-buffer, and its own storage -- called only from oz_static_release, once\n * \
+buffer, and its own storage -- called only from oz_release, once\n * \
 the refcount reaches zero (not from source; OZDictionary.m has no\n * \
 -dealloc of its own) */\n",
         name = name
@@ -834,8 +834,8 @@ the refcount reaches zero (not from source; OZDictionary.m has no\n * \
     c.push_str(&format!(
         "void {name}_oz_free(struct {name} *obj)\n{{\n\
          \tfor (unsigned int i = 0; i < obj->_count; i++) {{\n\
-         \t\toz_static_release((struct {root} *)obj->_keys[i]);\n\
-         \t\toz_static_release((struct {root} *)obj->_values[i]);\n\
+         \t\toz_release((struct {root} *)obj->_keys[i]);\n\
+         \t\toz_release((struct {root} *)obj->_values[i]);\n\
          \t}}\n\
          {keys_free}\
          {heap_check}\
@@ -954,9 +954,9 @@ fn render_protocol_dispatch(program: &Program, root: &str) -> (String, String) {
             call_args.extend(arg_names.iter().map(|a| a.to_string()));
             let call = format!("{}({})", target, call_args.join(", "));
             if m.return_type == "void" {
-                c.push_str(&format!("\tcase OZ_STATIC_CLASS_{}: {}; return;\n", name, call));
+                c.push_str(&format!("\tcase OZ_CLASS_{}: {}; return;\n", name, call));
             } else {
-                c.push_str(&format!("\tcase OZ_STATIC_CLASS_{}: return {};\n", name, call));
+                c.push_str(&format!("\tcase OZ_CLASS_{}: return {};\n", name, call));
             }
         }
         if m.return_type == "void" {
@@ -1253,11 +1253,11 @@ pub fn render(
         hoisted_structs.iter().map(|(n, t)| (n.as_str(), t.as_str())).collect();
 
     let mut h = String::new();
-    h.push_str("/* Auto-generated by oz_static -- do not edit */\n#pragma once\n\n");
+    h.push_str("/* Auto-generated by oz2c -- do not edit */\n#pragma once\n\n");
     // The `id`/`Class`/`BOOL` typedefs come first, before any `#include`,
     // because an include here can re-enter the generated headers: the PAL
     // (`platform/oz_assert.h`) includes `assert.h`, which in a split
-    // output resolves to oz_static's *own* generated `assert.h` -- itself
+    // output resolves to oz2c's *own* generated `assert.h` -- itself
     // a translation of the SDK shim -- which pulls in the class headers,
     // whose prototypes name `Class` and `BOOL`. Declared after the
     // includes, those prototypes are reached while this header is still
@@ -1279,7 +1279,7 @@ pub fn render(
     // `_meta` bitfield (`include/platform/oz_platform_types.h`), not a
     // pointer to a class object: the whole class set is known at
     // transpile time, so `[Foo class]` is the constant
-    // `OZ_STATIC_CLASS_Foo` and `[obj class]` is a bitfield read. That
+    // `OZ_CLASS_Foo` and `[obj class]` is a bitfield read. That
     // makes a `Class` a real value -- storable, comparable, passable --
     // for no flash and no RAM at all, where a class-object pointer would
     // need a `const` record per class. It used to be `void *`, purely as
@@ -1404,7 +1404,7 @@ below naming a type one of them declares sees the real definition */\n",
     if pools.item_slots() > 0 {
         h.push_str(
             "/* Shared pool for '@[...]'/'@{...}' element buffers; defined in\n * \
-oz_static_dispatch.c. A static, no-heap store on Zephyr\n * \
+oz2c_dispatch.c. A static, no-heap store on Zephyr\n * \
 (`sys_mem_blocks`) and a count-enforcing malloc-backed one on host, both\n * \
 via the PAL. */\nextern oz_mem_blocks_t oz_item_pool;\n\n",
         );
@@ -1451,7 +1451,7 @@ via the PAL. */\nextern oz_mem_blocks_t oz_item_pool;\n\n",
     for name in &struct_order {
         let id = program.class_id(name).unwrap_or(0);
         h.push_str(&format!("/* {} */\n", class_label(program, name, id)));
-        h.push_str(&format!("#define OZ_STATIC_CLASS_{} {}\n", name, id));
+        h.push_str(&format!("#define OZ_CLASS_{} {}\n", name, id));
         match struct_text.get(name.as_str()) {
             Some(text) => h.push_str(text),
             None => h.push_str(&format!("struct {};\n", name)),
@@ -1490,12 +1490,12 @@ via the PAL. */\nextern oz_mem_blocks_t oz_item_pool;\n\n",
             "/* The class's own name, for the default `-getDescription:maxLength:`\n * (see `OZObject.m`). A switch rather than a table indexed by class_id:\n * the ids are dense so either would do, but a switch costs no pointer\n * array and the linker drops the whole function when nothing reaches\n * the default -- which is every program that never uses `%@` on a class\n * without its own description (not from source) */\n",
         );
         h.push_str(&format!(
-            "const char *oz_static_class_name(struct {root} *self);\n",
+            "const char *oz_class_name(struct {root} *self);\n",
             root = name
         ));
         h.push_str(&format!(
-                "struct {root} *oz_static_retain(struct {root} *self);\n\
-                 void oz_static_release(struct {root} *self);\n\
+                "struct {root} *oz_retain(struct {root} *self);\n\
+                 void oz_release(struct {root} *self);\n\
                  /* `id`, not `struct {root} *`, and alone among the three in that.\n \
                  * This is the only one Objective-C source may call -- ARC forbids\n \
                  * '[obj retainCount]' and owns the retain/release pair -- so\n \
@@ -1505,7 +1505,7 @@ via the PAL. */\nextern oz_mem_blocks_t oz_item_pool;\n\n",
                  * spliced into this program's C, so a differing parameter type\n \
                  * would be a conflicting declaration rather than a redundant one.\n \
                  * It replaced a separate reserved-prefix forwarder in #418. */\n\
-                 int oz_static_retain_count(id obj);\n",
+                 int oz_retain_count(id obj);\n",
                 root = name
             ));
             if root_needs_synthetic_dealloc {
@@ -1516,7 +1516,7 @@ via the PAL. */\nextern oz_mem_blocks_t oz_item_pool;\n\n",
     }
 
     let mut c = String::new();
-    c.push_str("/* Auto-generated by oz_static -- do not edit */\n#include \"oz_static_dispatch.h\"\n\n");
+    c.push_str("/* Auto-generated by oz2c -- do not edit */\n#include \"oz2c_dispatch.h\"\n\n");
     // The header above declares `_oz_get_log_precision` unconditionally,
     // because OZNumber's `-getDescription:maxLength:` calls it. Its real
     // definition is in `src/OZLog.c`, which is pure C and never transpiled,
@@ -1590,22 +1590,22 @@ not tied to one (not from source) */\n",
             "/* synthesized: the class's own name, read by the default\n * `-getDescription:maxLength:` (not from source) */\n",
         );
         c.push_str(&format!(
-            "const char *oz_static_class_name(struct {root} *self)\n{{\n\
+            "const char *oz_class_name(struct {root} *self)\n{{\n\
              \tif (!self) {{\n\t\treturn \"nil\";\n\t}}\n\
              \tswitch (self->_meta.class_id) {{\n",
             root = root
         ));
         for name in &program.class_order {
             c.push_str(&format!(
-                "\tcase OZ_STATIC_CLASS_{name}: return \"{name}\";\n",
+                "\tcase OZ_CLASS_{name}: return \"{name}\";\n",
                 name = name
             ));
         }
         c.push_str("\tdefault: return \"?\";\n\t}\n}\n\n");
         c.push_str(&format!(
-            "struct {root} *oz_static_retain(struct {root} *self)\n{{\n\
+            "struct {root} *oz_retain(struct {root} *self)\n{{\n\
              \t/* An immortal object is not refcounted -- the same rule\n\
-             \t * oz_static_release applies before its decrement. Retaining one\n\
+             \t * oz_release applies before its decrement. Retaining one\n\
              \t * used to increment a word nothing would ever decrement, which\n\
              \t * both wasted an atomic and left retainCount climbing without\n\
              \t * bound (#373). It also kept a boxed literal out of .rodata:\n\
@@ -1620,7 +1620,7 @@ and 'include/oz_sdk/Foundation/OZObject.h' has to declare it without\n * \
 naming a generated struct (not from source) */\n",
         );
         c.push_str(&format!(
-            "int oz_static_retain_count(id obj)\n{{\n\
+            "int oz_retain_count(id obj)\n{{\n\
              \tstruct {root} *self = (struct {root} *)obj;\n\
              \tif (!self) {{\n\t\treturn 0;\n\t}}\n\
              \t/* Not refcounted, so the stored word is not maintained and\n\
@@ -1637,7 +1637,7 @@ entirely at compile time via this class_id switch (the \"const\n * \
 vtable\") -- never mutated at runtime. */\n",
         );
         c.push_str(&format!(
-            "void oz_static_release(struct {root} *self)\n{{\n\
+            "void oz_release(struct {root} *self)\n{{\n\
              \tif (!self) {{\n\t\treturn;\n\t}}\n\
              \t/* Immortal objects live in static storage and are never freed, so\n\
              \t * their refcount is not tracked either -- the check comes before\n\
@@ -1650,7 +1650,7 @@ vtable\") -- never mutated at runtime. */\n",
             root = root
         ));
         for name in &program.class_order {
-            c.push_str(&format!("\tcase OZ_STATIC_CLASS_{}: /* {} */\n", name, name));
+            c.push_str(&format!("\tcase OZ_CLASS_{}: /* {} */\n", name, name));
             /* The whole `[super dealloc]` chain, most-derived first,
              * because that send is rejected in source now and something
              * still has to run a superclass's own cleanup (#428 -- see

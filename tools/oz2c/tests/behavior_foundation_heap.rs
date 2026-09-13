@@ -4,7 +4,7 @@
 // `dynamicAllocWithHeap:`, transplanted from the real `src/OZHeap.m` (see
 // `common::ozheap_src`).
 //
-// The first two tests prove oz_static *transpiles* OZHeap into C that
+// The first two tests prove oz2c *transpiles* OZHeap into C that
 // compiles, links, and runs -- a value-typed ivar of an externally-declared
 // struct (`struct oz_heap_inner _inner`), a `self = [super init]` chain, a
 // `size_t` return type, and `&self->_inner` address-of-ivar passing. They do
@@ -38,7 +38,7 @@ int main(void) {{
 	OZHeap *ret = [h initWithBuffer:g_buf size:256];
 	printf(\"init_returned_self=%d\\n\", ret == h);
 	printf(\"used=%zu\\n\", [h usedBytes]);
-	printf(\"rc=%d\\n\", oz_static_retain_count(h));
+	printf(\"rc=%d\\n\", oz_retain_count(h));
 	printf(\"released_ok\\n\");
 	return 0;
 }}
@@ -67,7 +67,7 @@ fn heap_held_as_ivar_and_released_by_owner() {
 static char g_buf2[128];
 static int g_owner_dealloc_ran = 0;
 
-/* `struct OZHeap *`, not `OZHeap *`: oz_static copies an ivar
+/* `struct OZHeap *`, not `OZHeap *`: oz2c copies an ivar
  * declaration's type text through as written (only ARC qualifiers and
  * block declarators are lowered), so a bare class name in ivar position
  * stays a bare class name and C rejects it.

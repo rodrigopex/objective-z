@@ -25,7 +25,7 @@
  *     this target.
  *
  *   - both sides also retain and release the shared object in a loop --
- *     through `oz_static_retain` / `oz_static_release` directly since #428
+ *     through `oz_retain` / `oz_release` directly since #428
  *     made the two sends a located error, which is the same code they
  *     lowered to -- so `oz_atomic_inc` / `oz_atomic_dec_and_test` are
  *     driven concurrently from two cores. A lost increment here would drop the refcount to zero
@@ -93,8 +93,8 @@ void printk(const char *fmt, ...);
  * spelling that drives one shared object's refcount up and down without
  * also serializing on a slot; see the loop. */
 struct OZObject;
-struct OZObject *oz_static_retain(struct OZObject *self);
-void oz_static_release(struct OZObject *self);
+struct OZObject *oz_retain(struct OZObject *self);
+void oz_release(struct OZObject *self);
 
 #define ITERATIONS 2000
 #define RETAIN_ITERATIONS 20000
@@ -204,8 +204,8 @@ static void hammer(Counter *c)
 		 * ownership, which is why this is the C API and not a
 		 * strong-slot store: a store would serialize on the slot
 		 * as well and stop being a refcount test. */
-		(void)oz_static_retain((__bridge struct OZObject *)c);
-		oz_static_release((__bridge struct OZObject *)c);
+		(void)oz_retain((__bridge struct OZObject *)c);
+		oz_release((__bridge struct OZObject *)c);
 	}
 }
 
@@ -253,7 +253,7 @@ int main(void)
 
 	shared_counter = [[Counter alloc] init];
 	counter_ready = 1;
-	printk("counter created, rc=%d\n", oz_static_retain_count(shared_counter));
+	printk("counter created, rc=%d\n", oz_retain_count(shared_counter));
 
 	/* main is the second contender, so both cores are busy on the same
 	 * object rather than one core working while the other waits. */
@@ -274,7 +274,7 @@ int main(void)
 
 	/* Back to +1 after equal numbers of retain and release from two
 	 * cores, and still alive to answer. */
-	printk("rc_after=%d\n", oz_static_retain_count(shared_counter));
+	printk("rc_after=%d\n", oz_retain_count(shared_counter));
 	printk("still usable, count=%d\n", [shared_counter total]);
 
 	printk("=== Demo complete ===\n");

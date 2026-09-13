@@ -45,7 +45,7 @@ fn counter_src(extra_defines: &str, body: &str) -> String {
 /// The shape #238 was filed on. Before the fix `oz2c` exited 0 and the
 /// `#define` landed in the generated header verbatim, so the C compiler
 /// failed on `GREET_VIA_BODY(c)` -- generated code the user never wrote,
-/// with no oz_static diagnostic pointing at the `#define`.
+/// with no oz2c diagnostic pointing at the `#define`.
 #[test]
 fn message_send_in_macro_body_rejected() {
     let src = counter_src("#define BUMP_VIA_BODY(obj) [obj bump]", "\tBUMP_VIA_BODY(self);\n\treturn 0;");
@@ -201,7 +201,7 @@ fn c_string_in_macro_body_accepted() {
 /// tree-sitter frontend -- the argument is a real `message_expression` inside
 /// a `call_expression` -- and is the deliberate advantage of parsing source
 /// rather than a Clang AST, which would have expanded the macro before
-/// oz_static ever saw it.
+/// oz2c ever saw it.
 ///
 /// Pinned on its own account, per #238: nothing else would catch a future
 /// change to the walk that started expanding macros, and nothing else would

@@ -41,7 +41,7 @@ int main(void)
 	{
 		Sensor *s = [[Sensor alloc] init];
 		[s setValue:42];
-		OZLog("rc after alloc: %d", oz_static_retain_count(s));
+		OZLog("rc after alloc: %d", oz_retain_count(s));
 		/* s released automatically at scope exit */
 	}
 
@@ -50,7 +50,7 @@ int main(void)
 	{
 		Sensor *a = [[Sensor alloc] init];
 		[a setValue:99];
-		OZLog("sensor value=%d, rc=%d", [a value], oz_static_retain_count(a));
+		OZLog("sensor value=%d, rc=%d", [a value], oz_retain_count(a));
 		/* a released when pool drains */
 	}
 

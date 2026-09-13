@@ -63,14 +63,14 @@
  * ARC's to insert, so this is a plain C function rather than a method.
  *
  * That sentence was true of the design and false of the implementation
- * until #428 and #436: oz_static parses with tree-sitter rather than Clang,
+ * until #428 and #436: oz2c parses with tree-sitter rather than Clang,
  * so `[obj retain]`, `[obj release]` and `[obj retainCount]` were all
  * reachable, and one of them had an emitter accommodation built for it. All
  * five selectors ARC refuses are now hard located errors, and this
  * declaration is what the diagnostics point at.
  *
  * **The companion's C API is the escape hatch, and it is a decision (#437).**
- * `oz_static_retain` and `oz_static_release` are emitted into the generated
+ * `oz_retain` and `oz_release` are emitted into the generated
  * companion header, so plain C in a `.m` file can drive a refcount by hand.
  * ARC governs Objective-C and has no opinion about a C call, so the
  * rejection is a rule about the source language rather than an enforced
@@ -79,7 +79,7 @@
  * object's refcount up and down without also serialising on a slot, so a
  * two-core refcount-contention test -- `samples/smp_shared` -- could not be
  * written at all. Reaching for them means taking ownership manually and on
- * purpose. `oz_static_retain_count` below is different in kind: it reads,
+ * purpose. `oz_retain_count` below is different in kind: it reads,
  * and takes and gives no ownership, which is why it is the one an ordinary
  * program is expected to call.
  *
@@ -101,7 +101,7 @@
  * caller's pointer (see `-getDescription:maxLength:` below), which reading
  * a count does not do.
  */
-int oz_static_retain_count(id obj);
+int oz_retain_count(id obj);
 
 __attribute__((objc_root_class))
 @interface OZObject <OZObjectProtocol>
@@ -201,7 +201,7 @@ __attribute__((objc_root_class))
  * Answers `"nil"` for a nil receiver and `"?"` for a class id this program
  * does not know, so the caller never has to check.
  */
-const char *oz_static_class_name(OZObject *self);
+const char *oz_class_name(OZObject *self);
 
 #ifdef __clang__
 @compatibility_alias NSObject OZObject;

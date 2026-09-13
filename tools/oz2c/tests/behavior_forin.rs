@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // behavior_forin.rs - OZ-092: port of tests/behavior/cases/forin/ (the
-// Python-pipeline oracle) to oz_static. All 4 fixtures are in scope,
+// Python-pipeline oracle) to oz2c. All 4 fixtures are in scope,
 // unlocked by Foundation classes existing (the collection every one of
 // them iterates is always a boxed OZArray literal).
 //

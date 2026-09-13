@@ -331,7 +331,7 @@ int main(void)
     // for its own `return [h run];`.
     assert!(
         out.source_c
-            .contains("oz_static_release((struct OZObject *)(scratch));\n\treturn;\n"),
+            .contains("oz_release((struct OZObject *)(scratch));\n\treturn;\n"),
         "a valueless `return` must synthesize no temporary and simply follow the pending \
          release; got:\n{}",
         out.source_c

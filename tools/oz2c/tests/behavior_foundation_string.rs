@@ -23,7 +23,7 @@ use common::{compile_and_run, ozobject_src as PREAMBLE, ozstring_src};
 fn string_basic_cstring_length_and_equality() {
     // string_basic.m: getHello (cString), helloLength (length),
     // sameStringEqual (isEqual: across two separately-boxed literals with
-    // identical content -- oz_static doesn't dedup like the Python oracle
+    // identical content -- oz2c doesn't dedup like the Python oracle
     // does, so this also proves isEqual: compares content, not identity).
     let src = format!(
         "{}{}\n\

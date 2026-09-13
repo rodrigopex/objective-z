@@ -2,7 +2,7 @@
 //
 // progress.rs - where the pipeline says which pass it has reached.
 //
-// A px-keyboard build spends ~30s in the oz_static path and prints two
+// A px-keyboard build spends ~30s in the oz2c path and prints two
 // lines: one CMake `COMMENT`, and oz2c's own summary once it has finished.
 // From the outside that is indistinguishable from a hang, which is how it
 // was reported (#299).

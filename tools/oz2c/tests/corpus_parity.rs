@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// corpus_parity.rs - runs the *shared* behavior corpus through oz_static.
+// corpus_parity.rs - runs the *shared* behavior corpus through oz2c.
 //
 // `tests/behavior/cases/*/*.m` is the Python pipeline's own 71-case
 // behavior suite. Rather than maintaining a separate, smaller, hand-picked
-// set of fixtures for oz_static, this drives those same files: they are
+// set of fixtures for oz2c, this drives those same files: they are
 // the definition of what the mature backend supports, so they are the
-// honest measure of parity. A case that oz_static cannot handle shows up
+// honest measure of parity. A case that oz2c cannot handle shows up
 // here rather than being quietly absent.
 //
 // Two levels are checked, because they fail for different reasons:
@@ -290,7 +290,7 @@ fn par_over_cases<T: Send>(
 }
 
 /// Every case in the shared corpus must transpile. No allowlist: a case
-/// oz_static cannot even read is a parity gap, not a known limitation.
+/// oz2c cannot even read is a parity gap, not a known limitation.
 #[test]
 fn every_corpus_case_transpiles() {
     let cases = corpus_cases();

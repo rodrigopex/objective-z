@@ -13,7 +13,7 @@
 // expression over a declaration-only temporary, which evaluates exactly
 // where the source does.
 //
-//     (tmp = makeThing(), v = Thing_n(tmp), oz_static_release(tmp), v)
+//     (tmp = makeThing(), v = Thing_n(tmp), oz_release(tmp), v)
 //
 // The declaration is hoisted through `ctx.pre_stmts` and only the
 // assignment and release stay inside. A declaration with no initialiser
@@ -373,7 +373,7 @@ int main(void)
         out.source_c
     );
     assert!(
-        out.source_c.contains("oz_static_retain((struct OZObject *)(z))"),
+        out.source_c.contains("oz_retain((struct OZObject *)(z))"),
         "and the retain that keeps #375 fixed; got:\n{}",
         out.source_c
     );

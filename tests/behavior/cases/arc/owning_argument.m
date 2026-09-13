@@ -35,7 +35,7 @@
  * receiver's +1 and hands it back, so `[h setThing:[u init]];` passes a
  * reference `u` already accounts for and no call-site release is owed.
  * Taking one anyway leaves the object freed while the holder's ivar still
- * points at it, and the second `oz_static_release` -- the one
+ * points at it, and the second `oz_release` -- the one
  * `-dealloc` issues over the ivars -- then reads freed memory. That read
  * is what `just test-behavior --sanitize=address` reports and what this
  * file's assertions cannot see: a refcount already at zero returns early

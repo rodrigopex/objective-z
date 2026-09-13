@@ -41,7 +41,7 @@ pub struct Options {
     /// `clang -Xclang -ast-dump=json` dumps covering this source, which are
     /// the only authority on which ivars are objects the class owns (see
     /// `astinfo`). Produce them with `-fobjc-arc`, or they carry no
-    /// ownership information and oz_static falls back to its own narrower
+    /// ownership information and oz2c falls back to its own narrower
     /// rule.
     ///
     /// A list, not one dump: a program spread over several `.m` files needs
@@ -196,7 +196,7 @@ struct FrontEnd {
 /// `Program`), and nothing enforced that both agreed.
 ///
 /// Diagnostics stop the pipeline at the first pass that produces any --
-/// oz_static has no soft-diagnostic mode, so a returned `Err` is always
+/// oz2c has no soft-diagnostic mode, so a returned `Err` is always
 /// final and later passes would only report consequences of the first
 /// failure.
 fn front_end(

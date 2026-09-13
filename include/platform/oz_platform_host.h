@@ -306,13 +306,19 @@ static inline void oz_sys_heap_free(void *obj)
  * Defined in the generated oz_dispatch.c — requires struct OZHeap
  * to be complete.
  *
- * `oz_static_`, not `oz_heap_`: declared here, defined by the companion, so
- * they belong to the generated namespace the way `oz_static_retain_count`
- * does (#417, #418). The old spelling collided by word order with the PAL
- * functions they call — `oz_heap_obj_alloc` calling `oz_heap_alloc_obj`.
+ * `oz_heap_`, like every other C-side name. These two are *declared* here
+ * and *defined* by the companion, and #417 gave that split a prefix of its
+ * own for a while; #462 retired it, because `oz2c` names the tool and not
+ * the code it emits. One prefix per layer: `oz_`/`OZ_` for C, `_oz_` for
+ * per-class internals.
+ *
+ * The word order is what #417 was really fixing, and it still holds:
+ * subsystem, verb, then qualifier. So `oz_heap_alloc` calls
+ * `oz_heap_alloc_obj` — a prefix pair, and deliberately not the anagram
+ * `oz_heap_obj_alloc` calling `oz_heap_alloc_obj` that both preceded it.
  */
-void *oz_static_heap_alloc(struct OZHeap *heap, size_t size);
-void oz_static_heap_free(void *obj);
+void *oz_heap_alloc(struct OZHeap *heap, size_t size);
+void oz_heap_free(void *obj);
 
 #endif /* OZ_HEAP_SUPPORT */
 

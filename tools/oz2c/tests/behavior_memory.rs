@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // behavior_memory.rs - OZ-092: port of the Python pipeline's
-// tests/behavior/cases/memory/ fixtures to oz_static, using the Python
+// tests/behavior/cases/memory/ fixtures to oz2c, using the Python
 // pipeline (the oracle) as ground truth for what each fixture actually
 // verifies. Same pattern as end_to_end_behavior.rs: the real `OZObject`
 // (`common::ozobject_src`) as the root class, the class(es) under test,
@@ -15,7 +15,7 @@
 // **Where the refcount arithmetic is the subject -- `nested_retain_release`,
 // `release_decrements_refcount`, `retain_count_query`,
 // `retain_increments_refcount` -- the cases drive
-// `oz_static_retain`/`oz_static_release` as C functions rather than as
+// `oz_retain`/`oz_release` as C functions rather than as
 // retain/release *sends*, which ARC refuses (#428).** The claim
 // those cases make is about the runtime's two refcount functions, which is
 // where the arithmetic lives; the sends lowered to exactly these calls, and
@@ -51,16 +51,16 @@ fn nested_retain_release() {
          \n\
          int main(void) {{\n\
          \t__unsafe_unretained Handle *h = [Handle alloc];\n\
-         \tprintf(\"rc1=%d\\n\", oz_static_retain_count(h));\n\
-         \t(void)oz_static_retain((struct OZObject *)h);\n\
-         \tprintf(\"rc2=%d\\n\", oz_static_retain_count(h));\n\
-         \t(void)oz_static_retain((struct OZObject *)h);\n\
-         \tprintf(\"rc3=%d\\n\", oz_static_retain_count(h));\n\
-         \toz_static_release((struct OZObject *)h);\n\
-         \tprintf(\"rc4=%d\\n\", oz_static_retain_count(h));\n\
-         \toz_static_release((struct OZObject *)h);\n\
-         \tprintf(\"rc5=%d\\n\", oz_static_retain_count(h));\n\
-         \toz_static_release((struct OZObject *)h);\n\
+         \tprintf(\"rc1=%d\\n\", oz_retain_count(h));\n\
+         \t(void)oz_retain((struct OZObject *)h);\n\
+         \tprintf(\"rc2=%d\\n\", oz_retain_count(h));\n\
+         \t(void)oz_retain((struct OZObject *)h);\n\
+         \tprintf(\"rc3=%d\\n\", oz_retain_count(h));\n\
+         \toz_release((struct OZObject *)h);\n\
+         \tprintf(\"rc4=%d\\n\", oz_retain_count(h));\n\
+         \toz_release((struct OZObject *)h);\n\
+         \tprintf(\"rc5=%d\\n\", oz_retain_count(h));\n\
+         \toz_release((struct OZObject *)h);\n\
          \treturn 0;\n\
          }}\n",
         PREAMBLE()
@@ -84,14 +84,14 @@ fn release_decrements_refcount() {
          \n\
          int main(void) {{\n\
          \t__unsafe_unretained Counter *c = [Counter alloc];\n\
-         \t(void)oz_static_retain((struct OZObject *)c);\n\
-         \t(void)oz_static_retain((struct OZObject *)c);\n\
-         \tprintf(\"rc1=%d\\n\", oz_static_retain_count(c));\n\
-         \toz_static_release((struct OZObject *)c);\n\
-         \tprintf(\"rc2=%d\\n\", oz_static_retain_count(c));\n\
-         \toz_static_release((struct OZObject *)c);\n\
-         \tprintf(\"rc3=%d\\n\", oz_static_retain_count(c));\n\
-         \toz_static_release((struct OZObject *)c);\n\
+         \t(void)oz_retain((struct OZObject *)c);\n\
+         \t(void)oz_retain((struct OZObject *)c);\n\
+         \tprintf(\"rc1=%d\\n\", oz_retain_count(c));\n\
+         \toz_release((struct OZObject *)c);\n\
+         \tprintf(\"rc2=%d\\n\", oz_retain_count(c));\n\
+         \toz_release((struct OZObject *)c);\n\
+         \tprintf(\"rc3=%d\\n\", oz_retain_count(c));\n\
+         \toz_release((struct OZObject *)c);\n\
          \treturn 0;\n\
          }}\n",
         PREAMBLE()
@@ -105,7 +105,7 @@ fn release_frees_at_zero() {
     // Oracle: tests/behavior/cases/memory/release_frees_at_zero_test.c --
     // release at rc=1 frees the object; the Python fixture proves this via
     // a 1-block slab (alloc, release, re-alloc only succeeds if the block
-    // was actually returned). oz_static's oz_alloc is malloc-based with no
+    // was actually returned). oz2c's oz_alloc is malloc-based with no
     // slab to exhaust, so the equivalent guarantee this ports is simply:
     // alloc/release/alloc/release runs cleanly and every alloc yields a
     // live, non-null object -- releasing at rc=1 doesn't leave the
@@ -155,12 +155,12 @@ fn retain_count_query() {
          \n\
          int main(void) {{\n\
          \t__unsafe_unretained Tracker *t = [Tracker alloc];\n\
-         \tprintf(\"rc1=%d\\n\", oz_static_retain_count(t));\n\
-         \t(void)oz_static_retain((struct OZObject *)t);\n\
-         \tprintf(\"rc2=%d\\n\", oz_static_retain_count(t));\n\
-         \toz_static_release((struct OZObject *)t);\n\
-         \tprintf(\"rc3=%d\\n\", oz_static_retain_count(t));\n\
-         \toz_static_release((struct OZObject *)t);\n\
+         \tprintf(\"rc1=%d\\n\", oz_retain_count(t));\n\
+         \t(void)oz_retain((struct OZObject *)t);\n\
+         \tprintf(\"rc2=%d\\n\", oz_retain_count(t));\n\
+         \toz_release((struct OZObject *)t);\n\
+         \tprintf(\"rc3=%d\\n\", oz_retain_count(t));\n\
+         \toz_release((struct OZObject *)t);\n\
          \treturn 0;\n\
          }}\n",
         PREAMBLE()
@@ -185,7 +185,7 @@ fn retain_count_nil_returns_zero() {
          \n\
          int main(void) {{\n\
          \tTracker *nilT = 0;\n\
-         \tprintf(\"nil_rc=%d\\n\", oz_static_retain_count(nilT));\n\
+         \tprintf(\"nil_rc=%d\\n\", oz_retain_count(nilT));\n\
          \treturn 0;\n\
          }}\n",
         PREAMBLE()
@@ -209,14 +209,14 @@ fn retain_increments_refcount() {
          \n\
          int main(void) {{\n\
          \t__unsafe_unretained Node *n = [Node alloc];\n\
-         \tprintf(\"rc1=%d\\n\", oz_static_retain_count(n));\n\
-         \t(void)oz_static_retain((struct OZObject *)n);\n\
-         \tprintf(\"rc2=%d\\n\", oz_static_retain_count(n));\n\
-         \t(void)oz_static_retain((struct OZObject *)n);\n\
-         \tprintf(\"rc3=%d\\n\", oz_static_retain_count(n));\n\
-         \toz_static_release((struct OZObject *)n);\n\
-         \toz_static_release((struct OZObject *)n);\n\
-         \toz_static_release((struct OZObject *)n);\n\
+         \tprintf(\"rc1=%d\\n\", oz_retain_count(n));\n\
+         \t(void)oz_retain((struct OZObject *)n);\n\
+         \tprintf(\"rc2=%d\\n\", oz_retain_count(n));\n\
+         \t(void)oz_retain((struct OZObject *)n);\n\
+         \tprintf(\"rc3=%d\\n\", oz_retain_count(n));\n\
+         \toz_release((struct OZObject *)n);\n\
+         \toz_release((struct OZObject *)n);\n\
+         \toz_release((struct OZObject *)n);\n\
          \treturn 0;\n\
          }}\n",
         PREAMBLE()
@@ -282,16 +282,16 @@ int main(void) {
 	 * the inner brace is exactly what has to bring `first` back to 1. */
 	{
 		Link *first = [[Link alloc] initWithTag:1 next:nil];
-		printf(\"first_rc=%d\\n\", oz_static_retain_count(first));
+		printf(\"first_rc=%d\\n\", oz_retain_count(first));
 		{
 			Link *second = [[Link alloc] initWithTag:2 next:first];
 			/* `first` is now held twice: by the outer scope, and by
 			 * second's ivar. */
-			printf(\"first_rc_held=%d\\n\", oz_static_retain_count(first));
+			printf(\"first_rc_held=%d\\n\", oz_retain_count(first));
 		}
 		/* second's dealloc released its ivar, so `first` is back to
 		 * just us. */
-		printf(\"first_rc_after=%d\\n\", oz_static_retain_count(first));
+		printf(\"first_rc_after=%d\\n\", oz_retain_count(first));
 		printf(\"still_alive_tag=%d\\n\", [first tag]);
 	}
 	printf(\"done\\n\");
@@ -342,7 +342,7 @@ fn strong_ivar_assigned_a_fresh_object_is_not_retained_twice() {
 	return self;
 }
 - (int)leafCount {
-	return oz_static_retain_count(_leaf);
+	return oz_retain_count(_leaf);
 }
 - (void)dealloc {
 }
