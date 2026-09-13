@@ -70,6 +70,16 @@ struct OZObject *oz_retain(struct OZObject *self)
 	 * both wasted an atomic and left retainCount climbing without
 	 * bound (#373). It also kept a boxed literal out of .rodata:
 	 * anything that writes an object cannot be const. */
+#ifdef OZ_DEBUG_REFCOUNT
+	/* Retaining an object whose teardown has begun resurrects a
+	 * reference the dealloc switch has already passed, so the retain
+	 * succeeds and the object is freed under its new owner (#452). */
+	if (self && self->_meta.deallocating) {
+		oz_platform_print("oz: retain of %s during its own dealloc\n",
+				  oz_class_name(self));
+		oz_assert_msg(0, "retain during dealloc -- this object is being torn down; the class is named on the line above");
+	}
+#endif
 	if (self && !self->_meta.immortal) {
 		oz_atomic_inc(&self->oz_refcount);
 	}
@@ -109,6 +119,23 @@ void oz_release(struct OZObject *self)
 	if (self->_meta.immortal) {
 		return;
 	}
+#ifdef OZ_DEBUG_REFCOUNT
+	/* Before the decrement, because afterwards the evidence is gone:
+	 * oz_atomic_dec_and_test is atomic_fetch_sub(t, 1) == 1, so a
+	 * release at 0 leaves -1 and returns as though nothing happened.
+	 * A dealloc counter cannot see it either -- the refcount never
+	 * reaches 0 again -- and nor can a slot count, which the host
+	 * slab clamps (#452).
+	 *
+	 * Printed and then asserted rather than asserted with the class
+	 * in the message: oz_assert_msg takes a plain const char * and no
+	 * format arguments, so naming the class is the print's job. */
+	if (oz_atomic_get(&self->oz_refcount) <= 0) {
+		oz_platform_print("oz: over-release of %s\n",
+				  oz_class_name(self));
+		oz_assert_msg(0, "over-release -- this refcount was already 0; the class is named on the line above");
+	}
+#endif
 	if (!oz_atomic_dec_and_test(&self->oz_refcount)) {
 		return;
 	}
@@ -172,6 +199,9 @@ void oz_release(struct OZObject *self)
 		BoxedTest_oz_free((struct BoxedTest *)self);
 		break;
 	default:
+#ifdef OZ_DEBUG_REFCOUNT
+		oz_assert_msg(0, "released an object whose class_id matches no live class -- a freed, poisoned or corrupt pointer reached oz_release");
+#endif
 		break;
 	}
 }

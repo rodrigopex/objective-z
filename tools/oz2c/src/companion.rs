@@ -1610,6 +1610,17 @@ not tied to one (not from source) */\n",
              \t * both wasted an atomic and left retainCount climbing without\n\
              \t * bound (#373). It also kept a boxed literal out of .rodata:\n\
              \t * anything that writes an object cannot be const. */\n\
+             #ifdef OZ_DEBUG_REFCOUNT\n\
+             \t/* Retaining an object whose teardown has begun resurrects a\n\
+             \t * reference the dealloc switch has already passed, so the retain\n\
+             \t * succeeds and the object is freed under its new owner (#452). */\n\
+             \tif (self && self->_meta.deallocating) {{\n\
+             \t\toz_platform_print(\"oz: retain of %s during its own dealloc\\n\",\n\
+             \t\t\t\t  oz_class_name(self));\n\
+             \t\toz_assert_msg(0, \"retain during dealloc -- this object is being \
+torn down; the class is named on the line above\");\n\
+             \t}}\n\
+             #endif\n\
              \tif (self && !self->_meta.immortal) {{\n\t\toz_atomic_inc(&self->oz_refcount);\n\t}}\n\treturn self;\n}}\n\n",
             root = root
         ));
@@ -1643,6 +1654,24 @@ vtable\") -- never mutated at runtime. */\n",
              \t * their refcount is not tracked either -- the check comes before\n\
              \t * the decrement, not after it. */\n\
              \tif (self->_meta.immortal) {{\n\t\treturn;\n\t}}\n\
+             #ifdef OZ_DEBUG_REFCOUNT\n\
+             \t/* Before the decrement, because afterwards the evidence is gone:\n\
+             \t * oz_atomic_dec_and_test is atomic_fetch_sub(t, 1) == 1, so a\n\
+             \t * release at 0 leaves -1 and returns as though nothing happened.\n\
+             \t * A dealloc counter cannot see it either -- the refcount never\n\
+             \t * reaches 0 again -- and nor can a slot count, which the host\n\
+             \t * slab clamps (#452).\n\
+             \t *\n\
+             \t * Printed and then asserted rather than asserted with the class\n\
+             \t * in the message: oz_assert_msg takes a plain const char * and no\n\
+             \t * format arguments, so naming the class is the print's job. */\n\
+             \tif (oz_atomic_get(&self->oz_refcount) <= 0) {{\n\
+             \t\toz_platform_print(\"oz: over-release of %s\\n\",\n\
+             \t\t\t\t  oz_class_name(self));\n\
+             \t\toz_assert_msg(0, \"over-release -- this refcount was already 0; \
+the class is named on the line above\");\n\
+             \t}}\n\
+             #endif\n\
              \tif (!oz_atomic_dec_and_test(&self->oz_refcount)) {{\n\t\treturn;\n\t}}\n\
              \tif (self->_meta.deallocating) {{\n\t\treturn;\n\t}}\n\
              \tself->_meta.deallocating = 1;\n\
@@ -1679,7 +1708,18 @@ vtable\") -- never mutated at runtime. */\n",
             }
             c.push_str(&format!("\t\t{}_oz_free((struct {} *)self);\n\t\tbreak;\n", name, name));
         }
-        c.push_str("\tdefault:\n\t\tbreak;\n\t}\n}\n\n");
+        /* The `default:` arm is where a freed or corrupt pointer lands: its
+         * class_id matches no live class, so a silent `break` returns as
+         * though the object had been deallocated. Under the debug flag it
+         * names the failure instead (#452). */
+        c.push_str(
+            "\tdefault:\n\
+             #ifdef OZ_DEBUG_REFCOUNT\n\
+             \t\toz_assert_msg(0, \"released an object whose class_id matches no \
+live class -- a freed, poisoned or corrupt pointer reached oz_release\");\n\
+             #endif\n\
+             \t\tbreak;\n\t}\n}\n\n",
+        );
     }
 
     for name in &program.class_order {
