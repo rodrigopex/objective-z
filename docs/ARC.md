@@ -216,9 +216,20 @@ run:
 - counting cannot see **which** pointer a release names, which is what #398 got
   wrong;
 - eager allocation balances, so only observing a side effect catches it (#376);
-- `ownership_matrix.rs` drives `oz2c::transpile` with no AST, i.e. the
-  fall-back rule that leaks every `id`-typed ivar — a configuration no shipped
-  path uses.
+- `ownership_matrix.rs` drives `oz2c::transpile` with no AST — a configuration
+  no shipped path uses. **But the second half of this used to read "i.e. the
+  fall-back rule that leaks every `id`-typed ivar", and that does not bite.**
+  Measured 2026-09-13 (#453's audit): the AST-less fallback (`model.rs:373-378`)
+  differs from Clang's answer *only* for an `id`-typed **ivar**, and `DECLS`
+  (`ownership_matrix.rs:47-112`) declares none — `Holder` has `Thing *_ivar` and
+  `Thing *_arr[2]`, and `g_id_global` is file-scope rather than an ivar. So every
+  row in that file gives the same answer with or without an AST.
+
+  Pinning the AST-less form is therefore the *right* thing to do rather than a
+  compromise: it isolates a 1040-line regression net from SDK clang availability.
+  What is missing is an assertion that `DECLS` declares no `id`-typed ivar, so
+  the day someone adds one the file stops silently pinning a rule no shipped path
+  uses.
 
 And #459 was expressible in neither, because both assert on a single emitted
 function while that defect needs two methods *and* their order — which is why
