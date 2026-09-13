@@ -25,7 +25,7 @@ mod common;
 use common::{expect_reject, ozobject_src as PREAMBLE};
 
 fn transpiles(src: &str) -> bool {
-    oz_static::transpile(src).is_ok()
+    oz2c::transpile(src).is_ok()
 }
 
 /// `@try` in `main()` used to be accepted silently and then reach `emit`,

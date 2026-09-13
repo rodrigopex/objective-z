@@ -147,8 +147,8 @@ fn the_option_being_off_is_a_located_error_naming_it() {
 #[test]
 fn enabling_the_option_alone_generates_no_table() {
     let src = format!("{}{}", PREAMBLE(), hierarchy());
-    let options = oz_static::Options { introspection: true, ..Default::default() };
-    let out = oz_static::transpile_with_options(&src, &options).expect("should transpile");
+    let options = oz2c::Options { introspection: true, ..Default::default() };
+    let out = oz2c::transpile_with_options(&src, &options).expect("should transpile");
     for absent in ["oz_superclass_of", "oz_is_kind_of", "oz_conforms", "oz_proto_Togglable"] {
         assert!(
             !out.companion_c.contains(absent) && !out.companion_h.contains(absent),
@@ -175,8 +175,8 @@ int main(void) {
 }
 "
     );
-    let options = oz_static::Options { introspection: true, ..Default::default() };
-    let out = oz_static::transpile_with_options(&src, &options).expect("should transpile");
+    let options = oz2c::Options { introspection: true, ..Default::default() };
+    let out = oz2c::transpile_with_options(&src, &options).expect("should transpile");
     assert!(
         out.companion_c.contains("oz_proto_Togglable") && out.companion_c.contains("oz_conforms"),
         "the named protocol's bitmap and its reader must be emitted:\n{}",
@@ -210,8 +210,8 @@ int main(void) {
 }
 "
     );
-    let options = oz_static::Options { introspection: true, ..Default::default() };
-    let out = oz_static::transpile_with_options(&src, &options).expect("should transpile");
+    let options = oz2c::Options { introspection: true, ..Default::default() };
+    let out = oz2c::transpile_with_options(&src, &options).expect("should transpile");
     assert!(
         out.companion_c.contains("oz_proto_Togglable[1] = { 0x00000006u }"),
         "expected bits for Widget (1) and Gadget (2) only:\n{}",

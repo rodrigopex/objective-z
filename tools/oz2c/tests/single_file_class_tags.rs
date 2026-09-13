@@ -13,7 +13,7 @@
 //
 // Production was never affected: every real build goes through the CLI, hence
 // `emit_split`. What was affected is this suite, which drives
-// `oz_static::transpile()` -- so until #246 no Rust test could use a
+// `oz2c::transpile()` -- so until #246 no Rust test could use a
 // file-scope object declaration, the shape `samples/gpio_demo` (`static
 // GPIOOutput *led;`), `samples/heap_alloc` (`static OZHeap *sHeap;`) and all
 // three singletons are built on. That is why gaps A and D were both diagnosed
@@ -158,7 +158,7 @@ int main(void) {
 }
 "
     );
-    let out = oz_static::transpile(&src).expect("should transpile").source_c;
+    let out = oz2c::transpile(&src).expect("should transpile").source_c;
     assert!(
         out.contains("haveWidget(struct Widget *w)"),
         "parameter type must be tagged; got:\n{}",
@@ -194,7 +194,7 @@ int main(void) {
 }
 "
     );
-    let out = oz_static::transpile(&src).expect("should transpile").source_c;
+    let out = oz2c::transpile(&src).expect("should transpile").source_c;
     assert!(
         !out.contains("struct struct Widget"),
         "double-tagged a declaration that already had its tag:\n{}",
@@ -226,7 +226,7 @@ int main(void) {
 }
 "
     );
-    let out = oz_static::transpile(&src).expect("should transpile").source_c;
+    let out = oz2c::transpile(&src).expect("should transpile").source_c;
     assert!(
         !out.contains("struct point g_point"),
         "tagged a plain C typedef as if it were a class:\n{}",
@@ -325,7 +325,7 @@ int main(void) {
     let stdout = compile_and_run(&src, "hoisted_block_parameter_gets_struct_tag");
     assert_eq!(stdout, "seen=16\n");
 
-    let out = oz_static::transpile(&src).expect("should transpile").source_c;
+    let out = oz2c::transpile(&src).expect("should transpile").source_c;
     assert!(
         out.contains("(int seed, struct Widget *wp, int bump)"),
         "the hoisted signature must be tagged:\n{}",
@@ -416,7 +416,7 @@ int main(void) {
         compile_and_run_strict(&src, "file_scope_block_variable_with_class_parameter");
     assert_eq!(stdout, "seen=16 n=3\n");
 
-    let out = oz_static::transpile(&src).expect("should transpile").source_c;
+    let out = oz2c::transpile(&src).expect("should transpile").source_c;
     // The initializer is the hoisted function's bare name and nothing else:
     // this is the assertion that says the two edits did not truncate each
     // other. Matched loosely on the name, whose `L<line>_C<col>` suffix moves

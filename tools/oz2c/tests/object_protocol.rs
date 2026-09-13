@@ -27,7 +27,7 @@
 
 mod common;
 
-use oz_static::collect;
+use oz2c::collect;
 
 /// Every method `OZObject` declares, `OZObjectProtocol` declares too.
 ///

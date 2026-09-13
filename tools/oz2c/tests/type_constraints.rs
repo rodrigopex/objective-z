@@ -16,7 +16,7 @@
 // every other test in this crate.
 //
 // CST shapes referenced below were confirmed empirically via a throwaway
-// probe against `oz_static::parse::parse` before writing src/generics.rs
+// probe against `oz2c::parse::parse` before writing src/generics.rs
 // (see that file's header comment for the design rationale); not
 // re-verified here.
 

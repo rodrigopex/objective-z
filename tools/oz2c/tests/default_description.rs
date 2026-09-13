@@ -192,7 +192,7 @@ fn the_class_name_lookup_covers_every_class() {
 ",
     );
 
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     let c = &out.companion_c;
     assert!(
         c.contains("const char *oz_static_class_name(struct OZObject *self)"),

@@ -257,7 +257,7 @@ fn the_borrowing_method_emits_no_release() {
 @end
 "
     );
-    let out = oz_static::transpile(&src).expect("this source is inside the static subset");
+    let out = oz2c::transpile(&src).expect("this source is inside the static subset");
     let c = out.source_c;
 
     let borrow = extract_fn(&c, "int P_borrow_");

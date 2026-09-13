@@ -116,7 +116,7 @@ fn non_capturing_block_accepted() {
          - (void)test {{\n    void (^blk)(void) = ^{{\n        int y = 1;\n    }};\n}}\n@end\n",
         PREAMBLE()
     );
-    oz_static::transpile(&src).unwrap_or_else(|diags| {
+    oz2c::transpile(&src).unwrap_or_else(|diags| {
         panic!(
             "expected a non-capturing block to be accepted, got:\n{}",
             diags.iter().map(|d| d.to_string()).collect::<Vec<_>>().join("\n")
@@ -142,7 +142,7 @@ fn alloc_into_an_ivar_in_a_loop_accepted() {
          \x20       _cached = [Item alloc];\n    }}\n}}\n@end\n",
         PREAMBLE()
     );
-    oz_static::transpile(&src).unwrap_or_else(|diags| {
+    oz2c::transpile(&src).unwrap_or_else(|diags| {
         panic!(
             "expected an ivar store whose value cannot read it to be accepted, got:\n{}",
             diags.iter().map(|d| d.to_string()).collect::<Vec<_>>().join("\n")
@@ -181,7 +181,7 @@ fn fresh_local_alloc_in_loop_accepted() {
          \x20       Item *it = [Item alloc];\n        [it ping];\n    }}\n}}\n@end\n",
         PREAMBLE()
     );
-    oz_static::transpile(&src).unwrap_or_else(|diags| {
+    oz2c::transpile(&src).unwrap_or_else(|diags| {
         panic!(
             "expected a fresh per-iteration local alloc to be accepted, got:\n{}",
             diags.iter().map(|d| d.to_string()).collect::<Vec<_>>().join("\n")
@@ -228,7 +228,7 @@ fn protocol_conformance_satisfied_accepted() {
          @interface Foo : OZObject <Greeter>\n@end\n@implementation Foo\n- (void)greet {{\n}}\n@end\n",
         PREAMBLE()
     );
-    oz_static::transpile(&src).unwrap_or_else(|diags| {
+    oz2c::transpile(&src).unwrap_or_else(|diags| {
         panic!(
             "expected satisfied protocol conformance to be accepted, got:\n{}",
             diags.iter().map(|d| d.to_string()).collect::<Vec<_>>().join("\n")

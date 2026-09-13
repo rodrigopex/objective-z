@@ -168,7 +168,7 @@ int main(void)
 ",
     );
 
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     let body = function_body(&out.source_c, "makeAliased");
     assert!(
         !body.contains("oz_static_release"),
@@ -219,7 +219,7 @@ int main(void)
 ",
     );
 
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     let body = function_body(&out.source_c, "makeCastAliased");
     assert!(
         !body.contains("oz_static_release"),
@@ -306,7 +306,7 @@ int main(void)
 ",
     );
 
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     let body = function_body(&out.source_c, "makeViaCall");
     assert!(
         body.contains("oz_static_retain"),
@@ -353,7 +353,7 @@ int main(void)
 ",
     );
 
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     let main_body = function_body(&out.source_c, "int main");
     assert!(
         main_body.contains("oz_static_release"),
@@ -380,7 +380,7 @@ Thing *passBack(Thing *p)
 ",
     );
 
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     let body = function_body(&out.source_c, "passBack");
     assert!(
         !body.contains("oz_static_retain"),
@@ -416,7 +416,7 @@ fn a_returned_ivar_is_not_retained() {
 ",
     );
 
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     let body = function_body(&out.source_c, "Holder_held");
     assert!(
         !body.contains("oz_static_retain"),
@@ -440,7 +440,7 @@ Thing *echo(Thing *p)
 ",
     );
 
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     let body = function_body(&out.source_c, "echo");
     assert!(
         !body.contains("oz_static_retain") && !body.contains("_oz_sync_ret_"),

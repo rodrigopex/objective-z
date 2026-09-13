@@ -29,7 +29,7 @@ fn repo_root() -> PathBuf {
 //
 // `--ast` is a hard requirement of any source that declares a class, so this
 // harness produces one. It did not, for as long as it existed: ~500 cases
-// drove `oz_static::transpile` with no AST at all, which meant ARC's
+// drove `oz2c::transpile` with no AST at all, which meant ARC's
 // `id`-typed-ivar ownership -- the one question the dump exists to answer --
 // was decided here by the fall-back rule and on target by Clang. Two
 // different answers, and the gate ran the one that was not shipped.
@@ -158,7 +158,7 @@ pub fn ast_dump_file(m_path: &Path, ast_path: &Path) {
      * refuses it, and the case would fail with a message about the oracle
      * rather than about the case. Fail here instead, where Clang's own
      * stderr is still in hand and can say why. */
-    match oz_static::astinfo::AstFacts::from_path(ast_path) {
+    match oz2c::astinfo::AstFacts::from_path(ast_path) {
         Ok(facts) if !facts.is_empty() => {}
         Ok(_) => panic!(
             "the Clang AST dump of '{}' describes no ivars and no method bodies, so \
@@ -250,7 +250,7 @@ pub fn compile_and_run_with_heap(source: &str, stem: &str) -> String {
         source,
         stem,
         &["-DOZ_HEAP_SUPPORT"],
-        oz_static::Options { heap_support: true, ..Default::default() },
+        oz2c::Options { heap_support: true, ..Default::default() },
     )
 }
 
@@ -274,7 +274,7 @@ pub fn compile_and_run_with_heap_and_cc_flags(
         source,
         stem,
         &flags,
-        oz_static::Options { heap_support: true, ..Default::default() },
+        oz2c::Options { heap_support: true, ..Default::default() },
     )
 }
 
@@ -290,7 +290,7 @@ pub fn compile_and_run_with_introspection(source: &str, stem: &str) -> String {
         source,
         stem,
         &[],
-        oz_static::Options { introspection: true, ..Default::default() },
+        oz2c::Options { introspection: true, ..Default::default() },
     )
 }
 
@@ -301,7 +301,7 @@ pub fn compile_and_run_with_reflection(source: &str, stem: &str) -> String {
         source,
         stem,
         &[],
-        oz_static::Options { reflection: true, ..Default::default() },
+        oz2c::Options { reflection: true, ..Default::default() },
     )
 }
 
@@ -312,8 +312,8 @@ pub fn compile_and_run_with_reflection(source: &str, stem: &str) -> String {
 /// option, so an assertion about *why* something else was refused would
 /// pass for the wrong reason.
 pub fn expect_reject_with_reflection(source: &str) -> String {
-    let options = oz_static::Options { reflection: true, ..Default::default() };
-    match oz_static::transpile_with_options(source, &options) {
+    let options = oz2c::Options { reflection: true, ..Default::default() };
+    match oz2c::transpile_with_options(source, &options) {
         Ok(_) => panic!("expected transpile to be rejected by the static bar, but it succeeded"),
         Err(diags) => diags.iter().map(|d| d.to_string()).collect::<Vec<_>>().join("\n"),
     }
@@ -327,8 +327,8 @@ pub fn expect_reject_with_reflection(source: &str) -> String {
 /// available would otherwise be refused by the option instead, and the
 /// assertion would pass for the wrong reason.
 pub fn expect_reject_with_introspection(source: &str) -> String {
-    let options = oz_static::Options { introspection: true, ..Default::default() };
-    match oz_static::transpile_with_options(source, &options) {
+    let options = oz2c::Options { introspection: true, ..Default::default() };
+    match oz2c::transpile_with_options(source, &options) {
         Ok(_) => panic!("expected transpile to be rejected by the static bar, but it succeeded"),
         Err(diags) => diags.iter().map(|d| d.to_string()).collect::<Vec<_>>().join("\n"),
     }
@@ -348,7 +348,7 @@ pub fn compile_and_run_with_cc_flags(
 }
 
 fn compile_and_run_with_flags(source: &str, stem: &str, extra_cc_flags: &[&str]) -> String {
-    compile_and_run_inner(source, stem, extra_cc_flags, oz_static::Options::default())
+    compile_and_run_inner(source, stem, extra_cc_flags, oz2c::Options::default())
 }
 
 /// Transpile, compile, link, run.
@@ -362,7 +362,7 @@ fn compile_and_run_inner(
     source: &str,
     stem: &str,
     extra_cc_flags: &[&str],
-    mut options: oz_static::Options,
+    mut options: oz2c::Options,
 ) -> String {
     /* Before the transpile, not after: the dump has to exist to be passed,
      * and the scratch directory is where it goes. Wiping first keeps a
@@ -380,7 +380,7 @@ fn compile_and_run_inner(
         options.ast_paths.push(ast);
     }
 
-    let out = oz_static::transpile_with_options(source, &options).unwrap_or_else(|diags| {
+    let out = oz2c::transpile_with_options(source, &options).unwrap_or_else(|diags| {
         panic!(
             "transpile('{}') was expected to succeed but produced diagnostics:\n{}",
             stem,
@@ -434,7 +434,7 @@ fn cc(args: &[&str]) {
 /// Transpile `source`, expecting it to be rejected. Returns the joined
 /// diagnostic messages for substring assertions.
 pub fn expect_reject(source: &str) -> String {
-    match oz_static::transpile(source) {
+    match oz2c::transpile(source) {
         Ok(_) => panic!("expected transpile to be rejected by the static bar, but it succeeded"),
         Err(diags) => diags.iter().map(|d| d.to_string()).collect::<Vec<_>>().join("\n"),
     }
@@ -491,13 +491,13 @@ fn strip_import_and_pragma_lines(src: &str) -> String {
 /// Join a class's real header + implementation into one translation
 /// unit, applying only the two generic, meaning-preserving adaptations
 /// every class needs (see module doc comment). The `#ifdef __clang__`
-/// guard unwrap is shared with `oz_static::imports` (OZ-094's real
+/// guard unwrap is shared with `oz2c::imports` (OZ-094's real
 /// `#import` resolver hits the exact same headers) rather than
 /// duplicated here.
 fn assemble(header: &str, implementation: &str) -> String {
     format!(
         "{}\n{}\n",
-        strip_import_and_pragma_lines(&oz_static::imports::unwrap_clang_guard(header)),
+        strip_import_and_pragma_lines(&oz2c::imports::unwrap_clang_guard(header)),
         strip_import_and_pragma_lines(implementation)
     )
 }

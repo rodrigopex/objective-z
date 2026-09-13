@@ -372,7 +372,7 @@ __attribute__((objc_root_class))
 }
 @end
 ";
-    let out = oz_static::transpile(src).expect("hand-rolled root should transpile");
+    let out = oz2c::transpile(src).expect("hand-rolled root should transpile");
     let all = format!("{}{}{}", out.companion_h, out.companion_c, out.source_c);
     assert!(
         all.contains("OZ_PROTOCOL_SEND_getDescription_maxLength_"),

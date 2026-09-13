@@ -11,7 +11,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use oz_static::imports::resolve_imports;
+use oz2c::imports::resolve_imports;
 
 fn scratch_dir(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("oz_static_split_test_{}", name));
@@ -155,7 +155,7 @@ fn cross_file_multi_level_inheritance_compiles_links_and_runs() {
     let resolved = resolve_imports(&source, &dir, &include_dirs, &impl_dirs, "main")
         .unwrap_or_else(|e| panic!("resolve failed: {}", e));
 
-    let out = oz_static::transpile_split(&resolved.text, &resolved.origins).unwrap_or_else(|diags| {
+    let out = oz2c::transpile_split(&resolved.text, &resolved.origins).unwrap_or_else(|diags| {
         panic!("transpile_split failed:\n{}", diags.iter().map(|d| d.to_string()).collect::<Vec<_>>().join("\n"))
     });
 
@@ -237,7 +237,7 @@ fn boxed_array_literal_helper_prototype_is_visible_across_files() {
     let resolved = resolve_imports(&source, &dir, &include_dirs, &impl_dirs, "main")
         .unwrap_or_else(|e| panic!("resolve failed: {}", e));
 
-    let out = oz_static::transpile_split(&resolved.text, &resolved.origins).unwrap_or_else(|diags| {
+    let out = oz2c::transpile_split(&resolved.text, &resolved.origins).unwrap_or_else(|diags| {
         panic!("transpile_split failed:\n{}", diags.iter().map(|d| d.to_string()).collect::<Vec<_>>().join("\n"))
     });
 
@@ -320,7 +320,7 @@ fn non_objc_header_content_survives_into_other_translation_units() {
 
     let resolved = resolve_imports(&source, &dir, &include_dirs, &impl_dirs, "main")
         .unwrap_or_else(|e| panic!("resolve failed: {}", e));
-    let out = oz_static::transpile_split(&resolved.text, &resolved.origins).unwrap_or_else(|diags| {
+    let out = oz2c::transpile_split(&resolved.text, &resolved.origins).unwrap_or_else(|diags| {
         panic!(
             "transpile_split failed:\n{}",
             diags.iter().map(|d| d.to_string()).collect::<Vec<_>>().join("\n")
@@ -419,10 +419,10 @@ fn header_macro_invocation_reaches_other_origins() {
 
     let resolved = resolve_imports(&source, &dir, &include_dirs, &impl_dirs, "main")
         .unwrap_or_else(|e| panic!("resolve failed: {}", e));
-    let out = oz_static::transpile_split_with_options(
+    let out = oz2c::transpile_split_with_options(
         &resolved.text,
         &resolved.origins,
-        &oz_static::Options {
+        &oz2c::Options {
             header_ranges: resolved.header_ranges.clone(),
             ..Default::default()
         },

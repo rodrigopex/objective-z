@@ -27,10 +27,10 @@
 use std::fs;
 use std::path::PathBuf;
 
-use oz_static::imports::{resolve_entry_files, ResolvedSource};
-use oz_static::model::Diagnostic;
-use oz_static::render::render;
-use oz_static::Options;
+use oz2c::imports::{resolve_entry_files, ResolvedSource};
+use oz2c::model::Diagnostic;
+use oz2c::render::render;
+use oz2c::Options;
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -56,7 +56,7 @@ fn render_sole_diagnostic(dir: &PathBuf, entry: &str) -> String {
 
     let options =
         Options { header_ranges: resolved.header_ranges.clone(), ..Default::default() };
-    let diags = oz_static::transpile_split_with_options(
+    let diags = oz2c::transpile_split_with_options(
         &resolved.text,
         &resolved.origins,
         &options,

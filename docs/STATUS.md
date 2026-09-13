@@ -1303,7 +1303,7 @@ that cannot recognise an `id`-typed ivar as an object, so nothing releases
 it.
 
 The practical constraint that used to block this was the Rust suite: ~500
-tests drove `oz_static::transpile` with no AST at all, so the primary gate
+tests drove `oz2c::transpile` with no AST at all, so the primary gate
 exercised the fall-back while every shipped path exercised Clang's answer.
 `tests/common/mod.rs` now writes each case's source to a real `.m` and
 dumps it, and every other producer was already in place -- so all five

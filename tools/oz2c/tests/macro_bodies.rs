@@ -223,7 +223,7 @@ fn objc_in_macro_argument_runs() {
 #[test]
 fn macro_invocation_is_preserved_unexpanded() {
     let src = counter_src("#define TWICE(x) ((x) * 2)", "\treturn TWICE([self value]);");
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     assert!(
         out.source_c.contains("TWICE(Counter_value("),
         "the macro invocation should be preserved with the send lowered inside it:\n{}",

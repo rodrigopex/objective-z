@@ -55,7 +55,7 @@ int main(void) {
 }
 "
     );
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     let all = format!("{}\n{}", out.companion_h, out.source_c);
     assert!(
         all.contains("int _values[4];"),
@@ -85,7 +85,7 @@ fn a_scalar_array_ivar_is_not_released() {
 int main(void) { return 0; }
 "
     );
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     assert!(
         !out.source_c.contains("Box_oz_release_ivars"),
         "a scalar array is not owned, so nothing should be released:\n{}",
@@ -335,7 +335,7 @@ fn a_side_effecting_index_is_rejected() {
 int main(void) { return 0; }
 "
     );
-    let diags = match oz_static::transpile(&src) {
+    let diags = match oz2c::transpile(&src) {
         Err(diags) => diags,
         Ok(_) => panic!("a side-effecting index must be rejected"),
     };
@@ -377,7 +377,7 @@ int main(void) {
 }
 "
     );
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     let all = format!("{}\n{}", out.companion_h, out.source_c);
     assert!(
         all.contains("int _v[2][3][4][5];"),
@@ -422,7 +422,7 @@ fn a_multi_dimensional_owned_array_is_rejected() {
 int main(void) { return 0; }
 "
         );
-        let diags = match oz_static::transpile(&src) {
+        let diags = match oz2c::transpile(&src) {
             Err(diags) => diags,
             Ok(_) => panic!("an owned {} array of objects must be rejected", extent),
         };

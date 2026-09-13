@@ -29,8 +29,8 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use oz_static::imports::{resolve_entry_files, ResolvedSource};
-use oz_static::Options;
+use oz2c::imports::{resolve_entry_files, ResolvedSource};
+use oz2c::Options;
 
 fn scratch_dir(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("oz_static_line_directives_{}", name));
@@ -128,7 +128,7 @@ fn transpile_with_directives(
         header_ranges: resolved.header_ranges.clone(),
         ..Default::default()
     };
-    oz_static::transpile_split_with_options(&resolved.text, &resolved.origins, &options)
+    oz2c::transpile_split_with_options(&resolved.text, &resolved.origins, &options)
         .unwrap_or_else(|diags| panic!("transpile failed: {:?}", diags))
         .files
 }
@@ -138,7 +138,7 @@ fn transpile_with_directives(
 fn transpile_without_directives(resolved: &ResolvedSource) -> Vec<(String, String, String)> {
     let options =
         Options { header_ranges: resolved.header_ranges.clone(), ..Default::default() };
-    oz_static::transpile_split_with_options(&resolved.text, &resolved.origins, &options)
+    oz2c::transpile_split_with_options(&resolved.text, &resolved.origins, &options)
         .unwrap_or_else(|diags| panic!("transpile failed: {:?}", diags))
         .files
 }
@@ -447,7 +447,7 @@ ADD_OBS(chan, second_marker, 3)
         resolve_entry_files(&[dir.join("src/main.m")], &[dir.join("inc")], &[dir.join("src")])
             .unwrap();
     /* The repair has to really happen, or this proves nothing. */
-    let repaired = oz_static::parse::repair_bare_macro_statements(&resolved.text).0;
+    let repaired = oz2c::parse::repair_bare_macro_statements(&resolved.text).0;
     assert!(
         repaired.lines().count() < resolved.text.lines().count(),
         "no line was eaten -- the fixture no longer triggers the repair"

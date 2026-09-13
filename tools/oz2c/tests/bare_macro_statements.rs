@@ -83,7 +83,7 @@ int main(void) {
 "
     );
 
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     /* The original declarations are echoed as banner comments, so the
      * question is whether a *line* still begins with the Objective-C -- the
      * shape that reaches GCC as "stray '@' in program". */
@@ -133,7 +133,7 @@ int main(void) {
 "
     );
 
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     /* Named explicitly rather than by absence of `^`: the invocation is
      * left standing for the preprocessor, so the assertion is that its
      * callback argument became a hoisted function's name. */
@@ -192,7 +192,7 @@ int main(void) {
 "
     );
 
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     assert!(
         out.source_c.contains("static struct Counter *sShared;"),
         "the file-scope declaration should have its class name tagged:\n{}",
@@ -237,7 +237,7 @@ int main(void) {
 "
     );
 
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     assert!(
         out.source_c.contains("OBS_DECLARE(marker)\n"),
         "the invocation should be unchanged, with no `;` added:\n{}",
@@ -276,7 +276,7 @@ int main(void) {
 "
     );
 
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     assert!(
         out.source_c.contains("RESULT(int) five(void)"),
         "a real macro return type should be copied through unchanged:\n{}",

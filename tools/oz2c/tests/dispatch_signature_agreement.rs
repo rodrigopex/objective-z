@@ -70,7 +70,7 @@ struct beta_spec { long b; };
 int main(void) { return 0; }
 "
     );
-    let diags = match oz_static::transpile(&src) {
+    let diags = match oz2c::transpile(&src) {
         Err(diags) => diags,
         Ok(_) => panic!("a pointer-return collision must be rejected"),
     };
@@ -129,7 +129,7 @@ fn two_classes_with_differing_arithmetic_returns_are_rejected() {
 int main(void) { return 0; }
 "
     );
-    let diags = match oz_static::transpile(&src) {
+    let diags = match oz2c::transpile(&src) {
         Err(diags) => diags,
         Ok(_) => panic!("an arithmetic-return disagreement must be rejected"),
     };
@@ -180,7 +180,7 @@ int main(void) {
 }
 "
     );
-    oz_static::transpile(&src).expect("instancetype covaries by design and must not collide");
+    oz2c::transpile(&src).expect("instancetype covaries by design and must not collide");
     assert_eq!(compile_and_run(&src, "instancetype_is_not_a_collision"), "ok=2\n");
 }
 
@@ -208,7 +208,7 @@ struct thing { int v; };
 int main(void) { return 0; }
 "
     );
-    oz_static::transpile(&src).expect("inheritance is not a second implementor");
+    oz2c::transpile(&src).expect("inheritance is not a second implementor");
 }
 
 /// The shape the check was actually filed for: the colliding selector is
@@ -243,7 +243,7 @@ struct beta_spec { long b; };
 int main(void) { return 0; }
 "
     );
-    let diags = match oz_static::transpile(&src) {
+    let diags = match oz2c::transpile(&src) {
         Err(diags) => diags,
         Ok(_) => panic!("a property-declared collision must be rejected too"),
     };
@@ -292,7 +292,7 @@ struct beta_spec { long b; };
 int main(void) { return 0; }
 "
     );
-    let diags = match oz_static::transpile(&src) {
+    let diags = match oz2c::transpile(&src) {
         Err(diags) => diags,
         Ok(_) => panic!("two properties sharing a renamed getter must be rejected"),
     };
@@ -334,7 +334,7 @@ fn a_synthesized_setter_is_located_at_its_property() {
 int main(void) { return 0; }
 "
     );
-    let diags = match oz_static::transpile(&src) {
+    let diags = match oz2c::transpile(&src) {
         Err(diags) => diags,
         Ok(_) => panic!("a setter disagreeing with a method of that name must be rejected"),
     };
@@ -388,7 +388,7 @@ struct beta_spec { long b; };
 int main(void) { return 0; }
 "
     );
-    let diags = match oz_static::transpile(&src) {
+    let diags = match oz2c::transpile(&src) {
         Err(diags) => diags,
         Ok(_) => panic!("a category-declared collision must be rejected too"),
     };

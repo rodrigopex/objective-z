@@ -176,8 +176,8 @@ int main(void) {
 }
 "
     );
-    let options = oz_static::Options { reflection: true, ..Default::default() };
-    let out = oz_static::transpile_with_options(&src, &options).expect("should transpile");
+    let options = oz2c::Options { reflection: true, ..Default::default() };
+    let out = oz2c::transpile_with_options(&src, &options).expect("should transpile");
     // Asserted on the *declaration*, not on any mention: the wrapper in
     // the companion source calls `OZ_PROTOCOL_SEND_tick`, so a substring
     // check against that file passes whether or not the function was ever
@@ -230,8 +230,8 @@ fn the_option_being_off_is_a_located_error_naming_it() {
 #[test]
 fn enabling_the_option_alone_generates_nothing() {
     let src = format!("{}{}", PREAMBLE(), classes());
-    let options = oz_static::Options { reflection: true, ..Default::default() };
-    let out = oz_static::transpile_with_options(&src, &options).expect("should transpile");
+    let options = oz2c::Options { reflection: true, ..Default::default() };
+    let out = oz2c::transpile_with_options(&src, &options).expect("should transpile");
     for absent in ["oz_sel_", "oz_responds", "oz_perform"] {
         assert!(
             !out.companion_c.contains(absent),
@@ -245,14 +245,14 @@ fn enabling_the_option_alone_generates_nothing() {
 /// wrapper, and performing emits no bitmap.
 #[test]
 fn responds_and_perform_are_gated_separately() {
-    let options = oz_static::Options { reflection: true, ..Default::default() };
+    let options = oz2c::Options { reflection: true, ..Default::default() };
 
     let responds_only = format!(
         "{}{}int main(void) {{\n\tWidget *w = [Widget alloc];\n\tint r = [w respondsToSelector:@selector(poke)];\n\treturn r;\n}}\n",
         PREAMBLE(),
         classes()
     );
-    let out = oz_static::transpile_with_options(&responds_only, &options).expect("should transpile");
+    let out = oz2c::transpile_with_options(&responds_only, &options).expect("should transpile");
     assert!(
         out.companion_c.contains("oz_responds_poke") && out.companion_c.contains("BOOL oz_responds"),
         "the bitmap and its reader must be emitted:\n{}",
@@ -269,7 +269,7 @@ fn responds_and_perform_are_gated_separately() {
         PREAMBLE(),
         classes()
     );
-    let out = oz_static::transpile_with_options(&perform_only, &options).expect("should transpile");
+    let out = oz2c::transpile_with_options(&perform_only, &options).expect("should transpile");
     assert!(
         out.companion_c.contains("oz_perform_poke"),
         "the wrapper must be emitted:\n{}",

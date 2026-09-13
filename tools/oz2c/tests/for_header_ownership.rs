@@ -312,7 +312,7 @@ int main(void)
 }
 ",
     );
-    let out = oz_static::transpile(&src).expect("plain C for loop must transpile");
+    let out = oz2c::transpile(&src).expect("plain C for loop must transpile");
     assert!(
         out.source_c.contains("for (int i = 0; i < 3; i++) {"),
         "the header must be left exactly as written:\n{}",
@@ -359,7 +359,7 @@ int main(void)
 }
 ",
     );
-    let out = oz_static::transpile(&src).expect("a cast-to-long header must transpile");
+    let out = oz2c::transpile(&src).expect("a cast-to-long header must transpile");
     assert!(
         out.source_c.contains("for (long n = (long)(makeThing(7)); i < 1; i++) {"),
         "a non-pointer header must be left as written:\n{}",
