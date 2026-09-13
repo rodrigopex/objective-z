@@ -76,7 +76,7 @@ int main(void) {
     // a function name, and the `OZM(...)` invocation is left standing for
     // the preprocessor to expand. Running the program is what proves that
     // second half happened.
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     assert!(
         out.source_c.contains("OZM(FAKE_TIMER_DEFINE, my_timer, oz_block_"),
         "the literal should be hoisted and the OZM invocation left intact:\n{}",
@@ -130,7 +130,7 @@ int main(void) {
 }
 "
     );
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     assert!(
         out.source_c.contains("OZM(FAKE_TIMER_DEFINE, my_timer, on_expiry)"),
         "OZM is a macro escape, not a block feature -- nothing to hoist \
@@ -171,7 +171,7 @@ int main(void) {
     // Asserting on `DECLARE_FLAG()` would be vacuous -- that text is also in
     // the `#define` line, which passes through. The invocation is what to
     // look for, and the run is what shows it expanded.
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     assert!(
         out.source_c.contains("OZM(DECLARE_FLAG)"),
         "the invocation should pass through to the preprocessor:\n{}",
@@ -204,7 +204,7 @@ int main(void) {
 }
 "
     );
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     assert!(
         out.source_c.contains("OZMETRICS_DEFINE(counter)"),
         "OZMETRICS_DEFINE must survive verbatim:\n{}",

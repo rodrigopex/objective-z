@@ -89,7 +89,7 @@ int main(void)
 }
 ",
     );
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     assert!(
         !out.source_c.contains("oz_static_release((struct OZObject *)(n))"),
         "an `int` slot cannot hold a reference and must not be released through; got:\n{}",
@@ -118,7 +118,7 @@ int main(void)
 }
 ",
     );
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     assert!(
         !out.source_c.contains("oz_static_release((struct OZObject *)(n))"),
         "a `long` slot must not be released through either, however wide it is; got:\n{}",
@@ -152,7 +152,7 @@ int main(void)
 }
 ",
     );
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     assert!(
         out.source_c.contains("oz_static_release((struct OZObject *)(t))"),
         "a cast between object pointers still binds ownership (#332); got:\n{}",

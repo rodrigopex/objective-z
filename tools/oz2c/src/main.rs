@@ -58,7 +58,7 @@ macro_rules! oz_err {
 }
 
 fn dump_merged_ast_facts(ast_paths: &[PathBuf]) -> ExitCode {
-    let mut facts = oz_static::astinfo::AstFacts::default();
+    let mut facts = oz2c::astinfo::AstFacts::default();
     for path in ast_paths {
         let text = match fs::read_to_string(path) {
             Ok(text) => text,
@@ -67,7 +67,7 @@ fn dump_merged_ast_facts(ast_paths: &[PathBuf]) -> ExitCode {
                 return ExitCode::FAILURE;
             }
         };
-        match oz_static::astinfo::AstFacts::from_json(&text) {
+        match oz2c::astinfo::AstFacts::from_json(&text) {
             Ok(one) => facts.merge(one),
             Err(e) => {
                 oz_err!("--ast '{}': {}", path.display(), e);
@@ -87,7 +87,7 @@ fn main() -> ExitCode {
     let mut extra_impl_dirs: Vec<PathBuf> = Vec::new();
     let mut manifest_path: Option<PathBuf> = None;
     let mut expected_root: Option<String> = None;
-    let mut pool_overrides = oz_static::PoolOverrides::new();
+    let mut pool_overrides = oz2c::PoolOverrides::new();
     let mut ast_paths: Vec<PathBuf> = Vec::new();
     let mut heap_support = false;
     let mut introspection = false;
@@ -214,7 +214,7 @@ fn main() -> ExitCode {
             // `pools::PoolSizes::set_overrides`).
             "--pool-sizes" => {
                 let Some(spec) = args.get(i + 1) else { return usage() };
-                match oz_static::pools::parse_pool_sizes(spec) {
+                match oz2c::pools::parse_pool_sizes(spec) {
                     Ok(sizes) => pool_overrides.extend(sizes),
                     Err(why) => {
                         oz_err!("--pool-sizes: {}", why);
@@ -368,9 +368,9 @@ fn main() -> ExitCode {
     include_dirs.extend(extra_include_dirs);
     let mut impl_dirs = vec![repo_root.join("src")];
     impl_dirs.extend(extra_impl_dirs);
-    oz_static::progress::Observer::enter(&mut rep, oz_static::progress::Phase::ImportResolve);
+    oz2c::progress::Observer::enter(&mut rep, oz2c::progress::Phase::ImportResolve);
     let resolved =
-        match oz_static::imports::resolve_entry_files(&entry_paths, &include_dirs, &impl_dirs) {
+        match oz2c::imports::resolve_entry_files(&entry_paths, &include_dirs, &impl_dirs) {
             Ok(r) => r,
             Err(e) => {
                 oz_err!("{}", e);
@@ -390,9 +390,9 @@ fn main() -> ExitCode {
     // would otherwise produce a working-but-differently-rooted program.
     // Only paid for when the flag is passed, since it needs its own
     // `collect` pass.
-    oz_static::progress::Observer::enter(&mut rep, oz_static::progress::Phase::RootClassCheck);
+    oz2c::progress::Observer::enter(&mut rep, oz2c::progress::Phase::RootClassCheck);
     if let Some(expected) = &expected_root {
-        let (program, _) = oz_static::collect::collect(&resolved.text);
+        let (program, _) = oz2c::collect::collect(&resolved.text);
         match program.root_class() {
             Some(actual) if actual == expected => {}
             Some(actual) => {
@@ -418,7 +418,7 @@ fn main() -> ExitCode {
      * inside the pipeline now (`Options::ast_paths`), so reading them here
      * purely to measure them would reinstate the 1.30 GB peak this
      * avoids. */
-    oz_static::progress::Observer::enter(&mut rep, oz_static::progress::Phase::AstRead);
+    oz2c::progress::Observer::enter(&mut rep, oz2c::progress::Phase::AstRead);
     let mut ast_sizes: Vec<usize> = Vec::new();
     for path in &ast_paths {
         match fs::metadata(path) {
@@ -462,10 +462,10 @@ fn main() -> ExitCode {
         }
     }
 
-    match oz_static::transpile_split_observed(
+    match oz2c::transpile_split_observed(
         &resolved.text,
         &resolved.origins,
-        &oz_static::Options {
+        &oz2c::Options {
             pool_sizes: pool_overrides,
             ast_json: Vec::new(),
             ast_paths: ast_paths.clone(),
@@ -493,9 +493,9 @@ fn main() -> ExitCode {
         &mut rep,
     ) {
         Ok(out) => {
-            oz_static::progress::Observer::enter(
+            oz2c::progress::Observer::enter(
                 &mut rep,
-                oz_static::progress::Phase::Write,
+                oz2c::progress::Phase::Write,
             );
             // Foundation/SDK-origin files land in their own subdirectory,
             // matching the Python pipeline's own `outdir/Foundation/`
@@ -582,7 +582,7 @@ fn main() -> ExitCode {
                  * `eprint!` rather than through `oz_err!` (#457). The
                  * first line is still a self-contained summary, which is
                  * what `oz_static_build.py` reads. */
-                eprint!("{}", oz_static::render::render(&d, &resolved.text));
+                eprint!("{}", oz2c::render::render(&d, &resolved.text));
             }
             ExitCode::FAILURE
         }
@@ -597,9 +597,9 @@ fn main() -> ExitCode {
 /// reaches past its own construct into the next -- which is what a
 /// semicolon-less function-like macro invocation does to its neighbour
 /// (#288, #289).
-fn dump_resolved_cst(resolved: &oz_static::imports::ResolvedSource) {
+fn dump_resolved_cst(resolved: &oz2c::imports::ResolvedSource) {
     let src = &resolved.text;
-    let tree = oz_static::parse::parse(src);
+    let tree = oz2c::parse::parse(src);
     let root = tree.root_node();
 
     println!("resolved text: {} bytes, {} top-level nodes", src.len(), root.child_count());
@@ -610,7 +610,7 @@ fn dump_resolved_cst(resolved: &oz_static::imports::ResolvedSource) {
 
     let mut cursor = root.walk();
     for node in root.children(&mut cursor) {
-        let (line, _) = oz_static::parse::line_col(src, node.start_byte());
+        let (line, _) = oz2c::parse::line_col(src, node.start_byte());
         let origin = resolved
             .origins
             .iter()

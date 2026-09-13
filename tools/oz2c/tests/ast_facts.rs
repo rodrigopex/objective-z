@@ -54,8 +54,8 @@ fn ast_json() -> &'static str {
     }"#
 }
 
-fn generated(options: &oz_static::Options) -> String {
-    let out = oz_static::transpile_with_options(&source(), options)
+fn generated(options: &oz2c::Options) -> String {
+    let out = oz2c::transpile_with_options(&source(), options)
         .unwrap_or_else(|d| panic!("{}", d.iter().map(|d| d.to_string()).collect::<Vec<_>>().join("\n")));
     format!("{}{}", out.source_c, out.companion_c)
 }
@@ -66,7 +66,7 @@ fn generated(options: &oz_static::Options) -> String {
 /// non-object to a release call.
 #[test]
 fn id_ivar_is_not_released_without_an_ast() {
-    let all = generated(&oz_static::Options::default());
+    let all = generated(&oz2c::Options::default());
     assert!(
         !all.contains("Holder_oz_release_ivars"),
         "expected no release function for an unresolvable id ivar, got:\n{}",
@@ -78,7 +78,7 @@ fn id_ivar_is_not_released_without_an_ast() {
 /// released, `__unsafe_unretained id` is not, and a scalar never was.
 #[test]
 fn ast_makes_owned_id_ivar_released_and_unretained_one_not() {
-    let all = generated(&oz_static::Options {
+    let all = generated(&oz2c::Options {
         ast_json: vec![ast_json().to_string()],
         ..Default::default()
     });
@@ -102,9 +102,9 @@ fn ast_makes_owned_id_ivar_released_and_unretained_one_not() {
 /// indication why.
 #[test]
 fn malformed_ast_is_rejected() {
-    let result = oz_static::transpile_with_options(
+    let result = oz2c::transpile_with_options(
         &source(),
-        &oz_static::Options { ast_json: vec!["not json at all".to_string()], ..Default::default() },
+        &oz2c::Options { ast_json: vec!["not json at all".to_string()], ..Default::default() },
     )
     ;
     let Err(err) = result else { panic!("a malformed AST should be rejected") };
@@ -117,9 +117,9 @@ fn malformed_ast_is_rejected() {
 /// AST had been passed, which is the failure mode `--ast` exists to remove.
 #[test]
 fn ast_describing_no_ivars_is_rejected() {
-    let result = oz_static::transpile_with_options(
+    let result = oz2c::transpile_with_options(
         &source(),
-        &oz_static::Options {
+        &oz2c::Options {
             ast_json: vec![r#"{"kind": "TranslationUnitDecl", "inner": []}"#.to_string()],
             ..Default::default()
         },
@@ -142,7 +142,7 @@ fn ast_describing_no_ivars_is_rejected() {
 /// has to be a proof.
 #[test]
 fn dumped_facts_cover_every_set_and_are_sorted() {
-    let facts = oz_static::astinfo::AstFacts::from_json(ast_json())
+    let facts = oz2c::astinfo::AstFacts::from_json(ast_json())
         .expect("the fixture is a faithful excerpt of a real dump");
     let lines = facts.dump_lines();
 
@@ -185,8 +185,8 @@ fn dumped_facts_do_not_depend_on_how_the_dumps_were_split() {
       ]}"#;
 
     let merge = |a: &str, b: &str| {
-        let mut facts = oz_static::astinfo::AstFacts::from_json(a).expect("a");
-        facts.merge(oz_static::astinfo::AstFacts::from_json(b).expect("b"));
+        let mut facts = oz2c::astinfo::AstFacts::from_json(a).expect("a");
+        facts.merge(oz2c::astinfo::AstFacts::from_json(b).expect("b"));
         facts.dump_lines()
     };
 
@@ -228,7 +228,7 @@ fn concatenated_top_level_objects_are_read_as_a_stream() {
       ]
     }"#;
 
-    let facts = oz_static::astinfo::AstFacts::from_json(concatenated)
+    let facts = oz2c::astinfo::AstFacts::from_json(concatenated)
         .expect("concatenated dumps are what -ast-dump-filter produces");
     assert_eq!(
         facts.dump_lines(),
@@ -270,7 +270,7 @@ fn unrelated_clang_fields_are_ignored() {
       ]
     }"#;
 
-    let facts = oz_static::astinfo::AstFacts::from_json(noisy).expect("a realistic dump shape");
+    let facts = oz2c::astinfo::AstFacts::from_json(noisy).expect("a realistic dump shape");
     assert_eq!(
         facts.dump_lines(),
         vec![
@@ -294,8 +294,8 @@ fn unrelated_clang_fields_are_ignored() {
 /// dies before `HandleTranslationUnit`.
 #[test]
 fn an_empty_dump_is_rejected() {
-    assert!(oz_static::astinfo::AstFacts::from_json("").is_err());
-    assert!(oz_static::astinfo::AstFacts::from_json("   \n\t ").is_err());
+    assert!(oz2c::astinfo::AstFacts::from_json("").is_err());
+    assert!(oz2c::astinfo::AstFacts::from_json("   \n\t ").is_err());
 }
 
 /// Trailing garbage after a valid document is still an error.
@@ -305,7 +305,7 @@ fn an_empty_dump_is_rejected() {
 #[test]
 fn trailing_garbage_after_a_document_is_still_rejected() {
     let bad = r#"{"kind": "ObjCInterfaceDecl", "name": "A"} this is not json"#;
-    assert!(oz_static::astinfo::AstFacts::from_json(bad).is_err());
+    assert!(oz2c::astinfo::AstFacts::from_json(bad).is_err());
 }
 
 // ---------------------------------------------------------------------------
@@ -322,8 +322,8 @@ fn trailing_garbage_after_a_document_is_still_rejected() {
 /// With `require_ast` and no dump, a class is refused.
 #[test]
 fn a_class_with_no_ast_is_refused_when_the_ast_is_required() {
-    let options = oz_static::Options { require_ast: true, ..Default::default() };
-    let diagnostics = oz_static::transpile_with_options(&source(), &options)
+    let options = oz2c::Options { require_ast: true, ..Default::default() };
+    let diagnostics = oz2c::transpile_with_options(&source(), &options)
         .err()
         .expect("a class with no AST must be refused when the AST is required");
     let joined = diagnostics.iter().map(|d| d.to_string()).collect::<Vec<_>>().join("\n");
@@ -342,8 +342,8 @@ fn a_class_with_no_ast_is_refused_when_the_ast_is_required() {
 /// so a diagnostic that had defaulted to 1 would be visibly wrong here.
 #[test]
 fn the_refusal_points_at_the_first_class() {
-    let options = oz_static::Options { require_ast: true, ..Default::default() };
-    let diagnostics = oz_static::transpile_with_options(&source(), &options)
+    let options = oz2c::Options { require_ast: true, ..Default::default() };
+    let diagnostics = oz2c::transpile_with_options(&source(), &options)
         .err()
         .expect("a class with no AST must be refused");
     let first_class_line = source()
@@ -363,13 +363,13 @@ fn the_refusal_points_at_the_first_class() {
 /// `ast_json` supplied.
 #[test]
 fn a_dump_satisfies_the_requirement() {
-    let options = oz_static::Options {
+    let options = oz2c::Options {
         require_ast: true,
         ast_json: vec![ast_json().to_string()],
         ..Default::default()
     };
     assert!(
-        oz_static::transpile_with_options(&source(), &options).is_ok(),
+        oz2c::transpile_with_options(&source(), &options).is_ok(),
         "a supplied dump must satisfy require_ast"
     );
 }
@@ -381,10 +381,10 @@ fn a_dump_satisfies_the_requirement() {
 /// not be made to produce a dump that would say nothing.
 #[test]
 fn a_source_with_no_class_needs_no_dump() {
-    let options = oz_static::Options { require_ast: true, ..Default::default() };
+    let options = oz2c::Options { require_ast: true, ..Default::default() };
     let source = "#include <stdio.h>\nint main(void) { return 0; }\n";
     assert!(
-        oz_static::transpile_with_options(source, &options).is_ok(),
+        oz2c::transpile_with_options(source, &options).is_ok(),
         "a class-free source must transpile with no dump"
     );
 }
@@ -394,7 +394,7 @@ fn a_source_with_no_class_needs_no_dump() {
 #[test]
 fn the_requirement_is_off_by_default() {
     assert!(
-        oz_static::transpile(&source()).is_ok(),
+        oz2c::transpile(&source()).is_ok(),
         "Options::default() must not require an AST"
     );
 }

@@ -113,7 +113,7 @@ int main(void)
 }
 ",
     );
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     assert!(
         out.source_c.contains("Thing_n((struct Thing *)(borrowThing(held)))"),
         "a borrowed call result must be sent to directly, with no temporary and no release; \

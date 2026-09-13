@@ -69,7 +69,7 @@ int main(void) {
 }
 "
     );
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     assert!(
         out.source_c.contains(".connected = OZFN(oz_block_"),
         "the literal should be hoisted and the OZFN left standing:\n{}",
@@ -107,7 +107,7 @@ int main(void) {
 }
 "
     );
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     assert_eq!(
         out.source_c.matches("OZFN(oz_block_").count(),
         3,
@@ -147,7 +147,7 @@ int main(void) {
 }
 "
     );
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     /* By line start: the source's own prose may mention the directive, and
      * a substring test then matches the comment rather than the code --
      * which is exactly what the first version of this assertion did. */
@@ -258,7 +258,7 @@ static void *held = OZFN(^uint32_t(int seed) {
 });
 "
     );
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     let signature = out
         .source_c
         .lines()
@@ -296,7 +296,7 @@ static void *held = OZFN(^const char *(char *s, char *t) {
 });
 "
     );
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     let signature = out
         .source_c
         .lines()

@@ -61,12 +61,12 @@ fn heap_only_program(tail: &str) -> String {
     )
 }
 
-fn heap_options() -> oz_static::Options {
-    oz_static::Options { heap_support: true, ..Default::default() }
+fn heap_options() -> oz2c::Options {
+    oz2c::Options { heap_support: true, ..Default::default() }
 }
 
 fn generated(src: &str) -> String {
-    let out = oz_static::transpile_with_options(src, &heap_options())
+    let out = oz2c::transpile_with_options(src, &heap_options())
         .unwrap_or_else(|d| panic!("should transpile: {:?}", d));
     format!("{}\n{}", out.source_c, out.companion_c)
 }

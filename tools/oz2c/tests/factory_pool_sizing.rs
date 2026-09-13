@@ -106,7 +106,7 @@ int main(void)
 }
 "
 	);
-	let out = oz_static::transpile(&src).expect("should transpile");
+	let out = oz2c::transpile(&src).expect("should transpile");
 	assert!(
 		out.source_c.contains("OZ_SLAB_DEFINE(oz_slab_Thing, sizeof(struct Thing), 3, 4)"),
 		"Thing escapes +make, so it needs one slot per call site; got:\n{}",
@@ -154,7 +154,7 @@ fn a_factory_called_from_a_factory_multiplies() {
 int main(void) { return [Thing pair] != 0; }
 "
 	);
-	let out = oz_static::transpile(&src).expect("should transpile");
+	let out = oz2c::transpile(&src).expect("should transpile");
 	assert!(
 		out.source_c.contains("OZ_SLAB_DEFINE(oz_slab_Thing, sizeof(struct Thing), 2, 4)"),
 		"two call sites of +make, reached once, is two slots; got:\n{}",
@@ -255,7 +255,7 @@ int main(void)
 }
 "
 	);
-	let out = oz_static::transpile(&src).expect("should transpile");
+	let out = oz2c::transpile(&src).expect("should transpile");
 	assert!(
 		out.source_c.contains("OZ_SLAB_DEFINE(oz_slab_Thing, sizeof(struct Thing), 2, 4)"),
 		"two call sites of +used, and nothing for +unused; got:\n{}",

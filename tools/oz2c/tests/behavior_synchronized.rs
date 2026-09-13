@@ -348,7 +348,7 @@ fn synchronized_locks_the_objects_own_field() {
 int main(void) { return 0; }
 "
     );
-    let out = oz_static::transpile(&src).expect("should transpile").source_c;
+    let out = oz2c::transpile(&src).expect("should transpile").source_c;
     assert!(
         out.contains("->oz_sync_lock"),
         "@synchronized must lock the object's own field; got:\n{}",
@@ -369,7 +369,7 @@ int main(void) { return 0; }
 #[test]
 fn no_sync_lock_field_without_synchronized() {
     let src = format!("{}{}", ozobject_src(), "int main(void) { return 0; }\n");
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     let all = format!("{}{}", out.source_c, out.companion_h);
     assert!(
         !all.contains("oz_sync_lock"),

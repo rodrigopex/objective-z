@@ -292,7 +292,7 @@ int main(void)
 }
 ",
     );
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     assert!(
         !out.source_c.contains("void _oz_cv_"),
         "a void-valued send must synthesize no value temporary; got:\n{}",
@@ -325,7 +325,7 @@ int main(void)
 }
 ",
     );
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     assert!(
         !out.source_c.contains("_oz_ce_"),
         "a `for` initialiser runs once and keeps the hoist; got:\n{}",
@@ -366,7 +366,7 @@ int main(void)
 }
 ",
     );
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     assert!(
         !out.source_c.contains("_oz_ce_"),
         "an ordinary statement must keep the statement-level hoist; got:\n{}",

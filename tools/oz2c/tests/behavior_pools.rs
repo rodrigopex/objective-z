@@ -166,7 +166,7 @@ int main(void) {
 /// size and a typo looks like it worked.
 #[test]
 fn pool_size_for_unknown_class_rejected() {
-    let overrides: oz_static::PoolOverrides =
+    let overrides: oz2c::PoolOverrides =
         [("Nonexistent".to_string(), 4usize)].into_iter().collect();
     let src = format!(
         "{}{}",
@@ -178,7 +178,7 @@ fn pool_size_for_unknown_class_rejected() {
 @end
 "
     );
-    let diags = match oz_static::transpile_with_pool_sizes(&src, &overrides) {
+    let diags = match oz2c::transpile_with_pool_sizes(&src, &overrides) {
         Ok(_) => panic!("expected an unknown --pool-sizes class to be rejected"),
         Err(diags) => diags.iter().map(|d| d.to_string()).collect::<Vec<_>>().join("\n"),
     };
@@ -192,10 +192,10 @@ fn pool_size_for_unknown_class_rejected() {
 /// as one, a comment may not have been.
 #[test]
 fn malformed_pool_sizes_argument_rejected() {
-    assert!(oz_static::pools::parse_pool_sizes("Counter=3").is_ok());
-    assert!(oz_static::pools::parse_pool_sizes("Counter").is_err());
-    assert!(oz_static::pools::parse_pool_sizes("Counter=abc").is_err());
-    assert!(oz_static::pools::parse_pool_sizes("=3").is_err());
+    assert!(oz2c::pools::parse_pool_sizes("Counter=3").is_ok());
+    assert!(oz2c::pools::parse_pool_sizes("Counter").is_err());
+    assert!(oz2c::pools::parse_pool_sizes("Counter=abc").is_err());
+    assert!(oz2c::pools::parse_pool_sizes("=3").is_err());
 }
 
 /// A class with no slab-allocation site anywhere in the program gets **no
@@ -235,7 +235,7 @@ int main(void) {
 }
 "
     );
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     let all = format!("{}{}", out.source_c, out.companion_c);
     assert!(
         !all.contains("OZ_SLAB_DEFINE(oz_slab_Unused"),
@@ -294,7 +294,7 @@ int main(void) {
 }
 "
     );
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     let all = format!("{}{}", out.source_c, out.companion_c);
     assert!(
         all.contains("OZ_SLAB_DEFINE(oz_slab_Made, sizeof(struct Made), 1, 4)"),
@@ -346,7 +346,7 @@ fn item_pool_is_sized_from_literal_element_counts() {
 int main(void) { return 0; }
 "
     );
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     assert!(
         out.companion_c
             .contains("OZ_MEM_BLOCKS_DEFINE(oz_item_pool, sizeof(struct OZObject *), 5, 4)"),
@@ -385,7 +385,7 @@ fn dictionary_literal_reserves_two_slots_per_pair() {
 int main(void) { return 0; }
 "
     );
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     assert!(
         out.companion_c
             .contains("OZ_MEM_BLOCKS_DEFINE(oz_item_pool, sizeof(struct OZObject *), 4, 4)"),
@@ -411,7 +411,7 @@ fn no_item_pool_is_emitted_when_nothing_needs_one() {
 int main(void) { return 0; }
 "
     );
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     let all = format!("{}{}{}", out.source_c, out.companion_h, out.companion_c);
     assert!(
         !all.contains("oz_item_pool"),
@@ -443,7 +443,7 @@ fn item_pool_directive_raises_the_bound() {
 int main(void) { return 0; }
 "
     );
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     assert!(
         out.companion_c
             .contains("OZ_MEM_BLOCKS_DEFINE(oz_item_pool, sizeof(struct OZObject *), 16, 4)"),
@@ -477,7 +477,7 @@ fn item_pool_directive_does_not_disturb_the_class_pool_directive() {
 int main(void) { return 0; }
 "
     );
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     let all = format!("{}{}", out.source_c, out.companion_c);
     assert!(
         all.contains("OZ_MEM_BLOCKS_DEFINE(oz_item_pool, sizeof(struct OZObject *), 9, 4)"),

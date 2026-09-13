@@ -130,7 +130,7 @@ int main(void) {
 }
 "
     );
-    let out = oz_static::transpile(&src).expect("should transpile").source_c;
+    let out = oz2c::transpile(&src).expect("should transpile").source_c;
     assert!(
         !out.contains("struct struct"),
         "double-tagged the declaration:\n{}",

@@ -736,7 +736,7 @@ fn init_bound_through_a_cast_is_released_exactly_once() {
 int main(void) { return 0; }
 "
     );
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     let body = out
         .source_c
         .split("int Runner_initThroughCast(struct Runner *self)\n{")
@@ -1399,7 +1399,7 @@ fn init_arguments_are_left_alone() {
 int main(void) { return 0; }
 "
     );
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     let body = out
         .source_c
         .split("void Holder_run(struct Holder *self)\n{")
@@ -1463,7 +1463,7 @@ fn nested_alloc_init_argument_is_released_exactly_once() {
 int main(void) { return 0; }
 "
     );
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     let body = out
         .source_c
         .split("void Holder_run(struct Holder *self)\n{")
@@ -1732,7 +1732,7 @@ fn a_receiver_whose_reference_travels_out_is_left_alone() {
 int main(void) { return 0; }
 "
     );
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     let body = out
         .source_c
         .split("void Runner_run(struct Runner *self)\n{")
@@ -2147,7 +2147,7 @@ fn a_for_conditions_owning_operand_is_not_hoisted() {
 int main(void) { return 0; }
 "
     );
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     let body = out
         .source_c
         .split("void Runner_run(struct Runner *self)\n{")

@@ -20,7 +20,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use oz_static::imports::{resolve_entry_files, resolve_imports, ResolvedSource};
+use oz2c::imports::{resolve_entry_files, resolve_imports, ResolvedSource};
 
 fn scratch_dir(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("oz_static_source_map_{}", name));
@@ -405,7 +405,7 @@ ADD_OBS(some_chan, marker, 4);
     .unwrap();
     let resolved = resolve_entry_files(&[dir.join("src/main.m")], &[], &[dir.join("src")]).unwrap();
 
-    let (repaired, slots) = oz_static::parse::repair_bare_macro_statements(&resolved.text);
+    let (repaired, slots) = oz2c::parse::repair_bare_macro_statements(&resolved.text);
     assert!(!slots.is_empty(), "the fixture must actually trigger a repair");
     assert_eq!(repaired.len(), resolved.text.len(), "the repair must preserve every offset");
     assert!(

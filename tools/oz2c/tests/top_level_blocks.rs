@@ -65,7 +65,7 @@ use common::{compile_and_run, expect_reject, ozobject_src};
 /// Banner comments deliberately echo the original Objective-C, `^` and all,
 /// so comment lines are excluded.
 fn assert_no_block_caret(src: &str) {
-    let out = oz_static::transpile(src).expect("should transpile");
+    let out = oz2c::transpile(src).expect("should transpile");
     // Every file the single-file assembler produces, not just the primary
     // source: a block-typed declaration can land in the companion header.
     let text = format!("{}\n{}\n{}", out.source_c, out.companion_h, out.companion_c);
@@ -301,7 +301,7 @@ int main(void) { return 0; }
 "
     );
     assert_no_block_caret(&src);
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     assert!(
         out.source_c.contains("REGISTER_CB(lis, oz_block_"),
         "the literal should be replaced by its hoisted function's name:\n{}",
@@ -344,7 +344,7 @@ int main(void) { return 0; }
 "
     );
     assert_no_block_caret(&src);
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     assert!(
         out.source_c.contains("OZ_TIMER_DEFINE(my_timer, oz_block_"),
         "the literal should reach the macro as a hoisted function name:\n{}",
@@ -394,7 +394,7 @@ int main(void) {
 }
 "
     );
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     let signature = out
         .source_c
         .lines()
@@ -445,7 +445,7 @@ int main(void) {
 }
 "
     );
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     let signature = out
         .source_c
         .lines()
@@ -492,7 +492,7 @@ int main(void) {
 }
 "
     );
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     let signature = out
         .source_c
         .lines()

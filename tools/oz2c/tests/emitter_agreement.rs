@@ -60,12 +60,12 @@ use common::{ozarray_src, ozobject_src, oznumber_src};
 fn both(source: &str) -> (Vec<String>, Vec<String>, String, String) {
     let origins = vec![("audit".to_string(), 0..source.len())];
 
-    let (single_diags, single_text) = match oz_static::transpile(source) {
+    let (single_diags, single_text) = match oz2c::transpile(source) {
         Ok(out) => (Vec::new(), format!("{}{}{}", out.source_c, out.companion_h, out.companion_c)),
         Err(diags) => (diags.iter().map(|d| d.message.clone()).collect(), String::new()),
     };
 
-    let (split_diags, split_text) = match oz_static::transpile_split(source, &origins) {
+    let (split_diags, split_text) = match oz2c::transpile_split(source, &origins) {
         Ok(out) => {
             let mut text = String::new();
             for (_stem, h, c) in &out.files {

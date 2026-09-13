@@ -16,7 +16,7 @@
 mod common;
 use common::ozobject_src;
 
-use oz_static::progress::{Observer, Phase};
+use oz2c::progress::{Observer, Phase};
 
 /// Records what it is told, in order.
 #[derive(Default)]
@@ -66,7 +66,7 @@ fn holder_src() -> String {
 #[test]
 fn the_library_reports_its_passes_in_pipeline_order() {
     let mut rec = Recorder::default();
-    oz_static::transpile_observed(&holder_src(), &oz_static::Options::default(), &mut rec)
+    oz2c::transpile_observed(&holder_src(), &oz2c::Options::default(), &mut rec)
         .expect("the fixture transpiles");
 
     assert_eq!(
@@ -91,7 +91,7 @@ fn the_library_reports_its_passes_in_pipeline_order() {
 #[test]
 fn the_ast_phase_is_entered_even_with_no_dumps() {
     let mut rec = Recorder::default();
-    oz_static::transpile_observed(&holder_src(), &oz_static::Options::default(), &mut rec)
+    oz2c::transpile_observed(&holder_src(), &oz2c::Options::default(), &mut rec)
         .expect("transpiles");
     assert!(rec.phases.contains(&Phase::AstIngest), "got:\n{:#?}", rec.phases);
     assert!(rec.dumps.is_empty(), "no dumps were supplied, so none should be reported");
@@ -119,11 +119,11 @@ fn each_ast_dump_is_reported_by_index_and_size() {
       ]}"#;
 
     let mut rec = Recorder::default();
-    let options = oz_static::Options {
+    let options = oz2c::Options {
         ast_json: vec![first.to_string(), second.to_string()],
         ..Default::default()
     };
-    oz_static::transpile_observed(&holder_src(), &options, &mut rec).expect("transpiles");
+    oz2c::transpile_observed(&holder_src(), &options, &mut rec).expect("transpiles");
 
     assert_eq!(rec.dumps, vec![(0, first.len()), (1, second.len())]);
 }
@@ -159,7 +159,7 @@ struct beta { long b; };
 "
     );
     let mut rec = Recorder::default();
-    let diags = match oz_static::transpile_observed(&src, &oz_static::Options::default(), &mut rec)
+    let diags = match oz2c::transpile_observed(&src, &oz2c::Options::default(), &mut rec)
     {
         Err(diags) => diags,
         Ok(_) => panic!("a return-type collision must be rejected"),
@@ -183,10 +183,10 @@ struct beta { long b; };
 #[test]
 fn observing_does_not_change_the_output() {
     let src = holder_src();
-    let plain = oz_static::transpile(&src).expect("transpiles");
+    let plain = oz2c::transpile(&src).expect("transpiles");
 
     let mut rec = Recorder::default();
-    let observed = oz_static::transpile_observed(&src, &oz_static::Options::default(), &mut rec)
+    let observed = oz2c::transpile_observed(&src, &oz2c::Options::default(), &mut rec)
         .expect("transpiles");
 
     assert_eq!(plain.source_c, observed.source_c);

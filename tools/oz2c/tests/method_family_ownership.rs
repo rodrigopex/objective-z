@@ -212,7 +212,7 @@ void drive(Remote *r)
                 sel = row.selector
             )
         );
-        let out = oz_static::transpile(&src).expect("inside the static subset");
+        let out = oz2c::transpile(&src).expect("inside the static subset");
         let body = one_function(&out.source_c, "void drive");
         let releases = body.matches("oz_static_release").count();
         let expected = usize::from(row.owning);
@@ -247,7 +247,7 @@ void drive(Remote *r)
 }
 "
     );
-    let out = oz_static::transpile(&src).expect("inside the static subset");
+    let out = oz2c::transpile(&src).expect("inside the static subset");
     let body = one_function(&out.source_c, "void drive");
     assert_eq!(
         body.matches("oz_static_release").count(),
@@ -351,7 +351,7 @@ fn the_lifetime_attributes_are_not_in_the_refused_set() {
 @end
 "
     );
-    let out = oz_static::transpile(&src);
+    let out = oz2c::transpile(&src);
     assert!(
         out.is_ok(),
         "objc_precise_lifetime is #461's, not #458's -- it must not be refused here: {:?}",

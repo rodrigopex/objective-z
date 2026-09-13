@@ -102,7 +102,7 @@ int main(void)
 ",
     );
 
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     assert!(
         out.companion_h.contains("struct Thing *held"),
         "the field must carry the struct tag into the companion header:\n{}",
@@ -137,7 +137,7 @@ void fill(Thing *t)
 ",
     );
 
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     assert!(
         out.companion_h.contains("struct Thing *held"),
         "expected the tag once:\n{}",
@@ -178,7 +178,7 @@ int main(void)
 ",
     );
 
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     for needle in ["markerTag(struct OZObject *", "bareIdTag(struct OZObject *"] {
         assert!(
             out.source_c.contains(needle),
@@ -226,7 +226,7 @@ int main(void)
 ",
     );
 
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     assert!(
         !out.source_c.contains("struct OZObject *struct OZObject *"),
         "the id was lowered twice:\n{}",
@@ -360,7 +360,7 @@ int main(void)
     );
 
     /* (2) first, because it is the one that can fail on this host. */
-    let out = oz_static::transpile(&src).unwrap_or_else(|diags| {
+    let out = oz2c::transpile(&src).unwrap_or_else(|diags| {
         panic!(
             "expected the qualifier program to transpile, got:\n{}",
             diags.iter().map(|d| d.to_string()).collect::<Vec<_>>().join("\n")

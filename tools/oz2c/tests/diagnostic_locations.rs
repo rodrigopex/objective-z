@@ -30,8 +30,8 @@
 use std::fs;
 use std::path::PathBuf;
 
-use oz_static::imports::{resolve_entry_files, ResolvedSource};
-use oz_static::Options;
+use oz2c::imports::{resolve_entry_files, ResolvedSource};
+use oz2c::Options;
 
 /// The repository root, so the real `include/oz_sdk` and `src` resolve
 /// however cargo was invoked -- the shape `tests/line_directives.rs:283`
@@ -60,10 +60,10 @@ fn line_of(text: &str, needle: &str) -> usize {
 
 /// The sole diagnostic of a rejected resolution, resolved to a source
 /// position the way `oz2c` resolves it before printing.
-fn sole_resolved_diagnostic(resolved: &ResolvedSource) -> oz_static::model::Diagnostic {
+fn sole_resolved_diagnostic(resolved: &ResolvedSource) -> oz2c::model::Diagnostic {
     let options =
         Options { header_ranges: resolved.header_ranges.clone(), ..Default::default() };
-    let diags = oz_static::transpile_split_with_options(
+    let diags = oz2c::transpile_split_with_options(
         &resolved.text,
         &resolved.origins,
         &options,
@@ -203,7 +203,7 @@ fn an_unanchored_diagnostic_reports_no_file() {
         pool_sizes: [("NoSuchClass".to_string(), 4usize)].into_iter().collect(),
         ..Default::default()
     };
-    let diags = oz_static::transpile_with_options(source, &options)
+    let diags = oz2c::transpile_with_options(source, &options)
         .map(|_| ())
         .expect_err("expected --pool-sizes on an unknown class to be rejected");
     let d = diags.iter().find(|d| d.message.contains("--pool-sizes names")).unwrap_or_else(

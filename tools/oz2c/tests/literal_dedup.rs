@@ -66,7 +66,7 @@ int main(void) {
 }
 ",
         );
-        let out = oz_static::transpile(&src).expect("should transpile").source_c;
+        let out = oz2c::transpile(&src).expect("should transpile").source_c;
         let defs: Vec<&str> = out
                 .lines()
                 .filter(|l| l.starts_with("const struct OZString _oz_str_"))

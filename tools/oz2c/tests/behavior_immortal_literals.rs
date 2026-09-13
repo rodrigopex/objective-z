@@ -285,7 +285,7 @@ int main(void) {
 #[test]
 fn retain_checks_immortal_before_incrementing() {
     let src = format!("{}\n{}", ozobject_src(), "int main(void) { return 0; }\n");
-    let c = oz_static::transpile(&src).expect("should transpile").companion_c;
+    let c = oz2c::transpile(&src).expect("should transpile").companion_c;
     let start = c
         .find("*oz_static_retain(")
         .unwrap_or_else(|| panic!("no oz_static_retain in:\n{}", c));
@@ -311,7 +311,7 @@ fn retain_checks_immortal_before_incrementing() {
 #[test]
 fn retain_count_reports_one_for_an_immortal_object() {
     let src = format!("{}\n{}", ozobject_src(), "int main(void) { return 0; }\n");
-    let c = oz_static::transpile(&src).expect("should transpile").companion_c;
+    let c = oz2c::transpile(&src).expect("should transpile").companion_c;
     let start = c
         .find("int oz_static_retain_count(")
         .unwrap_or_else(|| panic!("no oz_static_retain_count in:\n{}", c));
@@ -343,7 +343,7 @@ fn literal_is_emitted_const() {
         ozstring_src(),
         "int main(void) { OZString *s = @\"hi\"; return [s length]; }\n"
     );
-    let out = oz_static::transpile(&src).expect("should transpile").source_c;
+    let out = oz2c::transpile(&src).expect("should transpile").source_c;
     let def = out
         .lines()
         .find(|l| l.contains("struct OZString _oz_str_") && l.contains("._meta"))
@@ -373,7 +373,7 @@ fn literal_is_marked_immortal_rather_than_deallocating() {
         ozstring_src(),
         "int main(void) { OZString *s = @\"hi\"; return [s length]; }\n"
     );
-    let out = oz_static::transpile(&src).expect("should transpile").source_c;
+    let out = oz2c::transpile(&src).expect("should transpile").source_c;
     // The stem also carries an `extern struct OZString _oz_str_...;`
     // prototype, so the initializer is what identifies the definition.
     let def = out
@@ -393,7 +393,7 @@ fn literal_is_marked_immortal_rather_than_deallocating() {
 #[test]
 fn release_checks_immortal_before_decrementing() {
     let src = format!("{}\n{}", ozobject_src(), "int main(void) { return 0; }\n");
-    let c = oz_static::transpile(&src).expect("should transpile").companion_c;
+    let c = oz2c::transpile(&src).expect("should transpile").companion_c;
     let start = c
         .find("void oz_static_release(")
         .unwrap_or_else(|| panic!("no oz_static_release in:\n{}", c));
@@ -455,7 +455,7 @@ fn only_singleton_conformers_are_marked_immortal() {
 ",
         "int main(void) { return 0; }\n"
     );
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     let all = format!("{}{}", out.source_c, out.companion_c);
 
     let alloc_body = |name: &str| -> String {

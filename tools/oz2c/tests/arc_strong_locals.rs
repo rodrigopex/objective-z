@@ -163,7 +163,7 @@ fn bare_declaration_gets_arcs_implicit_nil() {
 int main(void) { return 0; }
 "
     );
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     assert!(
         out.source_c.contains("struct Counter *c = 0;"),
         "a strong local declared bare must get ARC's implicit nil; got:\n{}",

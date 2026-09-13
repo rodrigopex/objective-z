@@ -326,7 +326,7 @@ int main(void)
 }
 ",
     );
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     assert!(
         !out.source_c.contains("oz_static_retain((struct OZObject *)(m))"),
         "an `int` slot cannot name the temporary and must not be retained; got:\n{}",
@@ -447,7 +447,7 @@ int main(void)
 }
 ",
     );
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     let releases = out.source_c.matches("oz_static_release((struct OZObject *)(t))").count();
     assert_eq!(
         releases, 1,
@@ -486,7 +486,7 @@ int main(void)
 }
 ",
     );
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     assert!(
         out.source_c.contains("oz_static_release((struct OZObject *)(t));\n\tcontinue;")
             || out.source_c.contains("oz_static_release((struct OZObject *)(t));\n\t\t\tcontinue;")

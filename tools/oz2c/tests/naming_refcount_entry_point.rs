@@ -39,7 +39,7 @@ use common::{compile_and_run_strict, ozobject_src};
 /// Every generated artifact, so a survivor cannot hide in the half this
 /// test does not look at.
 fn generated(src: &str) -> String {
-    let out = oz_static::transpile(src).expect("should transpile");
+    let out = oz2c::transpile(src).expect("should transpile");
     format!("{}\n{}\n{}", out.companion_h, out.companion_c, out.source_c)
 }
 
@@ -71,7 +71,7 @@ fn no_generated_name_carries_the_reserved_objc_prefix() {
 #[test]
 fn retain_count_takes_id_in_both_halves() {
     let src = format!("{}\n{}", ozobject_src(), "int main(void) { return 0; }\n");
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     assert!(
         out.companion_h.contains("int oz_static_retain_count(id obj);"),
         "the companion header must declare the `id` form, to agree with the \
@@ -158,8 +158,8 @@ fn the_heap_bridge_is_in_the_generated_namespace() {
         "@interface Sensor : OZObject { int _v; }\n@end\n\
          @implementation Sensor\n@end\n"
     );
-    let opts = oz_static::Options { heap_support: true, ..Default::default() };
-    let built = oz_static::transpile_with_options(&src, &opts)
+    let opts = oz2c::Options { heap_support: true, ..Default::default() };
+    let built = oz2c::transpile_with_options(&src, &opts)
         .unwrap_or_else(|d| panic!("should transpile: {:?}", d));
     let out = format!("{}\n{}", built.source_c, built.companion_c);
     assert!(

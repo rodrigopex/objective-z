@@ -288,7 +288,7 @@ fn the_description_dispatcher_routes_a_mutable_string_to_its_superclass() {
         ozmutablestring_src()
     );
 
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     let c = &out.companion_c;
 
     assert!(

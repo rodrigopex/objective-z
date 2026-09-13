@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// import_resolution.rs - OZ-094: tests for oz_static::imports::resolve_imports,
+// import_resolution.rs - OZ-094: tests for oz2c::imports::resolve_imports,
 // the filesystem-aware '#import' resolver that lives outside the core
 // (pure, filesystem-free) transpile()/transpile_split() pipeline. Also
 // covers OZ-096's origin-range tracking (`ResolvedSource::origins`),
@@ -12,7 +12,7 @@
 use std::fs;
 use std::path::PathBuf;
 
-use oz_static::imports::resolve_imports;
+use oz2c::imports::resolve_imports;
 
 fn scratch_dir(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("oz_static_import_test_{}", name));
@@ -157,7 +157,7 @@ fn hello_world_sample_transpiles_successfully() {
     let resolved = resolve_imports(&source, &source_dir, &include_dirs, &impl_dirs, "main")
         .unwrap_or_else(|e| panic!("expected resolution to succeed, got: {}", e));
 
-    oz_static::transpile(&resolved.text).unwrap_or_else(|diags| {
+    oz2c::transpile(&resolved.text).unwrap_or_else(|diags| {
         panic!(
             "expected the real hello_world sample to transpile cleanly, got:\n{}",
             diags.iter().map(|d| d.to_string()).collect::<Vec<_>>().join("\n")
@@ -186,7 +186,7 @@ fn direct_single_class_import_transpiles_successfully() {
 
     let resolved = resolve_imports(&source, &dir, &include_dirs, &impl_dirs, "main")
         .unwrap_or_else(|e| panic!("expected resolution to succeed, got: {}", e));
-    oz_static::transpile(&resolved.text).unwrap_or_else(|diags| {
+    oz2c::transpile(&resolved.text).unwrap_or_else(|diags| {
         panic!(
             "expected a direct single-class import to transpile cleanly, got:\n{}",
             diags.iter().map(|d| d.to_string()).collect::<Vec<_>>().join("\n")

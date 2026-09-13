@@ -26,7 +26,7 @@ mod common;
 use common::{compile_and_run, expect_reject, ozarray_src, ozobject_src, oznumber_src};
 
 fn transpiles(src: &str) -> bool {
-    oz_static::transpile(src).is_ok()
+    oz2c::transpile(src).is_ok()
 }
 
 /// A block capturing a stack local is rejected -- blocks are hoisted to plain
@@ -112,7 +112,7 @@ fn bare_block_qualified_pointer_is_hoisted() {
          \n#include <stdio.h>\nint main(void) {{\n\tFoo *x = [Foo alloc];\n\tprintf(\"r=%d\\n\", [x run]);\n\treturn 0;\n}}\n",
         ozobject_src()
     );
-    let out = oz_static::transpile(&src).expect("a __block local is supported, not rejected");
+    let out = oz2c::transpile(&src).expect("a __block local is supported, not rejected");
     assert!(
         out.source_c.contains("static struct Foo * p;")
             || out.source_c.contains("static struct Foo *p;"),

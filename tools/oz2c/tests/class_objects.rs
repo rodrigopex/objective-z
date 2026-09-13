@@ -89,7 +89,7 @@ fn class_emits_a_constant_rather_than_a_call() {
 @end
 "
     );
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     assert!(
         out.source_c.contains("return OZ_STATIC_CLASS_Widget;"),
         "[Widget class] must emit the class constant:\n{}",

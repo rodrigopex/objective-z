@@ -480,7 +480,7 @@ int main(void)
 ";
     let src = program(body);
 
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     let main_body = out.source_c.split("int main(void)").nth(1).expect("a main");
     /* Every statement is preceded by the source it came from, as a
      * comment, so a search for emitted text finds the *comment* first and

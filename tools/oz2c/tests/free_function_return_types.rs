@@ -131,7 +131,7 @@ int main(void)
 ",
     );
 
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     assert_eq!(
         return_temporary_type(&out.source_c, "result"),
         "struct Widget *",
@@ -189,7 +189,7 @@ int main(void)
 ",
     );
 
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     for (value, expected) in
         [("(size_t)(5000000000ULL)", "size_t"), ("1.5", "double"), ("\"objz\"", "const char*")]
     {
@@ -244,7 +244,7 @@ int main(void)
 ",
     );
 
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     assert_eq!(
         return_temporary_type(&out.source_c, "p"),
         "struct point",
@@ -282,7 +282,7 @@ int main(void)
 ",
     );
 
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     assert!(
         !out.source_c.contains("_oz_sync_ret_"),
         "a valueless `return` must synthesize no temporary; got:\n{}",
@@ -331,7 +331,7 @@ int main(void)
 ",
     );
 
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     for value in ["\"fast\"", "a + b", "Widget_n((struct Widget *)(w))"] {
         assert_no_return_temporary(&out.source_c, value);
     }

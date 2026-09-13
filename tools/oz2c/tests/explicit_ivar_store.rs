@@ -124,7 +124,7 @@ fn both_spellings_of_an_owned_ivar_store_lower_identically() {
 ",
     );
 
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     let implicit = function_body(&out.source_c, "Holder_storeImplicit");
     let explicit = function_body(&out.source_c, "Holder_storeExplicit");
 
@@ -264,7 +264,7 @@ fn dot_syntax_on_self_still_goes_through_the_setter() {
 ",
     );
 
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     let body = function_body(&out.source_c, "Holder_store");
     assert!(
         body.contains("Holder_setHeld_"),
@@ -297,7 +297,7 @@ fn a_scalar_ivar_stored_through_self_is_untouched() {
 ",
     );
 
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     let body = function_body(&out.source_c, "Counter_bump");
     assert!(
         !body.contains("oz_static_retain") && !body.contains("_oz_prev_"),
@@ -328,7 +328,7 @@ fn an_unretained_ivar_stored_through_self_is_untouched() {
 ",
     );
 
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     let body = function_body(&out.source_c, "Backref_pointAt_");
     assert!(
         !body.contains("oz_static_retain") && !body.contains("_oz_prev_"),
@@ -417,7 +417,7 @@ fn both_spellings_of_an_owned_array_element_store_lower_identically() {
 ",
     );
 
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     let bare = function_body(&out.source_c, "Slots_bare");
     let via_self = function_body(&out.source_c, "Slots_viaSelf");
 

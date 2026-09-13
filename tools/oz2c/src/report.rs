@@ -18,7 +18,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use oz_static::progress::{Observer, Phase};
+use oz2c::progress::{Observer, Phase};
 
 /// How much to print.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

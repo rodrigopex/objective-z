@@ -47,7 +47,7 @@ int main(void) { return 0; }
 
 fn transpiled() -> String {
     let src = format!("{}{}", PREAMBLE(), DECLS);
-    oz_static::transpile(&src).expect("should transpile").source_c
+    oz2c::transpile(&src).expect("should transpile").source_c
 }
 
 /// An empty `-dealloc` is idiomatic Objective-C, so the warning fired on
@@ -125,7 +125,7 @@ int main(void) {{ return 0; }}
 ",
         PREAMBLE()
     );
-    let out = oz_static::transpile(&src).expect("should transpile").source_c;
+    let out = oz2c::transpile(&src).expect("should transpile").source_c;
     let body = body_of(&out, "int Bar_take_(struct Bar *self, int n)");
     assert!(
         body.contains("(void)n;"),

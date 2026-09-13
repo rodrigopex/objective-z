@@ -35,7 +35,7 @@ someone checked.
 Two limits on `DELEGATED`, both of which have already produced defects:
 
 - **tree-sitter is the primary frontend, and it is more permissive than Clang.**
-  `oz_static::transpile(source)` — the pure-string form that ~130 tests drive,
+  `oz2c::transpile(source)` — the pure-string form that ~130 tests drive,
   with `Options::default()`'s `require_ast: false` — sees no Clang at all. So
   does `--allow-missing-ast`. A `DELEGATED` verdict holds on the *build* paths
   and not on those two. #428 is what happens when that gap is treated as
@@ -217,7 +217,7 @@ run:
 - counting cannot see **which** pointer a release names, which is what #398 got
   wrong;
 - eager allocation balances, so only observing a side effect catches it (#376);
-- `ownership_matrix.rs` drives `oz_static::transpile` with no AST, i.e. the
+- `ownership_matrix.rs` drives `oz2c::transpile` with no AST, i.e. the
   fall-back rule that leaks every `id`-typed ivar — a configuration no shipped
   path uses.
 

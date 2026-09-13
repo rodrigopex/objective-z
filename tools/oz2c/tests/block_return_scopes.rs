@@ -138,7 +138,7 @@ int main(void)
 ",
     );
 
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     let hoisted = hoisted_blocks(&out.source_c);
     assert_eq!(hoisted.len(), 1, "expected exactly one hoisted block, got:\n{}", out.source_c);
     let block = &hoisted[0];
@@ -211,7 +211,7 @@ int main(void)
 ",
     );
 
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     let block = &hoisted_blocks(&out.source_c)[0];
 
     assert!(
@@ -278,7 +278,7 @@ int main(void)
 ",
     );
 
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     let block = &hoisted_blocks(&out.source_c)[0];
 
     /* The `break` releases the iteration's local and nothing further:
@@ -345,7 +345,7 @@ int main(void)
 ",
     );
 
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     let enclosing = outside_hoisted_blocks(&out.source_c);
     for name in ["keptBefore", "keptAfter"] {
         assert!(
@@ -406,7 +406,7 @@ int main(void)
 ",
     );
 
-    let out = oz_static::transpile(&src).expect("should transpile");
+    let out = oz2c::transpile(&src).expect("should transpile");
     let block = &hoisted_blocks(&out.source_c)[0];
 
     assert!(

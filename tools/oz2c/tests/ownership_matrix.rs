@@ -157,7 +157,7 @@ fn counts(body: &str) -> (usize, usize, usize) {
 
 fn check(shape: &Shape, body_src: &str) {
     let src = program(body_src);
-    let out = oz_static::transpile(&src)
+    let out = oz2c::transpile(&src)
         .unwrap_or_else(|d| panic!("{} did not transpile: {:?}", shape.what, d));
     let body = function_body(&out.source_c, shape.func);
     let got = counts(&body);
