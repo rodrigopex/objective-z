@@ -1159,7 +1159,7 @@ fn reserved_name_err(diags: &mut Vec<Diagnostic>, src: &str, node: Node) {
 ///
 /// Not a list of "discouraged" spellings: ARC is always enabled here, and
 /// every Clang path in this repo passes `-fobjc-arc`
-/// (`cmake/oz_static.cmake`, `cmake/ObjcClang.cmake`,
+/// (`cmake/oz2c.cmake`, `cmake/ObjcClang.cmake`,
 /// `tests/tools/compile_and_run.py`, `tests/common/mod.rs`,
 /// `scripts/regen_zephyr_tests.py`, and `scripts/objz_check_compile_db.py`'s
 /// `REQUIRED_FLAGS`), under which each of these is a compile error. oz_static

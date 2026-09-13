@@ -25,7 +25,7 @@
 //     A prose mention of an option that does not exist is the bug, so it has
 //     to count.
 //   - **Comments in the CMake files *are* stripped.** Those name symbols
-//     deliberately to record that they are retired -- `oz_static.cmake` and
+//     deliberately to record that they are retired -- `oz2c.cmake` and
 //     `CMakeLists.txt` both explain that `CONFIG_OBJZ_BACKEND` dispatched
 //     between two backends until the Python one went. Requiring those to exist
 //     would be requiring the retirement to be undone.
@@ -39,7 +39,7 @@
 // The reverse direction is deliberately not asserted here. It has exactly one
 // hit -- `CONFIG_OBJZ_BACKEND_STATIC` is declared, `default y`, and read by
 // nothing at all, with `main.rs:5` claiming it is "wired into CMake by
-// cmake/oz_static.cmake" where that file never tests it. Deleting a Kconfig
+// cmake/oz2c.cmake" where that file never tests it. Deleting a Kconfig
 // symbol is its own decision, so it is recorded in `docs/STATUS.md` under
 // "Standing design rules" rather than turned into a failing test.
 
@@ -171,7 +171,7 @@ fn every_config_objz_a_compiled_source_names_is_declared() {
 
         /* Comments are stripped from the build files: those name retired
          * symbols on purpose, to record that they are retired. */
-        for rel in ["CMakeLists.txt", "cmake/oz_static.cmake", "cmake/ObjcClang.cmake"] {
+        for rel in ["CMakeLists.txt", "cmake/oz2c.cmake", "cmake/ObjcClang.cmake"] {
                 let p = repo(rel);
                 let text = fs::read_to_string(&p)
                         .unwrap_or_else(|e| panic!("{rel} must be readable: {e}"));

@@ -5,7 +5,7 @@
 # -performSelector: family.
 #
 # Every case here goes through the real Clang AST path, which is what
-# distinguishes it from tools/oz_static/tests/{class_objects,introspection,
+# distinguishes it from tools/oz2c/tests/{class_objects,introspection,
 # reflection}.rs: those transpile a single string with oz_static alone, so a
 # construct Clang itself refuses -- `Nil`, whose int-to-Class cast ARC
 # disallows -- would pass there and fail a real build.

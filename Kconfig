@@ -228,7 +228,7 @@ config OBJZ_LOG_BUFFER_SIZE
 	  documentation that was wrong.
 
 	  There is no #ifndef fallback left. src/OZLog.c is added to a
-	  build only by oz_static.cmake under CONFIG_OBJZ and this
+	  build only by oz2c.cmake under CONFIG_OBJZ and this
 	  option lives inside `if OBJZ`, so the symbol always exists
 	  where the file does -- and losing this entry is a compile
 	  error at the buffer's declaration rather than a silent return

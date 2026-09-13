@@ -147,7 +147,7 @@ def sample_names(named):
 def build(sample, board, build_dir):
     """Configure the sample and generate its C -- nothing more.
 
-    `oz_static_transpile_gen` (`cmake/oz_static.cmake`) depends on oz2c's
+    `oz_static_transpile_gen` (`cmake/oz2c.cmake`) depends on oz2c's
     outputs and on `zephyr_generated_headers`, and on nothing else. Those
     are exactly the two things this sweep consumes: the generated C, and
     each generated TU's command out of `compile_commands.json`. Zephyr's

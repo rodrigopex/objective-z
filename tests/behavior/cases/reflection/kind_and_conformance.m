@@ -1,7 +1,7 @@
 /* -isKindOfClass: and -conformsToProtocol: (#226).
  *
  * Both need CONFIG_OBJZ_INTROSPECTION, which defaults to y and which
- * tests/tools/oz_static_build.py passes so the corpus runs the
+ * tests/tools/oz2c_build.py passes so the corpus runs the
  * configuration a real build gets.
  *
  * Inheritance on both axes is the point. A one-class hierarchy would pass

@@ -29,7 +29,7 @@ import tempfile
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-OZ2C = REPO_ROOT / "tools" / "oz_static" / "target" / "debug" / "oz2c"
+OZ2C = REPO_ROOT / "tools" / "oz2c" / "target" / "debug" / "oz2c"
 SOURCE = REPO_ROOT / "tests" / "behavior" / "cases" / "lifecycle" / "alloc_returns_valid.m"
 PAL_INC = REPO_ROOT / "include"
 SDK_INC = REPO_ROOT / "include" / "oz_sdk"
@@ -45,7 +45,7 @@ import objz_clang  # noqa: E402  (path set up above)
 def main() -> int:
     if not OZ2C.is_file():
         print(f"FAILED: oz2c not built at {OZ2C}")
-        print("  cargo build --manifest-path tools/oz_static/Cargo.toml")
+        print("  cargo build --manifest-path tools/oz2c/Cargo.toml")
         return 1
 
     clang = objz_clang.find_clang_or_exit()

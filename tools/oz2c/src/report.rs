@@ -8,7 +8,7 @@
 // asserted; the durations are not and are never asserted.
 //
 // Everything goes to **stdout**. stderr belongs to diagnostics:
-// `tests/tools/oz_static_build.py` and `tools/oz_static/tests/
+// `tests/tools/oz2c_build.py` and `tools/oz2c/tests/
 // corpus_parity.rs` report its first line as the reason a transpile failed,
 // so progress on stderr would displace the real error. Every automated
 // consumer captures stdout and discards it, which is also why progress can
@@ -76,7 +76,7 @@ impl Reporter {
     ///
     /// The label is the filename as passed, with a trailing `.ast.json`
     /// trimmed. Deliberately not un-mangled back to a source name:
-    /// `cmake/oz_static.cmake` builds these through
+    /// `cmake/oz2c.cmake` builds these through
     /// `string(MAKE_C_IDENTIFIER)`, so `main.m` arrives as `main_m`, and
     /// from oz2c's side an `--ast` argument has no guaranteed relation to
     /// any source at all. The name as given is the only truthful label, and

@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Gate: a configure-time oz2c failure reports what oz2c said, and its status.
 
-`oz_static.cmake` runs oz2c at configure time to learn the generated file
+`oz2c.cmake` runs oz2c at configure time to learn the generated file
 list. That call used to pass `RESULT_VARIABLE` alone, so a failure produced
 one line -- "oz2c failed at configure time" -- and threw away both the
 transpiler's own diagnostic and the status that says whether it even ran.

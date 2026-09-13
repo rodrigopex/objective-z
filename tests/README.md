@@ -17,8 +17,8 @@
 │  (tests/pal/)         │  just test-pal
 ├───────────────────────┤
 │  Transpiler Unit      │  288 tests — Rust tests for oz2c
-│  (tools/oz_static/    │  cargo test --manifest-path
-│   tests/)             │    tools/oz_static/Cargo.toml
+│  (tools/oz2c/    │  cargo test --manifest-path
+│   tests/)             │    tools/oz2c/Cargo.toml
 └───────────────────────┘
 ```
 
@@ -26,7 +26,7 @@
 
 | Command | What it runs |
 |---------|-------------|
-| `cargo test --manifest-path tools/oz_static/Cargo.toml` | The transpiler's own suite, 288 tests. The primary gate; it has no `just` recipe |
+| `cargo test --manifest-path tools/oz2c/Cargo.toml` | The transpiler's own suite, 288 tests. The primary gate; it has no `just` recipe |
 | `just test-behavior` | 71-case behavior corpus through `oz2c` (host). Takes `--compiler`, `--opt`, `--sanitize`, `--check-leaks` |
 | `just test-adapted` | 40 adapted upstream tests |
 | `just test-pal` | PAL function tests (pure C, no transpiler) |
@@ -39,7 +39,7 @@
 
 ## Adding a New Test
 
-- **Transpiler logic bug:** Add a test under `tools/oz_static/tests/`
+- **Transpiler logic bug:** Add a test under `tools/oz2c/tests/`
 - **Generated C doesn't compile:** Add a `.m` to the corpus — `corpus_parity.rs`
   compiles every case as `-std=c17 -pedantic-errors` and gates on it
 - **Generated C compiles but wrong behavior:** Add `.m` + `_test.c` in `tests/behavior/cases/<category>/`
@@ -61,7 +61,7 @@ Pipeline: `.m` → tree-sitter CST → `oz2c` → `.c` + `.h` → GCC/Clang → 
 
 The drivers were written against the retired Python pipeline's generated ABI
 (`<Class>_ozh.h`, `Class_alloc`, `OZObject_release`) and are kept unmodified;
-`tests/tools/oz_static_build.py` writes a shim bridging those names to
+`tests/tools/oz2c_build.py` writes a shim bridging those names to
 oz_static's. That backend is readable at the `python-backend-final` tag.
 
 ## Adapted Test Sources

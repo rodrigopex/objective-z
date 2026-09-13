@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**Version: `tools/oz_static/Cargo.toml`** — the transpiler carries its own semantic
+**Version: `tools/oz2c/Cargo.toml`** — the transpiler carries its own semantic
 version, bumped in the same commit as the change it describes (patch for a fix, minor
 for a new construct or a pre-1.0 break). The repo-level `VERSION` file sits at v0.5.99
 and no longer moves: it tracked the outgoing Python pipeline through a scheme that tied
@@ -14,7 +14,7 @@ Objective-Z is an Objective-C transpiler for Zephyr RTOS, packaged as a Zephyr m
 (`zephyr/module.yml`). Converts `.m` sources to plain C — no ObjC runtime needed. Uses the
 Platform Abstraction Layer (PAL) for zero-cost Zephyr integration.
 
-**The transpiler is `tools/oz_static/` (the `oz2c` binary, Rust).** It is the only
+**The transpiler is `tools/oz2c/` (the `oz2c` binary, Rust).** It is the only
 backend. A second, Python implementation (`tools/oz_transpile/`, a 3-pass Clang-AST
 pipeline) was retired: it implemented no construct oz_static lacks, had been unable to
 build any sample on target since #267, and its one unique contribution --
@@ -25,8 +25,8 @@ uncompiled directory; see [docs/STATUS.md](docs/STATUS.md).
 ## Project instructions
 
 - Use just for build automation
-- Use semantic versioning on `tools/oz_static/Cargo.toml` (see Version above)
-- All changes must validate by testing. `cargo test --manifest-path tools/oz_static/Cargo.toml`
+- Use semantic versioning on `tools/oz2c/Cargo.toml` (see Version above)
+- All changes must validate by testing. `cargo test --manifest-path tools/oz2c/Cargo.toml`
   is the primary gate; `just test` runs the samples on ARM under twister and `just test-riscv`
   runs them on RISC-V (`just test-boards` does both). Anything touching emitted C also needs a
   real board build and run — compiling only proves the input was understood.
@@ -104,7 +104,7 @@ Versions CI pins, and so the ones to match locally: **Zephyr v4.4.2**
 The Rust suite has no `just` recipe — run it directly:
 
 ```sh
-cargo test --manifest-path tools/oz_static/Cargo.toml
+cargo test --manifest-path tools/oz2c/Cargo.toml
 ```
 
 Every twister recipe depends on `just oz2c`, so the transpiler is built before
@@ -130,12 +130,12 @@ Each sample uses `ZEPHYR_EXTRA_MODULES` to register the module and enables it wi
 
 - **`zephyr/module.yml`** — Module definition, points cmake/kconfig to root
 - **`west.yml`** — West manifest for Zephyr CI integration
-- **`CMakeLists.txt`** — Includes `oz_static.cmake` when `CONFIG_OBJZ` is enabled. It
+- **`CMakeLists.txt`** — Includes `oz2c.cmake` when `CONFIG_OBJZ` is enabled. It
   used to include `oz_transpile.cmake`, which dispatched on `CONFIG_OBJZ_BACKEND`
   between two backends; with one backend there is nothing to dispatch on
 - **`Kconfig`** — `CONFIG_OBJZ` master enable, auto-selects `STATIC_INIT_GNU`
 
-### OZ Transpiler (`tools/oz_static/`) — the `oz2c` binary
+### OZ Transpiler (`tools/oz2c/`) — the `oz2c` binary
 
 Primary compilation path: `.m -> tree-sitter CST -> oz2c -> .h + .c`. Generates plain C
 compilable by GCC alone. The source text is substituted in place rather than regenerated
@@ -161,7 +161,7 @@ from an AST, which is why unexpanded macros survive into the output.
   local's declared-type spelling (#400). Two of those — #398 and #400 — had the *correct*
   rule written down a few lines away in the same file, behind a check that returned
   before reaching it, which is worth looking for directly. The standing records are
-  `tools/oz_static/tests/ownership_matrix.rs` (every sink a `+1` reaches, by refcount
+  `tools/oz2c/tests/ownership_matrix.rs` (every sink a `+1` reaches, by refcount
   count) and `selector_ownership_matrix.rs` (every selector and construct that creates or
   consumes one, by observed output — counting cannot see *which* pointer a release names,
   which is what #398 got wrong). Everything not in those two files is believed correct,
@@ -169,7 +169,7 @@ from an AST, which is why unexpanded macros survive into the output.
   Those two records answer *where* a release goes. **[docs/ARC.md](docs/ARC.md) answers
   which of ARC's rules apply at all** — one verdict per normative rule of the Clang ARC
   specification (implemented / delegated to `-fobjc-arc` / refused / N/A / gap), with
-  `tools/oz_static/tests/arc_conformance.rs` pinning the delegated and refused ones. A new
+  `tools/oz2c/tests/arc_conformance.rs` pinning the delegated and refused ones. A new
   *rule* needs a row there; a new *site* needs one in the other two. Walking the spec that
   way is what found #458, #459, #460 and #461 — three of them use-after-free, from source
   Clang accepts silently (#447).
@@ -179,7 +179,7 @@ from an AST, which is why unexpanded macros survive into the output.
   `ARCProduceObject`/`ARCConsumeObject`/`ARCReclaimReturnedObject` marks, and
   `astinfo.rs` currently reads only `ObjCIvarDecl` of all that. tree-sitter stays the
   primary frontend for *syntax*; the ownership oracle is Clang's. Every path that
-  transpiles a program now produces one dump per source — `cmake/oz_static.cmake`,
+  transpiles a program now produces one dump per source — `cmake/oz2c.cmake`,
   `tests/tools/compile_and_run.py`, `tests/smoke/run.py`,
   `scripts/regen_zephyr_tests.py` and the Rust harness (`tests/common/mod.rs`) — and
   `scripts/objz_clang.py` is the single place that decides *which* clang, mirroring
@@ -205,10 +205,10 @@ from an AST, which is why unexpanded macros survive into the output.
   `--ast` is required of any source declaring a class; every other feature flag
   (`--heap-support`, `--introspection`, `--reflection`, `--line-directives`) is off unless
   passed — its absence is what the matching Kconfig option's `n` means, and
-  `cmake/oz_static.cmake` is what supplies it
+  `cmake/oz2c.cmake` is what supplies it
 - Progress goes to **stdout**; stderr is diagnostics only, because
-  `tests/tools/oz_static_build.py` reports its first line as the reason a transpile failed
-- Tests: `cargo test --manifest-path tools/oz_static/Cargo.toml`
+  `tests/tools/oz2c_build.py` reports its first line as the reason a transpile failed
+- Tests: `cargo test --manifest-path tools/oz2c/Cargo.toml`
 
 Three standing design rules, easy to violate with good intentions:
 
@@ -273,7 +273,7 @@ allocation balance.
 
 ### CMake Build Infrastructure (`cmake/`)
 
-- **`oz_static.cmake`** — builds `oz2c`, dumps one Clang AST per source for ARC facts,
+- **`oz2c.cmake`** — builds `oz2c`, dumps one Clang AST per source for ARC facts,
   and emits generated sources into `oz_static_generated/`. Defines
   `objz_transpile_sources()`, the entry point every sample calls — the name is
   unchanged from when it lived in the deleted `oz_transpile.cmake`, because 15 samples,
@@ -351,7 +351,7 @@ Retained as reference for transpiler development. Not compiled — the runtime c
   its last survivor in the live tree and went in #418, replaced by
   `oz_static_retain_count`, which already did the same job. The prefix still appears
   in `src/runtime_legacy/` and `include/runtime_legacy/` (not compiled) and as one
-  `#define` bridge in `tests/tools/oz_static_build.py`, which exists so behaviour
+  `#define` bridge in `tests/tools/oz2c_build.py`, which exists so behaviour
   drivers written against the old ABI stay unmodified — neither is a precedent
 - ObjC ivars: underscore prefix (`_color`, `_model`)
 - Use `#import` for ObjC headers, `#include` for C headers

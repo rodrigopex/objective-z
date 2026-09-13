@@ -129,10 +129,10 @@ def main() -> int:
             ast_files.append(ast_json)
 
         print("Transpiling all sources together (oz2c) ...")
-        oz2c = REPO_ROOT / "tools" / "oz_static" / "target" / "debug" / "oz2c"
+        oz2c = REPO_ROOT / "tools" / "oz2c" / "target" / "debug" / "oz2c"
         if not oz2c.is_file():
             print(f"error: oz2c not built at {oz2c}\n"
-                  f"       cargo build --manifest-path tools/oz_static/Cargo.toml",
+                  f"       cargo build --manifest-path tools/oz2c/Cargo.toml",
                   file=sys.stderr)
             return 1
         cmd = [str(oz2c),
@@ -166,7 +166,7 @@ def main() -> int:
         # `Class_alloc`, `OZObject_release`, `OZ_CLASS_X`. oz_static emits one
         # header per *origin file* and its own spellings, so the same shim the
         # behaviour corpus uses bridges the difference and the drivers stay
-        # unmodified. See tests/tools/oz_static_build.py.
+        # unmodified. See tests/tools/oz2c_build.py.
         print("Writing the ABI shim the ztest drivers include ...")
         classes = oz_static_build.discover_classes(tmpdir)
         if not classes:

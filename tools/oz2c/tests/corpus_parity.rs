@@ -139,7 +139,7 @@ fn transpile_case(case: &Path, outdir: &Path) -> Result<(), String> {
         .arg(root.join("src"))
         .arg("--ast")
         .arg(&ast)
-        // The same pair `tests/tools/oz_static_build.py` passes, which is
+        // The same pair `tests/tools/oz2c_build.py` passes, which is
         // in turn what `CONFIG_OBJZ_INTROSPECTION` and
         // `CONFIG_OBJZ_REFLECTION` default to. Without them a case using
         // either feature is refused here while passing under the harness

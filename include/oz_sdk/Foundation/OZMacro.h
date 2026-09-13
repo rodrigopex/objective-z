@@ -16,7 +16,7 @@
  *     error: initializing 'void (*)(int)' with an expression of
  *            incompatible type 'void (^)(int)'
  *
- * and Clang is not optional here. `cmake/oz_static.cmake` dumps one Clang
+ * and Clang is not optional here. `cmake/oz2c.cmake` dumps one Clang
  * AST per source, and that dump is the only authority on which ivars are
  * objects a class owns (gap N of the retired PARITY.md); the Python backend
  * compiles the same file outright.

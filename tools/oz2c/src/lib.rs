@@ -449,7 +449,7 @@ fn check_ast_present(
             "no Clang AST dump was supplied, and this source declares {} class(es). \
              Pass --ast <dump.json> once per `.m` in the program, produced with \
              `clang -Xclang -ast-dump=json -fsyntax-only -fobjc-arc` (see \
-             cmake/oz_static.cmake, which does this per source). The dump is the only \
+             cmake/oz2c.cmake, which does this per source). The dump is the only \
              authority on whether an `id`-typed ivar is an object the class owns, so \
              without it ARC skips those ivars and leaks them rather than failing. \
              `--allow-missing-ast` states that trade deliberately.",

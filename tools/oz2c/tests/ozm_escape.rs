@@ -12,7 +12,7 @@
 //            incompatible type 'void (^)(int)'
 //
 // So an inline block cannot be handed to one directly, and Clang is not
-// optional here: `cmake/oz_static.cmake` dumps one AST per source as the
+// optional here: `cmake/oz2c.cmake` dumps one AST per source as the
 // ownership oracle (gap N of the retired PARITY.md), and the Python backend
 // compiles the same file. Worse, a source Clang rejects fails *silently* --
 // the dump is taken with `2>/dev/null || true` -- so the file would quietly

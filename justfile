@@ -75,7 +75,7 @@ monitor:
 # The transpiler, built once, before anything that configures a sample.
 #
 # Every sample's configure step runs this same cargo build itself
-# (oz_static.cmake), so a sweep that starts with a rebuild pending has 13 of
+# (oz2c.cmake), so a sweep that starts with a rebuild pending has 13 of
 # them invoking cargo -- each with its own rustc fan-out -- within the same
 # second. Cargo's own locks make those builds correct, not cheap, and the
 # load spike is what makes a configure step fail to *start* oz2c at all
@@ -94,7 +94,7 @@ monitor:
 # the binary either. The twister recipes had always declared it; the host
 # ones were the omission.
 oz2c:
-    cargo build --manifest-path tools/oz_static/Cargo.toml
+    cargo build --manifest-path tools/oz2c/Cargo.toml
 
 # `-c` (--clobber-output) on every twister recipe below, and it is not
 # cosmetic. Without it twister *renames* the previous output directory rather

@@ -25,7 +25,7 @@
  * `-Wunused-value`, which this corpus compiles as an error, so a plain
  * pointer cast would fail the case before the leak could be measured. The
  * bare spelling is covered in
- * `tools/oz_static/tests/arc_leak_regressions.rs` instead, where the
+ * `tools/oz2c/tests/arc_leak_regressions.rs` instead, where the
  * generated C is compiled without `-Werror`.
  *
  * `run_init_through_cast_on_an_owned_local` is the opposite direction, and

@@ -273,7 +273,7 @@ graph LR
 
 ### Transpiler Pipeline
 
-`tools/oz_static/` (the `oz2c` binary, Rust):
+`tools/oz2c/` (the `oz2c` binary, Rust):
 
 1. **Collect** (`collect.rs`) — tree-sitter CST to a `Program`: classes, ivars, methods, types, protocols
 2. **Emit** (`emit.rs`) — in-place substitution producing C, one `.h`/`.c` pair per origin file plus a shared companion. The source text is patched rather than regenerated from a tree, which is why unexpanded macros survive into the output
@@ -506,7 +506,7 @@ just board=qemu_riscv32 rebuild   # RISC-V target
 
 `oz2c` rejects anything outside its supported subset with a located error
 rather than emitting code that misbehaves, so the authoritative list is
-`tools/oz_static/src/staticbar.rs` and the diagnostics it produces. See
+`tools/oz2c/src/staticbar.rs` and the diagnostics it produces. See
 [docs/STATUS.md](docs/STATUS.md) for what is verified and what is not.
 The notable exclusions:
 

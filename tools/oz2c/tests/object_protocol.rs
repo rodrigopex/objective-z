@@ -21,7 +21,7 @@
 //!
 //! The Clang diagnostic that started it is not visible from here: this
 //! harness compiles the *generated C* with `cc` and never parses the
-//! Objective-C. What guards that end is `oz_static.cmake`'s AST-dump
+//! Objective-C. What guards that end is `oz2c.cmake`'s AST-dump
 //! check, which since #307 fails the build on an ordinary error and not
 //! only a fatal one.
 

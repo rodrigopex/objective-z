@@ -16,7 +16,7 @@
 //     the *sequence* of passes deterministically while durations -- which
 //     are untestable -- live entirely in the binary (`main.rs`'s `report`).
 //   - Output routing stays one decision in one place. Progress must go to
-//     stdout, because `tests/tools/oz_static_build.py` reports the first
+//     stdout, because `tests/tools/oz2c_build.py` reports the first
 //     *stderr* line as the reason a transpile failed; a stray `eprintln!`
 //     in a pass would displace a real diagnostic there.
 //

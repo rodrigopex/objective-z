@@ -22,7 +22,7 @@ tests:
   #
   # Worth a configuration of its own rather than trusting the Rust suite:
   # tests/line_directives.rs proves oz2c emits the directives, and
-  # cmake/oz_static.cmake is what decides whether they are asked for. Only
+  # cmake/oz2c.cmake is what decides whether they are asked for. Only
   # a real build exercises that seam, and only a real run proves a
   # generated .c full of #line still compiles and behaves -- the one
   # failure mode here is a directive landing somewhere the C compiler
