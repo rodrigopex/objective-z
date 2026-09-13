@@ -159,7 +159,7 @@ fn main() -> ExitCode {
             // the author wrote -- method bodies, plain C function bodies and
             // hoisted blocks -- so a `gdb` breakpoint, a fatal-error
             // backtrace, `addr2line` and a coverage report all name the
-            // `.m` instead of `oz_static_generated/<Class>.c` (#305).
+            // `.m` instead of `oz2c_generated/<Class>.c` (#305).
             // Synthesized code keeps pointing at the generated file, which
             // is where it genuinely lives.
             //

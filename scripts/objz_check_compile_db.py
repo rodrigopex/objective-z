@@ -16,7 +16,7 @@ database, and does its command carry the flags that make it Objective-C?
 
 Headers are checked separately and more strictly. A `.h` without an entry is
 not left alone -- clangd interpolates the *generated* C twin's command, which
-parses `@interface` as C and whose `-I .../oz_static_generated` shadows the
+parses `@interface` as C and whose `-I .../oz2c_generated` shadows the
 SDK's Objective-C headers with their generated plain-C namesakes, so `OZObject`
 goes undeclared (#320). Both failures are silent: the database looks populated,
 and only an editor shows the difference. Hence FORBIDDEN_HEADER_SUBSTRINGS
@@ -50,7 +50,7 @@ REQUIRED_HEADER_FLAGS = ("-x", "objective-c-header")
 # was introduced to replace. `-std=c17` is that command's dialect; an include
 # path into the generated tree is what shadows the SDK's ObjC headers.
 FORBIDDEN_HEADER_FLAGS = ("-std=c17", "-x c-header")
-FORBIDDEN_HEADER_SUBSTRINGS = ("oz_static_generated",)
+FORBIDDEN_HEADER_SUBSTRINGS = ("oz2c_generated",)
 
 
 def fail(msg):

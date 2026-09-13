@@ -42,7 +42,7 @@ fn node_text<'a>(node: Node, src: &'a str) -> &'a str {
 ///
 /// Without them every artefact carrying a source position -- a `gdb`
 /// breakpoint, a Zephyr fatal-error backtrace, `addr2line`, a coverage
-/// report -- points at `oz_static_generated/<Class>.c`, the only file the
+/// report -- points at `oz2c_generated/<Class>.c`, the only file the
 /// C compiler is ever handed, and translating that back to the `.m` is
 /// done by eye against files that are neither the same length nor skewed
 /// by a constant.
