@@ -120,13 +120,13 @@ int main(void)
 	}
 	/* s is released here by ARC → dealloc fires */
 
-	/* @autoreleasepool test */
-	OZLog("@autoreleasepool test");
-	@autoreleasepool {
-		Sensor *a = createSensor(99);
-		OZLog("pool sensor value=%d", [a value]);
-	}
-	/* pool drains, a is released → dealloc fires */
+	/* No `@autoreleasepool` test, deliberately: the keyword is refused in
+	 * the static subset (#430). There is no `-autorelease` -- ARC forbids
+	 * the send -- so nothing can ever be pending, and no pool object
+	 * exists to drain. The replacement is the braced scope immediately
+	 * above, which is what the pool block compiled to anyway, so a test of
+	 * it here would have duplicated that one exactly. A reader arriving
+	 * from Cocoa looking for the pool should read that block instead. */
 
 	/*
 	 * Reassignment test: storing into a strong local releases whatever it

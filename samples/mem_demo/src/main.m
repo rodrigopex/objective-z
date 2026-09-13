@@ -47,7 +47,7 @@ int main(void)
 
 	/* Autorelease pool test */
 	OZLog("=== Autorelease pool test ===");
-	@autoreleasepool {
+	{
 		Sensor *a = [[Sensor alloc] init];
 		[a setValue:99];
 		OZLog("sensor value=%d, rc=%d", [a value], oz_static_retain_count(a));

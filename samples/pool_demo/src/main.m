@@ -4,7 +4,7 @@
  * Transpiled pool demo.
  *
  * Sensor uses a slab pool — zero heap allocation.
- * Each @autoreleasepool iteration releases the sensor,
+ * Each loop iteration's braced scope releases the sensor,
  * returning the slab block for the next iteration.
  */
 
@@ -67,18 +67,18 @@ int main(void)
 {
 	printk("=== Static Pool Demo ===\n");
 
-	/* Allocate 3 Sensors in a loop with @autoreleasepool.
+	/* Allocate 3 Sensors in a loop, each in its own braced scope.
 	 * Each iteration's pool scope releases the sensor,
 	 * returning the slab block for the next iteration.
 	 */
 	for (int i = 1; i <= 3; i++) {
-		@autoreleasepool {
+		{
 			Sensor *s = [[Sensor alloc] init];
 			@synchronized(s) {
 				[s setValue:i];
 			}
 			printk("pool alloc sensor value=%d\n", [s value]);
-			/* ARC releases s at @autoreleasepool scope exit */
+			/* ARC releases s at the scope's closing brace */
 		}
 	}
 

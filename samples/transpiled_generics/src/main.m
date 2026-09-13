@@ -17,7 +17,7 @@ int main(void)
 {
 	printk("=== Generics Demo ===\n");
 
-	@autoreleasepool {
+	{
 		/* Typed array of numbers — subscript returns OZNumber * */
 		OZArray<OZNumber *> *numbers = @[ @10, @20, @30 ];
 		OZNumber *first = numbers[0];
