@@ -157,7 +157,7 @@ be done at the source level because GCC will not
 | § | Rule | Verdict | Evidence |
 |---|---|---|---|
 | — | ARC cleanup is exception-safe | `N/A` | `@try`/`@catch` are refused (`staticbar.rs:729`) — no unwinding info on this target. There is no `__attribute__((cleanup))` either; every release is emitted explicitly at each exit |
-| — | …and every *other* exit must therefore have its own release arm | `IMPLEMENTED` (3 of 4) | Normal scope end, `return`, `break`/`continue` each have one. **`goto` does not** — `is_jump_statement` suppresses the trailing releases and nothing emits them. #454 |
+| — | …and every *other* exit must therefore have its own release arm | `IMPLEMENTED` | Normal scope end (`arc_exit`), `return`, `break`/`continue` (`render_loop_jump`) and — since #454 — `goto` (`render_goto`) each have one. `goto` was the fourth and last: `is_jump_statement` counted it, which *suppresses* the trailing release, and no renderer replaced it. Needed no scope graph — the label's own position plus `ArcScope::start_byte` answers it. Clang refuses the hard shapes, jumping *into* a scope or *over* a declaration (§ 2.6.6) |
 
 ---
 
@@ -184,7 +184,6 @@ file does not cover".
 | issue | § | what |
 |---|---|---|
 | #461 | 2.6.5, 2.7.2 | an out-parameter store is an untracked strong destination |
-| #454 | — | `goto` emits no scope releases |
 
 **Silent degrade — accepted and then ignored, which this project's standing
 rule forbids:**
