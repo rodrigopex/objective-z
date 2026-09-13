@@ -207,14 +207,20 @@ Three standing design rules, easy to violate with good intentions:
 
 - **It never silently degrades.** Anything outside the supported subset is a hard, *located*
   error. That is deliberate — do not add a soft-diagnostic or best-effort mode.
-- **ARC is the only ownership model.** A send of `retain`, `release`, `autorelease` or
-  `dealloc` is a hard located error, and so is declaring or defining one of the first
-  three (`staticbar::check_manual_memory_sends`, #428) — every Clang path here passes
-  `-fobjc-arc`, under which each is a compile error. A `-dealloc` *override* is the one
-  exception: it is the cleanup hook, and the chain above it is called automatically
+- **ARC is the only ownership model.** A send of `retain`, `release`, `autorelease`,
+  `dealloc` or `retainCount` is a hard located error, and so is declaring or defining
+  any of them but `dealloc` (`staticbar::check_manual_memory_sends`, #428 and #436) —
+  every Clang path here passes `-fobjc-arc`, under which each is a compile error, and
+  that is the whole rule the set follows: **exactly what Clang refuses.** A `-dealloc`
+  *override* is the one exception: it is the cleanup hook, and the chain above it is
+  called automatically
   (`companion::dealloc_chain`), so `[super dealloc]` is redundant rather than required.
-  Reading a refcount is permitted (`oz_static_retain_count`, or `-retainCount`, which
-  lowers to it). See [docs/STATUS.md](docs/STATUS.md), "Standing design rules".
+  Reading a refcount is permitted, through `oz_static_retain_count` -- a plain C call,
+  and the only refcount entry point Objective-C source may spell, since `-retainCount`
+  joined the forbidden five in #436. `@autoreleasepool` is refused for the neighbouring
+  reason (#430): with no `-autorelease` nothing can be pending, so a pool has nothing to
+  drain -- write a plain braced scope, which is what it compiled to. See
+  [docs/STATUS.md](docs/STATUS.md), "Standing design rules".
 - **The Python pipeline is a reference, not an authority.** It has real defects (a
   double-release in synthesized dealloc, no variadic support, item-slot sizing that ignores
   loops); matching them would be a regression dressed as parity.

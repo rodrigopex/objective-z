@@ -1075,11 +1075,11 @@ constraint, and because the one part that *was* an omission was a
 use-after-free.
 
 Three differences are forced by the target and are correctly decided:
-there is no autorelease pool (`@autoreleasepool` lowers to a plain
-compound statement), so ARC's `objc_autoreleaseReturnValue` /
-`objc_retainAutoreleasedReturnValue` return convention cannot exist and a
-returning function must pick +1-to-caller or borrowed and declare it
-consistently; there is no zeroing `__weak`, which is a hard located error
+there is no autorelease pool -- `@autoreleasepool` used to lower to a plain
+compound statement and is a hard located error as of #430 -- so ARC's
+`objc_autoreleaseReturnValue` / `objc_retainAutoreleasedReturnValue` return
+convention cannot exist and a returning function must pick +1-to-caller or
+borrowed and declare it consistently; there is no zeroing `__weak`, which is a hard located error
 because nothing can zero a weak reference without a runtime; and there is
 no `ObjCARCOpt`.
 
@@ -2021,7 +2021,35 @@ from an expression that is not the thing stored.
   a shape the emitter already lowered release-first, and a `self->_ivar`
   accepting one it lowered with a hoisted temporary. Fixing the site that was
   reported is not the fix; enumerating its siblings is.
-- **ARC is the only ownership model, and the four selectors it owns cannot be
+- **A keyword whose mechanism does not exist is refused, even when the
+  behaviour is right.** `@autoreleasepool` was accepted and *worked*: `emit`
+  dropped the token and ran the same `arc_enter`/`arc_exit` bookkeeping as
+  `render_scoped_block`, so the block was an ordinary ARC scope and
+  everything inside was released at the closing brace. It is a hard located
+  error now (`staticbar::check_autoreleasepool`, #430), because the keyword
+  promises deferred reclaim at a drain point and nothing here can defer:
+  there is no `-autorelease` -- ARC forbids the send, one of the five in the
+  rule below -- so no reference can ever be *pending*, and no pool object
+  exists outside `src/runtime_legacy/`. In Cocoa the difference is
+  observable; here it is unreachable, because the mechanism that creates it
+  is refused.
+
+  Two things this cost, both worth stating. The construct was **five
+  samples**, and each fix was deleting one token -- the braces stay and the
+  output is byte-identical, which is what made the rejection mechanical
+  rather than risky; measure that claim rather than assuming it, as
+  `behavior_autoreleasepool` now does by keeping the old leak regression
+  respelled. And **README's advice was wrong twice**: it recommended the
+  keyword "in loops that create temporary objects", contrasting a loop whose
+  1000 temporaries supposedly lived until return against one that drained a
+  pool per iteration. The mechanism did not exist *and* the two loops
+  behaved identically, because a `for` body is a scope and ARC already
+  released each iteration's object at its end. A document describing a
+  mechanism the code does not have will describe it wrongly; that is the
+  second reason to refuse rather than document (the first being #418's
+  year-long `__objc_refcount_get`).
+
+- **ARC is the only ownership model, and the five selectors it owns cannot be
   written.** A send of `retain`, `release`, `autorelease` or `dealloc` is a
   hard, located error, and so is *declaring or defining* one of the first three
   (#428). Every Clang path in this project passes `-fobjc-arc` --
