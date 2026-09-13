@@ -439,9 +439,12 @@ fn render_release_ivars(name: &str, root: &str, owned: &[(String, Option<String>
 /// class's slab, and the object is marked so `{name}_oz_free` knows to
 /// return it there.
 ///
-/// `oz_heap_obj_alloc` is declared by the PAL and defined in the companion
+/// `oz_static_heap_alloc` is declared by the PAL and defined in the companion
 /// (see `render_heap_bridge`) -- it needs `struct OZHeap` complete, which
-/// only generated code has.
+/// only generated code has. That split is why it carries `oz_static_` rather
+/// than `oz_heap_`: the prefix says which layer *defines* a name, and under
+/// `oz_heap_` this pair was an anagram of the PAL pair it calls --
+/// `oz_heap_obj_alloc` calling `oz_heap_alloc_obj` (#417).
 ///
 /// Guarded by `OZ_HEAP_SUPPORT` as well as by `--heap-support`, matching the
 /// oracle (`templates/class_header.h.j2`): the flag decides whether the code
@@ -498,7 +501,7 @@ fn render_heap_alloc(name: &str, root: &str, heap_support: bool, immortal: bool)
 backs '[{name} dynamicAllocWithHeap:h]' (not from source) */\n\
          #ifdef OZ_HEAP_SUPPORT\n\
          struct {name} *{name}_oz_dynamic_alloc_with_heap(struct {root} *heap_obj)\n{{\n\
-         \tstruct {name} *obj = (struct {name} *)oz_heap_obj_alloc(\n\
+         \tstruct {name} *obj = (struct {name} *)oz_static_heap_alloc(\n\
          \t\t(struct OZHeap *)heap_obj, sizeof(struct {name}));\n\
          \tif (!obj) {{\n\
          {trap}\
@@ -527,14 +530,14 @@ fn render_heap_free_check(root: &str, heap_support: bool) -> String {
     format!(
         "#ifdef OZ_HEAP_SUPPORT\n\
          \tif (((struct {root} *)obj)->_meta.heap_allocated) {{\n\
-         \t\toz_heap_obj_free((void *)obj);\n\
+         \t\toz_static_heap_free((void *)obj);\n\
          \t\treturn;\n\t}}\n\
          #endif\n",
         root = root
     )
 }
 
-/// `oz_heap_obj_alloc`/`oz_heap_obj_free`, which
+/// `oz_static_heap_alloc`/`oz_static_heap_free`, which
 /// `platform/oz_platform_{zephyr,host}.h` declare and deliberately leave to
 /// generated code: both need `struct OZHeap` to be a complete type, and the
 /// PAL cannot see it. Same division as the oracle's `oz_dispatch.c.j2`.
@@ -560,10 +563,10 @@ fn render_heap_bridge(heap_support: bool, has_ozheap: bool) -> String {
         return String::new();
     }
     if !has_ozheap {
-        return "/* synthesized: the two heap entry points the PAL declares but leaves to\n * generated code. This program declares no OZHeap, so every allocation\n * comes from the system heap and the named-heap arms would call an\n * accessor that is never generated (not from source) */\n#ifdef OZ_HEAP_SUPPORT\nvoid *oz_heap_obj_alloc(struct OZHeap *heap, size_t size)\n{\n\t(void)heap;\n\treturn oz_sys_heap_alloc(size);\n}\n\nvoid oz_heap_obj_free(void *obj)\n{\n\toz_sys_heap_free(obj);\n}\n#endif\n\n"
+        return "/* synthesized: the two heap entry points the PAL declares but leaves to\n * generated code. This program declares no OZHeap, so every allocation\n * comes from the system heap and the named-heap arms would call an\n * accessor that is never generated (not from source) */\n#ifdef OZ_HEAP_SUPPORT\nvoid *oz_static_heap_alloc(struct OZHeap *heap, size_t size)\n{\n\t(void)heap;\n\treturn oz_sys_heap_alloc(size);\n}\n\nvoid oz_static_heap_free(void *obj)\n{\n\toz_sys_heap_free(obj);\n}\n#endif\n\n"
             .to_string();
     }
-    "/* synthesized: the two heap entry points the PAL declares but leaves to\n * generated code -- both need 'struct OZHeap' complete, which only this\n * file has (not from source) */\n#ifdef OZ_HEAP_SUPPORT\nvoid *oz_heap_obj_alloc(struct OZHeap *heap, size_t size)\n{\n\tif (heap) {\n\t\treturn oz_heap_alloc_obj(OZHeap_oz_inner(heap), heap, size);\n\t}\n\treturn oz_sys_heap_alloc(size);\n}\n\nvoid oz_heap_obj_free(void *obj)\n{\n\tstruct oz_heap_hdr *hdr = (struct oz_heap_hdr *)\n\t\t((char *)obj - offsetof(struct oz_heap_hdr, obj));\n\tif (hdr->heap) {\n\t\toz_heap_free_obj(OZHeap_oz_inner(hdr->heap), obj);\n\t} else {\n\t\toz_sys_heap_free(obj);\n\t}\n}\n#endif\n\n"
+    "/* synthesized: the two heap entry points the PAL declares but leaves to\n * generated code -- both need 'struct OZHeap' complete, which only this\n * file has (not from source) */\n#ifdef OZ_HEAP_SUPPORT\nvoid *oz_static_heap_alloc(struct OZHeap *heap, size_t size)\n{\n\tif (heap) {\n\t\treturn oz_heap_alloc_obj(OZHeap_oz_inner(heap), heap, size);\n\t}\n\treturn oz_sys_heap_alloc(size);\n}\n\nvoid oz_static_heap_free(void *obj)\n{\n\tstruct oz_heap_hdr *hdr = (struct oz_heap_hdr *)\n\t\t((char *)obj - offsetof(struct oz_heap_hdr, obj));\n\tif (hdr->heap) {\n\t\toz_heap_free_obj(OZHeap_oz_inner(hdr->heap), obj);\n\t} else {\n\t\toz_sys_heap_free(obj);\n\t}\n}\n#endif\n\n"
         .to_string()
 }
 

@@ -4215,7 +4215,7 @@ fn render_message(node: Node, ctx: &mut EmitCtx) -> (String, String) {
     // function is generated.
     //
     // The two differ only in where the heap comes from. `+dynamicAlloc`
-    // passes a null heap, which is what `oz_heap_obj_alloc` routes to
+    // passes a null heap, which is what `oz_static_heap_alloc` routes to
     // `oz_sys_heap_alloc` (`k_malloc` on Zephyr, `malloc` on host) -- so it
     // needs no allocator of its own, and reusing
     // `{cls}_oz_dynamic_alloc_with_heap` is what keeps the memset, the
