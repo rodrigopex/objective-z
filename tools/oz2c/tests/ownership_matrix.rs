@@ -27,6 +27,22 @@
 // -- so the list cannot rot into a set of silently-skipped shapes, and a
 // reader can trust that everything *not* listed is believed correct.
 
+// **One sink is deliberately covered elsewhere, and saying so is what
+// keeps this file's contract honest.** A boxed collection literal's
+// *elements* are a sink -- `OZArray_oz_free` releases each one -- and
+// there is no row for them here, because `program()` above supplies only
+// `OZObject` and the shapes' own decls: a `@[...]` needs `OZArray`, and a
+// `@{...}` needs `OZDictionary` and `OZString`, so hosting one row would
+// change the preamble and pool directive for all of them.
+//
+// They are covered by `literal_element_ownership.rs`, which also asserts
+// what this file structurally cannot: it counts `-dealloc` calls at
+// runtime rather than refcount traffic in text. That matters for this
+// particular sink, because the defect it was written for (#449) was an
+// element retained although already `+1` -- the counts balance in the
+// function that builds the literal, and only the object failing to die
+// reveals it.
+
 mod common;
 use common::ozobject_src as PREAMBLE;
 
