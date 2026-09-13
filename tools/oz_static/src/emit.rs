@@ -280,8 +280,32 @@ fn collect_local_decls(body: Node, ctx: &mut EmitCtx) {
     /* A `static` object local is a strong slot, not a strong local: it is
      * stored into the same way and released at scope exit never (#359). */
     let statics = static_object_locals(body, ctx.src, ctx.program);
-    ctx.arc_managed_locals.extend(managed.difference(&statics).cloned());
-    ctx.arc_managed_slots.extend(statics);
+    /* **Replaced, not extended, and that is the fix for #459.** These two
+     * sets hold *names*, and `owned_locals_of` consults them by name alone
+     * -- so a name left behind by a previously rendered body answers for a
+     * different body's local of the same name. Bodies render in source
+     * order, which made the defect order-dependent: an owning `t` in an
+     * earlier method released a *borrowed* `t` in a later one, and writing
+     * the two methods the other way round was correct. A caller's
+     * reference freed inside a method that borrows it is a
+     * use-after-free, reproduced under ASan.
+     *
+     * `ctx.scope` above is deliberately *not* reset, and the asymmetry is
+     * the whole point: that map answers "what C type does this identifier
+     * have", and a `block_literal` body needs the enclosing body's answers
+     * to resolve an identifier at all (see `render_body_with_comments`).
+     * These two answer "does ARC manage this slot", which no block body
+     * needs of its enclosing body -- capturing an enclosing local is a
+     * located error (`staticbar::find_capture`), and a `__block` local is
+     * excluded from the managed set and promoted to a file-scope static.
+     *
+     * Reset here rather than at each call site so that a *new* call site
+     * cannot forget it -- the same argument this function's own doc comment
+     * already makes for driving both passes from one place. A per-site
+     * reset was the first fix and is one added caller away from
+     * reintroducing this bug. */
+    ctx.arc_managed_locals = managed.difference(&statics).cloned().collect();
+    ctx.arc_managed_slots = statics;
 }
 
 fn collect_local_decls_inner(node: Node, ctx: &mut EmitCtx) {
