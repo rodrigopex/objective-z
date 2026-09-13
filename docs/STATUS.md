@@ -2094,6 +2094,80 @@ cases *do* declare the same object local in two bodies and none of them
 declares a borrowed one second, which is why 121 cases under ASan and LSan
 were green over a use-after-free reachable in two lines.
 
+## The create rule is a family, and the attributes that could contradict it (#458)
+
+`CREATE_RULE_SELECTORS` was matched with `contains(&selector)` -- an exact
+string comparison against six spellings -- while its own doc comment claimed
+it was "matching Objective-C's own naming rule (the create rule)". It was
+not. ARC matches a **family** (spec § 3.1): a selector is in one when its
+first component *is* the family name, or begins with it and the next
+character is not a lowercase letter. `-newThing`, `-copyThing` and
+`-copyWithZone:` are all `+1` and were read as `+0`.
+
+The tenth ownership decision keyed on a syntactic form, and the form here is
+the selector's exact text.
+
+### Widening it alone would have made things worse
+
+Two attributes exist precisely to contradict the family a selector is
+spelled into, and oz_static reads neither. `ns_returns_not_retained` on a
+create-rule selector is the corrupting case, and it was already reachable
+before any widening:
+
+```objc
+- (Thing *)copy __attribute__((ns_returns_not_retained))
+{
+        return _shared;        /* a borrowed ivar */
+}
+```
+
+ARC reads the attribute and says `+0`, so the caller owes nothing.
+oz_static exact-matched `copy`, called it `+1`, and released at scope exit
+-- freeing an object the caller never owned while the ivar still held it.
+`heap-use-after-free` under ASan, from a source
+`clang -fobjc-arc -Weverything` accepts with **zero** diagnostics.
+
+So the two halves are one change: the five ownership attributes
+(`ns_returns_retained`, `ns_returns_not_retained`, `ns_consumed`,
+`ns_consumes_self`, `objc_method_family`) are refused with a located error,
+and *that* is what makes the family rule safe to widen. Refused rather than
+implemented on #430's precedent -- a spelling whose meaning is a mechanism
+the backend does not have must not be quietly accepted -- and reading them
+properly needs the Clang AST parsed for attributes, which is #453. Nothing
+in `src/`, `include/`, `samples/`, `tests/` or px-keyboard uses any of the
+five, so the refusal refuses nothing that exists.
+
+`objc_precise_lifetime` and `objc_externally_retained` are deliberately
+**not** in that set, and a test pins the boundary: they constrain ARC's
+freedom to move traffic rather than reassigning ownership, and every release
+here is already precise, so ignoring them changes no answer. Their defect is
+that they reach the generated C unlowered, which is #461's.
+
+### The guard is the whole safety argument, and the corpus held the counterexample
+
+Widening what counts as owning is the dangerous direction, so the family
+rule is guarded by what the method returns -- exactly as `is_initialiser`
+has been since #398.
+
+A scan of all **305** distinct selectors in the tree found exactly one that
+the family rule newly reaches:
+`tests/adapted/mulle_spec/retain_release_balance.m` declares
+`- (int)allocOk`. "alloc" followed by `O` is in the `alloc` family by
+spelling, and treating it as `+1` hands `oz_static_release` an `int` --
+which is #398 verbatim, where `[[Thing alloc] initialValue]` released the
+integer 42 and dereferenced it. Signal 11.
+
+**Clang is no help here, and that is worth knowing.** § 3.2 says an
+alloc-family method must return a retainable object pointer, and
+`clang -fobjc-arc` accepts `- (int)allocOk`, `- (int)newCount` and
+`- (int)copyFlag` with no diagnostic at all -- measured, not assumed. So
+this guard is oz_static's own and cannot be delegated.
+
+The scan is the method worth copying: before widening any name-based rule,
+enumerate every name in the tree the widening newly reaches, rather than
+reasoning about which ones it might.
+
+
 ## Standing design rules
 
 - **Never silently degrade.** Anything outside the supported subset is a hard,

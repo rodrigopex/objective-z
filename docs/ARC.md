@@ -58,9 +58,9 @@ transpile-compile-run under ASan for the oz_static half.
 |---|---|---|---|
 | 1.2 | `retain`/`release` are balanced and a null operand is a no-op | `IMPLEMENTED` | `oz_static_retain`/`oz_static_release` both return early on nil (`companion.rs:1603`, `1637`); `behavior/cases/error/release_nil_safe.m` |
 | 1.3 | No automatic retain/release merely for using a pointer as an operand | `IMPLEMENTED` | This *is* the model — see STATUS.md "The hybrid model". `arc.rs` emits only necessary traffic |
-| 1.3.1 | `ns_consumed` / `ns_consumes_self`: caller retains, callee releases | `GAP` | Clang **accepts** the attribute; oz_static reads it nowhere. #461 |
-| 1.3.2 | `ns_returns_retained`: the caller owns the result | `GAP` | Clang accepts; ignored. Harmless alone, corrupting with its negation — #458 |
-| 1.3.2 | `ns_returns_not_retained`: overrides a family's implicit +1 | `GAP` | **Use-after-free.** oz_static still calls a `copy`-family method +1 and releases. #458 |
+| 1.3.1 | `ns_consumed` / `ns_consumes_self`: caller retains, callee releases | `REFUSED` | Same walk (#458). They move an argument's release to the callee, which oz_static does not model — a caller and callee that disagree about who releases is the corrupting direction |
+| 1.3.2 | `ns_returns_retained`: the caller owns the result | `REFUSED` | A located error since #458 (`staticbar::check_ownership_attributes`). Refused rather than implemented on #430's precedent: a spelling whose meaning is a mechanism the backend does not have must not be quietly accepted. Reading it needs #453 |
+| 1.3.2 | `ns_returns_not_retained`: overrides a family's implicit +1 | `REFUSED` | Same walk. This is the one that reached a **use-after-free**: ARC read it and said +0, oz_static called `-copy` +1 and released the caller's object. Refusing it is also what makes § 3.1's family rule safe to widen — no attribute can contradict a family (#458) |
 | 1.3.3 | `objc_autoreleaseReturnValue` / `objc_retainAutoreleasedReturnValue` return convention | `N/A` | No autorelease pool exists, so the convention has nowhere to stand. A function must pick +1 or +0 and declare it consistently (STATUS.md:1077-1082) |
 | 1.3.4 | `(__bridge T)` transfers nothing | `IMPLEMENTED` | `is_bridging_cast` holds it back from all three ownership questions (`arc.rs:1417`) |
 | 1.3.4 | `(__bridge_retained T)` retains, handing +1 to the recipient | `GAP` | **Use-after-free.** No retain emitted; the local is still released at scope exit. #460 |
@@ -101,10 +101,10 @@ transpile-compile-run under ASan for the oz_static half.
 
 | § | Rule | Verdict | Evidence |
 |---|---|---|---|
-| 3.1 | A selector is in a family if its first component **is** the family name, or begins with it followed by a non-lowercase character | `GAP` | `CREATE_RULE_SELECTORS.contains(&selector)` is an **exact** match (`arc.rs:219-226`). `-newThing` and `-copyThing` are in a family and are not recognised. Leak where no implementation is visible; subsumed by return-path analysis where one is. #458 |
+| 3.1 | A selector is in a family if its first component **is** the family name, or begins with it followed by a non-lowercase character | `IMPLEMENTED` | `arc::create_rule_family_of` since #458, replacing an exact match against six spellings. **Guarded by the return type**, because the corpus holds the counterexample: `- (int)allocOk` is in the `alloc` family by spelling and releasing it hands `oz_static_release` an `int` — #398 exactly. Clang accepts `- (int)allocOk` silently, so the guard is oz_static's own. Mirrors `is_initialiser`; `method_family_ownership.rs` pins nine family boundaries |
 | 3.2 | Family signature requirements (`alloc`/`copy`/`mutableCopy`/`new` return a retainable pointer) | `IMPLEMENTED` | `returns_object_pointer` (`arc.rs:137`) |
 | 3.2 | An `init` method must return an ObjC pointer | `IMPLEMENTED`, and sharper than Clang | `is_initialiser` asks what the method *returns*, not how it is spelled — so `-initialValue` is not an initialiser (#398). Clang accepted a declared-only `- (int)initBadly;` in the probe |
-| 3.3 | `objc_method_family(none)` removes a selector from its family | `GAP` | Clang accepts; ignored. #458 |
+| 3.3 | `objc_method_family(none)` removes a selector from its family | `REFUSED` | Same walk as § 1.3.2 (#458): it reassigns a family outright, which is precisely what the widened family rule must not have contradicted underneath it |
 | 3.4.1 | `alloc`/`copy`/`mutableCopy`/`new` implicitly return retained | `IMPLEMENTED` for the exact spellings | `CREATE_RULE_SELECTORS` (`arc.rs:219`); `selector_ownership_matrix.rs` |
 | 3.4.2 | `init` consumes `self` and returns retained | `IMPLEMENTED` | `is_initialiser`; `accounts_for_its_receiver` (`arc.rs:1293`) stops the receiver being released twice (#340) |
 | 3.4.2 | A delegate init (`self = [super init]`) is legal only inside an `init` method | `DELEGATED` | Clang: `cannot assign to 'self' outside of a method in the init family` |
@@ -170,7 +170,6 @@ Ordered by direction, because a leak and a double free are not the same bug
 
 | issue | § | what |
 |---|---|---|
-| #458 | 1.3.2, 3.1, 3.3 | `ns_returns_not_retained` on a family selector: oz_static releases what ARC says it does not own |
 | #460 | 1.3.4 | `__bridge_retained` emits no retain, so the C side is handed a freed slot |
 
 **Leaking:**
@@ -179,7 +178,6 @@ Ordered by direction, because a leak and a double free are not the same bug
 |---|---|---|
 | #460 | 1.3.4 | `__bridge_transfer` emits no release for the +1 it took over |
 | #461 | 2.6.5, 2.7.2 | an out-parameter store is an untracked strong destination |
-| #458 | 3.1 | a family-named selector with no visible implementation is treated as +0 |
 | #454 | — | `goto` emits no scope releases |
 | #450 | — | `arc::analyze`'s fixed point terminates early on a C-factory chain |
 
@@ -189,7 +187,7 @@ rule forbids:**
 | issue | § | what |
 |---|---|---|
 | #448 | 2.2 | `__weak` outside an ivar or property; `__autoreleasing` anywhere |
-| #461 | 1.3.1, 4.4, 5.5 | the five ARC `__attribute__`s reach the generated C unlowered |
+| #461 | 4.4, 5.5 | `objc_externally_retained` and `objc_precise_lifetime` reach the generated C unlowered. Narrowed by #458, which *refuses* the three that carry ownership meaning — what is left is the two that do not, so this is now a lowering defect only |
 
 **`UNEXAMINED` — recorded, not scheduled:**
 
