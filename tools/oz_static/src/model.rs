@@ -47,11 +47,14 @@ pub struct PropertyInfo {
     pub getter_sel: Option<String>,
     pub setter_sel: Option<String>,
     pub ivar_name: Option<String>,
-    /// Source location of the `@property` declaration itself, for
-    /// diagnostics raised during property resolution (after parsing has
-    /// moved past the original `Node`).
-    pub decl_line: usize,
-    pub decl_col: usize,
+    /// Byte offset of the `@property` declaration itself in the merged
+    /// buffer, for diagnostics raised during property resolution (after
+    /// parsing has moved past the original `Node`).
+    ///
+    /// An offset rather than the `(line, col)` pair it used to be, so a
+    /// diagnostic built from it can be resolved back to a real file like
+    /// every other located one (#456).
+    pub decl_offset: usize,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -825,18 +828,99 @@ impl Program {
 #[derive(Debug, Clone)]
 pub struct Diagnostic {
     pub message: String,
+    /// 1-based line, and `col` the 1-based *byte* column.
+    ///
+    /// **Which buffer they index depends on whether `resolve_in` has
+    /// run.** Until it does, they are positions in the merged,
+    /// `#import`-spliced buffer that every pass walks -- and once
+    /// anything has been spliced in, that is a line in no file on disk.
+    /// A 9-line `.m` reported its defect at line 1989 (#456). After
+    /// `resolve_in`, they are positions in `file`.
     pub line: usize,
     pub col: usize,
+    /// Byte offset of the diagnostic in the merged buffer, kept so the
+    /// position can be resolved back to the file it was written in.
+    ///
+    /// Byte offsets are the one coordinate that survives everything:
+    /// `parse::repair_bare_macro_statements` overwrites a whitespace
+    /// byte in place, so it preserves every offset while it can *eat a
+    /// line* -- which is why this is an offset and not a line.
+    ///
+    /// `None` for the three whole-program checks with no node to point
+    /// at: `attach_ast`, an unknown `--pool-sizes` class, and an
+    /// unsizable slab cycle. Those keep the `(1, 1)` they always had;
+    /// giving them a real anchor needs one threaded from upstream and is
+    /// tracked separately.
+    pub offset: Option<usize>,
+    /// The source file `line`/`col` refer to, once `resolve_in` has run.
+    ///
+    /// `None` means they are still merged-buffer positions: either
+    /// nothing resolved them (the pure `transpile()` form is handed a
+    /// string with no files behind it) or the offset fell outside the
+    /// map.
+    pub file: Option<std::path::PathBuf>,
 }
 
 impl Diagnostic {
+    /// A diagnostic at a merged-buffer position with no offset to resolve
+    /// it by -- for a whole-program check that has no `Node` to blame.
+    ///
+    /// Prefer `at`. This spelling cannot be resolved to a file, so it is
+    /// the one that still reports a position no reader can open.
     pub fn new(message: impl Into<String>, line: usize, col: usize) -> Self {
-        Diagnostic { message: message.into(), line, col }
+        Diagnostic { message: message.into(), line, col, offset: None, file: None }
+    }
+
+    /// A diagnostic at `offset` in `src`, the merged buffer.
+    ///
+    /// The single spelling every *located* diagnostic goes through. It
+    /// derives `line`/`col` so no caller computes them, and keeps the
+    /// offset so `resolve_in` can map the position back to the file the
+    /// code was written in. A site that computes `line_col` itself and
+    /// calls `new` instead produces a diagnostic that cannot be resolved
+    /// -- which is the defect #456 fixed, so do not reintroduce it.
+    pub fn at(message: impl Into<String>, src: &str, offset: usize) -> Self {
+        let (line, col) = crate::parse::line_col(src, offset);
+        Diagnostic { message: message.into(), line, col, offset: Some(offset), file: None }
+    }
+
+    /// `at` when the anchor was found, and an unlocatable `(1, 1)` when it
+    /// was not.
+    ///
+    /// One spelling for "located if we can find it" rather than an
+    /// `unwrap_or((1, 1))` at the call site, so the fallback is visible
+    /// here and a caller cannot accidentally produce the unresolvable
+    /// shape while believing it passed an offset.
+    pub fn maybe_at(message: impl Into<String>, src: &str, offset: Option<usize>) -> Self {
+        match offset {
+            Some(offset) => Diagnostic::at(message, src, offset),
+            None => Diagnostic::new(message, 1, 1),
+        }
+    }
+
+    /// Rewrite `line`/`col` as a position in the file the offset was
+    /// spliced from, and record that file.
+    ///
+    /// A no-op when the diagnostic carries no offset, or when the offset
+    /// is outside the map: in both cases the merged position it already
+    /// holds is the most that can honestly be said, so it is left alone
+    /// rather than replaced with a guess.
+    pub fn resolve_in(&mut self, map: &crate::imports::SourceMap) {
+        let Some(offset) = self.offset else { return };
+        let Some((file, line, col)) = map.source_position(offset) else { return };
+        self.file = Some(file.to_path_buf());
+        self.line = line;
+        self.col = col;
     }
 }
 
 impl std::fmt::Display for Diagnostic {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}:{}: {}", self.line, self.col, self.message)
+        match &self.file {
+            Some(path) => {
+                write!(f, "{}:{}:{}: {}", path.display(), self.line, self.col, self.message)
+            }
+            None => write!(f, "{}:{}: {}", self.line, self.col, self.message),
+        }
     }
 }

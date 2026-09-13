@@ -548,7 +548,20 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         Err(diags) => {
-            for d in &diags {
+            /* Resolved here rather than inside the library because this is
+             * where the map lives: `resolved.source_map` covers the very
+             * buffer that was just transpiled, while `Options::source_map`
+             * carries one only to switch `#line` directives on -- reusing
+             * that field would turn directives on for every build (#456).
+             *
+             * Each diagnostic carries the byte offset it was raised at, and
+             * byte offsets survive `repair_bare_macro_statements` (which
+             * overwrites a whitespace byte in place), so nothing has to be
+             * re-derived here. A diagnostic with no offset, or one whose
+             * offset falls outside the map, keeps the merged position it
+             * arrived with. */
+            for mut d in diags {
+                d.resolve_in(&resolved.source_map);
                 eprintln!("oz_static: error: {}", d);
             }
             ExitCode::FAILURE

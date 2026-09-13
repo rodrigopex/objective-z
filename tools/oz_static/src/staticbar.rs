@@ -11,7 +11,6 @@ use std::collections::HashSet;
 use tree_sitter::Node;
 
 use crate::model::{ClassInfo, Diagnostic, Program};
-use crate::parse::line_col;
 
 /// Selectors the emitter answers itself, at the call site, from facts the
 /// whole-program view already has -- so they never become C functions and
@@ -55,8 +54,7 @@ fn node_text<'a>(node: Node, src: &'a str) -> &'a str {
 }
 
 fn err(diags: &mut Vec<Diagnostic>, src: &str, node: Node, message: impl Into<String>) {
-    let (line, col) = line_col(src, node.start_byte());
-    diags.push(Diagnostic::new(message, line, col));
+    diags.push(Diagnostic::at(message, src, node.start_byte()));
 }
 
 /// The selector of a `message_expression`, whatever shape its receiver has.

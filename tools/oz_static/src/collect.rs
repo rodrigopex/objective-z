@@ -551,13 +551,13 @@ fn extract_property(
     let declarator =
         child_by_kind(decl, "struct_declarator").or_else(|| child_by_kind(decl, "identifier"))?;
     let name = find_declared_name(declarator, src);
-    let (decl_line, decl_col) = crate::parse::line_col(src, node.start_byte());
+    let decl_offset = node.start_byte();
 
     if is_weak {
-        diagnostics.push(crate::model::Diagnostic::new(
+        diagnostics.push(crate::model::Diagnostic::at(
             format!("'weak' property '{}' is not supported; use 'unsafe_unretained' instead", name),
-            decl_line,
-            decl_col,
+            src,
+            decl_offset,
         ));
         return None;
     }
@@ -572,8 +572,7 @@ fn extract_property(
         getter_sel,
         setter_sel,
         ivar_name: None,
-        decl_line,
-        decl_col,
+        decl_offset,
     })
 }
 
@@ -710,7 +709,7 @@ pub fn collect(source: &str) -> (Program, Vec<crate::model::Diagnostic>) {
     // First-seen (line, col) per class, kept only for the
     // superclass-resolution diagnostic below -- not part of `ClassInfo`
     // itself, since nothing downstream needs it.
-    let mut first_seen: std::collections::HashMap<String, (usize, usize)> = std::collections::HashMap::new();
+    let mut first_seen: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
     let mut cursor = root.walk();
     for node in root.children(&mut cursor) {
         if node.kind() == "protocol_declaration" {
@@ -731,7 +730,7 @@ pub fn collect(source: &str) -> (Program, Vec<crate::model::Diagnostic>) {
             continue; // category: doesn't declare a new class
         }
         if !classes.contains_key(&name) {
-            first_seen.insert(name.clone(), crate::parse::line_col(source, node.start_byte()));
+            first_seen.insert(name.clone(), node.start_byte());
             classes.insert(
                 name.clone(),
                 ClassInfo { name: name.clone(), superclass, ..Default::default() },
@@ -792,15 +791,15 @@ pub fn collect(source: &str) -> (Program, Vec<crate::model::Diagnostic>) {
     for name in &class_order {
         let Some(sup) = &classes[name].superclass else { continue };
         if !known_classes.contains(sup) {
-            let (line, col) = first_seen[name];
-            diagnostics.push(crate::model::Diagnostic::new(
+            let offset = first_seen[name];
+            diagnostics.push(crate::model::Diagnostic::at(
                 format!(
                     "class '{}' extends '{}', but no class '{}' is defined in this source \
 (oz_static has no #import resolution -- provide a single, self-contained translation unit)",
                     name, sup, sup
                 ),
-                line,
-                col,
+                source,
+                offset,
             ));
         }
     }
@@ -941,14 +940,13 @@ pub fn collect(source: &str) -> (Program, Vec<crate::model::Diagnostic>) {
                 }
             }
             None => {
-                let (line, col) = crate::parse::line_col(source, prop_impl.start_byte());
-                diagnostics.push(crate::model::Diagnostic::new(
+                diagnostics.push(crate::model::Diagnostic::at(
                     format!(
                         "'@synthesize {}' but no '@property {}' is declared on '{}'",
                         prop_name, prop_name, name
                     ),
-                    line,
-                    col,
+                    source,
+                    prop_impl.start_byte(),
                 ));
             }
         }
@@ -1356,8 +1354,7 @@ fn reject_inline_anonymous_aggregates(
     ) {
         if in_method_type {
             if let Some(keyword) = anonymous_aggregate_keyword(node) {
-                let (line, col) = crate::parse::line_col(src, node.start_byte());
-                diagnostics.push(crate::model::Diagnostic::new(
+                diagnostics.push(crate::model::Diagnostic::at(
                     format!(
                         "an inline anonymous '{kw}' is not supported as a method return or \
                          parameter type -- it has no tag to name the type by in the generated C -- \
@@ -1365,8 +1362,8 @@ fn reject_inline_anonymous_aggregates(
                          '{kw} Tag' here",
                         kw = keyword
                     ),
-                    line,
-                    col,
+                    src,
+                    node.start_byte(),
                 ));
                 return;
             }

@@ -48,7 +48,6 @@ use std::collections::HashMap;
 use tree_sitter::Node;
 
 use crate::model::{Diagnostic, Program};
-use crate::parse::line_col;
 
 fn node_text<'a>(node: Node, src: &'a str) -> &'a str {
     &src[node.start_byte()..node.end_byte()]
@@ -297,10 +296,9 @@ fn check_dispatch_signature_agreement(
     conflicts
         .into_iter()
         .map(|(selector, first_class, first_sig, second_class, second_sig)| {
-            let (line, col) = locate_method(root, src, &second_class, &selector)
-                .or_else(|| locate_property_accessor(program, &second_class, &selector))
-                .unwrap_or((1, 1));
-            Diagnostic::new(
+            let offset = locate_method(root, src, &second_class, &selector)
+                .or_else(|| locate_property_accessor(program, &second_class, &selector));
+            Diagnostic::maybe_at(
                 format!(
                     "'{selector}' is dispatched dynamically, so one shared \
                      'OZ_PROTOCOL_SEND_{selc}' routes every implementor -- but \
@@ -315,8 +313,8 @@ fn check_dispatch_signature_agreement(
                     second_class = second_class,
                     second_sig = second_sig
                 ),
-                line,
-                col,
+                src,
+                offset,
             )
         })
         .collect()
@@ -363,12 +361,7 @@ fn returns_are_incompatible(a: &str, b: &str) -> bool {
 /// extends. (The `category.is_none()` guard belongs in
 /// `walk_for_owned_array_ivars`, where a category genuinely cannot
 /// contribute, and reached here by resemblance.)
-fn locate_method(
-    root: Node,
-    src: &str,
-    class: &str,
-    selector: &str,
-) -> Option<(usize, usize)> {
+fn locate_method(root: Node, src: &str, class: &str, selector: &str) -> Option<usize> {
     fn walk(node: Node, src: &str, class: &str, selector: &str) -> Option<usize> {
         if node.kind() == "class_interface" || node.kind() == "class_implementation" {
             let (name, _, _category) = crate::collect::class_header(node, src);
@@ -394,7 +387,7 @@ fn locate_method(
         let children: Vec<Node> = node.children(&mut cursor).collect();
         children.into_iter().find_map(|c| find_selector_byte(c, src, selector))
     }
-    walk(root, src, class, selector).map(|byte| crate::parse::line_col(src, byte))
+    walk(root, src, class, selector)
 }
 
 /// `(line, col)` of the `@property` on `class` whose accessor is `selector`.
@@ -425,11 +418,7 @@ fn locate_method(
 /// time over the same `source` this pass parses, rather than from a second
 /// CST walk that would have to re-derive the `getter=` resolution and could
 /// disagree with it.
-fn locate_property_accessor(
-    program: &Program,
-    class: &str,
-    selector: &str,
-) -> Option<(usize, usize)> {
+fn locate_property_accessor(program: &Program, class: &str, selector: &str) -> Option<usize> {
     let info = program.classes.get(class)?;
     info.properties
         .iter()
@@ -445,7 +434,7 @@ fn locate_property_accessor(
                 None => crate::collect::default_setter_sel(&prop.name) == selector,
             }
         })
-        .map(|prop| (prop.decl_line, prop.decl_col))
+        .map(|prop| prop.decl_offset)
 }
 
 /// Reject an owned array of objects with more than one dimension.
@@ -485,8 +474,7 @@ fn walk_for_owned_array_ivars(
                 if !owned.iter().any(|n| *n == ivar) {
                     continue;
                 }
-                let (line, col) = crate::parse::line_col(src, node.start_byte());
-                diags.push(Diagnostic::new(
+                diags.push(Diagnostic::at(
                     format!(
                         "'{ivar}' is an owned array of objects with more than one dimension \
                          ('{extent}'), which this backend cannot release: the elements are \
@@ -498,8 +486,8 @@ fn walk_for_owned_array_ivars(
                         extent = extent,
                         class = class_name
                     ),
-                    line,
-                    col,
+                    src,
+                    node.start_byte(),
                 ));
             }
         }
@@ -742,9 +730,8 @@ fn check_one(
     if constraint.satisfied_by(&concrete, program) {
         return;
     }
-    let (line, col) = line_col(src, value.start_byte());
     let role = role.map(|r| format!("{} ", r)).unwrap_or_default();
-    diags.push(Diagnostic::new(
+    diags.push(Diagnostic::at(
         format!(
             "generic type mismatch: {}'{}' does not satisfy constraint '{}' (required by '{}')",
             role,
@@ -752,8 +739,8 @@ fn check_one(
             constraint.describe(),
             declared_spelling
         ),
-        line,
-        col,
+        src,
+        value.start_byte(),
     ));
 }
 

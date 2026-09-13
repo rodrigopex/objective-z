@@ -443,8 +443,7 @@ fn check_ast_present(
         .filter_map(|keyword| source.find(keyword))
         .min()
         .unwrap_or(0);
-    let (line, col) = parse::line_col(source, first_class);
-    Err(Diagnostic::new(
+    Err(Diagnostic::at(
         format!(
             "no Clang AST dump was supplied, and this source declares {} class(es). \
              Pass --ast <dump.json> once per `.m` in the program, produced with \
@@ -455,8 +454,8 @@ fn check_ast_present(
              `--allow-missing-ast` states that trade deliberately.",
             program.classes.len()
         ),
-        line,
-        col,
+        source,
+        first_class,
     ))
 }
 
