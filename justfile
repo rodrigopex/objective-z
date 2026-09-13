@@ -278,6 +278,36 @@ test-adapted *args: oz2c
 test-pal: oz2c
     python3 -m pytest tests/pal/ -v
 
+# Both corpora under leak detection -- the gate `ci.yml`'s `leak-check` runs,
+# reachable by name at last (#455).
+#
+# **Linux only, and it says so rather than skipping.** `-fsanitize=leak` does
+# not exist on arm64 macOS, and neither does ASan's `detect_leaks=1`: the
+# first fails to compile, the second aborts with "detect_leaks is not
+# supported on this platform". A recipe that quietly passed on the machine
+# that cannot run it would be the exact defect `ci.yml:473` names -- a check
+# that holds nowhere -- so this one fails loudly and names CI as the place the
+# gate lives.
+#
+# Takes the same `*args` as the corpora, so one case can be reproduced with
+# `just test-leaks -k retain_release_balance`.
+#
+# Both corpora under leak detection (Linux only; the gate lives in CI).
+test-leaks *args: oz2c
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ "$(uname -s)" != "Linux" ]; then
+        echo "just test-leaks: leak detection needs Linux." >&2
+        echo "  -fsanitize=leak does not exist on arm64 macOS, and ASan's" >&2
+        echo "  detect_leaks=1 aborts with 'not supported on this platform'." >&2
+        echo "  The gate runs in CI as the 'leak-check' job; nothing local" >&2
+        echo "  can stand in for it. Run the corpora without it instead:" >&2
+        echo "    just test-behavior && just test-adapted" >&2
+        exit 1
+    fi
+    python3 -m pytest tests/behavior/ -v --check-leaks {{args}}
+    python3 -m pytest tests/adapted/ -v --check-leaks {{args}}
+
 
 # Everything that runs on the host: both corpora through oz2c, the PAL's own
 # C tests, and the transpile-and-compile smoke test. `test-all-transpiler` is
@@ -297,6 +327,12 @@ test-ci-local:
     just test-behavior --compiler=clang
     just test-behavior --opt=O2
     just test-behavior --sanitize=address,undefined
+    # The two cells CI has and this mirror did not (#455). The first is
+    # ASan and LSan in one process, which nothing ran anywhere: the
+    # `sanitizers` job passes `--sanitize` with no `--check-leaks`, so its
+    # ASan leg runs with `detect_leaks=0` explicitly.
+    just test-behavior --sanitize=address,undefined --check-leaks
+    just test-leaks
 
 test-regression: oz2c
     python3 -m pytest tests/behavior/ -v -k regression
