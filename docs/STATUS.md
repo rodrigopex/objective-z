@@ -2224,6 +2224,31 @@ claim, and the claim has to be the true one for that input.
 
 - **Never silently degrade.** Anything outside the supported subset is a hard,
   *located* error. This is deliberate, not a gap someone forgot to fill.
+- **A diagnostic's remedy has to be findable, not merely present.** #456 gave
+  every rejection a real `file:line:col`; the text was still one line with the
+  diagnosis and every remedy fused into it. The `-retain` rejection ran to 90
+  words and carried *three* distinct fixes -- let ARC manage the lifetime, opt
+  the slot out with `__unsafe_unretained`, read the count with
+  `oz_static_retain_count` -- and a reader had to find the imperative clause
+  inside the prose. So `help` is a `Vec`, not an `Option`, and a `note` tier
+  carries the reason, which is neither diagnosis nor remedy (#457).
+
+  Two things the renderer turns on that are easy to get wrong. **Columns are
+  display width, not bytes.** 58 of the 81 behaviour cases are tab-indented, so
+  a caret padded one space per byte lands four columns short of an 8-column tab
+  -- this is the common case here, not an edge one, and the shown line has its
+  tabs expanded so the two rows agree however a terminal draws a tab. **A span
+  wider than its line is clipped**, with a marker: a rejection can cover a whole
+  method body, and underlining forty lines buries the `help:` that says what to
+  do.
+
+  And the change that made the split safe rather than a rewording risk:
+  `Display` carries the tiers. A remedy moved out of `message` into `help` is
+  still visible to anything asking whether the remedy was offered, which is what
+  ~400 substring assertions in the suite ask. Without that, splitting the text
+  would have failed tests whose subject was the remedy, and the temptation would
+  have been to weaken the assertions rather than keep the text.
+
 - **Located means a position in a file the author can open, not a position in
   the buffer the compiler walks.** Every pass reads one `#import`-spliced
   buffer and raises diagnostics at offsets into it, and for the whole life of

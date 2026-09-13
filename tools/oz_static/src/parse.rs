@@ -23,8 +23,9 @@ pub fn parse(source: &str) -> Tree {
 /// what the caller is being shown", which was wrong -- the caller is
 /// being shown a line number they cannot open, and for a 9-line file
 /// with the SDK spliced in that number was 1989 (#456). A diagnostic
-/// goes through `model::Diagnostic::at`, which keeps the *offset* so
-/// `resolve_in` can name the real file and line.
+/// goes through `model::Diagnostic::spanning` (or `at`, which delegates
+/// to it), which keeps the *byte span* so `resolve_in` can name the real
+/// file and line and the renderer can underline the construct.
 ///
 /// What still wants this is a position that has to index the merged
 /// buffer itself: a symbol named after where it was written, which must

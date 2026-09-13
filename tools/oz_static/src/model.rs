@@ -899,14 +899,18 @@ impl Diagnostic {
         }
     }
 
-    /// A diagnostic at `offset` in `src`, the merged buffer.
+    /// A diagnostic pointing a caret at `offset` in `src`, the merged
+    /// buffer.
     ///
-    /// The single spelling every *located* diagnostic goes through. It
-    /// derives `line`/`col` so no caller computes them, and keeps the
-    /// offset so `resolve_in` can map the position back to the file the
-    /// code was written in. A site that computes `line_col` itself and
-    /// calls `new` instead produces a diagnostic that cannot be resolved
-    /// -- which is the defect #456 fixed, so do not reintroduce it.
+    /// For a site with a position but no end to offer. Delegates to
+    /// `spanning`, which is the one place a located diagnostic is built
+    /// -- so the two cannot disagree about how a position is recorded.
+    ///
+    /// `line`/`col` are derived here so no caller computes them, and the
+    /// offset is kept so `resolve_in` can map the position back to the
+    /// file the code was written in. A site that computes `line_col`
+    /// itself and calls `new` instead produces a diagnostic that cannot
+    /// be resolved -- the defect #456 fixed, so do not reintroduce it.
     pub fn at(message: impl Into<String>, src: &str, offset: usize) -> Self {
         Diagnostic::spanning(message, src, offset..offset)
     }
