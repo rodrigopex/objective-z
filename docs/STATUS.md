@@ -2339,6 +2339,60 @@ generated C did. The same shape as the extractor that made `@synchronized`
 look like a leak: when a helper and its caller agree on a type and disagree
 on a meaning, the compiler is not the instrument.
 
+## Two resolvers, one receiver, disagreeing silently (#481)
+
+`arc::collect_declared_types` matched `"declaration" | "parameter_declaration"`.
+An Objective-C **method** parameter is a `method_parameter` node, and that
+kind appeared **zero** times in all of `arc.rs` — against four times each in
+`staticbar.rs` and `collect.rs`. `arc.rs` was the only module that did not
+know it existed.
+
+**What that cost is not what it looks like.** The emitter resolves a
+parameter receiver perfectly well — `ctx.scope` is seeded from
+`collect::extract_method_sig` — and emits a **static** call. Only `arc`
+failed, so `message_target` answered `None`, `dispatch_ownership` fell
+through to polling every reachable implementor, and where two classes
+declare the selector and disagree the poll answered `Ambiguous`, which reads
+as borrowed and emits no release.
+
+So a **statically dispatched send took its ownership answer from an
+ambiguous poll over classes it can never reach.** The `Ambiguous` refusal in
+`emit::dynamic_dispatch_call` could not save it: that guards a *dynamically*
+dispatched send, and this one was static. The two halves resolved the same
+receiver differently and nothing noticed.
+
+### The three conditions, and why the first repro did not reproduce
+
+The defect needs all of:
+
+1. the receiver is a **method parameter**, and
+2. the selector is **not** a create-rule name, and
+3. **two or more** classes declare it and **disagree** about ownership.
+
+The issue's original repro was `- (void)use:(Thing *)t { Thing *c = [t copy]; }`
+and it releases correctly *without* the fix: `copy` is an exact entry in
+`CREATE_RULE_SELECTORS`, so `creates_reference` short-circuits
+`dispatch_ownership` before the poll and the receiver's class is never
+needed. Condition 2 fails outright. An unambiguous analysis-derived factory
+does not reproduce either — one implementor means the poll agrees.
+
+**A test written from that description would have passed on unfixed code.**
+Both non-reproducing shapes are now pinned as controls, and the check that
+matters is the split: removing the fix fails exactly one of four tests, and
+the three that pass either way are the controls. That is what makes the
+three-condition claim measured rather than asserted.
+
+### The question this does not answer
+
+The fix removes the disagreement for this shape. It does not answer whether
+`arc` should resolve receivers **at all**, or should ask the emitter's
+already-correct answer. Two resolvers for one question is the drift this
+repo has paid for twice: #405 made the bar and the emitter share one
+predicate precisely so they could not differ, and #435 made
+`staticbar::message_selector` delegate to `emit::parse_message` after it had
+answered the same question wrongly for years. This is the third instance of
+that shape, and it is an architectural call rather than a fix.
+
 ## Standing design rules
 
 - **The heap has one name per layer, and the layers are the point (#417).** The
