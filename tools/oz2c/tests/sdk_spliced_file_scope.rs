@@ -22,8 +22,8 @@
 // first is the general one:
 //
 //   1. A `#define` in the spliced prelude must be project-namespaced
-//      (`OZ`/`_OZ`). That admits the idempotency guard `OZNumber.m` wraps
-//      its `static inline` q31 helpers in (`_OZ_Q31_HELPERS`), which is the
+//      (`OZ`). That admits the idempotency guard `OZNumber.m` wraps
+//      its `static inline` q31 helpers in (`OZ_Q31_HELPERS`), which is the
 //      pattern this file endorses, and rejects anything owned by someone
 //      else -- libc today, Zephyr tomorrow.
 //   2. No standard library macro is defined anywhere in an SDK `.m`, prelude
@@ -114,7 +114,7 @@ fn a_spliced_prelude_defines_only_project_namespaced_macros() {
             let Some(macro_name) = defined_macro(line) else {
                 continue;
             };
-            if macro_name.starts_with("OZ") || macro_name.starts_with("_OZ") {
+            if macro_name.starts_with("OZ") {
                 continue;
             }
             offenders.push(format!("{}: {}", name, line.trim()));
@@ -125,7 +125,7 @@ fn a_spliced_prelude_defines_only_project_namespaced_macros() {
         offenders.is_empty(),
         "file scope ahead of an `@implementation` is spliced into the generated \
          header every Foundation translation unit includes, so a macro defined \
-         there is defined for all of them. Namespace it `OZ`/`_OZ`, or move it \
+         there is defined for all of them. Namespace it `OZ`, or move it \
          inside the `@implementation`:\n  {}",
         offenders.join("\n  ")
     );
