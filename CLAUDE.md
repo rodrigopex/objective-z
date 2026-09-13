@@ -166,6 +166,13 @@ from an AST, which is why unexpanded macros survive into the output.
   consumes one, by observed output — counting cannot see *which* pointer a release names,
   which is what #398 got wrong). Everything not in those two files is believed correct,
   so a new sink, selector or construct needs a row.
+  Those two records answer *where* a release goes. **[docs/ARC.md](docs/ARC.md) answers
+  which of ARC's rules apply at all** — one verdict per normative rule of the Clang ARC
+  specification (implemented / delegated to `-fobjc-arc` / refused / N/A / gap), with
+  `tools/oz_static/tests/arc_conformance.rs` pinning the delegated and refused ones. A new
+  *rule* needs a row there; a new *site* needs one in the other two. Walking the spec that
+  way is what found #458, #459, #460 and #461 — three of them use-after-free, from source
+  Clang accepts silently (#447).
   A Clang JSON AST is supplied via `--ast`, and since #385 it is **required**, not
   optional: `oz2c` refuses a source that declares a class with no dump behind it, as a
   hard located error. It carries the `__strong` qualifiers and the
