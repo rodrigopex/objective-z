@@ -1168,7 +1168,7 @@ fn class_name_from_type(t: &str) -> Option<String> {
     }
 }
 
-fn find_defining_class(
+pub(crate) fn find_defining_class(
     program: &Program,
     start: &str,
     selector: &str,
@@ -1190,7 +1190,7 @@ fn find_defining_class(
 /// *subclass* of `class_name` must, when `returns_instancetype` is true,
 /// report and cast to the subclass's own pointer type instead of this
 /// literal `return_type` -- see `MethodSig::returns_instancetype`.
-fn method_return_type(
+pub(crate) fn method_return_type(
     program: &Program,
     class_name: &str,
     selector: &str,
@@ -7405,7 +7405,13 @@ fn render_method_definition(
         Some(body) => {
             let class_info = ctx.program.classes[class_name].clone();
             let reject_diags = crate::staticbar::check_method_body(
-                body, ctx.src, ctx.program, &class_info, &sig.params, &sig.selector,
+                body,
+                ctx.src,
+                ctx.program,
+                &class_info,
+                &sig.params,
+                &sig.selector,
+                Some(&crate::staticbar::Sizing { pools: ctx.pools, types: &ctx.scope }),
             );
             if !reject_diags.is_empty() {
                 ctx.diags.extend(reject_diags);
@@ -8164,7 +8170,15 @@ fn walk_top_level<'a>(
                         // `function_definition` paths need it, and an earlier
                         // shape of this change had it in only one.
                         let reject_diags =
-                            crate::staticbar::check_function_body(body, source, program);
+                            crate::staticbar::check_function_body(
+                                body,
+                                source,
+                                program,
+                                Some(&crate::staticbar::Sizing {
+                                    pools,
+                                    types: &ctx.scope,
+                                }),
+                            );
                         if !reject_diags.is_empty() {
                             ctx.diags.extend(reject_diags);
                             text = format!("{}{}", prefix, node_text(body, source));
@@ -8937,7 +8951,12 @@ fn top_level_block_edits(
             let mut cursor = node.walk();
             let body = node.children(&mut cursor).find(|c| c.kind() == "compound_statement");
             if let Some(body) = body {
-                let reject = crate::staticbar::check_function_body(body, ctx.src, program);
+                let reject = crate::staticbar::check_function_body(
+                    body,
+                    ctx.src,
+                    program,
+                    Some(&crate::staticbar::Sizing { pools: ctx.pools, types: &ctx.scope }),
+                );
                 if !reject.is_empty() {
                     ctx.diags.extend(reject);
                     return;
