@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
 
-/// `tools/oz_static/../../include` -- the repo's real platform headers.
+/// `tools/oz2c/../../include` -- the repo's real platform headers.
 fn include_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../include")
 }
@@ -95,10 +95,10 @@ fn declares_a_class(source: &str) -> bool {
 ///     sign of it. That is #274's failure, and the flag is what removes the
 ///     possibility rather than making it unlikely.
 ///   * `-w`. The dump is transpiler input; warnings on it are noise nothing
-///     reads. `cmake/oz_static.cmake` does the same, for the same reason.
+///     reads. `cmake/oz2c.cmake` does the same, for the same reason.
 ///
 /// The exit status is deliberately ignored, for the reason the comment in
-/// `cmake/oz_static.cmake` gives at length: Clang exits non-zero for an
+/// `cmake/oz2c.cmake` gives at length: Clang exits non-zero for an
 /// ordinary error too and then still writes a complete dump. What is checked
 /// instead is that the dump carries facts -- `AstFacts::is_empty()` -- which
 /// is the property the caller actually depends on.

@@ -56,7 +56,7 @@ typedef struct sys_mem_blocks oz_mem_blocks_t;
  * This macro is the right home because oz_static emits it only when the
  * item pool is non-empty: `item_slots()` returns zero for a program with
  * no array or dictionary literal, and zero means "emit neither the pool
- * nor the builders that draw from it" (`tools/oz_static/src/pools.rs`).
+ * nor the builders that draw from it" (`tools/oz2c/src/pools.rs`).
  * A program that uses no collection is therefore never asked for the
  * option. The assert deliberately does *not* go in the two accessors
  * below: a `static inline`'s body is compiled whether or not anything

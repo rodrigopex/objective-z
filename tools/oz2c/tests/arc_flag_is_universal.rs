@@ -35,10 +35,10 @@ const ARC: &str = "-fobjc-arc";
 /// Kept in the order `docs/STATUS.md` lists them, so a reader comparing the
 /// two can do it line by line.
 const CLANG_PATHS: &[(&str, &str)] = &[
-    ("cmake/oz_static.cmake", include_str!("../../../cmake/oz_static.cmake")),
+    ("cmake/oz2c.cmake", include_str!("../../../cmake/oz2c.cmake")),
     ("cmake/ObjcClang.cmake", include_str!("../../../cmake/ObjcClang.cmake")),
     ("tests/tools/compile_and_run.py", include_str!("../../../tests/tools/compile_and_run.py")),
-    ("tools/oz_static/tests/common/mod.rs", include_str!("common/mod.rs")),
+    ("tools/oz2c/tests/common/mod.rs", include_str!("common/mod.rs")),
     ("scripts/regen_zephyr_tests.py", include_str!("../../../scripts/regen_zephyr_tests.py")),
     (
         "scripts/objz_check_compile_db.py",

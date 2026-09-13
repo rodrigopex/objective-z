@@ -83,7 +83,7 @@ jobs:
 
   # The primary gate for the static backend, and until #269 it never ran
   # here at all: this workflow built oz2c only indirectly, through
-  # oz_static.cmake, and never invoked `cargo test`. So all 262 tests --
+  # oz2c.cmake, and never invoked `cargo test`. So all 262 tests --
   # the corpus's `-std=c17 -pedantic-errors` compile check among them
   # (#266) -- held on a maintainer's machine and were unverified on every
   # PR.
@@ -121,8 +121,8 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            tools/oz_static/target
-          key: cargo-${{ runner.os }}-${{ hashFiles('tools/oz_static/Cargo.lock') }}
+            tools/oz2c/target
+          key: cargo-${{ runner.os }}-${{ hashFiles('tools/oz2c/Cargo.lock') }}
           restore-keys: cargo-${{ runner.os }}-
 
       - name: Show toolchain
@@ -134,10 +134,10 @@ jobs:
       # Warnings are part of the gate, not decoration -- the maintainer
       # workflow requires the suite clean including them.
       - name: Build (warnings are errors)
-        run: RUSTFLAGS="-D warnings" cargo build --manifest-path tools/oz_static/Cargo.toml --all-targets
+        run: RUSTFLAGS="-D warnings" cargo build --manifest-path tools/oz2c/Cargo.toml --all-targets
 
       - name: Run the Rust test suite
-        run: cargo test --manifest-path tools/oz_static/Cargo.toml
+        run: cargo test --manifest-path tools/oz2c/Cargo.toml
 
       # Here rather than in its own job because it takes seconds and
       # because a new job would be a new check context, which the `main`
@@ -177,7 +177,7 @@ jobs:
       # `oz_static_build` looks for target/debug/oz2c, and every
       # machine it was tried on already had one.
       - name: Build oz2c
-        run: cargo build --manifest-path tools/oz_static/Cargo.toml
+        run: cargo build --manifest-path tools/oz2c/Cargo.toml
 
       - name: Run behavior tests
         run: >
@@ -209,7 +209,7 @@ jobs:
       # `oz_static_build` looks for target/debug/oz2c, and every
       # machine it was tried on already had one.
       - name: Build oz2c
-        run: cargo build --manifest-path tools/oz_static/Cargo.toml
+        run: cargo build --manifest-path tools/oz2c/Cargo.toml
 
       - name: Run with AddressSanitizer + UBSan
         run: >
@@ -247,7 +247,7 @@ jobs:
       # `oz_static_build` looks for target/debug/oz2c, and every
       # machine it was tried on already had one.
       - name: Build oz2c
-        run: cargo build --manifest-path tools/oz_static/Cargo.toml
+        run: cargo build --manifest-path tools/oz2c/Cargo.toml
 
       - name: Run behavior tests with coverage
         run: >
@@ -291,7 +291,7 @@ jobs:
       # `oz_static_build` looks for target/debug/oz2c, and every
       # machine it was tried on already had one.
       - name: Build oz2c
-        run: cargo build --manifest-path tools/oz_static/Cargo.toml
+        run: cargo build --manifest-path tools/oz2c/Cargo.toml
 
       - name: Run adapted upstream tests
         run: PYTHONPATH=tools python3 -m pytest tests/adapted/ -v --backend=static
@@ -334,7 +334,7 @@ jobs:
       # `oz_static_build` looks for target/debug/oz2c, and every
       # machine it was tried on already had one.
       - name: Build oz2c
-        run: cargo build --manifest-path tools/oz_static/Cargo.toml
+        run: cargo build --manifest-path tools/oz2c/Cargo.toml
 
       - name: Run behavior tests with LeakSanitizer
         run: >
@@ -716,7 +716,7 @@ jobs:
       # the same dependency the corpus jobs gained, and the same way it
       # fails without one: "oz2c not built".
       - name: Build oz2c
-        run: cargo build --manifest-path tools/oz_static/Cargo.toml
+        run: cargo build --manifest-path tools/oz2c/Cargo.toml
 
       - name: Regenerate Zephyr test sources
         run: python scripts/regen_zephyr_tests.py
@@ -729,7 +729,7 @@ jobs:
         run: |
           if [ -n "$(git status --porcelain tests/zephyr/generated/)" ]; then
             echo "FAIL: Transpiled test sources are stale. Run:"
-            echo "  cargo build --manifest-path tools/oz_static/Cargo.toml"
+            echo "  cargo build --manifest-path tools/oz2c/Cargo.toml"
             echo "  python scripts/regen_zephyr_tests.py"
             echo "and commit the updated files."
             git status --porcelain tests/zephyr/generated/

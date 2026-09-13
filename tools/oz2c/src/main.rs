@@ -2,13 +2,13 @@
 //
 // main.rs - CLI entry point for the OZ-091 Track B spike.
 //
-// Wired into CMake by cmake/oz_static.cmake, which CMakeLists.txt includes
+// Wired into CMake by cmake/oz2c.cmake, which CMakeLists.txt includes
 // under CONFIG_OBJZ. Not under CONFIG_OBJZ_BACKEND_STATIC: that symbol is
 // declared `default y` in Kconfig and read by nothing -- no cmake file
 // mentions it -- so turning it off would not select another backend. It is
 // the last trace of the retired backend dispatcher (#420's reverse sweep).
 // Run directly for manual experimentation:
-//   cargo run --manifest-path tools/oz_static/Cargo.toml -- <input.m> <outdir>
+//   cargo run --manifest-path tools/oz2c/Cargo.toml -- <input.m> <outdir>
 
 mod report;
 
@@ -35,7 +35,7 @@ fn usage() -> ExitCode {
 /// The whole point is that two runs over the same dumps produce identical
 /// bytes, so `diff` is a proof rather than an impression -- see
 /// `astinfo::AstFacts::dump_lines`. Goes to **stdout**, because stderr is
-/// where diagnostics live and `tests/tools/oz_static_build.py` reports its
+/// where diagnostics live and `tests/tools/oz2c_build.py` reports its
 /// first line as the reason a transpile failed.
 ///
 /// Unlike the transpile path this does not reject dumps that describe no
@@ -261,7 +261,7 @@ fn main() -> ExitCode {
             // Write only the manifest -- the list of files a full run
             // would generate -- and none of the files themselves.
             //
-            // `cmake/oz_static.cmake` has to know that list before it can
+            // `cmake/oz2c.cmake` has to know that list before it can
             // declare it as an `add_custom_command` OUTPUT, and the only
             // thing that knows it is oz2c. That is why a second, full
             // transpile ran at configure time, dumping and parsing every
@@ -337,7 +337,7 @@ fn main() -> ExitCode {
     let mut rep = report::Reporter::new(level);
     // Every positional but the last is an entry `.m`; the last is the
     // output directory. A build system lists every `.m` a target owns
-    // (see `cmake/oz_static.cmake`), and all of them become one
+    // (see `cmake/oz2c.cmake`), and all of them become one
     // translation unit -- see `imports::resolve_entry_files` for why one
     // unit rather than one run per file.
     if positional.len() < 2 {
@@ -503,7 +503,7 @@ fn main() -> ExitCode {
             // `outdir/` directly. Every generated `#include` is still
             // just a bare filename (see `emit::emit_split`), so whatever
             // compiles this needs both `outdir` and `outdir/Foundation`
-            // on its include search path -- see cmake/oz_static.cmake.
+            // on its include search path -- see cmake/oz2c.cmake.
             let foundation_dir = outdir.join("Foundation");
             if !manifest_only {
                 if let Err(e) = fs::create_dir_all(&foundation_dir) {
@@ -521,7 +521,7 @@ fn main() -> ExitCode {
                 // needed so the parse saw the whole program, but there is
                 // nothing in it to transpile, and copying it back out is at
                 // best duplication of a header the C compiler already has:
-                // `cmake/oz_static.cmake` puts the module's own `include/`
+                // `cmake/oz2c.cmake` puts the module's own `include/`
                 // on the path and links `src/OZLog.c` itself. At worst it
                 // is a redefinition -- `include/oz_sdk/assert.h` is an
                 // AST-analysis shim (its own comment: "The generated C

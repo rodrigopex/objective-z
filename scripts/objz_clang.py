@@ -5,7 +5,7 @@
 One implementation, because there are now four callers and they must agree:
 `tests/tools/compile_and_run.py` (both host corpora), `tests/smoke/run.py`,
 `scripts/regen_zephyr_tests.py`, and the Rust suite's own harness
-(`tools/oz_static/tests/common/mod.rs`, which shells out to
+(`tools/oz2c/tests/common/mod.rs`, which shells out to
 `--print-clang` below). A dump is a transpiler *input* -- it decides ivar
 ownership and method definedness -- so which clang made it is not an
 implementation detail, and two harnesses picking different ones is the

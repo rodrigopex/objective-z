@@ -392,7 +392,7 @@ slot, and measured at 4/4 objects on a pool of one (#423).
 
 Two things are worth keeping from it.
 
-The first is that `tools/oz_static/tests/loop_allocation_bounds.rs`
+The first is that `tools/oz2c/tests/loop_allocation_bounds.rs`
 **asserted the over-rejection as correct behaviour**, in a case named
 `a_constant_index_overlaps_rather_than_accumulates` whose message explained
 why a constant index "overlaps at two rather than accumulating". It was
@@ -673,7 +673,7 @@ Where it went, and where it is now:
 
 **What one dump costs, measured per file rather than inferred from the
 total (#385).** The row above says 2.9 s for 18 dumps, which reads as
-0.161 s each; re-measured by timing `oz_static.cmake`'s own generated
+0.161 s each; re-measured by timing `oz2c.cmake`'s own generated
 per-source scripts, `samples/hello_world` on `mps2/an385` produces its 11
 dumps in **2.52 s serial, mean 0.229 s/dump** (0.143 s for `OZSpinLock.m`,
 0.318 s for `OZDefer.m`, 9.1 MB of JSON). So the order of magnitude in the
@@ -1175,7 +1175,7 @@ terms: a strong ivar store releases its previous value before evaluating
 the new one, so the peak is `N` slots however many times the initialiser
 runs -- not `N+1`, and not `2N`. Sizing needs no headroom for it. Measured
 on a one-slot pool: `first=1`, `second=1`
-(`tools/oz_static/tests/ivar_store_ordering.rs`).
+(`tools/oz2c/tests/ivar_store_ordering.rs`).
 
 **The contract that falls out: `-init` must be idempotent.** What the store
 ordering buys is memory safety, not semantic safety, and three shapes are
@@ -1266,7 +1266,7 @@ makes static resolution free.
 
 **The Clang AST is the corroborating oracle, and depending on it is now
 sanctioned** -- the Zephyr SDK ships clang, CI pins its version
-(`OZ_CLANG`, `-DOBJZ_REQUIRE_TESTED_CLANG=ON`), and `cmake/oz_static.cmake`
+(`OZ_CLANG`, `-DOBJZ_REQUIRE_TESTED_CLANG=ON`), and `cmake/oz2c.cmake`
 already dumps one AST per source. It carries precisely the facts ARC
 decides from: `__strong` / `__unsafe_unretained` qualifiers, and the
 transfer points marked `ARCProduceObject`, `ARCConsumeObject` and
@@ -1311,9 +1311,9 @@ paths agree:
 
 | path | dumps | which clang |
 |---|---|---|
-| `cmake/oz_static.cmake` (Zephyr) | one per entry `.m` + per `src/*.m` | `objz_find_clang()` |
+| `cmake/oz2c.cmake` (Zephyr) | one per entry `.m` + per `src/*.m` | `objz_find_clang()` |
 | `tests/tools/compile_and_run.py` (behaviour + adapted) | one per case | `scripts/objz_clang.py` |
-| `tools/oz_static/tests/common/mod.rs` (Rust suite) | one per compile-and-run case | `scripts/objz_clang.py` |
+| `tools/oz2c/tests/common/mod.rs` (Rust suite) | one per compile-and-run case | `scripts/objz_clang.py` |
 | `tests/smoke/run.py` | one | `scripts/objz_clang.py` |
 | `scripts/regen_zephyr_tests.py` | one per source | `scripts/objz_clang.py` |
 
@@ -1420,7 +1420,7 @@ right:
   every one assigns the `+1` *directly*; the defect needs the reference to
   pass through a local first.
 
-The audit is now `tools/oz_static/tests/ownership_matrix.rs`, asserting the
+The audit is now `tools/oz2c/tests/ownership_matrix.rs`, asserting the
 refcount shape of every sink, with the two remaining defects asserted to
 *still* be defective the way `KNOWN_CC_FAILURES` is -- so fixing one fails
 the test and forces the list to change, and everything not listed is
@@ -1431,7 +1431,7 @@ believed correct rather than merely unexamined.
 #400 walked the dimension the four earlier audits did not: **which selectors
 and constructs create or consume a reference**, the set every other ownership
 answer is built on. Six areas, fourteen cells, now standing as
-`tools/oz_static/tests/selector_ownership_matrix.rs`.
+`tools/oz2c/tests/selector_ownership_matrix.rs`.
 
 Everything behaved correctly except one cell, and it is the seventh consecutive
 ownership decision keyed on a syntactic form rather than on the reference:
@@ -1985,7 +1985,7 @@ walked is **the specification itself** -- which of ARC's normative rules hold
 here, rule by rule.
 
 That is now [docs/ARC.md](ARC.md), with one verdict per rule, and
-`tools/oz_static/tests/arc_conformance.rs` pinning the two verdicts that are
+`tools/oz2c/tests/arc_conformance.rs` pinning the two verdicts that are
 claims about behaviour rather than descriptions of code.
 
 **What it produced before it had written a single row.** Six defects, three of
@@ -2356,8 +2356,8 @@ claim, and the claim has to be the true one for that input.
   written.** A send of `retain`, `release`, `autorelease` or `dealloc` is a
   hard, located error, and so is *declaring or defining* one of the first three
   (#428). Every Clang path in this project passes `-fobjc-arc` --
-  `cmake/oz_static.cmake`, `cmake/ObjcClang.cmake`,
-  `tests/tools/compile_and_run.py`, `tools/oz_static/tests/common/mod.rs`,
+  `cmake/oz2c.cmake`, `cmake/ObjcClang.cmake`,
+  `tests/tools/compile_and_run.py`, `tools/oz2c/tests/common/mod.rs`,
   `scripts/regen_zephyr_tests.py`, and `scripts/objz_check_compile_db.py`'s
   `REQUIRED_FLAGS` -- under which each of those sends is a compile error.
   oz_static parses with tree-sitter rather than Clang, which is the only
@@ -2746,7 +2746,7 @@ claim, and the claim has to be the true one for that input.
 
   The enforcement is structural rather than a test. Dropping the `#ifndef`
   leaves the read bare, and `src/OZLog.c` is added to a build only by
-  `oz_static.cmake` under `CONFIG_OBJZ` while the option sits inside
+  `oz2c.cmake` under `CONFIG_OBJZ` while the option sits inside
   `if OBJZ`, so the symbol exists wherever the file does -- and removing the
   `Kconfig` entry now stops the build at
   `src/OZLog.c:33:18: error: 'CONFIG_OBJZ_LOG_BUFFER_SIZE' undeclared`, which was
@@ -2772,7 +2772,7 @@ claim, and the claim has to be the true one for that input.
   `CMakeLists.txt`, cmake module or justfile recipe reaches, making them
   references in dead code rather than reads. The three with a site outside
   those trees are all prose recording a retirement: `CONFIG_OBJZ_BACKEND` in
-  `oz_static.cmake` and `CLAUDE.md` on the dispatcher that went with the
+  `oz2c.cmake` and `CLAUDE.md` on the dispatcher that went with the
   Python backend, `CONFIG_OBJZ_BACKEND_PYTHON` in `Kconfig`'s own comment
   saying it no longer exists, `CONFIG_OBJZ_FLAT_DISPATCH` inside README's
   "Legacy Runtime Reference" block -- and each of them again in this paragraph,
@@ -2780,9 +2780,9 @@ claim, and the claim has to be the true one for that input.
   `CONFIG_OBJZ_LOG_BUFFER_SIZE` was the only one a compiled source read. The
   reverse direction found one:
   `CONFIG_OBJZ_BACKEND_STATIC` is declared, `default y`, and read by nothing
-  at all -- `CMakeLists.txt` gates on `CONFIG_OBJZ`, `oz_static.cmake` never
+  at all -- `CMakeLists.txt` gates on `CONFIG_OBJZ`, `oz2c.cmake` never
   tests it, and `main.rs:5`'s comment claiming it is "wired into CMake by
-  cmake/oz_static.cmake" is the opposite of what that file does.
+  cmake/oz2c.cmake" is the opposite of what that file does.
 
 - **`__objc_` is retired as a prefix, and a leading double underscore is never
   ours to spell.** C reserves it to the implementation, so every name under it
@@ -2916,5 +2916,5 @@ claim, and the claim has to be the true one for that input.
   above the `#define` it was written to catch. It reported clean on the exact
   input it was built against. **A text guard is not evidence until it has been
   made to fail.**
-- **The version is `tools/oz_static/Cargo.toml`**, bumped in the same commit
+- **The version is `tools/oz2c/Cargo.toml`**, bumped in the same commit
   as the change it describes. The repo-level `VERSION` file is retired.

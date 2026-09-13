@@ -249,7 +249,7 @@ int main(void) {
 /// This is what lets a Zephyr definition macro take an inline block, which is
 /// what #272 was filed for, and **whether it works turns entirely on how the
 /// macro treats the argument under `__OBJC__`.** Clang parses the same file
-/// -- `cmake/oz_static.cmake` dumps one AST per source as oz2c's ownership
+/// -- `cmake/oz2c.cmake` dumps one AST per source as oz2c's ownership
 /// oracle -- so the source has to be valid Objective-C, and Objective-C
 /// refuses block-to-function-pointer conversion in every position:
 ///

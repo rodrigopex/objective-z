@@ -3,7 +3,7 @@
 // cli_progress.rs - oz2c's progress output, and the stream it goes on.
 //
 // The routing is the part that can break something else. stderr belongs to
-// diagnostics: `tests/tools/oz_static_build.py` takes
+// diagnostics: `tests/tools/oz2c_build.py` takes
 // `stderr.strip().splitlines()` and reports `err[0]` as the reason a
 // transpile failed, and `corpus_parity.rs` returns the whole trimmed
 // stderr. A progress line on stderr would displace a real error message in
@@ -219,7 +219,7 @@ fn timings_prints_the_phase_rows_in_pipeline_order() {
 /// A rejected source still reports its reason as the first line of stderr,
 /// with progress on.
 ///
-/// Mirrors exactly what `tests/tools/oz_static_build.py` does with the
+/// Mirrors exactly what `tests/tools/oz2c_build.py` does with the
 /// output, so a regression there fails here first.
 #[test]
 fn a_rejected_source_reports_its_reason_first_on_stderr() {

@@ -36,7 +36,7 @@ serde = { version = "1", features = ["derive"] }
 # `serde_json`'s parser, and `package."*"` also covers tree-sitter-objc's
 # generated parser.c, which cc-rs was building unoptimised. The local crate
 # stays at 1 so editing oz_static is still quick to rebuild, which is what
-# `cmake/oz_static.cmake`'s "configure-time compile speed matters here"
+# `cmake/oz2c.cmake`'s "configure-time compile speed matters here"
 # comment was protecting.
 #
 # Deliberately `profile.dev` rather than a release build:
@@ -47,7 +47,7 @@ serde = { version = "1", features = ["derive"] }
 #     never runs, which is the trap `cmake/ObjcClang.cmake` documents for
 #     clang 18-vs-19.
 #   - `target/debug/oz2c` is hardcoded in three places
-#     (`cmake/oz_static.cmake`, `tests/tools/oz_static_build.py`,
+#     (`cmake/oz2c.cmake`, `tests/tools/oz2c_build.py`,
 #     `scripts/regen_zephyr_tests.py`) plus the CI workflow, so no path
 #     anywhere has to change.
 #

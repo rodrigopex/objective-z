@@ -190,7 +190,7 @@ endfunction()
 # Registers a deferred function to write compile_commands_objc.json
 # and create a merge target (once).
 #
-# Called from `oz_static.cmake`'s AST-dump loop, once per `.m` file it is
+# Called from `oz2c.cmake`'s AST-dump loop, once per `.m` file it is
 # about to hand to Clang, with the same flags. That is the only caller: the
 # entry is only as good as the flags, and those are the flags Clang is known
 # to accept on that exact file.
@@ -341,7 +341,7 @@ endfunction()
 # No longer "host-compatible", which this heading said for as long as the
 # dump was parsed as the build machine: `--target=` has named the real
 # embedded triple since #274. The same flags, minus `-w`, are what
-# `oz_static.cmake` hands to `_objz_collect_compile_db()` (#304), so a change
+# `oz2c.cmake` hands to `_objz_collect_compile_db()` (#304), so a change
 # here moves both the transpiler's oracle and what clangd sees.
 #
 # The AST dump only needs include paths, defines, and ObjC parsing.

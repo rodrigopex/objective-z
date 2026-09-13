@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 #
-# oz_static.cmake — Transpile Objective-C (.m) to plain C via `oz2c`.
+# oz2c.cmake — Transpile Objective-C (.m) to plain C via `oz2c`.
 #
 # The entry point every consumer calls is `objz_transpile_sources()`, defined
 # at the bottom of this file. It used to live in `oz_transpile.cmake` and
@@ -11,12 +11,12 @@
 #
 # Supported: any number of entry `.m` files (all merged into one
 # translation unit, with further `.m`s pulled in automatically via
-# `#import` — see tools/oz_static/src/imports.rs), INCLUDE_DIRS,
+# `#import` — see tools/oz2c/src/imports.rs), INCLUDE_DIRS,
 # ROOT_CLASS as a cross-check, and POOL_SIZES.
 #
 # Objects come from a per-class PAL slab (`OZ_SLAB_DEFINE`), sized by
 # counting allocation sites and overridable per class — see
-# tools/oz_static/src/pools.rs. A size can also be stated in the source
+# tools/oz2c/src/pools.rs. A size can also be stated in the source
 # itself as `/* oz-pool: Class=N,... */`, the same directive the Python
 # backend's own test harness reads; POOL_SIZES here wins for the classes
 # it names.
@@ -54,13 +54,13 @@ function(objz_transpile_sources_static target)
     # ── Build oz2c (debug profile: configure-time compile speed matters
     #    here, not the transpiler's own runtime speed). Once per configure,
     #    which is not once per sweep -- see the lock below ──────────────
-    set(_oz_static_dir ${_mod}/tools/oz_static)
-    set(_oz2c ${_oz_static_dir}/target/debug/oz2c)
+    set(_oz2c_dir ${_mod}/tools/oz2c)
+    set(_oz2c ${_oz2c_dir}/target/debug/oz2c)
     # Globbed at configure time, which is enough for the case this exists
     # for: editing the transpiler and rebuilding a sample. Adding a *new*
     # source file needs a re-configure, same as any CMake glob.
-    file(GLOB_RECURSE _oz2c_srcs ${_oz_static_dir}/src/*.rs)
-    list(APPEND _oz2c_srcs ${_oz_static_dir}/Cargo.toml)
+    file(GLOB_RECURSE _oz2c_srcs ${_oz2c_dir}/src/*.rs)
+    list(APPEND _oz2c_srcs ${_oz2c_dir}/Cargo.toml)
     # Zephyr's own toolchain cmake exports CC/CFLAGS (the ARM
     # cross-compiler) into ENV, which cc-rs (tree-sitter-objc's C parser
     # build script) would otherwise inherit -- unset them so cargo builds
@@ -85,8 +85,8 @@ function(objz_transpile_sources_static target)
     # The lock lives under `target/`, so it is gitignored and `cargo clean`
     # takes it with the build it guards. `GUARD PROCESS` also releases it if
     # this CMake process dies before the explicit release below.
-    set(_oz2c_lock ${_oz_static_dir}/target/.oz2c-build.lock)
-    file(MAKE_DIRECTORY ${_oz_static_dir}/target)
+    set(_oz2c_lock ${_oz2c_dir}/target/.oz2c-build.lock)
+    file(MAKE_DIRECTORY ${_oz2c_dir}/target)
     file(LOCK ${_oz2c_lock} GUARD PROCESS TIMEOUT 900 RESULT_VARIABLE _lock_rc)
     if(NOT _lock_rc STREQUAL "")
         # Not fatal: a lock we could not take costs concurrency, and cargo's
@@ -100,7 +100,7 @@ function(objz_transpile_sources_static target)
     execute_process(
         COMMAND ${CMAKE_COMMAND} -E env --unset=CC --unset=CXX --unset=CFLAGS --unset=CXXFLAGS
                 --unset=LDFLAGS --unset=AR --unset=RANLIB --unset=NM
-                cargo build --manifest-path ${_oz_static_dir}/Cargo.toml
+                cargo build --manifest-path ${_oz2c_dir}/Cargo.toml
         RESULT_VARIABLE _cargo_rc
         OUTPUT_VARIABLE _cargo_out
         ERROR_VARIABLE _cargo_err
@@ -557,7 +557,7 @@ function(objz_transpile_sources_static target)
         OUTPUT  ${_gen_files}
         COMMAND ${CMAKE_COMMAND} -E env --unset=CC --unset=CXX --unset=CFLAGS --unset=CXXFLAGS
                 --unset=LDFLAGS --unset=AR --unset=RANLIB --unset=NM
-                cargo build --manifest-path ${_oz_static_dir}/Cargo.toml
+                cargo build --manifest-path ${_oz2c_dir}/Cargo.toml
         # The dumps are their own edges now (above), so ninja produces
         # them -- in parallel, and only the ones whose source or headers
         # changed -- and this command consumes them. It no longer re-runs

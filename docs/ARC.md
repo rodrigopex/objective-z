@@ -28,7 +28,7 @@ was found by a hand audit prompted by the previous one.
 ARC's front end.** Every Clang path in this project passes `-fobjc-arc` —
 asserted, not assumed, by `arc_flag_is_universal.rs` (#443) — and the AST dump
 fails the build on *any* error, with two matched exceptions
-(`cmake/oz_static.cmake:345`). So a rule Clang refuses is a rule this project
+(`cmake/oz2c.cmake:345`). So a rule Clang refuses is a rule this project
 refuses, and writing that down is what turns an inherited property into a claim
 someone checked.
 

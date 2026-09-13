@@ -30,7 +30,7 @@ set -euo pipefail
 # is built against it, or how CI does any of that. `.github/**` is here
 # so a change to this script or the workflow re-runs everything it gates.
 patterns=(
-	'tools/oz_static/'
+	'tools/oz2c/'
 	'include/'
 	'src/'
 	'samples/'

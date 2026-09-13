@@ -39,8 +39,8 @@ use common::{checkout_key, checkout_key_of, test_scratch_dir, ScratchDir};
 /// taking the directory rather than reading `CARGO_MANIFEST_DIR` itself.
 #[test]
 fn two_checkouts_get_different_keys() {
-    let primary = "/Users/dev/objective-z/tools/oz_static";
-    let worktree = "/tmp/wt343/tools/oz_static";
+    let primary = "/Users/dev/objective-z/tools/oz2c";
+    let worktree = "/tmp/wt343/tools/oz2c";
     assert_ne!(
         checkout_key_of(primary),
         checkout_key_of(worktree),

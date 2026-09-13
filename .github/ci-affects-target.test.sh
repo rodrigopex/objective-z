@@ -98,10 +98,10 @@ expect "$tmp/docs-full" false "none under a path that reaches a target build" \
 BASE_SHA=""
 
 # A source change must still run everything.
-make_upstream code-up code 'tools/oz_static/src/emit.rs'
+make_upstream code-up code 'tools/oz2c/src/emit.rs'
 git_quiet clone -q "$tmp/code-up" "$tmp/code-full"
 (cd "$tmp/code-full" && git_quiet checkout -q code)
-expect "$tmp/code-full" true "matches tools/oz_static/" \
+expect "$tmp/code-full" true "matches tools/oz2c/" \
 	"a transpiler source change reaches a target build"
 
 # So must a change to the filter itself, or to the workflow that runs it.

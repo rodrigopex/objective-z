@@ -584,7 +584,7 @@ pub fn resolve_imports(
 /// `resolve_imports` for several entry `.m` files at once, merged into
 /// one translation unit -- what a build system hands over, since a
 /// sample's CMakeLists.txt lists every `.m` it owns (see
-/// `cmake/oz_static.cmake`).
+/// `cmake/oz2c.cmake`).
 ///
 /// One translation unit rather than one run per file, because the whole
 /// design is whole-program: `collect` rejects a class whose superclass it

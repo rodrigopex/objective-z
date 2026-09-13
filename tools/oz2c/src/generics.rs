@@ -101,7 +101,7 @@ impl Constraint {
 fn parse_constraint(type_node: Node, src: &str) -> Option<Constraint> {
     // `id<Proto>` parses as `typedefed_specifier` wrapping `id` plus a
     // `protocol_reference_list` -- see the probe in this change's
-    // description, or `tools/oz_static/tests/type_constraints.rs`'s
+    // description, or `tools/oz2c/tests/type_constraints.rs`'s
     // header comment for the confirmed shape.
     if let Some(list) = find_protocol_reference_list(type_node) {
         let mut cursor = list.walk();
