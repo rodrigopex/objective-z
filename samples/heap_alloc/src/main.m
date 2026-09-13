@@ -55,7 +55,7 @@ int main(void)
 	OZLog("local heap before: %zu bytes used", [sHeap usedBytes]);
 
 	/* Allocate from user-provided heap */
-	@autoreleasepool {
+	{
 		Sensor *s = [[Sensor dynamicAllocWithHeap:appHeap] init];
 		[s setValue:42];
 		OZLog("Sensor allocated from app heap, value=%d", [s value]);
@@ -70,14 +70,14 @@ int main(void)
 	OZLog("local heap after free: %zu bytes used", [sHeap usedBytes]);
 
 	/* Allocate from the system heap -- k_malloc on Zephyr */
-	@autoreleasepool {
+	{
 		Sensor *s = [[Sensor dynamicAlloc] init];
 		[s setValue:99];
 		OZLog("Sensor allocated from system heap, value=%d", [s value]);
 	}
 
 	/* Regular slab allocation still works */
-	@autoreleasepool {
+	{
 		Sensor *s = [[Sensor alloc] init];
 		[s setValue:7];
 		OZLog("Slab sensor value=%d", [s value]);
