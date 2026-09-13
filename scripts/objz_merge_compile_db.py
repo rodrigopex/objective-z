@@ -9,9 +9,9 @@ up in one database.
 
 The header half exists because a `.h` with no entry of its own is not left
 alone -- clangd interpolates one, and the nearest match is the *generated* C
-twin under `oz_static_generated/`. That command is wrong for a header twice
+twin under `oz2c_generated/`. That command is wrong for a header twice
 over: it is `-x c-header -std=c17`, so every `@interface` is a syntax error;
-and its `-I .../oz_static_generated` precedes the SDK's, so the generated
+and its `-I .../oz2c_generated` precedes the SDK's, so the generated
 plain-C `Foundation/Foundation.h` shadows the Objective-C one and `OZObject` is
 never declared. An exact filename match always beats interpolation, so an entry
 per header removes both mechanisms rather than compensating for them (#320).

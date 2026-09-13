@@ -274,7 +274,7 @@ allocation balance.
 ### CMake Build Infrastructure (`cmake/`)
 
 - **`oz2c.cmake`** — builds `oz2c`, dumps one Clang AST per source for ARC facts,
-  and emits generated sources into `oz_static_generated/`. Defines
+  and emits generated sources into `oz2c_generated/`. Defines
   `objz_transpile_sources()`, the entry point every sample calls — the name is
   unchanged from when it lived in the deleted `oz_transpile.cmake`, because 15 samples,
   px-app and any out-of-tree user call it

@@ -162,7 +162,7 @@ function(objz_transpile_sources_static target)
     endif()
     # CONFIG_OBJZ_DEBUG_LINES puts #line directives on the generated C, so
     # gdb, addr2line, a fatal-error backtrace and coverage all name the .m
-    # the code was written in instead of oz_static_generated/<Class>.c
+    # the code was written in instead of oz2c_generated/<Class>.c
     # (#305). Like --introspection this needs nothing on the C side: the
     # directives are in the emitted text and change only what the compiler
     # writes into DWARF, so the program itself is byte-for-byte the same.
@@ -230,8 +230,8 @@ function(objz_transpile_sources_static target)
         list(APPEND _oz2c_flags -I ${_dir})
     endforeach()
 
-    set(_outdir ${CMAKE_CURRENT_BINARY_DIR}/oz_static_generated)
-    set(_manifest ${_outdir}/oz_static_manifest.txt)
+    set(_outdir ${CMAKE_CURRENT_BINARY_DIR}/oz2c_generated)
+    set(_manifest ${_outdir}/oz2c_manifest.txt)
     file(MAKE_DIRECTORY ${_outdir}/Foundation)
 
     # ── Clang AST dumps ───────────────────────────────────────────────
@@ -285,7 +285,7 @@ function(objz_transpile_sources_static target)
     file(GLOB _sdk_impls ${_mod}/src/*.m)
     set(_ast_dir ${_outdir}/ast)
     file(MAKE_DIRECTORY ${_ast_dir})
-    set(_ast_script "${_ast_dir}/oz_static_ast.sh")
+    set(_ast_script "${_ast_dir}/oz2c_ast.sh")
     set(_ast_lines "#!/bin/sh\n")
     set(_ast_args "")
     set(_ast_outputs "")
@@ -424,7 +424,7 @@ function(objz_transpile_sources_static target)
     #     and harmless: a file name does not depend on an ARC fact, and the
     #     build-time run overwrites this output anyway.
     #   - at build time (the `add_custom_command` further down), which
-    #     `add_dependencies(oz_static_transpile_gen zephyr_generated_headers)`
+    #     `add_dependencies(oz2c_transpile_gen zephyr_generated_headers)`
     #     orders after those headers exist. **This is the run whose dumps
     #     reach the shipped C**, so this is the run worth checking.
     #
@@ -436,7 +436,7 @@ function(objz_transpile_sources_static target)
     # compatibility warning meant to catch a silently-substituted clang had
     # printed on every CI run for the life of the workflow, unread in a
     # 1400-line log. A warning about a substituted oracle is not a check.
-    set(_ast_check "${_ast_dir}/oz_static_ast_check.sh")
+    set(_ast_check "${_ast_dir}/oz2c_ast_check.sh")
     if(OBJZ_ALLOW_PARTIAL_AST)
         file(WRITE ${_ast_check}
             "#!/bin/sh\n"
@@ -607,9 +607,9 @@ function(objz_transpile_sources_static target)
         USES_TERMINAL
     )
 
-    add_custom_target(oz_static_transpile_gen DEPENDS ${_gen_files})
-    add_dependencies(oz_static_transpile_gen zephyr_generated_headers)
-    add_dependencies(${target} oz_static_transpile_gen)
+    add_custom_target(oz2c_transpile_gen DEPENDS ${_gen_files})
+    add_dependencies(oz2c_transpile_gen zephyr_generated_headers)
+    add_dependencies(${target} oz2c_transpile_gen)
 
     foreach(_f ${_gen_files})
         get_filename_component(_ext ${_f} EXT)
