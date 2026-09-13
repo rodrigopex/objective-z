@@ -118,7 +118,7 @@ impl Reporter {
         };
         let _ = writeln!(
             out,
-            "oz_static: {} entry source{}, {} origins, {} resolved; {}",
+            "oz2c: {} entry source{}, {} origins, {} resolved; {}",
             entries,
             if entries == 1 { "" } else { "s" },
             origins,
@@ -143,9 +143,9 @@ impl Reporter {
          * that is the contract anything scraping our output relies on. */
         if self.quiet() {
             if listed_only {
-                eprintln!("oz_static: {} files listed for {}", written, outdir.display());
+                eprintln!("oz2c: {} files listed for {}", written, outdir.display());
             } else {
-                eprintln!("oz_static: {} files generated in {}", written, outdir.display());
+                eprintln!("oz2c: {} files generated in {}", written, outdir.display());
             }
             return;
         }
@@ -154,7 +154,7 @@ impl Reporter {
         let mut out = out.lock();
         let _ = writeln!(
             out,
-            "oz_static: {} files {} {} ({:.2}s)",
+            "oz2c: {} files {} {} ({:.2}s)",
             written,
             if listed_only { "listed for" } else { "generated in" },
             outdir.display(),
@@ -170,7 +170,7 @@ impl Reporter {
          * they did. */
         let _ = writeln!(
             out,
-            "oz_static: timings (of {:.2}s wall; rows are spans, not a partition)",
+            "oz2c: timings (of {:.2}s wall; rows are spans, not a partition)",
             elapsed.as_secs_f64()
         );
         let wall = elapsed.as_secs_f64();
@@ -184,7 +184,7 @@ impl Reporter {
             };
             let _ = writeln!(
                 out,
-                "oz_static:   {:<16} {:>7.2}s   {:>5.1}%{}",
+                "oz2c:   {:<16} {:>7.2}s   {:>5.1}%{}",
                 phase.label(),
                 secs,
                 share,
@@ -232,7 +232,7 @@ impl Observer for Reporter {
         if self.level == Level::Timings {
             let _ = writeln!(
                 out,
-                "oz_static: ast {}  {:<30} {:>9}   {:.2}s",
+                "oz2c: ast {}  {:<30} {:>9}   {:.2}s",
                 counter,
                 label,
                 human_bytes(json_bytes as u64),
@@ -241,7 +241,7 @@ impl Observer for Reporter {
         } else {
             let _ = writeln!(
                 out,
-                "oz_static: ast {}  {:<30} {:>9}",
+                "oz2c: ast {}  {:<30} {:>9}",
                 counter,
                 label,
                 human_bytes(json_bytes as u64)

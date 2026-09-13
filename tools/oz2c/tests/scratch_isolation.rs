@@ -5,8 +5,8 @@
 //
 // The bug this covers is not in the transpiler: it is in the suite. Every
 // scratch path was built from a fixed name under `$TMPDIR`
-// (`oz_static_corpus_compile`, `oz_static_fptr_probe.c`,
-// `oz_static_test_<stem>`), so it did not depend on the checkout -- and
+// (`oz2c_corpus_compile`, `oz2c_fptr_probe.c`,
+// `oz2c_test_<stem>`), so it did not depend on the checkout -- and
 // each site cleared the directory on entry. Two `cargo test` runs in two
 // worktrees therefore destroyed each other's output mid-run:
 //
@@ -73,7 +73,7 @@ fn a_scratch_path_names_this_checkout_and_this_run() {
     );
     assert_ne!(
         scratch.path(),
-        std::env::temp_dir().join("oz_static_isolation_probe").as_path(),
+        std::env::temp_dir().join("oz2c_isolation_probe").as_path(),
         "still the old checkout-independent name"
     );
     assert!(scratch.path().is_dir(), "the directory was not created");
@@ -125,11 +125,11 @@ fn compile_and_run_scratch_is_per_checkout() {
     let dir = test_scratch_dir("some_case");
     let name = dir.file_name().unwrap().to_str().unwrap().to_string();
 
-    assert!(name.starts_with("oz_static_test_some_case_"), "unexpected name {}", name);
+    assert!(name.starts_with("oz2c_test_some_case_"), "unexpected name {}", name);
     assert!(name.ends_with(&checkout_key()), "{} does not name this checkout", name);
     assert_ne!(
         dir,
-        std::env::temp_dir().join("oz_static_test_some_case"),
+        std::env::temp_dir().join("oz2c_test_some_case"),
         "still the old checkout-independent name"
     );
     /* Spelled out rather than probed for the absence of a pid: five
@@ -137,7 +137,7 @@ fn compile_and_run_scratch_is_per_checkout() {
      * would fail on one run in a few thousand for no reason at all. */
     assert_eq!(
         name,
-        format!("oz_static_test_some_case_{}", checkout_key()),
+        format!("oz2c_test_some_case_{}", checkout_key()),
         "keyed on more than the checkout, which would leak a directory per run"
     );
 }

@@ -885,7 +885,7 @@ pub fn ozheap_src() -> String {
 /// justfile's `outdir` was keyed on `file_name(justfile_directory())` for
 /// exactly this reason after two twister sweeps shared `/tmp/twister-out`
 /// (#315), and the Rust suite never got the same treatment -- two
-/// concurrent `cargo test` runs shared `$TMPDIR/oz_static_corpus_compile`
+/// concurrent `cargo test` runs shared `$TMPDIR/oz2c_corpus_compile`
 /// and each deleted the directory the other was still writing into
 /// (#343). The failure that produces is *convincing*: it names a corpus
 /// case and a missing generated header, and points at nothing external.
@@ -970,5 +970,5 @@ impl Drop for ScratchDir {
 /// one run they cannot, since `cargo test` gives each test binary its own
 /// process and each case here its own `stem`.
 pub fn test_scratch_dir(stem: &str) -> PathBuf {
-    std::env::temp_dir().join(format!("oz_static_test_{}_{}", stem, checkout_key()))
+    std::env::temp_dir().join(format!("oz2c_test_{}_{}", stem, checkout_key()))
 }

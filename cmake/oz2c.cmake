@@ -96,7 +96,7 @@ function(objz_transpile_sources_static target)
             "objz_transpile_sources_static: could not lock ${_oz2c_lock} "
             "(${_lock_rc}); building oz2c unserialized")
     endif()
-    message(STATUS "oz_static: building oz2c (cargo)")
+    message(STATUS "oz2c: building oz2c (cargo)")
     execute_process(
         COMMAND ${CMAKE_COMMAND} -E env --unset=CC --unset=CXX --unset=CFLAGS --unset=CXXFLAGS
                 --unset=LDFLAGS --unset=AR --unset=RANLIB --unset=NM
@@ -340,7 +340,7 @@ function(objz_transpile_sources_static target)
         # a bare `echo` reaches the script's own stdout and lands in the
         # build log alongside oz2c's own progress.
         string(APPEND _ast_lines
-            "echo \"oz_static: clang ast ${_ast_k}/${_n_ast} ${_name}\"\n"
+            "echo \"oz2c: clang ast ${_ast_k}/${_n_ast} ${_name}\"\n"
             "${_one} > ${_ast} 2> ${_ast}.err\n"
             "grep 'error:' ${_ast}.err | grep -qv -e 'disallowed with ARC' \\\n"
             "    -e 'ARC forbids explicit message send' || rm -f ${_ast}.err\n")
@@ -369,7 +369,7 @@ function(objz_transpile_sources_static target)
             COMMAND sh ${_one_script}
             DEPENDS ${_src}
             DEPFILE ${_ast}.d
-            COMMENT "oz_static: clang ast ${_ast_k}/${_n_ast} ${_name}"
+            COMMENT "oz2c: clang ast ${_ast_k}/${_n_ast} ${_name}"
         )
         list(APPEND _ast_outputs ${_ast})
     endforeach()
@@ -445,7 +445,7 @@ function(objz_transpile_sources_static target)
             "# correct, but a leak.\n"
             "for f in ${_ast_dir}/*.ast.json.err; do\n"
             "  [ -e \"$f\" ] || exit 0\n"
-            "  echo \"oz_static: WARNING: diagnostics in a Clang AST dump:\" >&2\n"
+            "  echo \"oz2c: WARNING: diagnostics in a Clang AST dump:\" >&2\n"
             "  cat \"$f\" >&2\n"
             "done\n"
             "exit 0\n")
@@ -457,11 +457,11 @@ function(objz_transpile_sources_static target)
             "  [ -e \"$f\" ] || break\n"
             "  found=1\n"
             "  if grep -q 'fatal error:' \"$f\"; then\n"
-            "    echo \"oz_static: Clang hit a fatal error, so this AST dump stops\" >&2\n"
+            "    echo \"oz2c: Clang hit a fatal error, so this AST dump stops\" >&2\n"
             "    echo \"where the error is and the ivar-ownership oracle is\" >&2\n"
             "    echo \"incomplete for that file (see docs/STATUS.md):\" >&2\n"
             "  else\n"
-            "    echo \"oz_static: Clang reported an error while dumping this AST.\" >&2\n"
+            "    echo \"oz2c: Clang reported an error while dumping this AST.\" >&2\n"
             "    echo \"It does not truncate the dump, but it means the Objective-C\" >&2\n"
             "    echo \"oz2c reads does not parse cleanly -- usually a declaration\" >&2\n"
             "    echo \"missing from an oz_sdk header (#304, #307):\" >&2\n"
@@ -469,7 +469,7 @@ function(objz_transpile_sources_static target)
             "  cat \"$f\" >&2\n"
             "done\n"
             "[ \$found -eq 0 ] && exit 0\n"
-            "echo \"oz_static: fix the diagnostics above, or configure with\" >&2\n"
+            "echo \"oz2c: fix the diagnostics above, or configure with\" >&2\n"
             "echo \"-DOBJZ_ALLOW_PARTIAL_AST=ON to report them and carry on\" >&2\n"
             "echo \"(with conservative ARC, which leaks \\`id\\` ivars in any\" >&2\n"
             "echo \"file whose dump really was truncated).\" >&2\n"
@@ -520,7 +520,7 @@ function(objz_transpile_sources_static target)
     # skipped, so the list cannot drift from the real one. The
     # `compare_files` below turns "cannot" into "does not".
     message(STATUS
-        "oz_static: reading the generated file list (--manifest-only)")
+        "oz2c: reading the generated file list (--manifest-only)")
     # `ECHO_*_VARIABLE` keeps #299's streamed progress -- the output still
     # reaches the terminal as it did -- while also retaining it, so a
     # failure can say what oz2c said. Without the capture the only record
@@ -586,7 +586,7 @@ function(objz_transpile_sources_static target)
         DEPENDS ${_src_abs_list} ${_oz2c_srcs} ${_ast_outputs} ${_sdk_impls}
         # The only line ninja prints *before* the edge runs, so it carries
         # the scale rather than just the verb.
-        COMMENT "oz_static: ${_n_entry} source(s) -> C via oz2c (${_n_ast} Clang AST dumps)"
+        COMMENT "oz2c: ${_n_entry} source(s) -> C via oz2c (${_n_ast} Clang AST dumps)"
         # Ninja buffers a command's output and prints it when the edge
         # finishes. This edge takes ~15s on px-keyboard and is 85% of that
         # build's wall clock, so buffered progress would all arrive after
