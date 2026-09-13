@@ -47,7 +47,14 @@ const PREFIX: &str = "oz2c error: ";
 /// resolved to a file, degrades to the one-line form rather than drawing
 /// a frame around nothing.
 pub fn render(diag: &Diagnostic, merged: &str) -> String {
-    let mut out = format!("{}{}\n", PREFIX, diag.message);
+    /* Internal whitespace is collapsed. The summary stays on one line
+     * -- `oz_static_build.py` reads it whole -- so a run of spaces in
+     * the middle of a message is printed rather than reflowed away, and
+     * #460 shipped one: a multi-line Rust string literal written without
+     * `\` continuations left 22 consecutive spaces inside the
+     * `__bridge_retained` refusal. The literal is fixed, and this makes
+     * the next one cosmetic instead of visible. */
+    let mut out = format!("{}{}\n", PREFIX, collapse_spaces(&diag.message));
 
     if let Some(frame) = frame(diag, merged) {
         out.push_str(&frame);
@@ -124,6 +131,17 @@ fn line_containing(merged: &str, offset: usize) -> Option<(&str, usize)> {
     let start = merged[..offset].rfind('\n').map(|i| i + 1).unwrap_or(0);
     let end = merged[start..].find('\n').map(|i| start + i).unwrap_or(merged.len());
     Some((&merged[start..end], start))
+}
+
+/// `text` with every run of whitespace reduced to one space, and the
+/// ends trimmed.
+///
+/// A diagnostic message is one sentence of prose; nothing in it is
+/// column-sensitive, so no run of spaces in it can be load-bearing. The
+/// snippet is never passed through here -- that text *is* column
+/// sensitive, and its alignment is the whole point.
+fn collapse_spaces(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// Display width of `text`, counting a tab as its advance to the next
