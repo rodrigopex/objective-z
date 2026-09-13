@@ -293,7 +293,6 @@ Zero-cost abstraction for transpiler-generated C:
 - **`oz_platform_zephyr.h`** — Zephyr backend: k_mem_slab, Zephyr atomics, spinlock, printk
 - **`oz_platform_host.h`** — Host backend: malloc-backed slab, C11 stdatomic, printf
 - **`oz_platform_types.h`** — Shared type definitions
-- **`oz_lock.h`** — OZSpinLock RAII spinlock struct for `@synchronized`
 
 All PAL functions are `static inline` — vanish at -O1+.
 
@@ -347,7 +346,11 @@ Retained as reference for transpiler development. Not compiled — the runtime c
 - **Internal and synthesized functions: `oz_` (companion-wide) or `_oz_`
   (per-class). The `__objc_` prefix is retired — don't add one.** A leading double
   underscore is reserved to the implementation in C, so every name under it was
-  undefined behaviour waiting for a toolchain to claim it. `__objc_refcount_get` was
+  undefined behaviour waiting for a toolchain to claim it. **The same is true of a
+  leading underscore followed by an uppercase letter, so an include guard or
+  file-scope macro is `OZ_...` and never `_OZ_...`** — `_OZ_Q31_HELPERS` was the
+  last of those and went in #417, and `tests/sdk_spliced_file_scope.rs` now
+  requires a spliced prelude's `#define` to start `OZ`. `__objc_refcount_get` was
   its last survivor in the live tree and went in #418, replaced by
   `oz_retain_count`, which already did the same job. The prefix still appears
   in `src/runtime_legacy/` and `include/runtime_legacy/` (not compiled) and as one
