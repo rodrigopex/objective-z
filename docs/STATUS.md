@@ -1302,17 +1302,41 @@ Two things measured about it, so the next reader does not have to guess:
   with static storage duration; a file-scope object pointer is `__strong`.
   All three were asserted incorrectly from recall during the #359 audit and
   corrected by dumping the AST for the shape.
-- **It cannot answer every question, and one of them looks like it should.**
-  At a call site, a protocol send, a `+1` class send and a `+0` class send
-  are marked *identically* -- `ARCReclaimReturnedObject` on all three --
-  because ARC's callee autoreleases and its caller always reclaims. That
-  convention is sound only because of the pool this target does not have,
-  so the AST distinguishes nothing there. It *does* distinguish the
-  implementors: a method returning an owned reference carries
-  `ARCConsumeObject` inside it, one returning a borrowed ivar does not.
-  So the AST can classify each implementor more reliably than the CST can
-  -- but which implementor runs is a runtime fact, and no oracle removes
-  the need for unanimity.
+- **It cannot answer every question, and the two sentences this bullet used
+  to make about *which* questions were both false.** Corrected 2026-09-13 by
+  direct measurement against the pinned clang (#453's audit); the claims had
+  stood since #385 and nothing had re-derived them.
+
+  What the marks actually discriminate is **method-family membership**. A
+  family `+1` carries `ARCConsumeObject` -- `[Probe alloc]` and
+  `[[Probe alloc] init]` both do -- while a `+0` instance send, a protocol
+  send and a *non-family* `+1` class send all carry
+  `ARCReclaimReturnedObject`. So the three are **not** marked identically,
+  and what Clang tells apart is exactly the set `arc::create_rule_family_of`
+  already computes from the selector -- and computes with a return-type guard
+  Clang lacks (`docs/ARC.md` s 1.2). So `ARCConsumeObject` at a call site is a
+  **redundancy check** on the family rule, not new knowledge. What Clang does
+  not tell apart is a non-family factory from a `+0` send, which is #361's
+  question -- so #361 stays unanswerable from the AST, for a different reason
+  than this bullet used to give.
+
+  It is also **silent on implementor return-ownership**, contrary to the
+  claim that an owned return carries `ARCConsumeObject` and a borrowed one
+  does not. Measured, that is false in both directions:
+  `- (id)borrowAfterAlloc` returns a borrowed ivar and carries
+  `ARCConsumeObject` (from an unrelated sub-expression), while
+  `- (id)ownedViaOpaqueC { return cReturns(); }` returns a reclaimed `+1`
+  and carries none. And `ARCProduceObject` sits on the return of *every*
+  object-returning method, owned or borrowed alike -- it is
+  `objc_autoreleaseReturnValue`, which `docs/ARC.md` s 1.3.3 already rules
+  `N/A` here. The AST therefore classifies implementors no better than the
+  CST does, and the need for unanimity stands on its own.
+
+  Census over repo-owned source (155 `.m` files, deduped by `file:line:col`):
+  489 transfer marks -- 202 `ARCReclaimReturnedObject`, 194
+  `ARCConsumeObject`, 93 `ARCProduceObject` -- of which `astinfo.rs` reads
+  **none**; and 411 ownership-qualified declarations of which it reads **35**
+  (8.5%), all of them `ObjCIvarDecl`.
 
 **Since #385 the dump is required, not optional.** `oz2c` refuses a source
 that declares a class with no `--ast` behind it -- a hard, located error at
