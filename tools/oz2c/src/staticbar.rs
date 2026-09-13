@@ -6,6 +6,7 @@
 // best-effort a construct outside the static bar. Anything not explicitly
 // supported is a named, located hard error.
 
+use std::collections::HashMap;
 use std::collections::HashSet;
 
 use tree_sitter::Node;
@@ -138,6 +139,37 @@ struct MethodScope<'a> {
     /// emit.rs hoists them to file-scope statics rather than leaving them
     /// as real stack locals a block would need to close over.
     block_locals: HashSet<String>,
+    /// The slab sizes this program will be built with, so the loop rule can
+    /// ask whether a class has the slots a shape needs (#433).
+    ///
+    /// `None` where no sizing is available -- the pure `transpile(source)`
+    /// form has no `PoolSizes` to give -- and `None` keeps the old, stricter
+    /// answer. That is the safe direction: a missing size refuses a shape
+    /// that might have fitted, where assuming capacity would hand the second
+    /// allocation a full slab and a nil the program never checks.
+    pools: Option<&'a crate::pools::PoolSizes>,
+    /// Static type of every name visible in this body, by which a stored
+    /// value's class resolves. Emit's own `EmitCtx::scope`, plus this
+    /// body's parameters -- **passed rather than rebuilt**, so the bar
+    /// resolves a receiver through the same map the emitter resolves it
+    /// through. A second resolver here is how the bar and the lowering
+    /// come to answer different questions (#423, #433).
+    ///
+    /// Empty where no sizing was supplied, which resolves nothing and so
+    /// keeps the stricter answer.
+    types: HashMap<String, String>,
+}
+
+/// What the loop rule needs in order to ask a **capacity** question rather
+/// than pass a verdict on a shape.
+///
+/// One struct rather than two parameters because neither half answers it:
+/// a pool size with no resolved class, and a class with no pool sizes, both
+/// fall back to the rejection. `None` is the pure `transpile(source)` form,
+/// which has no `PoolSizes` to give.
+pub struct Sizing<'a> {
+    pub pools: &'a crate::pools::PoolSizes,
+    pub types: &'a HashMap<String, String>,
 }
 
 /// `@synchronized` lowers to an explicit `oz_spin_lock` / `oz_spin_unlock`
@@ -321,13 +353,40 @@ fn is_owning_receiver_of_owning_send(node: Node, src: &str, program: &Program) -
 enum LoopEscape {
     /// Kept in a slot that *is* reused, but whose previous value is
     /// released only after the new one exists. Bounded at two, not one.
-    OverlappingStore(&'static str),
+    OverlappingStore(&'static str, PoolAdvice),
     /// Kept in a destination that differs per iteration, so nothing is
     /// released and live instances accumulate to the loop's own bound.
     Accumulates(&'static str),
     /// Handed to the caller, so the iteration does not end its life at
     /// all.
     Returned,
+}
+
+/// Whether raising a pool lifts an `OverlappingStore` rejection, and if
+/// not, **why not** -- decided where both facts are known rather than
+/// re-derived in the message.
+///
+/// #425's defect was one sentence of advice that changed nothing when
+/// taken. The guard against repeating it is not a rule about wording: it
+/// is that the only arm which offers the pool is the one that has already
+/// resolved the class and read its size, so the advice is a consequence of
+/// the check rather than a claim beside it.
+enum PoolAdvice {
+    /// The class resolved and has fewer than two slots, so raising it to
+    /// two genuinely lifts this rejection -- the same source is then
+    /// accepted. Carries the class, so the directive can name it.
+    RaiseTo(String),
+    /// The bar could not name the slab this allocation draws from -- an
+    /// `id`-typed receiver, a C factory, a selector declared nowhere -- so
+    /// it cannot promise that any size lifts the rejection, and must not
+    /// suggest one.
+    ClassUnresolved,
+    /// This destination's store is not lowered through a liftable
+    /// temporary, so no size lifts it. The array-element arm is the case:
+    /// `emit::render_strong_array_element_assign` answers
+    /// `LocalStore::Unsupported` with a located error and no temporary at
+    /// all.
+    LoweringCannotUseIt,
 }
 
 impl LoopEscape {
@@ -363,14 +422,23 @@ impl LoopEscape {
     /// predicate relaxed, the shape runs correctly on a pool of two, five
     /// allocations and five frees, and is short of slots on one.
     ///
-    /// It is still not *implemented*, and that is the only reason the
-    /// remedy cannot be offered. So the message states the narrower fact
-    /// that held before #424 and still holds: raising the pool does not
-    /// lift this rejection, because this check never reads `PoolSizes`. It
-    /// deliberately does not claim the shape would be wrong at any pool
-    /// size, which is what it said when this fix was first written and is
-    /// no longer true. Making the arm pool-aware is a behavioural change
-    /// and wants its own issue.
+    /// **#433 implemented it, so the sentence that stood here is now
+    /// false and has gone.** The record is kept as a chain rather than
+    /// rewritten, because each link was true when written and it is the
+    /// sequence that is instructive: the message first claimed the shape
+    /// would be wrong at any pool size (#424 falsified that); #425
+    /// narrowed it to the true, narrower fact that *this check* never read
+    /// `PoolSizes`, and noted the remedy would be right again "the day
+    /// this check can read the size"; #433 is that day. What changed is an
+    /// argument, not a sentence -- the reason the advice was false expired,
+    /// and it expired because #424 changed the lowering, not because
+    /// anyone rewrote the wording.
+    ///
+    /// So the pool is offered again, under one condition #425 could not
+    /// have met: it is offered **only** by the arm that has already
+    /// resolved the class and found fewer than two slots (`PoolAdvice`).
+    /// Advice the checker cannot honour is the defect; advice that *is* the
+    /// checker's own finding cannot be.
     ///
     /// `Accumulates` had the same false remedy for a different reason, and
     /// that reason has not moved: the loop's bound is not something this
@@ -393,19 +461,48 @@ impl LoopEscape {
     /// must be one the author can express **and** the checker can honour.
     ///
     /// So both keep only the advice that works. The pool remains the right
-    /// tool for a *site* that needs more than one live instance, and for
-    /// `OverlappingStore` it would be the right tool again the day this
-    /// check can read the size.
+    /// tool for a *site* that needs more than one live instance, and since
+    /// #433 it is that tool for `OverlappingStore` too -- named, and only
+    /// where raising it is what the bar is waiting for.
     fn describe(&self, what: &str) -> String {
         match self {
-            LoopEscape::OverlappingStore(dest) => format!(
-                "{what} inside a loop is stored into {dest}, which needs **two** slab slots \
-                 rather than one: the store releases the previous object only after the new \
-                 one exists, so both are briefly live. Bind it to a local declared before the \
-                 loop and store that -- a local's previous value is released *before* the next \
-                 allocation, so one slot serves it. Raising this class's pool does not lift \
-                 this rejection: the loop check does not read pool sizes"
-            ),
+            LoopEscape::OverlappingStore(dest, advice) => {
+                let head = format!(
+                    "{what} inside a loop is stored into {dest}, which needs **two** slab \
+                     slots rather than one: the store releases the previous object only after \
+                     the new one exists, so both are briefly live."
+                );
+                /* The local always works, so it is always offered; the
+                 * pool is offered only where it is the thing this check is
+                 * waiting for. */
+                let local = "Bind it to a local declared before the loop and store that -- a \
+                             local's previous value is released *before* the next allocation, \
+                             so one slot serves it";
+                match advice {
+                    PoolAdvice::RaiseTo(class) => format!(
+                        "{head} '{class}' has fewer than two. Give it two \
+                         (`/* oz-pool: {class}=2 */`, or `--pool-sizes {class}=2`), or else \
+                         {local}",
+                        head = head,
+                        class = class,
+                        local = local[0..1].to_lowercase() + &local[1..]
+                    ),
+                    PoolAdvice::ClassUnresolved => format!(
+                        "{head} {local}. Raising a pool is not offered here because this \
+                         check could not tell which class's slab the allocation draws from, \
+                         so it cannot promise any size lifts the rejection",
+                        head = head,
+                        local = local
+                    ),
+                    PoolAdvice::LoweringCannotUseIt => format!(
+                        "{head} {local}. Raising a pool does not lift this rejection: this \
+                         destination's store is not lowered through a temporary, so no slab \
+                         size makes the shape work",
+                        head = head,
+                        local = local
+                    ),
+                }
+            }
             LoopEscape::Accumulates(dest) => format!(
                 "{what} inside a loop is stored into {dest}, so each iteration keeps its own \
                  instance and nothing is released; the static subset sizes one slab slot per \
@@ -436,6 +533,45 @@ impl LoopEscape {
 /// Reaching the enclosing block without passing a store or a `return` is
 /// the confined case: nothing kept the reference, so it dies with the
 /// statement.
+/// How to name the allocation in a diagnostic: with its class when that
+/// resolves, and without when it does not.
+///
+/// **This was the last hand-extraction left in this file, and it was the
+/// one `pools::class_method_callee` warns about.** That function's comment
+/// records the history: taking `children[0]` after filtering brackets was
+/// "the third place" to do it, and the copy in
+/// `staticbar::message_selector` "got it wrong for eight years' worth of
+/// receiver shapes (#435)". `message_selector` was routed through
+/// `emit::parse_message` then; this site was not, because it only fed a
+/// message and a wrong word in a diagnostic is cosmetic.
+///
+/// It stops being cosmetic the moment anything reads the answer. Measured
+/// on the old extraction:
+///
+/// | expression | yielded |
+/// |---|---|
+/// | `[Foo alloc]` | `Foo` |
+/// | `[[Foo alloc] init]` | `Foo` |
+/// | `makeThing()` | `makeThing()` |
+/// | `[self make]` | `self` |
+/// | `@[1, 2]` | `@[1, 2]` |
+///
+/// So three of five named something that is not a class, and
+/// `PoolSizes::for_class` answers `0` for each -- which fails *safe*, and
+/// would have given pool-awareness to one syntactic form while silently
+/// withholding it from the others for no principled reason.
+///
+/// Routed through `parse_message` and `program.is_class`, the same way
+/// `class_method_callee` is. An unresolvable receiver now yields "an
+/// allocation" rather than a fabricated class name, which is a better
+/// diagnostic as well as a resolvable input.
+fn allocation_of(node: Node, src: &str, program: &Program, scope: &MethodScope) -> String {
+    match stored_class(node, src, program, scope) {
+        Some(class) => format!("an allocation of '{}'", class),
+        None => "an allocation".to_string(),
+    }
+}
+
 fn loop_escape(
     node: Node,
     src: &str,
@@ -519,16 +655,208 @@ fn loop_escape(
 ///   - `LocalStore::Unsupported` -- everything else, `_x = [_x copy]`
 ///     included: `+1`, but it reads the ivar, so the new value has to exist
 ///     before the old one can go. Still two slots, still refused.
+/// Whether a second slab slot can serve the overlap at all -- a question
+/// about the **lowering** the destination's store goes through, not about
+/// the pool.
+///
+/// Keyed on the destination kind because that is what selects the
+/// lowering, and the two lowerings differ in kind rather than in degree.
+enum SecondSlotServes {
+    /// `emit::render_overlapping_strong_store` -- the ivar, `self->` ivar,
+    /// local and file-scope spellings. Since #424 it pushes a bare
+    /// `struct ROOT *prev;` through `ctx.pre_stmts` and assigns inside the
+    /// comma expression, so two briefly-live instances are correct code
+    /// wherever two slots exist.
+    Yes,
+    /// `emit::render_strong_array_element_assign` -- for
+    /// `LocalStore::Unsupported` it emits a located error and no temporary
+    /// at all, so the shape does not work at *any* pool size and a pool
+    /// size must not be allowed to lift its rejection.
+    ///
+    /// Verified against the tree rather than carried over from #433's
+    /// text: that arm is `emit.rs`'s `if kind == LocalStore::Unsupported {
+    /// ctx.err(...) }`, ahead of the two lowerings that do emit an
+    /// expression.
+    No,
+}
+
+/// The class whose slab this `+1` expression draws its slot from, when it
+/// resolves.
+///
+/// This is **not** `allocated_class`, which the diagnostic uses: that one
+/// answers "which class is named as the receiver of the allocation", and
+/// for `[_thing dup]` the answer is nothing, because `_thing` is an ivar.
+/// The capacity question is about the slab the new object lands in, and for
+/// a send that is the declared return type of the selector -- which is how
+/// `Foo *_thing = [_thing dup]` draws from `Foo`'s slab although no `Foo`
+/// is named in the expression. Keeping the two apart is the point: naming
+/// them the same thing is what made the first cut of #433 accept nothing it
+/// was filed to accept.
+///
+/// The three literal desugars mirror `pools::walk_sites` exactly, since
+/// that is the pass whose slots are being counted.
+fn stored_class(
+    value: Node,
+    src: &str,
+    program: &Program,
+    scope: &MethodScope,
+) -> Option<String> {
+    match value.kind() {
+        "array_literal" => return Some("OZArray".to_string()),
+        "dictionary_literal" => return Some("OZDictionary".to_string()),
+        "at_expression" if crate::emit::is_numeric_boxed_shape(value, src) => {
+            return Some("OZNumber".to_string());
+        }
+        /* The wrappers `loop_escape` already walks *up* through, walked
+         * down here for the same reason: they change no one's class, so a
+         * question answered differently on either side of a cast or a pair
+         * of parentheses is being asked about the spelling rather than
+         * about the reference. */
+        "parenthesized_expression" | "cast_expression" | "unary_expression" => {
+            let mut cursor = value.walk();
+            let inner = value
+                .children(&mut cursor)
+                .find(|c| c.is_named() && c.kind() != "type_descriptor")?;
+            return stored_class(inner, src, program, scope);
+        }
+        /* Both arms draw from the same slab or the question has no single
+         * answer. `cond ? [Foo make] : [_ivar dup]` is the shape the loop
+         * rule sees most often in `LocalStore::Unsupported`, and answering
+         * `None` for it meant the commonest refusal got the vaguest
+         * message. */
+        "conditional_expression" => {
+            let mut cursor = value.walk();
+            let arms: Vec<Node> = value
+                .children(&mut cursor)
+                .filter(|c| c.is_named())
+                .skip(1)
+                .collect();
+            let [then, otherwise] = arms.as_slice() else {
+                return None;
+            };
+            let a = stored_class(*then, src, program, scope)?;
+            let b = stored_class(*otherwise, src, program, scope)?;
+            return if a == b { Some(a) } else { None };
+        }
+        "message_expression" => {}
+        _ => return None,
+    }
+    let mut cursor = value.walk();
+    if value.children(&mut cursor).filter(|c| c.kind() != "[" && c.kind() != "]").count() < 2 {
+        return None;
+    }
+    let parts = crate::emit::parse_message(value, src);
+    let receiver = receiver_class(parts.receiver, src, program, scope)?;
+    let to_class = parts.receiver.kind() == "identifier"
+        && program.is_class(&src[parts.receiver.byte_range()]);
+    /* Through `find_defining_class`, so an inherited declaration resolves
+     * -- `+alloc` and `-copy` are declared on the root class, not on the
+     * class the send names. */
+    let defining = crate::emit::find_defining_class(program, &receiver, &parts.selector, to_class)?;
+    let (ret, returns_instancetype) =
+        crate::emit::method_return_type(program, &defining, &parts.selector, to_class)?;
+    if returns_instancetype {
+        /* `instancetype` is the *receiver's* class, which is the whole
+         * reason `[[Foo alloc] init]` draws from `Foo`'s slab and not from
+         * the root's. */
+        return Some(receiver);
+    }
+    class_named_by(&ret, program)
+}
+
+/// The static class of a message-send receiver, by the same two rules
+/// `emit::render_message_expression` uses: a literal class name is itself,
+/// and anything else is looked up in the scope's type map.
+fn receiver_class(
+    receiver: Node,
+    src: &str,
+    program: &Program,
+    scope: &MethodScope,
+) -> Option<String> {
+    match receiver.kind() {
+        /* `[[Foo alloc] init]`: the receiver is itself a send, and its
+         * class is the class that send produces. */
+        "message_expression" => stored_class(receiver, src, program, scope),
+        "identifier" => {
+            let name = &src[receiver.byte_range()];
+            if program.is_class(name) {
+                return Some(name.to_string());
+            }
+            class_named_by(scope.types.get(name)?, program)
+        }
+        _ => None,
+    }
+}
+
+/// The class a declared type names, or `None` when it names none.
+///
+/// `id`, `OZObject *` and a C scalar all reach `None` deliberately: `id`
+/// resolves to no single slab, and a value the pool does not size cannot be
+/// the subject of a capacity question. `None` keeps the rejection.
+fn class_named_by(ty: &str, program: &Program) -> Option<String> {
+    let bare = ty.trim().trim_end_matches(|c: char| c == '*' || c.is_whitespace()).trim();
+    let bare = bare.strip_prefix("struct ").unwrap_or(bare).trim();
+    if program.is_class(bare) {
+        return Some(bare.to_string());
+    }
+    None
+}
+
 fn overlapping_unless_released_first(
     name: &str,
     value: Node,
     src: &str,
     program: &Program,
+    scope: &MethodScope,
     what: &'static str,
+    second_slot: SecondSlotServes,
 ) -> Option<LoopEscape> {
     match crate::emit::classify_store(name, value, src, program) {
         crate::emit::LocalStore::Owning | crate::emit::LocalStore::BorrowedIdent => None,
-        crate::emit::LocalStore::Unsupported => Some(LoopEscape::OverlappingStore(what)),
+        /* Two objects are briefly live, so the shape needs two slots -- and
+         * since #433 that is a question about capacity rather than a verdict
+         * on the shape. Where the class resolves and has the slots, accept
+         * it; where it does not, refuse as before.
+         *
+         * **What made this answerable is #424, not this change.** The
+         * rejection used to rest on two reasons, and the load-bearing one
+         * was that the whole capture was lifted out of the loop by
+         * `ctx.pre_stmts` -- so accepting the shape at *any* pool size
+         * would have miscompiled. #424 split that: the lowering now pushes
+         * a bare `struct ROOT *prev;` (`emit.rs:3136`) and assigns inside
+         * the comma expression, and a declaration with no initialiser
+         * evaluates nothing, so lifting it above a loop reorders nothing.
+         * This function's own doc has recorded since then that "#424
+         * retired that reason rather than this rule -- the rejection stands
+         * on capacity alone". Re-verified against the tree rather than
+         * quoted: both the push and that sentence are still there.
+         *
+         * The class must be *resolved*, never extracted from text. The
+         * extraction this file used until #433 answered `_slot` for
+         * `[_slot copy]` and `makeThing()` for a C factory, and
+         * `for_class` returns 0 for both -- so keying acceptance on it
+         * would have granted pool-awareness to one syntactic form and
+         * silently withheld it from others. `allocated_class` is the
+         * resolved answer; an unresolved one keeps the rejection. */
+        crate::emit::LocalStore::Unsupported => {
+            if matches!(second_slot, SecondSlotServes::No) {
+                return Some(LoopEscape::OverlappingStore(
+                    what,
+                    PoolAdvice::LoweringCannotUseIt,
+                ));
+            }
+            match stored_class(value, src, program, scope) {
+                None => Some(LoopEscape::OverlappingStore(what, PoolAdvice::ClassUnresolved)),
+                Some(class) => {
+                    let slots = scope.pools.map(|p| p.for_class(&class)).unwrap_or(0);
+                    if slots >= 2 {
+                        None
+                    } else {
+                        Some(LoopEscape::OverlappingStore(what, PoolAdvice::RaiseTo(class)))
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -549,11 +877,12 @@ fn ivar_slot_escape(
     program: &Program,
     scope: &MethodScope,
     what: &'static str,
+    second_slot: SecondSlotServes,
 ) -> Option<LoopEscape> {
     if !scope.owned_object_ivars.contains(name) {
         return Some(LoopEscape::Accumulates("an ivar that is not an owned strong slot"));
     }
-    overlapping_unless_released_first(name, value, src, program, what)
+    overlapping_unless_released_first(name, value, src, program, scope, what, second_slot)
 }
 
 /// The strong slot an assignment's left side names, by the **same rule the
@@ -662,7 +991,15 @@ fn assignment_escape(
                 return Some(LoopEscape::Accumulates("a local ARC does not manage"));
             }
             if scope.class_ivars.contains(name) {
-                return ivar_slot_escape(name, value, src, program, scope, "an ivar");
+                return ivar_slot_escape(
+                    name,
+                    value,
+                    src,
+                    program,
+                    scope,
+                    "an ivar",
+                    SecondSlotServes::Yes,
+                );
             }
             /* A file-scope variable, which ARC manages as a strong slot the
              * same way an ivar is (#359) -- including the release-first
@@ -673,20 +1010,26 @@ fn assignment_escape(
                 value,
                 src,
                 program,
+                scope,
                 "a file-scope variable",
+                SecondSlotServes::Yes,
             )
         }
         /* `self->_x`. Routed through the same extractor the emitter keys
          * its store on, for the same reason the arms above share one
          * predicate (#423). */
         "field_expression" => match assigned_slot_name(*lhs, src) {
-            Some(name) => ivar_slot_escape(&name, value, src, program, scope, "an ivar"),
+            Some(name) => {
+                ivar_slot_escape(&name, value, src, program, scope, "an ivar", SecondSlotServes::Yes)
+            }
             /* Dot syntax, or a field of something that is not `self`. A
              * property store sends the setter, and a synthesized setter
              * retains the new value before releasing the old -- which is
              * the two-slot overlap by construction, whatever the right-hand
              * side reads. */
-            None => Some(LoopEscape::OverlappingStore("an ivar")),
+            None => {
+                Some(LoopEscape::OverlappingStore("an ivar", PoolAdvice::LoweringCannotUseIt))
+            }
         },
         "subscript_expression" => {
             /* A constant index names the same element every iteration, so
@@ -706,7 +1049,10 @@ fn assignment_escape(
              * about the *array*, not the element, so this has to ask about
              * the same name or the two answer different questions. */
             let Some(name) = parts.first().and_then(|recv| assigned_slot_name(*recv, src)) else {
-                return Some(LoopEscape::OverlappingStore("one element of an array ivar"));
+                return Some(LoopEscape::OverlappingStore(
+                    "one element of an array ivar",
+                    PoolAdvice::LoweringCannotUseIt,
+                ));
             };
             /* Only an *ivar* array is a strong slot the emitter manages: a
              * local or parameter array has no scope-exit release to pair
@@ -727,6 +1073,7 @@ fn assignment_escape(
                 program,
                 scope,
                 "one element of an array ivar",
+                SecondSlotServes::No,
             )
         }
         _ => Some(LoopEscape::Accumulates("a destination this pass cannot bound")),
@@ -770,17 +1117,7 @@ fn walk_for_reject(
             ) && !is_owning_receiver_of_owning_send(node, src, program);
             if creates_plus_one && in_loop {
                 if let Some(escape) = loop_escape(node, src, program, scope) {
-                    let class_name = node_text(node, src)
-                        .trim_start_matches('[')
-                        .split_whitespace()
-                        .next()
-                        .unwrap_or("?");
-                    err(
-                        diags,
-                        src,
-                        node,
-                        escape.describe(&format!("an allocation of '{}'", class_name)),
-                    );
+                    err(diags, src, node, escape.describe(&allocation_of(node, src, program, scope)));
                 }
             }
         }
@@ -1897,6 +2234,7 @@ pub fn check_method_body(
     class_info: &ClassInfo,
     params: &[(String, String)],
     selector: &str,
+    sizing: Option<&Sizing>,
 ) -> Vec<Diagnostic> {
     let mut diags = Vec::new();
     if INTRINSIC_SELECTORS.contains(&selector) {
@@ -1921,9 +2259,14 @@ pub fn check_method_body(
         arc_managed_locals: &managed,
         locals: HashSet::new(),
         block_locals: HashSet::new(),
+        pools: sizing.map(|s| s.pools),
+        types: sizing.map(|s| s.types.clone()).unwrap_or_default(),
     };
-    for (name, _) in params {
+    for (name, ty) in params {
         scope.locals.insert(name.clone());
+        /* A parameter shadows an ivar of the same name, here as in C, so
+         * this overwrites rather than `or_insert`. */
+        scope.types.insert(name.clone(), ty.clone());
     }
     walk_for_reject(body, src, program, &mut scope, false, false, &mut diags);
     diags
@@ -1956,7 +2299,12 @@ pub fn check_method_body(
 /// invent captures: `samples/gpio_demo`'s `[led toggle]` inside a block in
 /// `main` would be flagged the moment any class in that file declared an ivar
 /// named `led`.
-pub fn check_function_body(body: Node, src: &str, program: &Program) -> Vec<Diagnostic> {
+pub fn check_function_body(
+    body: Node,
+    src: &str,
+    program: &Program,
+    sizing: Option<&Sizing>,
+) -> Vec<Diagnostic> {
     let mut diags = Vec::new();
     let no_ivars: HashSet<String> = HashSet::new();
     let managed = crate::emit::managed_object_locals(body, src, program);
@@ -1966,6 +2314,8 @@ pub fn check_function_body(body: Node, src: &str, program: &Program) -> Vec<Diag
         arc_managed_locals: &managed,
         locals: HashSet::new(),
         block_locals: HashSet::new(),
+        pools: sizing.map(|s| s.pools),
+        types: sizing.map(|s| s.types.clone()).unwrap_or_default(),
     };
     walk_for_reject(body, src, program, &mut scope, false, false, &mut diags);
     diags

@@ -69,7 +69,9 @@
 // `nil` from the second iteration on.
 
 mod common;
-use common::{compile_and_run_strict, expect_reject, ozobject_src};
+use common::{
+    compile_and_run_strict, compile_and_run_with_cc_flags, expect_reject, ozobject_src,
+};
 
 /// `+make` is the spelling the old rule could not see: the allocation is
 /// inside the factory, so `selector == "alloc"` never matched at the call
@@ -111,7 +113,33 @@ int g_freed = 0;
 ";
 
 fn program(body: &str) -> String {
-    format!("/* oz-pool: Foo=1 */\n{}{}\n{}", ozobject_src(), PRELUDE, body)
+    program_with_pool("1", body)
+}
+
+/// The same program at a chosen slab size. `Foo=1` is not the natural
+/// sizing of these cases -- `+make` and `-dup` are two allocation sites, so
+/// `pools::analyze` would give `Foo` two slots on its own -- so the
+/// directive is what makes "one slot" the thing under test at all (#433).
+fn program_with_pool(pool: &str, body: &str) -> String {
+    format!("/* oz-pool: Foo={} */\n{}{}\n{}", pool, ozobject_src(), PRELUDE, body)
+}
+
+/// Transpile, expecting the static bar to accept.
+///
+/// #433 turns a rejection into an acceptance, and the failure mode of a
+/// test for that is a case that passes because the shape is no longer
+/// *refused* rather than because it now *works* -- "no diagnostic" is an
+/// absence claim, the same trap as a vacuous negative assertion one level
+/// up. So this helper exists for the cases whose point is the boundary
+/// itself, and every case that claims the accepted shape is correct uses
+/// `compile_and_run_strict` and counts deallocs instead.
+fn expect_accept(source: &str) {
+    if let Err(diags) = oz2c::transpile(source) {
+        panic!(
+            "expected the static bar to accept, got:\n{}",
+            diags.iter().map(|d| d.to_string()).collect::<Vec<_>>().join("\n")
+        );
+    }
 }
 
 /// The four operand positions, all newly accepted, all on **one slot**.
@@ -322,94 +350,103 @@ int main(void) { return 0; }
     );
 }
 
-/// The rejection does not move when the pool is raised, which is the whole
-/// of #425: the advice was to do something that changes nothing.
+/// Raising the pool **does** lift this rejection, and #425's test that
+/// said otherwise is what this replaces.
 ///
-/// Measured rather than argued, because "the check never reads
-/// `PoolSizes`" is a claim about code and this is a claim about behaviour.
-/// The same program at `Foo=1`, `Foo=2` and `Foo=8` is refused identically,
-/// so a diagnostic naming the pool sends the author round a loop of their
-/// own.
+/// That is a reversal of an argument, not a correction of wording, and the
+/// chain is worth keeping because each link was true when written:
+///
+///   - Before #424 the shape could not be accepted at *any* pool size.
+///     `render_overlapping_strong_store` pushed the temporary's
+///     *initialiser* through `ctx.pre_stmts`, which a loop lifts above
+///     itself, so the ivar was captured once while still nil and a stale
+///     pointer was released every iteration. Pool-awareness would have
+///     turned a refusal into a miscompile.
+///   - #424 split that: a bare `struct ROOT *prev;` goes through
+///     `pre_stmts` and the assignment happens inside the comma expression.
+///     A declaration with no initialiser evaluates nothing, so lifting it
+///     reorders nothing, and the rejection was left standing on capacity
+///     alone.
+///   - #425 then removed the "raise the pool" advice, because `staticbar`
+///     read no `PoolSizes` and so could not honour it -- and said the
+///     remedy would be right again "the day this check can read the size".
+///   - #433 is that day.
+///
+/// So the assertion that used to live here -- that the diagnostic is
+/// byte-identical at `Foo=1`, `Foo=2` and `Foo=8` -- is now false, and it
+/// was measured true when it was written. What expired was the reason, and
+/// it expired because #424 changed the lowering, not because anyone
+/// rewrote the message.
 #[test]
-fn raising_the_pool_does_not_lift_an_overlapping_store() {
+fn raising_the_pool_lifts_an_overlapping_store() {
     let churn = "\
 @interface Holder : OZObject {
-	Foo *_thing;
+\tFoo *_thing;
 }
 - (void)churn;
 @end
 @implementation Holder
 - (void)churn
 {
-	int i;
+\tint i;
 
-	for (i = 0; i < 4; i++) {
-		_thing = [_thing dup];
-	}
+\tfor (i = 0; i < 4; i++) {
+\t\t_thing = [_thing dup];
+\t}
 }
 @end
 
 int main(void) { return 0; }
 ";
-    let mut seen = Vec::new();
-    for pool in ["1", "2", "8"] {
-        let src = format!(
-            "/* oz-pool: Foo={} */\n{}{}\n{}",
-            pool,
-            ozobject_src(),
-            PRELUDE,
-            churn
-        );
-        let diags = expect_reject(&src);
-        assert!(
-            diags.contains("needs **two** slab slots"),
-            "pool={} must still be refused for the same reason; got:\n{}",
-            pool,
-            diags
-        );
-        assert!(
-            !diags.contains("oz-pool") && !diags.contains("--pool-sizes"),
-            "pool={} must not be told to raise the pool it already raised; got:\n{}",
-            pool,
-            diags
-        );
-        seen.push(diags);
-    }
-    assert_eq!(
-        seen[0], seen[1],
-        "the diagnostic is identical at Foo=1 and Foo=2, which is why advising a raise was \
-         advice to do nothing"
+    /* One slot still refuses it -- the overlap is real, and this is the
+     * half of #425 that has not moved. */
+    let one = expect_reject(&program_with_pool("1", churn));
+    assert!(
+        one.contains("needs **two** slab slots"),
+        "one slot must still be refused for the capacity reason; got:\n{}",
+        one
     );
-    assert_eq!(seen[1], seen[2], "and identical again at Foo=8");
+    /* And the advice is now the check's own finding rather than a claim
+     * beside it: it names the class it resolved and the size it read. */
+    assert!(
+        one.contains("'Foo' has fewer than two"),
+        "the message must say what it measured, not just what to do; got:\n{}",
+        one
+    );
+    assert!(
+        one.contains("oz-pool: Foo=2") && one.contains("--pool-sizes Foo=2"),
+        "and must name the raise in both spellings the author can write; got:\n{}",
+        one
+    );
+
+    /* Two lifts it, and so does more than two. Taking the advice has to
+     * change the outcome, which is the property #425 found missing. */
+    for pool in ["2", "8"] {
+        expect_accept(&program_with_pool(pool, churn));
+    }
 }
 
-/// No diagnostic in this family may recommend the pool, for any of the
-/// three escapes.
+/// No diagnostic in this family may recommend the pool **where raising it
+/// would change nothing** -- which since #433 is a narrower set than "all
+/// three escapes".
 ///
-/// A standing guard rather than three separate assertions: `Accumulates`
-/// carried the same false remedy for its own reason -- the loop's trip
-/// count is not a number this pass knows, so there was no pool size to
-/// name -- and `Returned` never had one. Anything added here later has to
-/// answer the same question, which is what a table-shaped test is for.
+/// `OverlappingStore` has left this table, because for that escape the
+/// pool is now the remedy: the arm resolves the class, reads its size and
+/// refuses only below two, so naming the raise is reporting what it
+/// measured. It keeps a row of its own in
+/// `raising_the_pool_lifts_an_overlapping_store`.
+///
+/// The two that remain are unbounded by any finite size, and for the same
+/// reason as before: `Accumulates` keeps one instance per iteration and
+/// the loop's trip count is not a number this pass knows, so there is no
+/// size to name; `Returned` hands the reference to the caller, so the
+/// iteration never ends its life at all. A table-shaped test because
+/// anything added here later has to answer the same question -- and the
+/// question is now "is raising the pool something the author can take and
+/// this check will honour", which is the one #425 actually asked.
 #[test]
-fn no_loop_escape_recommends_raising_the_pool() {
+fn no_unbounded_escape_recommends_raising_the_pool() {
     let bodies: &[(&str, &str)] = &[
-        (
-            "OverlappingStore",
-            "\
-@interface Holder : OZObject { Foo *_thing; }
-- (void)go;
-@end
-@implementation Holder
-- (void)go
-{
-	int i;
-	for (i = 0; i < 4; i++) { _thing = [_thing dup]; }
-}
-@end
-int main(void) { return 0; }
-",
-        ),
         (
             "Accumulates",
             "\
@@ -870,4 +907,281 @@ int main(void) { return 0; }
         "one allocation must produce one diagnostic; got:\n{}",
         diags
     );
+}
+/// The acceptance #433 exists for, **run** rather than merely not refused.
+///
+/// Four iterations on a two-slot pool, counting deallocs as it goes. Both
+/// halves of the output are load-bearing: `tag=1` proves the new object
+/// exists, since an exhausted slab hands back nil and `[nil tag]` is 0;
+/// and `freed` climbing by one per iteration proves the *previous* object
+/// was released rather than leaked, which is the thing a "transpiles
+/// without error" assertion could not see.
+///
+/// The seed store before the loop is what makes each iteration a real
+/// overlap: `_ivar` already holds an object when `[_ivar dup]` allocates
+/// the next, so two are briefly live, which is the whole shape under test.
+#[test]
+fn a_two_slot_pool_serves_an_overlapping_ivar_store() {
+    let src = program_with_pool(
+        "2",
+        "\
+@interface Holder : OZObject {
+	Foo *_ivar;
+}
+- (void)run;
+@end
+@implementation Holder
+- (void)run
+{
+	int i;
+
+	_ivar = [Foo make];
+	for (i = 0; i < 4; i++) {
+		_ivar = [_ivar dup];
+		printf(\"i=%d tag=%d freed=%d\\n\", i, [_ivar tag], g_freed);
+	}
+}
+@end
+
+int main(void)
+{
+	Holder *h = [[Holder alloc] init];
+	[h run];
+	return 0;
+}
+",
+    );
+    /* `-pedantic-errors` as well as the strict pair, because this is the
+     * one place the newly accepted shape's C is compiled at all: no sample
+     * has an overlapping store in a loop, so `just test-pedantic` -- which
+     * sweeps the samples -- cannot see it. The lowering itself is #424's
+     * and is emitted elsewhere, so no new *spelling* reaches the output;
+     * this is the gate for that claim rather than a substitute for it. */
+    assert_eq!(
+        compile_and_run_with_cc_flags(
+            &src,
+            "loopbound_overlap_two_slots",
+            &[
+                "-std=c17",
+                "-pedantic-errors",
+                "-Werror=incompatible-pointer-types",
+                "-Werror=int-conversion",
+            ],
+        ),
+        "i=0 tag=1 freed=1\ni=1 tag=1 freed=2\ni=2 tag=1 freed=3\ni=3 tag=1 freed=4\n",
+        "two slots serve the overlap: each iteration's dup allocates into the free slot and \
+         releases the previous object, so `tag` stays 1 (a nil would print 0) and `freed` \
+         climbs by one (a leak would leave it at 0)"
+    );
+}
+
+/// The same source on one slot is refused, which is the contrast that
+/// makes the case above mean something.
+///
+/// Kept as its own case rather than folded in, because the two assert
+/// different kinds of thing: that one runs, and that this does not build.
+#[test]
+fn one_slot_refuses_what_two_slots_run() {
+    let diags = expect_reject(&program_with_pool(
+        "1",
+        "\
+@interface Holder : OZObject {
+	Foo *_ivar;
+}
+- (void)run;
+@end
+@implementation Holder
+- (void)run
+{
+	int i;
+
+	_ivar = [Foo make];
+	for (i = 0; i < 4; i++) {
+		_ivar = [_ivar dup];
+	}
+}
+@end
+
+int main(void) { return 0; }
+",
+    ));
+    assert!(
+        diags.contains("'Foo' has fewer than two"),
+        "one slot is refused, and for the capacity reason; got:\n{}",
+        diags
+    );
+}
+
+/// An array element stays refused **at every pool size**, and the message
+/// says why rather than offering a size.
+///
+/// Not an oversight in the relaxation but the point of scoping it: the
+/// ivar, `self->` ivar, local and file-scope spellings share
+/// `emit::render_overlapping_strong_store`, which since #424 lowers the
+/// overlap through a bare temporary, so a second slot serves them.
+/// `render_strong_array_element_assign` answers `LocalStore::Unsupported`
+/// with a located error and no temporary at all -- verified in the tree,
+/// not carried over from the issue's text -- so no slab size makes that
+/// shape work, and a diagnostic offering one would be #425 again.
+#[test]
+fn an_array_element_overlap_is_refused_at_every_pool_size() {
+    let body = "\
+@interface Holder : OZObject {
+	Foo *_arr[4];
+}
+- (void)run;
+@end
+@implementation Holder
+- (void)run
+{
+	int i;
+
+	for (i = 0; i < 4; i++) {
+		_arr[0] = [_arr[0] dup];
+	}
+}
+@end
+
+int main(void) { return 0; }
+";
+    for pool in ["1", "2", "8"] {
+        let diags = expect_reject(&program_with_pool(pool, body));
+        assert!(
+            diags.contains("one element of an array ivar"),
+            "pool={} must still refuse the array element; got:\n{}",
+            pool,
+            diags
+        );
+        assert!(
+            !diags.contains("oz-pool") && !diags.contains("--pool-sizes"),
+            "pool={} must not offer a size that cannot lift it (#425); got:\n{}",
+            pool,
+            diags
+        );
+        assert!(
+            diags.contains("not lowered through a temporary"),
+            "pool={} must say why no size helps, not merely withhold the advice; got:\n{}",
+            pool,
+            diags
+        );
+    }
+}
+
+/// Where the class does not resolve, the rejection stands and the message
+/// says *that* rather than guessing.
+///
+/// `- (id)dup` is the shape: the send is a real `+1`, but its declared
+/// return type names no class, so the bar cannot say which slab the new
+/// object draws from and so cannot promise any size lifts the rejection.
+/// Refusing is the safe direction -- assuming capacity would hand the
+/// second allocation a full slab, and `oz_alloc` answers that with a nil
+/// nothing checks.
+///
+/// This is also why the capacity question is asked of the value's class
+/// and not the destination's: `Foo *_thing` would resolve here and be
+/// wrong, since what `-dup` returns is what occupies the slot.
+#[test]
+fn an_unresolved_stored_class_keeps_the_rejection() {
+    let src = format!(
+        "/* oz-pool: Foo=8 */\n{}{}",
+        ozobject_src(),
+        "\
+@interface Foo : OZObject
+- (id)dup;
+@end
+@implementation Foo
+- (id)dup
+{
+	return [[Foo alloc] init];
+}
+@end
+
+@interface Holder : OZObject {
+	Foo *_thing;
+}
+- (void)run;
+@end
+@implementation Holder
+- (void)run
+{
+	int i;
+
+	for (i = 0; i < 4; i++) {
+		_thing = [_thing dup];
+	}
+}
+@end
+
+int main(void) { return 0; }
+"
+    );
+    let diags = expect_reject(&src);
+    assert!(
+        diags.contains("could not tell which class's slab"),
+        "an unresolved class must be named as the reason; got:\n{}",
+        diags
+    );
+    assert!(
+        !diags.contains("oz-pool") && !diags.contains("--pool-sizes"),
+        "and must not offer a size it cannot promise (#425); got:\n{}",
+        diags
+    );
+}
+
+/// A cast and a ternary resolve to the same class the bare send does.
+///
+/// The standing rule of every ARC defect since #351: a question answered
+/// differently on either side of a cast, a pair of parentheses or a
+/// ternary is being asked about the *spelling* rather than about the
+/// reference. `stored_class` therefore walks down through the same
+/// wrappers `loop_escape` already walks up through, and a ternary resolves
+/// when both arms draw from one slab.
+///
+/// Measured by the acceptance, which is what makes this more than an
+/// assertion about a helper: on two slots all three spellings build, and
+/// on one all three are refused naming `Foo`. Were the wrappers not
+/// walked, the two-slot cases would be refused as `ClassUnresolved`
+/// instead -- so the pair of loops below is the oracle, not the prose.
+#[test]
+fn a_cast_and_a_ternary_resolve_like_the_bare_send() {
+    let spellings = [
+        ("bare", "[_ivar dup]"),
+        ("parenthesized", "([_ivar dup])"),
+        ("cast", "(Foo *)[_ivar dup]"),
+        ("ternary", "i > 0 ? [_ivar dup] : [Foo make]"),
+    ];
+    for (name, expr) in spellings {
+        let body = format!(
+            "\
+@interface Holder : OZObject {{
+	Foo *_ivar;
+}}
+- (void)run;
+@end
+@implementation Holder
+- (void)run
+{{
+	int i;
+
+	_ivar = [Foo make];
+	for (i = 0; i < 4; i++) {{
+		_ivar = {};
+	}}
+}}
+@end
+
+int main(void) {{ return 0; }}
+",
+            expr
+        );
+        expect_accept(&program_with_pool("2", &body));
+        let diags = expect_reject(&program_with_pool("1", &body));
+        assert!(
+            diags.contains("'Foo' has fewer than two"),
+            "the {} spelling must resolve to Foo on one slot too, not fall back to \
+             'could not tell which class'; got:\n{}",
+            name,
+            diags
+        );
+    }
 }
