@@ -1974,6 +1974,67 @@ is reported at the outer send: `-init` consumes its receiver's reference
 and hands it back, and reporting the inner one would start the escape walk
 from an expression that is not the thing stored.
 
+## Walking the specification (#447)
+
+Four audits had already walked this ground: every **sink** a `+1` can reach
+(#359), every **position** a `+1` expression can appear in (#355), every
+**selector and construct** that creates or consumes one (#400), and every
+**store destination** (#423). Each was prompted by the previous one raising
+"so what else is there?", and each found defects. The dimension none of them
+walked is **the specification itself** -- which of ARC's normative rules hold
+here, rule by rule.
+
+That is now [docs/ARC.md](ARC.md), with one verdict per rule, and
+`tools/oz_static/tests/arc_conformance.rs` pinning the two verdicts that are
+claims about behaviour rather than descriptions of code.
+
+**What it produced before it had written a single row.** Six defects, three of
+them memory corruption, all from Objective-C that `clang -fobjc-arc
+-Weverything` accepts with zero diagnostics:
+
+| # | direction | keyed on |
+|---|---|---|
+| #459 | use-after-free | an identifier's text, in a set of names that outlives the body it describes |
+| #458 | use-after-free | a selector's exact text, where ARC matches a method *family* and its attributes |
+| #460 | use-after-free *and* leak | one predicate for three bridging casts that mean three different things |
+| #461 | leak | a store destination the four strong-slot shapes do not cover (`*out = ...`) |
+| #448 | silent degrade | two positions for a qualifier that needs covering in all of them |
+| #450 | leak | a fixed point that watches one of the two sets it grows |
+
+Three lessons, and the third is the one worth carrying:
+
+- **The verdict categories did the work, not the prose.** Forcing every rule
+  into `IMPLEMENTED` / `DELEGATED` / `REFUSED` / `N/A` / `GAP` is what made the
+  gaps visible: each is a rule that had no verdict, and writing "what does
+  oz_static do here?" next to "what does ARC require?" is a question the
+  existing prose never asked in that form.
+- **`DELEGATED` is the most valuable category and the most fragile.** Most of
+  ARC's front-end rules need no oz_static implementation because
+  `-fobjc-arc` refuses them first, and #443 already asserts the flag is on
+  every path. But the flag being present is not the same as the *refusal*
+  still happening -- a Clang upgrade or a changed triple can retire one
+  silently. So `arc_conformance.rs` runs the probes and asserts the
+  diagnostics, and a second test asserts each probe is *also* accepted
+  **without** `-fobjc-arc`, because the first draft of four rows matched
+  `no visible @interface ... declares the selector 'retain'` -- an ordinary
+  unknown-selector error that has nothing to do with ARC. Those rows passed
+  and tested nothing.
+- **An instrument aimed at leaks would have caught none of these.** #451's
+  exit-time census sees an object that was never freed; #452's refcount trap
+  sees a release below zero. Five of the six above free an object *too early*
+  or not at all in a place neither instrument watches, and a dealloc counter
+  reads the **right** count when an object is freed too soon. What found them
+  was comparing behaviour against a written-down requirement, one rule at a
+  time -- which is a different kind of instrument, and cheaper than all of
+  them.
+
+One measurement trap specific to this work, recorded because it cost an hour:
+**#459 contaminates any probe that shares a local name with another method in
+the same fixture.** An early `__bridge_transfer` probe appeared to emit the
+correct release and did not -- the release came from a preceding method's
+owning `t`. Any fixture for #458, #460 or #461 has to use distinct local names
+or it passes for the wrong reason.
+
 ## Standing design rules
 
 - **Never silently degrade.** Anything outside the supported subset is a hard,
@@ -2276,9 +2337,24 @@ from an expression that is not the thing stored.
 - **A leak is a bug; a double free is memory corruption.** ARC therefore fails
   toward leaking: an unrecognised shape is treated as borrowed. Widening what
   counts as owning is the dangerous direction and must be exact rather than
-  heuristic. Note what that rule does *not* say: recognising a shape as +1 is
-  only half the job, and a *recognised* one still leaked for as long as nothing
-  bound it (#322). It also does not say that one reading of ownership serves
+  heuristic.
+
+  **Read that as a statement about `is_owning_expr`'s bias, not about the
+  system's behaviour** -- which is the correction #447 forced. Walking the ARC
+  specification turned up three defects in the *corrupting* direction at once
+  (#458, #459, #460), and none of them came from widening what counts as
+  owning. They came from three different decisions keyed on a syntactic form
+  where ARC keys on something else: a selector's exact text against ARC's
+  method *family* (#458), an identifier's text against a set of names that
+  outlives the body it describes (#459), and one predicate for three bridging
+  casts that mean three different things (#460). The bias protects the shapes
+  the analysis declines to recognise. It does nothing for a shape the analysis
+  recognises *confidently and wrongly*, and that is where every corrupting
+  defect so far has lived.
+
+  Note what that rule does *not* say: recognising a shape as +1 is only half
+  the job, and a *recognised* one still leaked for as long as nothing bound it
+  (#322). It also does not say that one reading of ownership serves
   every question. `is_owning_expr` answers "is this +1 by shape"; a result
   bound to nothing needs the narrower `discarded_owning_value`, because
   `-retain` and `-init...` hand back a reference something else already
