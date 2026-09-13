@@ -1978,6 +1978,38 @@ from an expression that is not the thing stored.
 
 - **Never silently degrade.** Anything outside the supported subset is a hard,
   *located* error. This is deliberate, not a gap someone forgot to fill.
+- **Located means a position in a file the author can open, not a position in
+  the buffer the compiler walks.** Every pass reads one `#import`-spliced
+  buffer and raises diagnostics at offsets into it, and for the whole life of
+  the feature `Diagnostic` reported those offsets directly: a 9-line
+  `Keyboard.m` with 33 spliced origins had its defect reported at **line 1989**,
+  and no file in the project has a line 1989 (#456). Half of "hard, located
+  error" was therefore not being delivered, by a rule nobody had written down
+  because it read as obviously true.
+
+  What makes it worth a rule is where the fix already was.
+  `imports::SourceMap::source_position` answers this exactly, by binary search
+  over pre-indexed segments -- it had been built for `#line` directives and no
+  diagnostic path ever called it. So the gap was not a missing capability but
+  an unconnected one, which is the shape that survives longest: nothing fails,
+  and the output looks like a real compiler's.
+
+  Two things the fix turns on, both easy to get wrong the other way. **Carry an
+  offset, never a line.** `parse::repair_bare_macro_statements` overwrites an
+  ASCII whitespace byte in place, so it preserves every byte offset while
+  *eating a line* whenever that byte is a newline -- a line derived from the
+  repaired buffer is quietly wrong, and only for files that were repaired.
+  **Resolve where the map lives, not where the diagnostic is built.**
+  `Options::source_map` carries a map only to switch `#line` directives on, so
+  resolving through that field would emit directives into every build; `main.rs`
+  owns the resolution because it owns the resolution the map came from.
+
+  And say nothing rather than something plausible: three whole-program checks
+  have no node to blame (`attach_ast`, an unknown `--pool-sizes` class, an
+  unsizable slab cycle). They keep `(1, 1)` and report *no file*, so a reader
+  can tell "unanchored" from "anchored here". A test asserts that absence,
+  because the tempting failure is to hand them the entry file and make an
+  unanchored diagnostic look located.
 - **A remedy in a diagnostic is a claim about the checker, so the check that
   offers it has to be the check that can act on it.** The loop-escape rejection
   told authors to raise the class's pool for four releases while having no pool
