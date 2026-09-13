@@ -11,7 +11,7 @@
 // run, require a non-zero exit, and hand back stdout and stderr together.
 //
 // Both streams, because a trap's evidence is split across them. The class
-// name goes to stdout through `oz_platform_print` and the assertion text to
+// name goes to stdout through `OZ_PLATFORM_PRINT` and the assertion text to
 // stderr through `oz_assert_msg`, and that split is not decoration:
 // `oz_assert_msg` takes a plain `const char *` with no format arguments
 // (`include/platform/oz_assert.h`), so naming the class cannot happen inside
@@ -221,7 +221,7 @@ fn without_the_flag_an_over_release_is_survived_silently() {
 /// about it.
 ///
 /// This test is what found the PAL's `, ##__VA_ARGS__`, which clang rejects
-/// as a GNU extension at *every* expansion of `oz_platform_print` -- not
+/// as a GNU extension at *every* expansion of `OZ_PLATFORM_PRINT` -- not
 /// only a zero-argument one. Nothing had expanded that macro before the
 /// traps did, so an unreachable non-conformance became a real one the
 /// moment #452's C called it.

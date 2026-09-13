@@ -1714,7 +1714,7 @@ not tied to one (not from source) */\n",
              \t * reference the dealloc switch has already passed, so the retain\n\
              \t * succeeds and the object is freed under its new owner (#452). */\n\
              \tif (self && self->_meta.deallocating) {{\n\
-             \t\toz_platform_print(\"oz: retain of %s during its own dealloc\\n\",\n\
+             \t\tOZ_PLATFORM_PRINT(\"oz: retain of %s during its own dealloc\\n\",\n\
              \t\t\t\t  oz_class_name(self));\n\
              \t\toz_platform_flush();\n\
              \t\toz_assert_msg(0, \"retain during dealloc -- this object is being \
@@ -1772,7 +1772,7 @@ vtable\") -- never mutated at runtime. */\n",
              \t * assertion text survived on stderr and the class name did not.\n\
              \t * It read as a trap that could not name a class. */\n\
              \tif (oz_atomic_get(&self->oz_refcount) <= 0) {{\n\
-             \t\toz_platform_print(\"oz: over-release of %s\\n\",\n\
+             \t\tOZ_PLATFORM_PRINT(\"oz: over-release of %s\\n\",\n\
              \t\t\t\t  oz_class_name(self));\n\
              \t\toz_platform_flush();\n\
              \t\toz_assert_msg(0, \"over-release -- this refcount was already 0; \
