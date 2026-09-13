@@ -1324,18 +1324,30 @@ fn walk_bridging_casts(node: Node, src: &str, diags: &mut Vec<Diagnostic>) {
                     "so that reference is stranded -- a leak",
                 ),
             };
-            err(
+            /* Split across the tiers rather than fused into one sentence
+             * (#457). This refusal landed while #457 was still open, so
+             * it went in through the single-string `err`; the wording is
+             * #460's own, only its tier moved. */
+            err_detailed(
                 diags,
                 src,
                 node,
-                format!(
-                    "'{kind}' is not supported: ARC would {verb}, and oz_static emits no \
-                     such traffic -- {direction}, {consequence}. Use a plain '(__bridge T)' \
-                     cast, which transfers no ownership, and keep the object alive on the \
-                     Objective-C side independently -- an instance variable, or a singleton \
-                     adopting 'OZSingletonProtocol', which is what 'px-keyboard' does for \
-                     the pointer it hands to a Zephyr callback"
-                ),
+                Rejection {
+                    message: format!("'{kind}' is not supported: it transfers a reference"),
+                    note: Some(format!(
+                        "ARC would {verb}, and oz_static emits no such traffic -- \
+                         {direction}, {consequence}"
+                    )),
+                    help: vec![
+                        "use a plain '(__bridge T)' cast, which transfers no ownership"
+                            .to_string(),
+                        "keep the object alive on the Objective-C side independently -- an \
+                         instance variable, or a singleton adopting \
+                         'OZSingletonProtocol', which is what 'px-keyboard' does for the \
+                         pointer it hands to a Zephyr callback"
+                            .to_string(),
+                    ],
+                },
             );
             return;
         }
