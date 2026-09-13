@@ -174,7 +174,7 @@ jobs:
       # The corpora run through oz_static now, so this job needs the
       # binary. The Python backend needed no build step, which is
       # exactly why repointing failed here first and nowhere locally:
-      # `oz_static_build` looks for target/debug/oz2c, and every
+      # `oz2c_build` looks for target/debug/oz2c, and every
       # machine it was tried on already had one.
       - name: Build oz2c
         run: cargo build --manifest-path tools/oz2c/Cargo.toml
@@ -206,7 +206,7 @@ jobs:
       # The corpora run through oz_static now, so this job needs the
       # binary. The Python backend needed no build step, which is
       # exactly why repointing failed here first and nowhere locally:
-      # `oz_static_build` looks for target/debug/oz2c, and every
+      # `oz2c_build` looks for target/debug/oz2c, and every
       # machine it was tried on already had one.
       - name: Build oz2c
         run: cargo build --manifest-path tools/oz2c/Cargo.toml
@@ -244,7 +244,7 @@ jobs:
       # The corpora run through oz_static now, so this job needs the
       # binary. The Python backend needed no build step, which is
       # exactly why repointing failed here first and nowhere locally:
-      # `oz_static_build` looks for target/debug/oz2c, and every
+      # `oz2c_build` looks for target/debug/oz2c, and every
       # machine it was tried on already had one.
       - name: Build oz2c
         run: cargo build --manifest-path tools/oz2c/Cargo.toml
@@ -288,7 +288,7 @@ jobs:
       # The corpora run through oz_static now, so this job needs the
       # binary. The Python backend needed no build step, which is
       # exactly why repointing failed here first and nowhere locally:
-      # `oz_static_build` looks for target/debug/oz2c, and every
+      # `oz2c_build` looks for target/debug/oz2c, and every
       # machine it was tried on already had one.
       - name: Build oz2c
         run: cargo build --manifest-path tools/oz2c/Cargo.toml
@@ -331,7 +331,7 @@ jobs:
       # The corpora run through oz_static now, so this job needs the
       # binary. The Python backend needed no build step, which is
       # exactly why repointing failed here first and nowhere locally:
-      # `oz_static_build` looks for target/debug/oz2c, and every
+      # `oz2c_build` looks for target/debug/oz2c, and every
       # machine it was tried on already had one.
       - name: Build oz2c
         run: cargo build --manifest-path tools/oz2c/Cargo.toml

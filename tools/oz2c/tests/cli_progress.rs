@@ -111,7 +111,7 @@ fn run(args: &[&str], src: &PathBuf, out: &PathBuf) -> std::process::Output {
 /// A successful run writes nothing to stderr.
 ///
 /// This is the regression test for the whole design. If progress ever moves
-/// to stderr, `oz_static_build.py`'s `err[0]` stops being the failure
+/// to stderr, `oz2c_build.py`'s `err[0]` stops being the failure
 /// reason and starts being a progress line.
 #[test]
 fn a_successful_run_leaves_stderr_empty() {

@@ -17,7 +17,7 @@ import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tests" / "tools"))
-import oz_static_build  # noqa: E402  (path set up above)
+import oz2c_build  # noqa: E402  (path set up above)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import objz_clang  # noqa: E402  (path set up above)
@@ -168,12 +168,12 @@ def main() -> int:
         # behaviour corpus uses bridges the difference and the drivers stay
         # unmodified. See tests/tools/oz2c_build.py.
         print("Writing the ABI shim the ztest drivers include ...")
-        classes = oz_static_build.discover_classes(tmpdir)
+        classes = oz2c_build.discover_classes(tmpdir)
         if not classes:
             print("error: no classes found in oz2c output", file=sys.stderr)
             return 1
         root = "OZObject" if "OZObject" in classes else classes[0]
-        oz_static_build.write_abi_shim(tmpdir, classes, root, driver_text)
+        oz2c_build.write_abi_shim(tmpdir, classes, root, driver_text)
 
         generated: dict[str, str] = {}
         for f in sorted(tmpdir.rglob("*")):
