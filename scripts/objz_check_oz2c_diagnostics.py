@@ -37,7 +37,7 @@ import sys
 # capture adds. Both have to be there: the message alone still leaves a
 # failed *start* indistinguishable from a rejected input.
 REQUIRED = (
-    "oz_static: error: cannot resolve #import",
+    "oz2c error: cannot resolve #import",
     "result:",
 )
 
