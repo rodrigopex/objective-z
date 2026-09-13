@@ -17,14 +17,14 @@ was found by a hand audit prompted by the previous one.
 
 | verdict | meaning |
 |---|---|
-| `IMPLEMENTED` | oz_static does it. The `evidence` column names the test that proves it. |
+| `IMPLEMENTED` | oz2c does it. The `evidence` column names the test that proves it. |
 | `DELEGATED` | `clang -fobjc-arc` refuses it before oz2c sees it, on every path that dumps an AST. The `evidence` column quotes the diagnostic. |
-| `REFUSED` | a located oz_static error. The `evidence` column names the site. |
+| `REFUSED` | a located oz2c error. The `evidence` column names the site. |
 | `N/A` | structurally impossible on this target. The `evidence` column says why. |
-| `GAP` | oz_static neither implements nor refuses it. Every one cites the issue tracking it. |
+| `GAP` | oz2c neither implements nor refuses it. Every one cites the issue tracking it. |
 | `UNEXAMINED` | no construct in the accepted subset reaches it, so it has been neither implemented nor verified. Recorded so it is not mistaken for covered. |
 
-**`DELEGATED` is load-bearing and is the reason oz_static does not reimplement
+**`DELEGATED` is load-bearing and is the reason oz2c does not reimplement
 ARC's front end.** Every Clang path in this project passes `-fobjc-arc` —
 asserted, not assumed, by `arc_flag_is_universal.rs` (#443) — and the AST dump
 fails the build on *any* error, with two matched exceptions
@@ -48,7 +48,7 @@ Two limits on `DELEGATED`, both of which have already produced defects:
 records that two claims about ARC made from memory during the #359 audit were
 wrong and were corrected by dumping the AST for the shape. The probes behind
 this file are `clang -fobjc-arc -Weverything` for the Clang half and a
-transpile-compile-run under ASan for the oz_static half.
+transpile-compile-run under ASan for the oz2c half.
 
 ---
 
@@ -56,17 +56,17 @@ transpile-compile-run under ASan for the oz_static half.
 
 | § | Rule | Verdict | Evidence |
 |---|---|---|---|
-| 1.2 | `retain`/`release` are balanced and a null operand is a no-op | `IMPLEMENTED` | `oz_static_retain`/`oz_static_release` both return early on nil (`companion.rs:1603`, `1637`); `behavior/cases/error/release_nil_safe.m` |
+| 1.2 | `retain`/`release` are balanced and a null operand is a no-op | `IMPLEMENTED` | `oz_retain`/`oz_release` both return early on nil (`companion.rs:1603`, `1637`); `behavior/cases/error/release_nil_safe.m` |
 | 1.3 | No automatic retain/release merely for using a pointer as an operand | `IMPLEMENTED` | This *is* the model — see STATUS.md "The hybrid model". `arc.rs` emits only necessary traffic |
-| 1.3.1 | `ns_consumed` / `ns_consumes_self`: caller retains, callee releases | `REFUSED` | Same walk (#458). They move an argument's release to the callee, which oz_static does not model — a caller and callee that disagree about who releases is the corrupting direction |
+| 1.3.1 | `ns_consumed` / `ns_consumes_self`: caller retains, callee releases | `REFUSED` | Same walk (#458). They move an argument's release to the callee, which oz2c does not model — a caller and callee that disagree about who releases is the corrupting direction |
 | 1.3.2 | `ns_returns_retained`: the caller owns the result | `REFUSED` | A located error since #458 (`staticbar::check_ownership_attributes`). Refused rather than implemented on #430's precedent: a spelling whose meaning is a mechanism the backend does not have must not be quietly accepted. Reading it needs #453 |
-| 1.3.2 | `ns_returns_not_retained`: overrides a family's implicit +1 | `REFUSED` | Same walk. This is the one that reached a **use-after-free**: ARC read it and said +0, oz_static called `-copy` +1 and released the caller's object. Refusing it is also what makes § 3.1's family rule safe to widen — no attribute can contradict a family (#458) |
+| 1.3.2 | `ns_returns_not_retained`: overrides a family's implicit +1 | `REFUSED` | Same walk. This is the one that reached a **use-after-free**: ARC read it and said +0, oz2c called `-copy` +1 and released the caller's object. Refusing it is also what makes § 3.1's family rule safe to widen — no attribute can contradict a family (#458) |
 | 1.3.3 | `objc_autoreleaseReturnValue` / `objc_retainAutoreleasedReturnValue` return convention | `N/A` | No autorelease pool exists, so the convention has nowhere to stand. A function must pick +1 or +0 and declare it consistently (STATUS.md:1077-1082) |
 | 1.3.4 | `(__bridge T)` transfers nothing | `IMPLEMENTED` | `is_bridging_cast` holds it back from all three ownership questions (`arc.rs:1417`) |
-| 1.3.4 | `(__bridge_retained T)` retains, handing +1 to the recipient | `REFUSED` | A located error since #460 (`staticbar::check_bridging_casts`). It emitted no retain, so the local was still released at scope exit and C was handed a freed slot — and the stale read *succeeded* first, which is why it was silent. Refused rather than implemented: the tree has zero uses, and emission is sequenced after the `oz_static_*` respelling |
+| 1.3.4 | `(__bridge_retained T)` retains, handing +1 to the recipient | `REFUSED` | A located error since #460 (`staticbar::check_bridging_casts`). It emitted no retain, so the local was still released at scope exit and C was handed a freed slot — and the stale read *succeeded* first, which is why it was silent. Refused rather than implemented: the tree has zero uses, and emission is sequenced after #462's respelling of the emitted ABI |
 | 1.3.4 | `(__bridge_transfer T)` releases at the end of the full expression | `REFUSED` | Same walk (#460). It emitted no release, stranding the +1 it took over from C |
 | 1.4 | Object ↔ non-object conversion is ill-formed without a bridge | `DELEGATED` | `cast of Objective-C pointer type 'Thing *' to C pointer type 'void *' requires a bridged cast` |
-| 1.4 | …except a cast to an integer type, which is allowed | `IMPLEMENTED` | Clang accepts it; oz_static deliberately leaks it rather than releasing through an integer slot (#380, `integer_slot_ownership.rs`) |
+| 1.4 | …except a cast to an integer type, which is allowed | `IMPLEMENTED` | Clang accepts it; oz2c deliberately leaks it rather than releasing through an integer slot (#380, `integer_slot_ownership.rs`) |
 | 1.5 | Known-semantics conversions (CF audited functions, `cf_returns_*`) | `N/A` | No Core Foundation and no C retainable pointer types on this target |
 
 ## § 2 — Ownership qualification
@@ -79,7 +79,7 @@ transpile-compile-run under ASan for the oz_static half.
 | 2.2 | `__weak` is a zeroing weak reference | `N/A` by decision | No runtime can zero one. `__unsafe_unretained` is the supported opt-out and the cycle-breaker |
 | 2.2 | …and `__weak` must therefore be refused, not ignored | `REFUSED` (ivars, properties) / `GAP` (everywhere else) | Ivar `emit.rs:6692`, property `collect.rs:558`. On a local, parameter, `static`, file-scope decl, `for`-header decl or C struct field it reaches the generated C verbatim. Clang backstops the build paths with `cannot create __weak reference because the current deployment target does not support weak references`. #448 |
 | 2.4 | Property ownership from a modifier (`strong`, `copy`, `assign`, `unsafe_unretained`) | `IMPLEMENTED` | `collect.rs:535`; synthesized strong setter is retain-new / assign / release-old (`emit.rs:7047`) |
-| 2.4 | `weak` property | `REFUSED` | `collect.rs:558`. oz_static's own rule, **not** delegated: Clang *accepts* a `weak` property declaration |
+| 2.4 | `weak` property | `REFUSED` | `collect.rs:558`. oz2c's own rule, **not** delegated: Clang *accepts* a `weak` property declaration |
 | 2.4 | `__autoreleasing` is forbidden on a property | `DELEGATED` | Clang refuses it |
 | 2.5.1 | Reading a `__weak` lvalue retains-and-autoreleases | `N/A` | No `__weak` |
 | 2.5.2 | Assigning a `__strong` lvalue: retain new, release old | `IMPLEMENTED` | `classify_store` (`emit.rs:590`) — the one predicate both `staticbar` and the emitter ask (#405). Four destinations: ivar, managed local, `static` local, file-scope object, and since #429 a slot spelled `id` is a strong slot in all four |
@@ -92,7 +92,7 @@ transpile-compile-run under ASan for the oz_static half.
 | 2.6.3 | Conversion between differently-qualified pointers is ill-formed | `DELEGATED` | `casting 'Thing *__strong *' to type 'Thing *__weak *' changes retain/release properties of pointer` |
 | 2.6.5 | Pass-by-writeback through a `T __autoreleasing *` out-parameter | `GAP` | Clang accepts; `*out = <+1>` asks no ownership question and the caller's variable joins no scope. **Leak, and a fifth untracked strong destination** — the #359 shape at a site nobody walked. #461 |
 | 2.6.6 | `__strong` fields of a C struct are managed | `IMPLEMENTED` | Walked and fixed in #359; `ownership_matrix.rs` has the row |
-| 2.6.6 | `__strong` in a **union** is ill-formed | `UNEXAMINED` | Clang *accepted* the probe. Unverified whether oz_static would mismanage it; no construct in the tree uses one |
+| 2.6.6 | `__strong` in a **union** is ill-formed | `UNEXAMINED` | Clang *accepted* the probe. Unverified whether oz2c would mismanage it; no construct in the tree uses one |
 | 2.7.1 | An unqualified retainable pointer is inferred `__strong` | `IMPLEMENTED` | The AST states each ivar's ownership outright under `-fobjc-arc` (`model.rs:340`) |
 | 2.7.1 | …except `Class`, inferred `__unsafe_unretained` | `IMPLEMENTED` | Class objects are static and immortal (`companion.rs`, `class_objects.rs`) |
 | 2.7.2 | A `T *` parameter infers `__autoreleasing` | `GAP` | Same site as 2.6.5. #461 |
@@ -101,7 +101,7 @@ transpile-compile-run under ASan for the oz_static half.
 
 | § | Rule | Verdict | Evidence |
 |---|---|---|---|
-| 3.1 | A selector is in a family if its first component **is** the family name, or begins with it followed by a non-lowercase character | `IMPLEMENTED` | `arc::create_rule_family_of` since #458, replacing an exact match against six spellings. **Guarded by the return type**, because the corpus holds the counterexample: `- (int)allocOk` is in the `alloc` family by spelling and releasing it hands `oz_static_release` an `int` — #398 exactly. Clang accepts `- (int)allocOk` silently, so the guard is oz_static's own. Mirrors `is_initialiser`; `method_family_ownership.rs` pins nine family boundaries |
+| 3.1 | A selector is in a family if its first component **is** the family name, or begins with it followed by a non-lowercase character | `IMPLEMENTED` | `arc::create_rule_family_of` since #458, replacing an exact match against six spellings. **Guarded by the return type**, because the corpus holds the counterexample: `- (int)allocOk` is in the `alloc` family by spelling and releasing it hands `oz_release` an `int` — #398 exactly. Clang accepts `- (int)allocOk` silently, so the guard is oz2c's own. Mirrors `is_initialiser`; `method_family_ownership.rs` pins nine family boundaries |
 | 3.2 | Family signature requirements (`alloc`/`copy`/`mutableCopy`/`new` return a retainable pointer) | `IMPLEMENTED` | `returns_object_pointer` (`arc.rs:137`) |
 | 3.2 | An `init` method must return an ObjC pointer | `IMPLEMENTED`, and sharper than Clang | `is_initialiser` asks what the method *returns*, not how it is spelled — so `-initialValue` is not an initialiser (#398). Clang accepted a declared-only `- (int)initBadly;` in the probe |
 | 3.3 | `objc_method_family(none)` removes a selector from its family | `REFUSED` | Same walk as § 1.3.2 (#458): it reassigns a family outright, which is precisely what the widened family rule must not have contradicted underneath it |
@@ -118,13 +118,13 @@ transpile-compile-run under ASan for the oz_static half.
 | 4.1 | A **send** of `retain`/`release`/`autorelease`/`retainCount` is ill-formed | `DELEGATED` + `REFUSED` | Clang: `ARC forbids explicit message send of 'retain'` (verified for all four, with the selectors declared). Also `staticbar::check_manual_memory_sends` with `ARC_FORBIDDEN_SELECTORS` (#428, #436), covering every receiver spelling |
 | 4.1 | `@selector(retain)` is ill-formed | `DELEGATED` | Clang: `ARC forbids use of 'retain' in a @selector` |
 | 4.1 | An **implementation** of `retain`/`release`/`autorelease` is ill-formed | `DELEGATED` | Clang: `ARC forbids implementation of 'retain'` |
-| 4.1 | A bare **declaration** of one of them | `REFUSED`, wider than Clang | `staticbar.rs:1215-1229`. Clang **accepts** `- (void)release;` in an `@interface` — it refuses the *send* and the *implementation*, not the declaration (measured both ways). CLAUDE.md's "exactly what Clang refuses" is a claim about the **selector set**, and on that it is exact; oz_static's *operation* set is one wider, deliberately, because a declaration whose every call site is an error is dead weight |
+| 4.1 | A bare **declaration** of one of them | `REFUSED`, wider than Clang | `staticbar.rs:1215-1229`. Clang **accepts** `- (void)release;` in an `@interface` — it refuses the *send* and the *implementation*, not the declaration (measured both ways). CLAUDE.md's "exactly what Clang refuses" is a claim about the **selector set**, and on that it is exact; oz2c's *operation* set is one wider, deliberately, because a declaration whose every call site is an error is dead weight |
 | 4.2 | A send of `dealloc` is ill-formed | `DELEGATED` + `REFUSED` | Clang: `ARC forbids explicit message send of 'dealloc'`, including `[super dealloc]` |
 | 4.2 | A class may define `-dealloc`; the superclass chain runs automatically | `IMPLEMENTED` | `companion::dealloc_chain` (`companion.rs:71`), most-derived first. Synthesizing it is what made rejecting `[super dealloc]` possible (#428) |
 | 4.2 | Instance variables are destroyed after the root `-dealloc` entry | `IMPLEMENTED`, order deliberate | `_oz_release_ivars` runs **after** the `-dealloc` bodies so they can still read the ivars (`companion.rs:1649-1678`) |
 | 4.3 | `@autoreleasepool { }` captures and restores the pool | `REFUSED` | Since #430 a located error: *"'@autoreleasepool' has no meaning in the static subset: there is no '-autorelease' … Delete the keyword and keep the braces"*. It used to lower to a plain compound statement, which is the `N/A` this row said before #430 landed — silently accepting a keyword whose mechanism does not exist is the degradation the standing rule forbids |
 | 4.3 | Referring to `NSAutoreleasePool` is ill-formed | `N/A` | No such class; Clang's rule is about a Foundation this SDK does not have |
-| 4.4 | `self` is externally retained in a non-`init` method | `DELEGATED` | Clang refuses assigning `self` outside the init family; oz_static never releases `self` |
+| 4.4 | `self` is externally retained in a non-`init` method | `DELEGATED` | Clang refuses assigning `self` outside the init family; oz2c never releases `self` |
 | 4.4 | The for-in loop variable is externally retained | `IMPLEMENTED`, unpinned | Verified by probe: no release is emitted for the loop variable. `behavior_forin.rs` and the four `behavior/cases/forin/` cases exercise the construct but assert nothing about refcount traffic, so nothing would notice if this changed |
 | 4.4 | `objc_externally_retained` on a variable | `GAP` | Ignored, and reaches the generated C as an `__attribute__`. #461 |
 
@@ -138,7 +138,7 @@ be done at the source level because GCC will not
 
 | § | Rule | Verdict | Evidence |
 |---|---|---|---|
-| 5.2 | ARC may assume non-ARC code balances sensibly | `IMPLEMENTED` by decision | The C API (`oz_static_retain`/`oz_static_release`) is a deliberate escape hatch, not an enforced invariant (#437) |
+| 5.2 | ARC may assume non-ARC code balances sensibly | `IMPLEMENTED` by decision | The C API (`oz_retain`/`oz_release`) is a deliberate escape hatch, not an enforced invariant (#437) |
 | 5.3 | Object liveness: an object in a `__strong` slot is live while a later computation depends on it | `IMPLEMENTED` | This is the **escape** half of every release decision — `alias_chain`, `return_needs_retain` (#351). Asking only provenance produced #351, #352, #359, #360 |
 | 5.4 | No object lifetime extension | `IMPLEMENTED` | Scope-exit release rather than a pool; `objc_precise_lifetime` is the default here because there is no imprecise case |
 | 5.5 | `objc_precise_lifetime` forces a precise release | `GAP` (benign) | Ignored, and reaches the generated C as an `__attribute__`. Semantically a no-op — every release here is already precise — so the defect is the unlowered spelling, not the behaviour. #461 |
