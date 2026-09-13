@@ -433,7 +433,7 @@ fn compile_and_run_inner(
     }
 
     /* Both streams, because a trap's evidence is split across them: the class
-     * name goes to stdout via `oz_platform_print` and the assertion text to
+     * name goes to stdout via `OZ_PLATFORM_PRINT` and the assertion text to
      * stderr. A caller checking only one would miss half the claim. */
     let mut both = String::from_utf8_lossy(&run.stdout).into_owned();
     both.push_str(&String::from_utf8_lossy(&run.stderr));
@@ -448,7 +448,7 @@ fn compile_and_run_inner(
 /// trap is *real C* and says nothing about whether it fires (#452).
 ///
 /// Returns stdout and stderr concatenated, so an assertion can name both the
-/// class printed by `oz_platform_print` and the message given to
+/// class printed by `OZ_PLATFORM_PRINT` and the message given to
 /// `oz_assert_msg`.
 pub fn expect_trap(source: &str, stem: &str, extra_cc_flags: &[&str]) -> String {
     compile_and_run_inner(source, stem, extra_cc_flags, oz2c::Options::default(), false)

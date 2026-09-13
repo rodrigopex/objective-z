@@ -86,7 +86,7 @@ struct OZObject *oz_retain(struct OZObject *self)
 	 * reference the dealloc switch has already passed, so the retain
 	 * succeeds and the object is freed under its new owner (#452). */
 	if (self && self->_meta.deallocating) {
-		oz_platform_print("oz: retain of %s during its own dealloc\n",
+		OZ_PLATFORM_PRINT("oz: retain of %s during its own dealloc\n",
 				  oz_class_name(self));
 		oz_platform_flush();
 		oz_assert_msg(0, "retain during dealloc -- this object is being torn down; the class is named on the line above");
@@ -149,7 +149,7 @@ void oz_release(struct OZObject *self)
 	 * assertion text survived on stderr and the class name did not.
 	 * It read as a trap that could not name a class. */
 	if (oz_atomic_get(&self->oz_refcount) <= 0) {
-		oz_platform_print("oz: over-release of %s\n",
+		OZ_PLATFORM_PRINT("oz: over-release of %s\n",
 				  oz_class_name(self));
 		oz_platform_flush();
 		oz_assert_msg(0, "over-release -- this refcount was already 0; the class is named on the line above");
