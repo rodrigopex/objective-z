@@ -29,7 +29,7 @@ DRIVER_ALLOC_RE = re.compile(r"\b(\w+?)(?:_oz)?_alloc\s*\(")
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import oz_static_build  # noqa: E402  (path set up above)
+import oz2c_build  # noqa: E402  (path set up above)
 
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 import objz_clang  # noqa: E402  (path set up above)
@@ -103,7 +103,7 @@ def _default_pool_sizes(m_path: Path, driver_text: str = "") -> str:
         `OZDefer_alloc()` are exactly that.
 
     `X_alloc` rather than `X_oz_alloc` because the driver spells the retired
-    Python pipeline's ABI and `oz_static_build.write_abi_shim` bridges it;
+    Python pipeline's ABI and `oz2c_build.write_abi_shim` bridges it;
     both spellings are matched so neither form is missed.
     """
     text = m_path.read_text()
@@ -215,7 +215,7 @@ def _run_pipeline_inner(m_path: Path, test_file: Path, tmpdir: Path,
             args=["oz2c", str(m_path)], returncode=1, stdout="",
             stderr=f"unknown backend {backend!r}: the Python pipeline was "
                    f"retired (see the `python-backend-final` tag)")
-    err = oz_static_build.transpile(m_path, tmpdir, pool_sizes,
+    err = oz2c_build.transpile(m_path, tmpdir, pool_sizes,
                                     heap_support, ast_json)
     if err is not None:
         return subprocess.CompletedProcess(

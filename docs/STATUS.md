@@ -2790,7 +2790,7 @@ claim, and the claim has to be the true one for that input.
   Synthesized and internal names are `oz_static_` (companion-wide) or `_oz_`
   (per-class). `__objc_refcount_get` was the last survivor in the live tree and
   went in #418; the prefix remains only in `runtime_legacy/`, which is not
-  compiled, and in one `#define` bridge in `tests/tools/oz_static_build.py` that
+  compiled, and in one `#define` bridge in `tests/tools/oz2c_build.py` that
   exists so behaviour drivers written against the retired Python pipeline's ABI
   stay unmodified. Neither is a precedent. `CLAUDE.md` had documented the
   opposite -- "Internal functions: `__objc_` prefix" -- which #418 made outright
