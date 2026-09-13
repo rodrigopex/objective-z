@@ -558,17 +558,31 @@ int main(void) {
 /// A *bridging* cast is the one cast #327 does not look through, and the
 /// reason `arc::is_bridging_cast` exists.
 ///
-/// `(__bridge_retained void *)[t copy];` hands the reference to a
-/// non-Objective-C holder; releasing it would pull the object out from
-/// under that holder, which is a double free and not a leak. `__bridge`
-/// and `__bridge_transfer` are held back with it -- not because either is
-/// known to be unsafe, but because there is no CoreFoundation here for any
-/// of the three to bridge to, so leaving all of them borrowed costs
-/// nothing observable and keeps the conservative bias exact.
+/// `(__bridge void *)[t copy];` transfers nothing, so the reference stays
+/// with whoever already held it; releasing it here would be a release of
+/// something this expression never owned, which is a double free and not a
+/// leak. `deallocs=0` is therefore the answer being asserted, not a leak
+/// being tolerated.
 ///
-/// So `deallocs=0` here is the answer being asserted, not a leak being
-/// tolerated: under `__bridge_retained` the reference belongs to whatever
-/// took the `void *`.
+/// **Fixture and reasoning both changed in #460.** The first of the two
+/// discards used to be `(__bridge_retained void *)[t copy];`, and this doc
+/// said the other two kinds were "held back with it -- not because either
+/// is known to be unsafe, but because there is no CoreFoundation here for
+/// any of the three to bridge to".
+///
+/// One of them *was* unsafe, and measuring it is what #460 did:
+/// `__bridge_retained` emits no retain, so at a hand-out site the local is
+/// released at scope exit while C keeps the pointer it was promised --
+/// `heap-use-after-free` under ASan -- and at a binding site the `+1`
+/// leaks instead. `__bridge_transfer` emits no release and strands the
+/// reference it took over. Both are now located errors
+/// (`staticbar::check_bridging_casts`), pinned in
+/// `bridging_cast_ownership.rs`, so neither can appear in a fixture again.
+///
+/// What survives is the property that was always right: plain `__bridge`
+/// is opaque to the ownership questions. `arc::is_bridging_cast` still
+/// names all three, because narrowing it would drop the refused two into
+/// the ordinary cast path, which is looked *through* (#332).
 #[test]
 fn a_bridging_cast_is_not_looked_through() {
     let src = format!(
@@ -592,7 +606,7 @@ static int g_deallocs = 0;
 #include <stdio.h>
 int main(void) {
 	Thing *t = [Thing alloc];
-	(__bridge_retained void *)[t copy];
+	(__bridge void *)[t copy];
 	(__bridge void *)[t copy];
 	printf(\"deallocs=%d\\n\", g_deallocs);
 	return 0;
@@ -1041,20 +1055,37 @@ int main(void) {
 }
 
 /// A *bridging* cast is not looked through at a binding site either, for
-/// #327's reason.
+/// #327's reason: `(__bridge Thing *)` transfers nothing, so the reference
+/// stays with whoever already had it and releasing it here would be a
+/// release of something this scope never owned.
 ///
-/// `(__bridge_retained Thing *)` hands the reference to a non-Objective-C
-/// holder, so releasing it at scope exit would pull the object out from
-/// under that holder -- a double free, not a leak. `__bridge` and
-/// `__bridge_transfer` are held back with it, because there is no
+/// `bridged=0` is the answer being asserted and not a leak being
+/// tolerated. The non-bridging local in the same scope (`plain=1`) is what
+/// shows the peel is working at all and that the bridging ones are being
+/// singled out.
+///
+/// **This test's fixture and its reasoning both changed in #460, and the
+/// part that changed was an argument, not a typo.** It used to bind through
+/// `(__bridge_retained Bridged *)` and its doc said `__bridge` and
+/// `__bridge_transfer` were "held back with it" because "there is no
 /// CoreFoundation here for any of the three to bridge to, so leaving all
-/// three borrowed keeps the conservative bias exact rather than resting on
-/// a reading of a bridge this project does not have.
+/// three borrowed keeps the conservative bias exact".
 ///
-/// `deallocs=0` is therefore the answer being asserted and not a leak being
-/// tolerated, exactly as in `a_bridging_cast_is_not_looked_through`. The
-/// non-bridging local in the same scope is what shows the peel is working
-/// at all and the bridging one is being singled out.
+/// That reading was wrong twice over. The two transferring kinds are not
+/// about CoreFoundation -- they are about whether ARC emits traffic for a
+/// hand-off to *any* C pointer, which is what px-keyboard does through a
+/// Zephyr `k_timer` user_data. And leaving `__bridge_retained` borrowed is
+/// not conservative: measured, it produces a leak at a binding site (this
+/// shape) *and* a use-after-free at a hand-out site, where the local is
+/// released at scope exit while C keeps the pointer it was promised. A bias
+/// that corrupts in one position is not a bias.
+///
+/// So #460 refuses `__bridge_retained` and `__bridge_transfer` outright and
+/// keeps only plain `__bridge`, which is the one kind whose "transfers
+/// nothing" reading is true. The refusals are pinned in
+/// `bridging_cast_ownership.rs`; what survives here is the property that
+/// was always correct -- plain `__bridge` stays opaque to the ownership
+/// questions, so `arc::is_bridging_cast` must keep naming all three.
 #[test]
 fn a_bridging_cast_at_a_binding_site_is_not_looked_through() {
     let src = format!(
@@ -1092,10 +1123,10 @@ static int g_plain = 0;
 @end
 @implementation Runner
 - (int)run {
-	Bridged *held = (__bridge_retained Bridged *)[Bridged alloc];
 	Bridged *lent = (__bridge Bridged *)[Bridged alloc];
+	Bridged *also = (__bridge Bridged *)[Bridged alloc];
 	Plain *mine = (Plain *)[Plain alloc];
-	return (held != nil) + (lent != nil) + (mine != nil);
+	return (lent != nil) + (also != nil) + (mine != nil);
 }
 @end
 

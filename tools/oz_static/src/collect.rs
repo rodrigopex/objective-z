@@ -789,6 +789,15 @@ pub fn collect(source: &str) -> (Program, Vec<crate::model::Diagnostic>) {
      */
     diagnostics.extend(crate::staticbar::check_ownership_attributes(root, source));
 
+    /*
+     * And the two bridging casts that transfer a reference, for the fifth
+     * time the same reason. `__bridge_retained` would have to emit a retain
+     * and `__bridge_transfer` a release; neither does, so one hands C a
+     * freed pointer and the other strands a `+1` (#460). Plain `__bridge`
+     * transfers nothing and stays supported.
+     */
+    diagnostics.extend(crate::staticbar::check_bridging_casts(root, source));
+
     // A `superclass` reference that doesn't resolve to a class actually
     // collected above (e.g. a real Foundation class only ever pulled in
     // via `#import <Foundation/Foundation.h>` -- oz_static has no import
