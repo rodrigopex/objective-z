@@ -187,8 +187,15 @@ static inline void *oz_current_thread(void)
 /* Formatted output — printk                                           */
 /* ------------------------------------------------------------------ */
 
-#define OZ_PLATFORM_PRINT(fmt, ...) printk(fmt, ##__VA_ARGS__)
-#define OZ_PLATFORM_SNPRINT(buf, len, fmt, ...) snprintk(buf, len, fmt, ##__VA_ARGS__)
+/*
+ * `(...)` forwarding the whole list rather than `, ##__VA_ARGS__` -- the
+ * GNU comma-swallowing extension, which `-std=c17 -pedantic-errors`
+ * diagnoses at every expansion. See the longer note on the host backend's
+ * pair; both had the same latent defect, and #452's refcount traps are the
+ * first generated C to expand either (#452).
+ */
+#define OZ_PLATFORM_PRINT(...) printk(__VA_ARGS__)
+#define OZ_PLATFORM_SNPRINT(...) snprintk(__VA_ARGS__)
 
 /* ------------------------------------------------------------------ */
 /* Heap allocator — sys_heap + spinlock wrapper for dynamicAllocWithHeap:     */

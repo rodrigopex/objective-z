@@ -226,8 +226,28 @@ static inline void *oz_current_thread(void)
 /* Formatted output — printf                                           */
 /* ------------------------------------------------------------------ */
 
-#define OZ_PLATFORM_PRINT(fmt, ...) printf(fmt, ##__VA_ARGS__)
-#define OZ_PLATFORM_SNPRINT(buf, len, fmt, ...) snprintf(buf, len, fmt, ##__VA_ARGS__)
+/*
+ * `(...)` forwarding the whole list, not `(fmt, ...)` with `, ##__VA_ARGS__`.
+ * The `##` form is a GNU extension for swallowing the comma when no
+ * variadic argument is given, and clang diagnoses it at *every* expansion
+ * under `-std=c17 -pedantic-errors` -- not only the zero-argument ones:
+ *
+ *     error: token pasting of ',' and __VA_ARGS__ is a GNU extension
+ *            [-Wgnu-zero-variadic-macro-arguments]
+ *
+ * That went unnoticed because nothing expanded these macros. #452's
+ * refcount traps are the first generated C to call `OZ_PLATFORM_PRINT`, and
+ * they made a latent non-conformance reachable: the flagged dispatch would
+ * not compile as ISO C17. Forwarding the list needs no extension, because
+ * every caller passes at least the format string -- and a caller passing
+ * *nothing* is now a diagnostic rather than silently accepted, which is the
+ * right answer for a print with no format.
+ *
+ * `oz_platform.h` records the same C23-vs-C17 constraint for `OZM`, which
+ * is why that one is not variadic-with-no-argument either.
+ */
+#define OZ_PLATFORM_PRINT(...) printf(__VA_ARGS__)
+#define OZ_PLATFORM_SNPRINT(...) snprintf(__VA_ARGS__)
 
 /* ------------------------------------------------------------------ */
 /* Heap allocator — malloc-backed wrapper for dynamicAllocWithHeap:           */
