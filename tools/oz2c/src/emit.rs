@@ -1595,6 +1595,24 @@ fn needs_translation(node: Node, src: &str) -> bool {
             // `render_return_statement` returns the original text when
             // there is nothing to release.
             | "return_statement"
+            // And `goto`, the fourth jump and the last one to get an arm
+            // (#454). `is_jump_statement` has counted it all along, which
+            // suppresses the trailing scope release on the reasoning that a
+            // jump emits its own -- but no renderer emitted one, so the
+            // releases were suppressed and never replaced.
+            //
+            // Missing from this list it was worse than that: a `goto`
+            // nested in an ObjC-free subtree -- `if (n) { goto done; }` --
+            // was copied verbatim, so `render_goto` never ran even once it
+            // existed, and the scope's release stayed where the jump had
+            // already passed it. Exactly #283's shape, one jump kind later:
+            // the visit has to be forced from here or the arm is
+            // unreachable for the spelling that matters.
+            //
+            // Costs no churn, for the same reason the three above do not:
+            // `render_goto` returns the original text when there is nothing
+            // to release.
+            | "goto_statement"
     ) {
         return true;
     }
@@ -1954,6 +1972,7 @@ fn render_expr(node: Node, ctx: &mut EmitCtx) -> (String, String) {
         "break_statement" | "continue_statement" if !ctx.arc_scopes.is_empty() => {
             render_loop_jump(node, ctx)
         }
+        "goto_statement" if !ctx.arc_scopes.is_empty() => render_goto(node, ctx),
         // A +1 result passed straight as an argument (#328), or used as a
         // send's receiver (#340). Ahead of the discarded-result arm below,
         // because a statement can be both -- `[[Foo new] take:[Bar new]];`
@@ -5357,6 +5376,157 @@ fn is_block_body(body: Node) -> bool {
 /// `tests/behavior/cases/arc/break_releases_loop_local.m` detects: it breaks
 /// out of a loop holding the only block of a one-block slab, then allocates
 /// again and checks the allocation succeeded.
+/// A `goto`, with the releases every scope it leaves is owed (#454).
+///
+/// `is_jump_statement` has always counted `goto_statement`, which
+/// *suppresses* the trailing scope release on the reasoning that a jump
+/// emits its own -- true of `return`, `break` and `continue`, each of
+/// which has an arm, and false of `goto`, which had none. So the releases
+/// were suppressed and never replaced, and
+///
+/// ```objc
+/// {
+///         Thing *t = [[Thing alloc] init];
+///         if ([t tag]) { goto done; }
+/// }
+/// done:
+/// ```
+///
+/// emitted `oz_release(t)` *after* the `goto`, where the jump had
+/// already gone. A leak, and the whole of it.
+///
+/// **This needs no scope graph, which is what I expected it to need.** The
+/// release set is decided by one comparison the emitter already makes:
+/// which live scopes does the jump leave? For `break` that is "those
+/// opened inside the nearest loop or switch"; here it is "those that do
+/// not also contain the label". `goto_statement` carries the label as a
+/// `statement_identifier`, `labeled_statement` carries the matching one,
+/// and `ArcScope::start_byte` plus the innermost common ancestor answers
+/// the rest -- so this is `releases_up_to_jump_target` with a different
+/// target search, not a new mechanism.
+///
+/// **Both jump directions are covered by that one rule, and the backward
+/// case needed checking rather than assuming.** I expected a backward
+/// `goto` to be a hazard, because it forms a loop that
+/// `staticbar::LOOP_KINDS` cannot see -- it lists `for_statement`,
+/// `while_statement` and `do_statement` -- so the loop-escape bar never
+/// asks whether the reference outlives the iteration, and pool sizing
+/// counts one slot per site. Measured, there is nothing there: a scope
+/// that allocates and closes inside the loop body releases per iteration,
+/// so one slot suffices and the emitted C was already correct. A backward
+/// `goto` from *inside* a scope leaves it, and this same rule releases it.
+///
+/// Clang refuses the two shapes that would be hard -- jumping *into* a
+/// scope, and jumping *over* a declaration -- with `cannot jump from this
+/// goto statement to its label` (ARC § 2.6.6). So the cases that reach
+/// here are exactly the two this handles.
+fn render_goto(node: Node, ctx: &mut EmitCtx) -> (String, String) {
+    let releases = releases_past_goto_label(node, ctx);
+    let keyword = node_text(node, ctx.src);
+    if releases.is_empty() {
+        return (keyword.to_string(), "void".to_string());
+    }
+    (format!("{}\n\t{}", releases.join("\n\t"), keyword), "void".to_string())
+}
+
+/// The scopes a `goto` leaves, innermost first.
+///
+/// The label named by the `goto` is looked up in the enclosing body, and
+/// the jump leaves every live scope that does not also contain it. Found
+/// by walking up from the `goto` to the innermost ancestor spanning the
+/// label, which is the same shape `releases_up_to_jump_target` uses for
+/// the loop or switch a `break` leaves.
+///
+/// An unresolvable label releases nothing. That is not laxity: a `goto`
+/// whose label is not in the same function is not valid C, and the C
+/// compiler is a better place to say so than a release decision.
+fn releases_past_goto_label(node: Node, ctx: &EmitCtx) -> Vec<String> {
+    let Some(label) = goto_label_name(node, ctx.src) else {
+        return Vec::new();
+    };
+    let Some(target_label) = enclosing_body_label(node, &label, ctx.src) else {
+        return Vec::new();
+    };
+    /* The innermost ancestor of the `goto` that also spans the label. Every
+     * scope opened inside it is left by the jump; the ancestor itself, and
+     * anything wrapping it, is not. */
+    let mut target = node.parent();
+    while let Some(candidate) = target {
+        if candidate.start_byte() <= target_label.start_byte()
+            && candidate.end_byte() >= target_label.end_byte()
+        {
+            break;
+        }
+        target = candidate.parent();
+    }
+    let Some(target) = target else {
+        return Vec::new();
+    };
+    let mut names = Vec::new();
+    for scope in ctx.arc_scopes.iter().rev() {
+        if scope.start_byte <= target.start_byte() {
+            break;
+        }
+        for name in scope.owned.iter().rev() {
+            names.push(name.clone());
+        }
+    }
+    /* Through `release_lines` like every other release site, so the cast to
+     * the root class and the statement's shape come from one place. The
+     * first draft of this returned the bare names and emitted `t` where a
+     * release belonged -- caught by reading the output rather than by a
+     * type error, since both sides are `Vec<String>`. */
+    release_lines(&names, ctx)
+}
+
+/// The label a `goto_statement` names.
+fn goto_label_name(node: Node, src: &str) -> Option<String> {
+    let mut cursor = node.walk();
+    let children: Vec<Node> = node.children(&mut cursor).collect();
+    children
+        .into_iter()
+        .find(|c| c.kind() == "statement_identifier")
+        .map(|c| node_text(c, src).trim().to_string())
+}
+
+/// The `labeled_statement` for `label` within the body enclosing `node`.
+///
+/// Searched from the outermost `compound_statement` above the `goto`, which
+/// is the function or method body -- a label is function-scoped in C, so
+/// anything narrower can miss it and anything wider can find another
+/// function's.
+fn enclosing_body_label<'a>(node: Node<'a>, label: &str, src: &str) -> Option<Node<'a>> {
+    let mut body = None;
+    let mut walk = node.parent();
+    while let Some(candidate) = walk {
+        if candidate.kind() == "compound_statement" {
+            body = Some(candidate);
+        }
+        walk = candidate.parent();
+    }
+    fn find<'a>(node: Node<'a>, label: &str, src: &str) -> Option<Node<'a>> {
+        if node.kind() == "labeled_statement" {
+            let mut cursor = node.walk();
+            let named = node
+                .children(&mut cursor)
+                .find(|c| c.kind() == "statement_identifier")
+                .map(|c| node_text(c, src).trim().to_string());
+            if named.as_deref() == Some(label) {
+                return Some(node);
+            }
+        }
+        let mut cursor = node.walk();
+        let children: Vec<Node<'a>> = node.children(&mut cursor).collect();
+        for child in children {
+            if let Some(found) = find(child, label, src) {
+                return Some(found);
+            }
+        }
+        None
+    }
+    find(body?, label, src)
+}
+
 fn render_loop_jump(node: Node, ctx: &mut EmitCtx) -> (String, String) {
     let releases = releases_up_to_jump_target(node, ctx);
     let keyword = node_text(node, ctx.src);
