@@ -2477,12 +2477,36 @@ fn render_boxed_string_literal(node: Node, ctx: &mut EmitCtx) -> (String, String
 /// that must be retained before the literal can hold onto it, exactly
 /// like the Python oracle (which draws the same line, for the same
 /// reason: it has no general-purpose ownership analysis either).
-fn is_fresh_alloc(node: Node, src: &str) -> bool {
+fn is_fresh_alloc(node: Node, ctx: &EmitCtx) -> bool {
+    /* The literal node kinds first, and they stay: a nested `@[...]`,
+     * `@{...}`, `@42` or `@"s"` is desugared *by this emitter* into a
+     * builder call, so its `+1` exists nowhere `arc.rs` can see it. Those
+     * four are this function's own knowledge and cannot be delegated.
+     *
+     * Everything else goes to `arc::binds_ownership`, which is the
+     * predicate every other binding site consults (#449). It used to
+     * return `false` here for anything that was not one of those four --
+     * so `@[[Thing alloc]]` retained a reference that was already `+1`,
+     * the object reached `+2`, and the array released one of the two at
+     * its own `-dealloc`. One reference leaked per element.
+     *
+     * The old answer copied the Python oracle's line, and this function's
+     * doc said so: it drew the same boundary "for the same reason: it has
+     * no general-purpose ownership analysis either". oz2c does now,
+     * and has since the create-rule and factory analysis landed -- so the
+     * reason expired and the line did not move with it. The eleventh
+     * ownership decision keyed on a syntactic form, and the form here is
+     * the element's node kind. */
     match node.kind() {
-        "at_expression" => is_numeric_boxed_shape(node, src),
+        "at_expression" => is_numeric_boxed_shape(node, ctx.src),
         "string_literal" => is_boxed_string_literal(node),
         "array_literal" | "dictionary_literal" => true,
-        _ => false,
+        _ => crate::arc::binds_ownership(
+            node,
+            ctx.src,
+            ctx.program,
+            &ctx.program.owning_methods,
+        ),
     }
 }
 
@@ -2523,7 +2547,7 @@ fn render_boxed_array_literal(node: Node, ctx: &mut EmitCtx) -> (String, String)
 
     let mut elem_refs = Vec::with_capacity(elements.len());
     for elem in &elements {
-        let fresh = is_fresh_alloc(*elem, ctx.src);
+        let fresh = is_fresh_alloc(*elem, ctx);
         let (text, _) = render_expr(*elem, ctx);
         if fresh {
             elem_refs.push(format!("(void *){}", text));
@@ -2574,7 +2598,7 @@ fn render_boxed_dictionary_literal(node: Node, ctx: &mut EmitCtx) -> (String, St
         let exprs: Vec<Node> = pair.children(&mut pc).filter(|c| c.kind() != ":").collect();
         let (key, value) = (exprs[0], exprs[1]);
         for (node, refs) in [(key, &mut key_refs), (value, &mut value_refs)] {
-            let fresh = is_fresh_alloc(node, ctx.src);
+            let fresh = is_fresh_alloc(node, ctx);
             let (text, _) = render_expr(node, ctx);
             if fresh {
                 refs.push(format!("(void *){}", text));
