@@ -1219,6 +1219,122 @@ const ARC_FORBIDDEN_SELECTORS: &[&str] =
 /// as a `compound_statement` whose first child is the literal token
 /// `@autoreleasepool`, ahead of the usual `{`. That shape test used to live
 /// in `emit::is_autoreleasepool_shape`, which this replaces.
+/// The two bridging casts that **transfer** a reference, and are therefore
+/// refused rather than treated like the one that does not.
+///
+/// ARC spec § 1.3.4 defines three, and they mean three different things:
+///
+/// | cast | ownership |
+/// |---|---|
+/// | `(__bridge T)` | transfers nothing; the source keeps its reference |
+/// | `(__bridge_retained T)` | ARC **retains**, handing a `+1` to the recipient |
+/// | `(__bridge_transfer T)` | ARC takes over a `+1` and **releases** it |
+///
+/// `arc::is_bridging_cast` matches all three by name and treats them
+/// identically -- as a signal to hold ownership back, so none of the three
+/// questions looks through them. That is right for the first and wrong for
+/// the other two, in opposite directions (#460):
+///
+///   * `__bridge_retained` emitted no retain, so the local was still
+///     released at scope exit and the C side was handed a freed slot.
+///     Measured under ASan as `heap-use-after-free` -- and the read of the
+///     stale pointer *succeeded* first, printing the right value, which is
+///     the trap `docs/STATUS.md` records: a use-after-free is silent until
+///     the allocator reuses the block.
+///   * `__bridge_transfer` emitted no release, so the `+1` it took over
+///     from C was stranded. A leak.
+///
+/// Refused rather than implemented, and the decision was measured rather
+/// than argued. Across `src/`, `include/`, `samples/`, `tests/` and
+/// px-keyboard there are **zero** uses of either -- all six bridging casts
+/// in the tree are plain `__bridge`, and all six are correct:
+/// `px-keyboard/src/PXLEDController.m:61,143` round-trips `self` through a
+/// Zephyr `k_timer` user_data, and `samples/smp_shared/src/main.m:207-208`
+/// casts through `__bridge` to drive a refcount by hand via the C API that
+/// #437 made a deliberate escape hatch. So this refuses nothing that
+/// exists, and converts two silent memory bugs into build errors.
+///
+/// Same precedent as #430 and #458: a spelling whose meaning is a
+/// mechanism the backend does not have must not be quietly accepted.
+/// Implementing them stays available and is strictly better *if* CF-style
+/// hand-off to C is meant to be supported -- that is a product question,
+/// not a correctness one, and the refusal does not foreclose it. It would
+/// also need new emission, which wants sequencing after the `oz_static_*`
+/// respelling rather than before it.
+///
+/// Plain `__bridge` is deliberately **not** here, and
+/// `arc::is_bridging_cast` keeps naming all three: the list there is what
+/// holds a bridging cast opaque to the ownership questions, and narrowing
+/// it to one spelling would make the other two fall through to the
+/// non-bridging cast path -- which looks *through* the cast and is how
+/// #332 double-released. Refusing them at the bar and keeping them opaque
+/// at the analysis are complementary, not redundant.
+const TRANSFERRING_BRIDGE_CASTS: &[&str] = &["__bridge_retained", "__bridge_transfer"];
+
+/// Refuse a transferring bridging cast wherever it appears.
+///
+/// A whole-root walk, for the reason `check_manual_memory_sends`,
+/// `check_autoreleasepool` and `check_ownership_attributes` all give: this
+/// is a fact about the cast, not about the body it sits in, and
+/// `walk_for_reject` treats a block literal as opaque.
+pub fn check_bridging_casts(root: Node, src: &str) -> Vec<Diagnostic> {
+    let mut diags = Vec::new();
+    walk_bridging_casts(root, src, &mut diags);
+    diags
+}
+
+fn walk_bridging_casts(node: Node, src: &str, diags: &mut Vec<Diagnostic>) {
+    if node.kind() == "cast_expression" {
+        if let Some(kind) = transferring_bridge_kind(node, src) {
+            let (verb, direction, consequence) = match kind {
+                "__bridge_retained" => (
+                    "retain its operand, handing a '+1' to the C side",
+                    "the reference is still released at the end of this scope",
+                    "so the pointer C keeps is freed -- a use-after-free",
+                ),
+                _ => (
+                    "release the '+1' it takes over from the C side",
+                    "no release is emitted for it anywhere",
+                    "so that reference is stranded -- a leak",
+                ),
+            };
+            err(
+                diags,
+                src,
+                node,
+                format!(
+                    "'{kind}' is not supported: ARC would {verb}, and oz_static emits no such                      traffic -- {direction}, {consequence}. Use a plain '(__bridge T)' cast,                      which transfers no ownership, and keep the object alive on the                      Objective-C side independently -- an instance variable, or a singleton                      adopting 'OZSingletonProtocol', which is what 'px-keyboard' does for the                      pointer it hands to a Zephyr callback"
+                ),
+            );
+            return;
+        }
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        walk_bridging_casts(child, src, diags);
+    }
+}
+
+/// Which transferring bridge qualifier `cast` carries, if any.
+///
+/// Reads the `type_qualifier` children of the cast's `type_descriptor`,
+/// the shape `arc::is_bridging_cast` already relies on -- named exactly
+/// rather than matched on a `__bridge` prefix, so plain `__bridge` cannot
+/// be caught by accident.
+fn transferring_bridge_kind(cast: Node, src: &str) -> Option<&'static str> {
+    let mut cursor = cast.walk();
+    let descriptor = cast.children(&mut cursor).find(|c| c.kind() == "type_descriptor")?;
+    let mut cursor = descriptor.walk();
+    let qualifiers: Vec<Node> = descriptor.children(&mut cursor).collect();
+    qualifiers.into_iter().find_map(|child| {
+        if child.kind() != "type_qualifier" {
+            return None;
+        }
+        let text = node_text(child, src).trim();
+        TRANSFERRING_BRIDGE_CASTS.iter().copied().find(|k| *k == text)
+    })
+}
+
 /// The ARC attributes that *contradict* an ownership answer oz_static
 /// derives some other way, and are therefore refused rather than ignored.
 ///
