@@ -90,17 +90,25 @@ fn oz2c_binary() -> PathBuf {
     path.join("oz2c")
 }
 
-fn corpus_cases() -> Vec<PathBuf> {
-    let cases_dir = repo_root().join("tests/behavior/cases");
+/// The `.m` files one directory under `dir`, sorted -- the `<group>/<case>.m`
+/// shape both corpora use.
+///
+/// The two roots differ by one level and nothing else:
+/// `tests/behavior/cases/<category>/*.m` against
+/// `tests/adapted/<source>/*.m`. There is no `cases/` under `tests/adapted`,
+/// which is the trap: a sweep globbing `tests/adapted/cases/*/*.m` matches
+/// nothing, reports the behaviour corpus's number, and calls it both corpora
+/// (#400).
+fn cases_under(dir: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
-    let mut dirs: Vec<PathBuf> = std::fs::read_dir(&cases_dir)
-        .unwrap_or_else(|e| panic!("cannot read {}: {}", cases_dir.display(), e))
+    let mut dirs: Vec<PathBuf> = std::fs::read_dir(dir)
+        .unwrap_or_else(|e| panic!("cannot read {}: {}", dir.display(), e))
         .filter_map(|e| e.ok().map(|e| e.path()))
         .filter(|p| p.is_dir())
         .collect();
     dirs.sort();
-    for dir in dirs {
-        let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
+    for group in dirs {
+        let mut files: Vec<PathBuf> = std::fs::read_dir(&group)
             .unwrap()
             .filter_map(|e| e.ok().map(|e| e.path()))
             .filter(|p| p.extension().is_some_and(|e| e == "m"))
@@ -108,6 +116,45 @@ fn corpus_cases() -> Vec<PathBuf> {
         files.sort();
         out.extend(files);
     }
+    out
+}
+
+/// Both corpora: the 81 behaviour cases and the 40 adapted ones.
+///
+/// The adapted corpus had no ISO C gate at all until #455 -- this function
+/// read only `tests/behavior/cases`, so forty cases compiled in CI as
+/// whatever the host compiler defaults to and never as `-std=c17
+/// -pedantic-errors`.
+///
+/// Both counts are asserted rather than trusted. A wrong glob here does not
+/// fail, it silently narrows: it returns a smaller set, every case in it
+/// passes, and the run reports a clean number for a corpus it never opened.
+/// That is #400's failure exactly, and the assertion is what makes it loud.
+/// If a corpus legitimately grows, update the number in the same commit that
+/// adds the case.
+fn corpus_cases() -> Vec<PathBuf> {
+    let root = repo_root();
+
+    let behavior = cases_under(&root.join("tests/behavior/cases"));
+    assert_eq!(
+        behavior.len(),
+        81,
+        "expected 81 behaviour cases under tests/behavior/cases, found {} -- \
+         if the corpus grew, update this count in the commit that grew it",
+        behavior.len()
+    );
+
+    let adapted = cases_under(&root.join("tests/adapted"));
+    assert_eq!(
+        adapted.len(),
+        40,
+        "expected 40 adapted cases under tests/adapted, found {} -- note there \
+         is no `cases/` level here, unlike tests/behavior",
+        adapted.len()
+    );
+
+    let mut out = behavior;
+    out.extend(adapted);
     out
 }
 
