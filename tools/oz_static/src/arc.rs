@@ -315,14 +315,35 @@ fn is_owning_selector(program: &Program, class: Option<&str>, selector: &str) ->
         || is_initialiser(program, class, selector)
 }
 
-/// Find every method that returns +1, iterating until the set stops growing.
+/// Find every method and C function that returns +1, iterating until the set
+/// stops growing.
+///
+/// **The guard reads `owning.len()`, which is both sets.** It read
+/// `owning.methods.len()` until #450, so a pass that discovered only new
+/// owning C *functions* left that number unchanged and returned. `functions`
+/// is the other half of `OwningMethods` -- the plain top-level C factories --
+/// and a chain of them resolves one level per pass, because `scan_once` walks
+/// in source order and can only recognise a `return f(...)` once `f` is
+/// already in the set.
+///
+/// So an outer-first chain of C factories terminated at whatever depth the
+/// first pass reached, and everything above it was classified `+0`: callers
+/// treated the result as borrowed and nothing released it. A leak, which is
+/// why it never crashed -- but the shape C-factory support exists for is
+/// `samples/arc_demo`'s `static Sensor *createSensor(int)`, where treating an
+/// owning factory as borrowed left the one-slot slab occupied and faulted the
+/// MPU.
+///
+/// Iterating to a fixed point at all is the one improvement over the retired
+/// Python oracle's single pass, and guarding on half the state made it one
+/// pass again for any program whose factories are C functions.
 pub fn analyze(source: &str, program: &Program) -> OwningMethods {
     let tree = crate::parse::parse(source);
     let mut owning = OwningMethods::default();
     loop {
-        let before = owning.methods.len();
+        let before = owning.len();
         scan_once(tree.root_node(), source, program, &mut owning);
-        if owning.methods.len() == before {
+        if owning.len() == before {
             return owning;
         }
     }
