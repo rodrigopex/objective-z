@@ -2317,6 +2317,49 @@ on a meaning, the compiler is not the instrument.
 
 ## Standing design rules
 
+- **The heap has one name per layer, and the layers are the point (#417).** The
+  issue this closes counted "seven names for one concept" and called
+  `oz_heap_obj_alloc` calling `oz_heap_alloc_obj` the worst pair in the tree.
+  Those two are gone -- `ff6616d` retired the anagram and #462 respelled the
+  bridge -- and what the count was really seeing is a four-layer path where each
+  layer legitimately needs its own name. Written down here because the names are
+  now right and nothing said so, which is how a later reader decides to
+  "simplify" one of them:
+
+  | layer | name | takes |
+  |---|---|---|
+  | Objective-C class | `OZHeap` | — |
+  | generated accessor | `OZHeap_oz_inner` | `struct OZHeap *` |
+  | generated bridge | `oz_heap_alloc` / `oz_heap_free` | `struct OZHeap *` / `void *` |
+  | PAL | `oz_heap_alloc_obj` / `oz_heap_free_obj` | `struct oz_heap_inner *` |
+  | system fallback | `oz_sys_heap_alloc` / `oz_sys_heap_free` | `size_t` / `void *` |
+
+  The **parameter type is what distinguishes them**, not the verb: the bridge
+  takes the class pointer a user holds, the PAL takes the inner store only the
+  companion can reach, and the fallback takes neither. `oz_heap_alloc` calling
+  `oz_heap_alloc_obj` is a prefix pair rather than the anagram it replaced, and
+  that closeness is the accepted cost of one C-side prefix (#462) -- collapsing
+  either into the other means a caller passing the wrong one of two pointer
+  types that are both `void *`-compatible in generated C.
+
+  `struct oz_heap_inner` is defined in **four** headers, which looks like the
+  dead-header duplication #417 found elsewhere and is not: `oz_platform_host.h`
+  and `oz_platform_zephyr.h` each `#define OZ_HEAP_INNER_DEFINED` before
+  defining it, and `OZHeap.h` and `oz_platform.h` are `#ifndef`-guarded on that
+  macro. Whichever header a translation unit reaches first wins and the rest
+  skip. Checked rather than assumed, because the shape is indistinguishable from
+  a real collision until you read all four guards.
+
+- **`oz_class_name` in a public header is correct, and was not always (#417).**
+  The name was `oz_static_class_name` -- a *generated-namespace* spelling
+  hand-written into public `OZObject.h`, which #417 filed as the only one a
+  human wrote. #462 did not delete the declaration; it removed the violation by
+  retiring that namespace, so the name now sits in `oz_`, which is where a
+  public C declaration belongs. `OZObject.h:204` declares it and
+  `src/OZObject.m:100` calls it, and both should stay. The header has to carry
+  it because Clang resolves the call while dumping the AST, before any generated
+  header exists (#418's invariant).
+
 - **`oz2c` names the tool. `oz_`/`OZ_` names the code. Nothing is named after
   the crate.** The transpiler answered to two names for most of its life:
   `oz2c` as the binary and the justfile recipe, `oz_static` as the crate, the
