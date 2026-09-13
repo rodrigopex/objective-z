@@ -37,7 +37,7 @@ void OZNumber_oz_free(struct OZNumber *obj)
 
 /* already resolved: #import <Foundation/OZNumber.h> */
 
-/* _OZ_Q31_HELPERS */
+/* OZ_Q31_HELPERS */
 
 /* -----------------------------------------------------------------------------
  * @implementation OZNumber

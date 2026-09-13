@@ -98,8 +98,8 @@ BOOL OZNumber_isEqual_(struct OZNumber *self, void * anObject);
 void OZNumber_dealloc(struct OZNumber *self);
 /*========================= end interface: OZNumber ==========================*/
 
-#ifndef _OZ_Q31_HELPERS
-#define _OZ_Q31_HELPERS
+#ifndef OZ_Q31_HELPERS
+#define OZ_Q31_HELPERS
 
 static inline uint8_t _oz_bits_for_mag(uint32_t mag)
 {

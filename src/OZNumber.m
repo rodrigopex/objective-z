@@ -3,8 +3,8 @@
 #import <Foundation/OZNumber.h>
 #import <Foundation/OZLog.h>
 
-#ifndef _OZ_Q31_HELPERS
-#define _OZ_Q31_HELPERS
+#ifndef OZ_Q31_HELPERS
+#define OZ_Q31_HELPERS
 
 static inline uint8_t _oz_bits_for_mag(uint32_t mag)
 {
@@ -263,7 +263,7 @@ static inline void _oz_q31_div(int32_t a_raw, uint8_t a_shift,
 	*out_raw = neg ? -(int32_t)result : (int32_t)result;
 	*out_shift = result_shift;
 }
-#endif /* _OZ_Q31_HELPERS */
+#endif /* OZ_Q31_HELPERS */
 
 @implementation OZNumber
 
