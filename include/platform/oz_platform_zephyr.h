@@ -197,6 +197,17 @@ static inline void *oz_current_thread(void)
 #define OZ_PLATFORM_PRINT(...) printk(__VA_ARGS__)
 #define OZ_PLATFORM_SNPRINT(...) snprintk(__VA_ARGS__)
 
+/*
+ * Nothing to do: `printk` writes to the console as it goes, so output
+ * already issued has left before an abort. The host backend's counterpart
+ * is a real `fflush(NULL)`, because buffered `printf` loses a diagnostic
+ * printed just before `abort()` -- see the note there (#452). This exists
+ * so the traps can be written once for both backends.
+ */
+static inline void oz_platform_flush(void)
+{
+}
+
 /* ------------------------------------------------------------------ */
 /* Heap allocator — sys_heap + spinlock wrapper for dynamicAllocWithHeap:     */
 /* ------------------------------------------------------------------ */

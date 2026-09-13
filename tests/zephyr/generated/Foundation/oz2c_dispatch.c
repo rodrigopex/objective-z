@@ -88,6 +88,7 @@ struct OZObject *oz_retain(struct OZObject *self)
 	if (self && self->_meta.deallocating) {
 		oz_platform_print("oz: retain of %s during its own dealloc\n",
 				  oz_class_name(self));
+		oz_platform_flush();
 		oz_assert_msg(0, "retain during dealloc -- this object is being torn down; the class is named on the line above");
 	}
 #endif
@@ -140,10 +141,17 @@ void oz_release(struct OZObject *self)
 	 *
 	 * Printed and then asserted rather than asserted with the class
 	 * in the message: oz_assert_msg takes a plain const char * and no
-	 * format arguments, so naming the class is the print's job. */
+	 * format arguments, so naming the class is the print's job.
+	 *
+	 * The flush is not decoration. printf to anything but a terminal
+	 * is fully buffered and abort() does not flush stdio, so on glibc
+	 * this line reached a buffer that was then discarded -- the
+	 * assertion text survived on stderr and the class name did not.
+	 * It read as a trap that could not name a class. */
 	if (oz_atomic_get(&self->oz_refcount) <= 0) {
 		oz_platform_print("oz: over-release of %s\n",
 				  oz_class_name(self));
+		oz_platform_flush();
 		oz_assert_msg(0, "over-release -- this refcount was already 0; the class is named on the line above");
 	}
 #endif
