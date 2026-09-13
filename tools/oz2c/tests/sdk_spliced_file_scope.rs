@@ -104,6 +104,43 @@ fn defined_macro(line: &str) -> Option<&str> {
     Some(&name[..end])
 }
 
+/// Is this macro name one the project may define in a spliced prelude?
+///
+/// `OZ` and nothing else. It admitted `_OZ` until #417, for the single
+/// guard spelled that way -- but a leading underscore followed by an
+/// uppercase letter is reserved to the implementation in C, the same
+/// undefined behaviour the `__objc_` prefix was retired for in #418. The
+/// guard was renamed, which left the alternative with no users, so it
+/// went with it: a gate that still admits the shape it exists to reject
+/// is not a gate.
+fn is_project_namespaced(macro_name: &str) -> bool {
+    macro_name.starts_with("OZ")
+}
+
+/// The rule above, made to fail.
+///
+/// `docs/STATUS.md` says it plainly about this very file: a text guard is
+/// not evidence until it has been made to fail. Both sweeps below read
+/// the real SDK sources, which are currently compliant -- so on their own
+/// they would pass just as happily against a predicate that returned
+/// `true` unconditionally, and the tightening in #417 would rest on
+/// nothing.
+#[test]
+fn the_namespace_rule_rejects_the_shapes_it_is_meant_to() {
+    assert!(is_project_namespaced("OZ_Q31_HELPERS"), "the project's own guard must pass");
+    assert!(is_project_namespaced("OZHeapInner"), "no underscore is needed to qualify");
+
+    /* The shape #417 removed, and the reason the alternative went with
+     * it: reserved to the implementation, so it must not come back. */
+    assert!(!is_project_namespaced("_OZ_Q31_HELPERS"), "a leading underscore is reserved");
+    assert!(!is_project_namespaced("_OZ_ANYTHING"), "including for a project-looking name");
+
+    /* Someone else's names, which is what the rule was written for. */
+    assert!(!is_project_namespaced("NULL"), "a standard library macro");
+    assert!(!is_project_namespaced("MIN"), "a name the SDK does not own");
+    assert!(!is_project_namespaced("__objc_thing"), "the retired prefix");
+}
+
 /// Rule 1: a macro defined in the spliced prelude belongs to this project.
 #[test]
 fn a_spliced_prelude_defines_only_project_namespaced_macros() {
@@ -114,7 +151,7 @@ fn a_spliced_prelude_defines_only_project_namespaced_macros() {
             let Some(macro_name) = defined_macro(line) else {
                 continue;
             };
-            if macro_name.starts_with("OZ") {
+            if is_project_namespaced(macro_name) {
                 continue;
             }
             offenders.push(format!("{}: {}", name, line.trim()));
