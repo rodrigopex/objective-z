@@ -328,7 +328,7 @@ Retained as reference for transpiler development. Not compiled — the runtime c
   for the 81 behaviour cases alone, and calls it "both corpora" (#400's PR did exactly
   that). Glob `tests/adapted/**/*.m`, and assert the count is 40 before trusting the
   result
-- **`tests/zephyr/`** — 18 Zephyr integration cases in 5 ztest suites (`native_sim` +
+- **`tests/zephyr/`** — 21 Zephyr integration cases in 6 ztest suites (`native_sim` +
   `ztest` + `twister`), over C committed under `tests/zephyr/generated/`. That C is
   **oz2c's output** since the port, so a green run says something about the
   default backend; `scripts/regen_zephyr_tests.py` regenerates it and the

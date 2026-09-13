@@ -1415,7 +1415,18 @@ and is not counted here (not from source) */\n",
                 name = name
             ));
         }
-        c.push_str("\n\treturn leaked;\n");
+        c.push_str(
+            "\n\tif (leaked > 0) {\n\
+             \t\t/* The report is the whole value of this call, and a caller\n\
+             \t\t * may exit or abort straight after it. #452 measured stdio\n\
+             \t\t * losing a diagnostic that way: `printf` to anything but a\n\
+             \t\t * terminal is fully buffered and neither `abort()` nor\n\
+             \t\t * `_exit()` flushes it. Flushing every stream also keeps the\n\
+             \t\t * report ordered against whatever the program printed on\n\
+             \t\t * stdout, which is what a reader is comparing it to. No-op\n\
+             \t\t * on Zephyr, where printk has already left. */\n\
+             \t\toz_platform_flush();\n\t}\n\treturn leaked;\n",
+        );
     }
     c.push_str("}\n\n");
     (h, c)

@@ -32,6 +32,15 @@
 // Every claim below is made from both sides. A census is the kind of check
 // that reads green when it is not running at all, so "reports zero" is
 // only worth having next to "reports one, and names the class".
+//
+// And it is not a hypothetical net: #453's ARC audit found four `+1`s
+// that are never released -- in value position, stored into an
+// ObjC-pointer parameter, into a non-ivar array element outside a loop,
+// and in an aggregate initializer. All four leak, **none corrupts**, so no
+// sanitizer observable catches them, and every one stays reachable from a
+// root so LSan is silent too.
+// `the_census_catches_a_real_arc_leak_no_sanitizer_can_see` is the first
+// of those four, measured.
 
 mod common;
 use common::{compile_and_run, ozobject_src as PREAMBLE, singleton_protocol_src};
@@ -107,6 +116,16 @@ fn the_census_names_every_class_that_has_a_slab() {
             out
         );
     }
+
+    // Flushed before returning, and only when there is a report to lose.
+    // #452 measured stdio discarding a diagnostic printed just before an
+    // abort, and added `oz_platform_flush` for it; a census that runs at
+    // exit is in the same position.
+    assert!(
+        out.contains("oz_platform_flush();"),
+        "the census must flush before returning a non-zero count:\n{}",
+        out
+    );
 
     // The prototype is in the header, because `gen_test_main.py` includes
     // that header rather than writing an `extern` of its own -- which is
@@ -320,12 +339,75 @@ int main(void)
 
 #[test]
 fn an_object_parked_in_a_file_scope_static_is_reported() {
+    // `compile_and_run` returns stdout then stderr concatenated (#452's
+    // harness change), so the count and the report it printed are both
+    // checked here -- the count alone would not say the class was named.
     let out = compile_and_run(&format!("{}\n{}", PREAMBLE(), PARKED), "census_parked");
-    assert_eq!(out, "census=1\n", "one class must report as outstanding");
+    assert_eq!(
+        out, "census=1\nLEAK: Widget has 1 outstanding allocation(s)\n",
+        "one class must report as outstanding, by name"
+    );
 }
 
 #[test]
 fn a_released_object_leaves_the_census_clean() {
     let out = compile_and_run(&format!("{}\n{}", PREAMBLE(), RELEASED), "census_released");
+    // Exact, and over both streams: no `LEAK:` line anywhere, which is the
+    // half that stops the assertion above from being satisfiable by a
+    // census that reports unconditionally.
     assert_eq!(out, "census=0\n", "a balanced program must report nothing");
+}
+
+/// A `+1` in **value position** -- `Thing *t = pick ? [[Thing alloc] init]
+/// : b;` -- one of the four leaks #453's ARC audit found, and the reason
+/// this census is worth more than the issue claims.
+///
+/// All four of #453's shapes leak and **none corrupts**, so no sanitizer
+/// observable catches them; and LSan cannot either, because it reports
+/// unreachable blocks while these stay reachable. Counting `num_used` at
+/// exit sees them regardless. This is that claim measured rather than
+/// asserted: the census reports 1 for a program whose only fault is the
+/// missing scope-end release.
+///
+/// **This case pins a known defect, so it must flip when #453 is fixed.**
+/// When ARC learns to release a `+1` in value position, the expectation
+/// below becomes `census=0` -- and that is the *success* signal, not a
+/// regression here. Changing the number is the whole edit; the case is
+/// worth keeping either way, because it then becomes a second control.
+const VALUE_POSITION_LEAK: &str = "\
+@interface Thing : OZObject
+@end
+@implementation Thing
+@end
+
+#include <stdio.h>
+
+static int make(int pick, Thing *b)
+{
+\tThing *t = pick ? [[Thing alloc] init] : b;
+\treturn t != 0;
+}
+
+int main(void)
+{
+\t{
+\t\tThing *b = [Thing alloc];
+\t\tprintf(\"used=%d\\n\", make(1, b));
+\t}
+\tprintf(\"census=%d\\n\", oz_check_all_slabs());
+\treturn 0;
+}
+";
+
+#[test]
+fn the_census_catches_a_real_arc_leak_no_sanitizer_can_see() {
+    let src = format!("{}\n{}", PREAMBLE(), VALUE_POSITION_LEAK);
+    let out = compile_and_run(&src, "census_value_position");
+    assert_eq!(
+        out, "used=1\ncensus=1\nLEAK: Thing has 1 outstanding allocation(s)\n",
+        "the +1 from the ternary's true arm is never released (#453). If this \
+         now reports census=0 with no LEAK line, #453 has been fixed -- change \
+         the expectation to \"used=1\\ncensus=0\\n\" and keep the case as a \
+         control."
+    );
 }
