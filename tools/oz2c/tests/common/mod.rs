@@ -666,7 +666,7 @@ pub fn ozobject_src() -> String {
 /// helper function bodies and method bodies, including `other->_raw`
 /// cross-instance ivar access and `[[OZNumber alloc] init]` chaining), with
 /// one addition: the real `-getDescription:maxLength:` calls
-/// `_oz_get_log_precision()`, defined in `src/OZLog.c` -- which needs
+/// `oz_log_precision()`, defined in `src/OZLog.c` -- which needs
 /// Zephyr's `printk` and the Python pipeline's own generated dispatch
 /// headers, neither available on host. A small stub supplies it (always
 /// -1, i.e. `-getDescription:maxLength:`'s default 14-digit precision), so
@@ -679,13 +679,13 @@ pub fn oznumber_src() -> String {
         include_str!("../../../../src/OZNumber.m"),
     );
     format!(
-        "/* synthesized stub (not from source): the real _oz_get_log_precision\n * \
+        "/* synthesized stub (not from source): the real oz_log_precision\n * \
 lives in src/OZLog.c, which needs Zephyr's printk plus the Python\n * \
 pipeline's own generated dispatch headers -- neither available on host.\n * \
 Plain (not static/inline): oz2c's own companion header now declares\n * \
 this symbol too (see companion.rs), and a static definition can't follow\n * \
 a non-static declaration. */\n\
-int _oz_get_log_precision(void) {{ return -1; }}\n\n{}",
+int oz_log_precision(void) {{ return -1; }}\n\n{}",
         assembled
     )
 }

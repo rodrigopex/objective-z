@@ -21,11 +21,11 @@
  * default 128) and has no #ifndef fallback on purpose: a fallback is what
  * let it be documented and undeclared for as long as it was (#420). */
 
-static int _oz_log_precision = -1;
+static int _oz_active_precision = -1;
 
-int _oz_get_log_precision(void)
+int oz_log_precision(void)
 {
-	return _oz_log_precision;
+	return _oz_active_precision;
 }
 
 void OZLog(const char *fmt, ...)
@@ -78,10 +78,10 @@ void OZLog(const char *fmt, ...)
 						buf[pos++] = *s++;
 					}
 				} else {
-					_oz_log_precision = obj_prec;
+					_oz_active_precision = obj_prec;
 					pos += OZ_PROTOCOL_SEND_getDescription_maxLength_(
 						obj, buf + pos, max - pos);
-					_oz_log_precision = -1;
+					_oz_active_precision = -1;
 				}
 				p++;
 				continue;
