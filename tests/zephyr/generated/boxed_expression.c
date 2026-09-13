@@ -45,6 +45,18 @@ struct BoxedTest *BoxedTest_oz_alloc(void)
  * oz_release, once the refcount reaches zero (not from source) */
 void BoxedTest_oz_free(struct BoxedTest *obj)
 {
+#ifdef OZ_DEBUG_REFCOUNT
+	/* Poison the slot on the way out (#452). Read the comment on
+	 * `render_freed_poison` before trusting any of this to be
+	 * legible afterwards: both allocators write their free-list
+	 * link over `_meta`, so the body poison outlives the header
+	 * stamp. */
+	((struct OZObject *)obj)->_meta.class_id = OZ_CLASS_ID_FREED;
+	((struct OZObject *)obj)->_meta.immortal = 0;
+	oz_atomic_init(&((struct OZObject *)obj)->oz_refcount, 0);
+	memset((char *)obj + sizeof(struct OZObject), 0xA5,
+	       sizeof(struct BoxedTest) - sizeof(struct OZObject));
+#endif
 	oz_slab_free(&oz_slab_BoxedTest, (void *)obj);
 }
 

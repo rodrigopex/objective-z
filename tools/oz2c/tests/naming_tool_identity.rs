@@ -76,7 +76,13 @@ fn the_abi_is_spelled_on_the_c_side_prefix() {
 		"void oz_release(struct OZObject *self)",
 		"struct OZObject *oz_retain(struct OZObject *self)",
 		"const char *oz_class_name(struct OZObject *self)",
-		"#define OZ_CLASS_",
+		/* Named through to the class, not left at the `OZ_CLASS_` prefix.
+		 * The prefix stopped proving anything when #452 added
+		 * `#define OZ_CLASS_ID_FREED`: a companion that emitted the
+		 * reserved id and no per-class id at all would still satisfy it --
+		 * the same vacuous pass this test's own comment above exists to
+		 * prevent, arriving from a new direction. */
+		"#define OZ_CLASS_OZObject ",
 		"oz2c_dispatch.h",
 	] {
 		assert!(

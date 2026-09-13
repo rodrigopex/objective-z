@@ -16,6 +16,17 @@ typedef bool BOOL;
 #define Nil ((Class)0xFFFF)
 #endif
 
+/* The id `_oz_free` stamps over a slot it is returning (#452). Reserved
+ * unconditionally, whether or not the stamp is compiled in, because the
+ * guarantee a reserved id needs is that no class ever takes it -- and ids
+ * are assigned densely from 0, so the top of the 10-bit range is the one
+ * value a program would have to declare 1024 classes to reach.
+ * `oz_class_name` renders it as "freed" rather than "?", which is the
+ * difference between "something was over-released" and "something
+ * already freed was released again" -- when the stamp is still legible.
+ * It often is not: see the comment on the stamp itself. */
+#define OZ_CLASS_ID_FREED 1023
+
 /* struct tags named by a prototype below but declared in no header this
  * one includes -- forward-declared so the tag is file-scoped rather than
  * scoped to a parameter list */

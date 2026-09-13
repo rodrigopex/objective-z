@@ -520,6 +520,86 @@ backs '[{name} dynamicAllocWithHeap:h]' (not from source) */\n\
     )
 }
 
+/// Freed-slot poisoning, the second half of #452: what `{name}_oz_free`
+/// writes over an object before it gives the storage back.
+///
+/// **Ordering matters twice.** It goes before `render_heap_free_check`,
+/// which `return`s for a heap-allocated instance -- after it, every heap
+/// object would escape unpoisoned. And it goes after the collection
+/// emitters' element-release loops, which still read `obj->_count` and
+/// `obj->_items`.
+///
+/// Three stores and a `memset`, and they are not equally useful. This is
+/// worth stating precisely, because the obvious reading of "stamp a
+/// reserved class id so the over-release trap can name the class" does not
+/// survive contact with either allocator:
+///
+///   * **The body poison is the part that lasts.** `k_mem_slab_free` links
+///     a freed block into its free list by writing the next pointer *into
+///     the block* (`kernel/mem_slab.c`: `*(char **) mem = slab->free_list`),
+///     and host `free()` lets malloc do the same with its own bookkeeping.
+///     Both write the *first* word, which is exactly where `_meta` sits --
+///     `_meta` is the root struct's first member, so `class_id` is at
+///     offset 0. Everything past the root prefix is untouched, so `0xA5`
+///     there is legible for as long as the slot stays free, and a
+///     use-after-free that reads an ivar gets an obviously wrong value
+///     instead of a plausible stale one. On target that is the only such
+///     instrument there is; on the host AddressSanitizer is strictly
+///     better and the corpora already run under it.
+///   * **The `class_id` stamp is legible only before the slot goes back.**
+///     That is a narrow window -- the dealloc switch has already read the
+///     id by then -- plus the slab path where a thread is waiting and gets
+///     the block handed to it directly with no free-list write, and a
+///     slab-less class, whose `_oz_free` returns the storage nowhere.
+///     It is three cycles behind a debug flag, so it stays, and
+///     `oz_class_name` renders it as "freed". What it is *not* is a fix for
+///     the `?` in the over-release message: see
+///     `tools/oz2c/tests/refcount_traps.rs`, which measures that.
+///   * **`oz_refcount = 0` is what makes the over-release trap
+///     deterministic**, where it survives. It sits at offset 4, so a 4-byte
+///     free-list pointer on a 32-bit target leaves it alone; a 64-bit
+///     host's allocator reaches it. Unflagged, the trap fires only because
+///     freed memory happened to hold something <= 0.
+///
+/// `immortal` is cleared for completeness rather than need: `oz_release`
+/// returns on that bit above the trap, so no immortal object reaches here
+/// today. It costs one store under a flag and removes a way for a future
+/// caller to make a poisoned slot invisible to the trap.
+///
+/// A quarantine would make all of this legible, and #452 rejected it: a
+/// slot held back is a slot the next allocation cannot have, and
+/// `pools.rs` counts one slot per site. Poison costs no slots.
+fn render_freed_poison(name: &str, root: &str) -> String {
+    /* The root class has no body past its own prefix, so there is nothing
+     * to memset -- and `name == root` makes the length expression a
+     * literal zero, which is noise in the output rather than a store. */
+    let body_poison = if name == root {
+        String::new()
+    } else {
+        format!(
+            "\tmemset((char *)obj + sizeof(struct {root}), 0xA5,\n\
+             \t       sizeof(struct {name}) - sizeof(struct {root}));\n",
+            name = name,
+            root = root
+        )
+    };
+    format!(
+        "#ifdef OZ_DEBUG_REFCOUNT\n\
+         \t/* Poison the slot on the way out (#452). Read the comment on\n\
+         \t * `render_freed_poison` before trusting any of this to be\n\
+         \t * legible afterwards: both allocators write their free-list\n\
+         \t * link over `_meta`, so the body poison outlives the header\n\
+         \t * stamp. */\n\
+         \t((struct {root} *)obj)->_meta.class_id = OZ_CLASS_ID_FREED;\n\
+         \t((struct {root} *)obj)->_meta.immortal = 0;\n\
+         \toz_atomic_init(&((struct {root} *)obj)->oz_refcount, 0);\n\
+         {body_poison}\
+         #endif\n",
+        root = root,
+        body_poison = body_poison
+    )
+}
+
 /// The first lines of every `{name}_oz_free`: an object that came from a
 /// heap has no slot in the class's slab to return, so it goes back to the
 /// heap and the slab is never touched.
@@ -612,9 +692,11 @@ pub(crate) fn render_alloc_free(
     c.push_str(&render_free_banner(name, slots));
     c.push_str(&format!(
         "void {name}_oz_free(struct {name} *obj)\n{{\n\
+         {poison}\
          {heap_check}\
          {slab_free}}}\n\n",
         name = name,
+        poison = render_freed_poison(name, root),
         heap_check = render_heap_free_check(root, heap_support),
         slab_free = render_slab_free(name, slots)
     ));
@@ -681,12 +763,14 @@ zero (not from source; OZArray.m has no -dealloc of its own) */\n",
          \t\toz_release((struct {root} *)obj->_items[i]);\n\
          \t}}\n\
          {items_free}\
+         {poison}\
          {heap_check}\
          {slab_free}\
          }}\n\n",
         root = root,
         name = name,
         items_free = render_item_buffer_free("_items", "obj->_count", item_slots),
+        poison = render_freed_poison(name, root),
         heap_check = render_heap_free_check(root, heap_support),
         slab_free = render_slab_free(name, slots)
     ));
@@ -838,12 +922,14 @@ the refcount reaches zero (not from source; OZDictionary.m has no\n * \
          \t\toz_release((struct {root} *)obj->_values[i]);\n\
          \t}}\n\
          {keys_free}\
+         {poison}\
          {heap_check}\
          {slab_free}\
          }}\n\n",
         root = root,
         name = name,
         keys_free = render_item_buffer_free("_keys", "obj->_count * 2", item_slots),
+        poison = render_freed_poison(name, root),
         heap_check = render_heap_free_check(root, heap_support),
         slab_free = render_slab_free(name, slots)
     ));
@@ -1301,7 +1387,17 @@ pub fn render(
 * the output alongside this one. */\n\
 #ifndef Nil\n\
 #define Nil ((Class)0xFFFF)\n\
-#endif\n\n",
+#endif\n\n\
+/* The id `_oz_free` stamps over a slot it is returning (#452). Reserved\n \
+* unconditionally, whether or not the stamp is compiled in, because the\n \
+* guarantee a reserved id needs is that no class ever takes it -- and ids\n \
+* are assigned densely from 0, so the top of the 10-bit range is the one\n \
+* value a program would have to declare 1024 classes to reach.\n \
+* `oz_class_name` renders it as \"freed\" rather than \"?\", which is the\n \
+* difference between \"something was over-released\" and \"something\n \
+* already freed was released again\" -- when the stamp is still legible.\n \
+* It often is not: see the comment on the stamp itself. */\n\
+#define OZ_CLASS_ID_FREED 1023\n\n",
     );
     // Replaced, once the whole header is built, by a forward declaration
     // for every struct tag it mentions but never declares -- see
@@ -1601,7 +1697,10 @@ not tied to one (not from source) */\n",
                 name = name
             ));
         }
-        c.push_str("\tdefault: return \"?\";\n\t}\n}\n\n");
+        c.push_str(
+            "\tcase OZ_CLASS_ID_FREED: return \"freed\";\n\
+             \tdefault: return \"?\";\n\t}\n}\n\n",
+        );
         c.push_str(&format!(
             "struct {root} *oz_retain(struct {root} *self)\n{{\n\
              \t/* An immortal object is not refcounted -- the same rule\n\

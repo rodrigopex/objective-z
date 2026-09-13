@@ -28,6 +28,16 @@ struct OZObject *OZObject_oz_alloc(void)
  * source) */
 void OZObject_oz_free(struct OZObject *obj)
 {
+#ifdef OZ_DEBUG_REFCOUNT
+	/* Poison the slot on the way out (#452). Read the comment on
+	 * `render_freed_poison` before trusting any of this to be
+	 * legible afterwards: both allocators write their free-list
+	 * link over `_meta`, so the body poison outlives the header
+	 * stamp. */
+	((struct OZObject *)obj)->_meta.class_id = OZ_CLASS_ID_FREED;
+	((struct OZObject *)obj)->_meta.immortal = 0;
+	oz_atomic_init(&((struct OZObject *)obj)->oz_refcount, 0);
+#endif
 	/* No slab, so no slot to return. With heap support on, the check
 	 * above has already given a heap-allocated instance back to its
 	 * heap; without it, nothing in this program can have allocated
@@ -58,6 +68,7 @@ const char *oz_class_name(struct OZObject *self)
 	case OZ_CLASS_Level4: return "Level4";
 	case OZ_CLASS_OZNumber: return "OZNumber";
 	case OZ_CLASS_BoxedTest: return "BoxedTest";
+	case OZ_CLASS_ID_FREED: return "freed";
 	default: return "?";
 	}
 }
