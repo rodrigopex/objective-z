@@ -33,7 +33,19 @@
 void OZLog(const char *fmt, ...);
 
 /**
- * @brief Get the current log format precision for %@ objects.
- * @return Precision (>= 0) if set by OZLog during %.N@ processing, or -1 (default).
+ * @brief The precision the `%@` currently being rendered was written with.
+ * @return Precision (>= 0) while `OZLog` is processing a `%.N@`, else -1.
+ *
+ * Carries no `get`, deliberately: `get` marks a method or function that
+ * writes through a caller's pointer (`-getBytes:length:range:`,
+ * `-getDescription:maxLength:`), which #413 settled as the rule. This
+ * returns its value, so `get` would be a lie -- the same reasoning that
+ * keeps `-usedBytes` and `-cString` free of it. #417 renamed it: the old
+ * spelling was public while carrying the *internal* `_oz_` prefix, and
+ * misused `get`, in one name. `docs/STATUS.md` records what it was.
+ *
+ * Valid only inside a `-getDescription:maxLength:` called from a `%@`
+ * conversion. `OZLog` sets it immediately before the dispatch and clears it
+ * immediately after, so a caller that reads it from anywhere else sees -1.
  */
-int _oz_get_log_precision(void);
+int oz_log_precision(void);
