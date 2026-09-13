@@ -102,6 +102,10 @@ const DECLS: &str = "\
 @end
 
 static Thing *g_global;
+/* The `id` spelling of the same slot. Two rows below need it, and it is
+ * declared here rather than in a row because `DECLS` is where file-scope
+ * state lives. */
+static id g_id_global;
 Thing *factory(void);
 void keep(Thing *t);
 int tagOf(Thing *t);
@@ -313,6 +317,46 @@ void staticLocal(void)
 	static Thing *cached;
 
 	cached = [[Thing alloc] init];
+}
+",
+        ),
+        /* The same two slots, spelled `id` (#429). They are separate rows
+         * rather than a note on the two above because they were separate
+         * *code paths*: `static_object_locals` and `file_scope_vars` each
+         * tested `stars == 1`, which `id` cannot satisfy -- it carries no
+         * `*` in source because it already is a pointer (#400). Both slots
+         * silently leaked, and neither row above could have caught it.
+         *
+         * Identical expectations to their `Thing *` twins, which is the
+         * claim worth pinning: the spelling of a slot's type must not
+         * change its ownership. */
+        (
+            Shape {
+                what: "static local spelled `id` (#429)",
+                func: "staticIdLocal",
+                expect: (1, 0, 1),
+                known_defect: None,
+            },
+            "\
+void staticIdLocal(void)
+{
+	static id cached;
+
+	cached = [[Thing alloc] init];
+}
+",
+        ),
+        (
+            Shape {
+                what: "file-scope global spelled `id` (#429)",
+                func: "globalIdDirect",
+                expect: (1, 0, 1),
+                known_defect: None,
+            },
+            "\
+void globalIdDirect(void)
+{
+	g_id_global = [[Thing alloc] init];
 }
 ",
         ),
