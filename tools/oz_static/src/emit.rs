@@ -702,13 +702,30 @@ pub(crate) fn static_object_locals(
         }
         if node.kind() == "declaration" && is_static_declaration(node, src) {
             let (type_text, stars) = crate::collect::extract_type_and_stars(node, src);
-            if stars == 1
-                && program.is_class(type_text.trim())
-                && !node_text(node, src).contains("__unsafe_unretained")
-            {
+            let bare = type_text.trim();
+            /* The same test `managed_object_locals` grew in #400, forty
+             * lines below this one, and did not get here: `id` is the one
+             * object spelling with no `*` in source, so a `stars == 1` test
+             * cannot see it and a `+1` stored in such a slot was never
+             * released (#429). `stars == 0` matters -- `id *p` is a pointer
+             * *to* an object reference, not one. */
+            let is_object = (stars == 1 && program.is_class(bare)) || (stars == 0 && bare == "id");
+            if is_object && !node_text(node, src).contains("__unsafe_unretained") {
                 let mut cursor = node.walk();
                 for child in node.children(&mut cursor) {
-                    if matches!(child.kind(), "pointer_declarator" | "init_declarator") {
+                    /* `identifier` as well, which a `Class *p` declaration
+                     * never produces: a bare `static id cached;` has no
+                     * `pointer_declarator`, and its only `identifier` child
+                     * is the name -- the type `id` is a `type_identifier`,
+                     * and `id` is a reserved word so nothing else can be
+                     * spelled that way (#317). Without this the `= nil`
+                     * form worked and the bare form leaked, which is a
+                     * split `managed_object_locals` deliberately does not
+                     * make. */
+                    if matches!(
+                        child.kind(),
+                        "pointer_declarator" | "init_declarator" | "identifier"
+                    ) {
                         let name = crate::collect::find_declared_name(child, src);
                         if !name.is_empty() {
                             found.insert(name);
@@ -3109,7 +3126,13 @@ fn is_file_scope_object(name: &str, ctx: &EmitCtx) -> bool {
     if ctx.program.ivar_access_path(&ctx.class_name, name).is_some() {
         return false;
     }
-    ctx.scope.get(name).and_then(|ty| class_name_from_type(ty)).is_some()
+    /* `|| == "id"` for the reason #429 gives: `class_name_from_type` answers
+     * None for `id`, so a file-scope `id` was not recognised as a strong
+     * slot and a `+1` stored in one leaked. Third of the three slot paths
+     * that needed the #400 rule, and the last. */
+    ctx.scope
+        .get(name)
+        .is_some_and(|ty| class_name_from_type(ty).is_some() || ty.trim() == "id")
 }
 
 fn render_strong_local_assign(
@@ -8904,10 +8927,23 @@ fn file_scope_vars(root: Node, ctx_src: &str, program: &Program) -> HashMap<Stri
         //
         // The bare name is what `render_type` wants, since it re-adds the tag.
         let class_name = type_text.strip_prefix("struct ").unwrap_or(&type_text);
-        if stars == 0 || !known.contains(class_name) {
+        /* `id` is the third spelling, and the one this gate could not see.
+         * The comment above records two forms of the same asymmetry (#251,
+         * and gap R before it); this is the same shape a third time, from
+         * the other side -- `stars == 0` was a safe stand-in for "not an
+         * object" until #400 established that `id` carries no `*` in
+         * source because it already is a pointer. A file-scope `id` never
+         * entered the scope map, so `is_file_scope_object` was never even
+         * asked and a `+1` stored in one leaked (#429). */
+        let is_id = stars == 0 && type_text.trim() == "id";
+        if !is_id && (stars == 0 || !known.contains(class_name)) {
             continue;
         }
-        let c_type = crate::collect::render_type(class_name, stars, &known);
+        let c_type = if is_id {
+            "id".to_string()
+        } else {
+            crate::collect::render_type(class_name, stars, &known)
+        };
         let mut c2 = child.walk();
         let declarators: Vec<Node> = child.children(&mut c2).collect();
         for declarator in declarators {
