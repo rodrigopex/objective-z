@@ -1824,7 +1824,40 @@ fn collect_declared_types(
     found: &mut Option<String>,
     count: &mut usize,
 ) {
-    if matches!(node.kind(), "declaration" | "parameter_declaration") && declares_name(node, name, src)
+    /* `method_parameter` is the Objective-C one, and its absence was a
+     * leak. `arc.rs` was the only module that did not know the kind
+     * exists -- `staticbar.rs` and `collect.rs` each name it four times --
+     * so `declared_class_of` could not resolve a receiver that came in as
+     * a method parameter, and `message_target` answered `None`.
+     *
+     * What that cost is not "a parameter receiver is unresolved". The
+     * emitter resolves it perfectly well from `ctx.scope`, seeded by
+     * `collect::extract_method_sig`, and emits a *static* call. Only this
+     * module failed, so `dispatch_ownership` fell through to polling every
+     * reachable implementor -- and where two classes declare the selector
+     * and disagree, the poll answers `Ambiguous`, which reads as borrowed
+     * and emits no release.
+     *
+     * So a **statically dispatched send took its ownership answer from an
+     * ambiguous poll over classes it can never reach**, and the
+     * `Ambiguous` refusal in `emit::dynamic_dispatch_call` could not save
+     * it: that guards a *dynamically* dispatched send, and this one is
+     * static. Two resolvers, one receiver, disagreeing silently.
+     *
+     * Three conditions have to coincide, which is why it had never been
+     * seen: the receiver is a method parameter, the selector is not a
+     * create-rule name (`copy` and friends short-circuit
+     * `creates_reference` before the poll, so the class is never needed),
+     * and two or more classes declare it with disagreeing ownership.
+     * Measured: with only one implementor the poll agrees and there is no
+     * defect at all.
+     *
+     * The type sits inside a `method_type` child rather than as a direct
+     * one, unlike a `declaration`; `extract_type_and_stars` walks the
+     * subtree, so it reaches it, and `declares_name` matches the
+     * `identifier` child. Both verified rather than assumed. */
+    if matches!(node.kind(), "declaration" | "parameter_declaration" | "method_parameter")
+        && declares_name(node, name, src)
     {
         let (ty, _) = crate::collect::extract_type_and_stars(node, src);
         let bare = ty.trim().trim_start_matches("struct ").trim();
