@@ -133,15 +133,19 @@ test-riscv: oz2c
 test-smp: oz2c
     west twister -T samples/ -p {{ smp_board }} -c -O {{ outdir }}-smp
 
-# Every board, so neither an architecture-specific regression nor a
-# core-count-specific one can hide. `test-smp` is here as of #443: it existed
-# and was in no aggregate recipe, which is how `samples/smp_shared` -- the
-# only sample that runs on two cores, and the only place `@synchronized`
-# faces real contention -- stayed unbuildable without anything saying so.
+# Both architectures, so neither hides an architecture-specific regression.
+#
+# `test-smp` is deliberately **not** here, and #443 briefly put it here by
+# mistake -- making this recipe byte-identical to `test-all-boards` below,
+# which already ran all three. Two aggregates with one body is worse than
+# either split, and the distinction this one draws is real: the two
+# architectures are the fast sweep, and SMP is the slower third that
+# `test-all-boards` adds. The gap #443 set out to close was never local
+# anyway; it was that **CI** ran no SMP leg, which `smp-tests` in
+# `.github/workflows/ci.yml` now does.
 test-boards:
     just test
     just test-riscv
-    just test-smp
 
 # `-Wall -Wextra` clean is not the same as valid C: a bare `;` at file scope
 # lived in every generated program until #264 and passed that sweep, the corpus
