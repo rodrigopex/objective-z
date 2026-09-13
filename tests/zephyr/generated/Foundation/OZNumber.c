@@ -338,7 +338,7 @@ struct OZNumber * OZNumber_dividingBy_(struct OZNumber *self, struct OZNumber * 
 /* - (int)getDescription:(char *)buf maxLength:(size_t)maxLen */
 int OZNumber_getDescription_maxLength_(struct OZNumber *self, char* buf, size_t maxLen)
 {
-	int prec = _oz_get_log_precision();
+	int prec = oz_log_precision();
 	if (prec < 0) {
 		prec = 14;
 	}
