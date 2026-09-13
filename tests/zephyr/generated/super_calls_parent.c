@@ -28,6 +28,18 @@ struct Base *Base_oz_alloc(void)
  * oz_release, once the refcount reaches zero (not from source) */
 void Base_oz_free(struct Base *obj)
 {
+#ifdef OZ_DEBUG_REFCOUNT
+	/* Poison the slot on the way out (#452). Read the comment on
+	 * `render_freed_poison` before trusting any of this to be
+	 * legible afterwards: both allocators write their free-list
+	 * link over `_meta`, so the body poison outlives the header
+	 * stamp. */
+	((struct OZObject *)obj)->_meta.class_id = OZ_CLASS_ID_FREED;
+	((struct OZObject *)obj)->_meta.immortal = 0;
+	oz_atomic_init(&((struct OZObject *)obj)->oz_refcount, 0);
+	memset((char *)obj + sizeof(struct OZObject), 0xA5,
+	       sizeof(struct Base) - sizeof(struct OZObject));
+#endif
 	oz_slab_free(&oz_slab_Base, (void *)obj);
 }
 
@@ -80,6 +92,18 @@ struct Child *Child_oz_alloc(void)
  * oz_release, once the refcount reaches zero (not from source) */
 void Child_oz_free(struct Child *obj)
 {
+#ifdef OZ_DEBUG_REFCOUNT
+	/* Poison the slot on the way out (#452). Read the comment on
+	 * `render_freed_poison` before trusting any of this to be
+	 * legible afterwards: both allocators write their free-list
+	 * link over `_meta`, so the body poison outlives the header
+	 * stamp. */
+	((struct OZObject *)obj)->_meta.class_id = OZ_CLASS_ID_FREED;
+	((struct OZObject *)obj)->_meta.immortal = 0;
+	oz_atomic_init(&((struct OZObject *)obj)->oz_refcount, 0);
+	memset((char *)obj + sizeof(struct OZObject), 0xA5,
+	       sizeof(struct Child) - sizeof(struct OZObject));
+#endif
 	oz_slab_free(&oz_slab_Child, (void *)obj);
 }
 
