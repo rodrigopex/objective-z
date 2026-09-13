@@ -510,6 +510,15 @@ which was true when written and is not true now. Making the arm pool-aware
 is a behavioural change and wants its own issue — it is the one place in
 this area where a bigger pool is the genuine answer.
 
+**That issue was #433, and it landed, so the paragraph above is now history
+too.** The check reads `PoolSizes`, an `OverlappingStore` whose class has
+two or more slots is accepted, and the remedy is offered again — by the arm
+that resolved the class and read its size, and by no other. See "The day the
+check could read the size (#433)". What this section got right was not its
+conclusion but its *condition*: it said which fact would have to change for
+the advice to be correct again, and that is the sentence that let the
+reversal be recognised as one rather than argued about.
+
 So the general lesson is not "the message was wrong". It is that a remedy
 offered in a diagnostic is a claim about the checker's own behaviour, and
 this one had never been true. It was also *pinned* by a green assertion —
@@ -854,6 +863,25 @@ counted sends across `tests/*/cases/*.m` and samples only, missing the ~50 Rust
 test files whose ObjC is inline. `-release` has 1 send in the first population
 and **142** in the one that was skipped.
 
+
+### A blast-radius sweep that agreed with itself about nothing (#433)
+
+The same sweep, one issue later, reported **121 of 121 refused by both
+binaries** — no output to compare, and therefore no diff. Read as a result
+that is a clean bill of health: nothing changed. It was a broken invocation.
+
+The flags were held in a shell variable and interpolated unquoted. In `zsh`
+an unquoted parameter expansion does **not** word-split, so all seven flags
+arrived as one argument and every case failed to parse, in both binaries
+identically. Re-run with a proper array: **121 of 121 byte-identical**, zero
+newly refused, zero newly accepted.
+
+Both numbers are "the two binaries agree". Only one of them is about the
+code. The distinguishing question is not whether the two sides match but
+**whether the harness did the work at all**, so a sweep needs a cell that
+fails when nothing ran — here, the count of cases *either* binary accepted,
+which was zero and should have been 121. An all-refused sweep and an
+all-identical sweep are the same green and opposite evidence.
 
 ### A blast-radius sweep whose own harness produced the diff (#424)
 
@@ -2393,6 +2421,102 @@ predicate precisely so they could not differ, and #435 made
 answered the same question wrongly for years. This is the third instance of
 that shape, and it is an architectural call rather than a fix.
 
+## The day the check could read the size (#433)
+
+#425 ended by naming the condition under which its own conclusion would
+expire: the pool would be the right remedy again "the day this check can
+read the size". #433 is that day, and the interesting part is that **what
+changed was an argument, not a sentence.**
+
+The chain, because each link was true when it was written:
+
+1. The message once claimed the shape would be wrong at *any* pool size.
+   True while `ctx.pre_stmts` hoisted the temporary's **initialiser** out of
+   the loop: a bigger pool could not move it back in, so accepting the shape
+   would have miscompiled rather than merely exhausted the slab.
+2. #424 replaced that with a bare declaration plus an assignment inside the
+   comma expression. A declaration with no initialiser evaluates nothing, so
+   the hazard went — and pool-awareness became *sound* while remaining
+   unimplemented.
+3. #425 narrowed the message to the fact that survived: raising the pool does
+   not lift **this rejection**, because the check never reads `PoolSizes`.
+4. #433 made it read them. The narrowed fact is now false too, and the
+   advice is back.
+
+No step rewrote a claim that was wrong when made. Each expired because the
+code underneath it moved. That is worth separating from the usual case,
+where a diagnostic is corrected because it never was true: the guard against
+the second is review, and the guard against the first is **citing the
+condition that would end the claim**, which #425 happened to do.
+
+### Two questions that look like one class question
+
+The first cut of this fix resolved the wrong class and would have shipped
+accepting nothing the issue was filed to accept.
+
+`allocated_class` — written for the *diagnostic*, to say "an allocation of
+'Thing'" — answers **which class is named as the receiver of the
+allocation**. For the issue's own example, `_thing = [_thing dup]`, it
+answers nothing: `_thing` is an ivar, not a class. The capacity question is
+a different one — **which slab does the new object come from** — and for a
+send that is the declared return type of the selector. `Foo *_thing =
+[_thing dup]` draws from `Foo`'s slab although no `Foo` is named anywhere in
+the expression.
+
+Keyed on the first, the relaxation was sound, built clean, passed 672 tests
+and relaxed **nothing**. The tell was that `raising_the_pool_does_not_lift_an_overlapping_store`
+— the test whose whole purpose was to pin the behaviour being changed —
+still passed. A green suite after a behavioural change is not evidence the
+change is safe; it is first a question about whether the change happened.
+
+So the bar now resolves the stored class through `emit::find_defining_class`
+and `emit::method_return_type`, and the two resolvers are collapsed into
+one: the diagnostic names the class it can actually promise something about,
+which is the same class the acceptance is decided on. `allocated_class` is
+gone.
+
+### Advice that is the check's own finding
+
+#425's lesson was that a remedy in a diagnostic is a claim about the
+checker's behaviour. The structural guard added here is stronger than
+watching the wording: the pool is offered **only** by the arm that has
+already resolved the class and read its size below two (`PoolAdvice`). The
+advice is a consequence of the check rather than a sentence beside it, so it
+cannot drift from what the check will honour.
+
+The two arms that cannot offer it say which fact they are missing rather
+than falling silent:
+
+| arm | why no size is offered |
+| --- | --- |
+| `PoolAdvice::ClassUnresolved` | the slab could not be named — an `id` return type, a C factory — so no size can be promised |
+| `PoolAdvice::LoweringCannotUseIt` | `render_strong_array_element_assign` answers `LocalStore::Unsupported` with a located error and **no temporary**, so no size makes the shape work |
+
+The second is why the relaxation is scoped rather than general. #424 gave
+the *shared* lowering a liftable temporary; it deliberately did not reach
+the array-element one, and that was verified in the tree for this change
+rather than carried over from the issue's text.
+
+### One question, both directions through the wrappers
+
+`stored_class` walks **down** through parentheses, casts and a ternary whose
+arms share a slab — the same wrappers `loop_escape` already walks **up**
+through. A question answered differently on either side of a cast is a
+question about the spelling rather than about the reference, which is the
+standing rule of every ARC defect since #351. A ternary with a *borrowing*
+arm still resolves to nothing, which is why the case that exercises that
+shape kept its meaning unchanged.
+
+### What this leaves open
+
+`walk_for_reject` has arms for `message_expression`, `array_literal` and
+`dictionary_literal`, and **none for `call_expression`**. A plain C factory
+that reads its own destination inside a loop — `_thing = copy_of(_thing);` —
+is therefore never asked the loop question at all, at any pool size. That is
+pre-existing and untouched by this change, and it is the same shape as every
+defect since #355: a position nobody asked the question in. Filed separately
+rather than folded in.
+
 ## Standing design rules
 
 - **The heap has one name per layer, and the layers are the point (#417).** The
@@ -2437,6 +2561,30 @@ that shape, and it is an architectural call rather than a fix.
   `src/OZObject.m:100` calls it, and both should stay. The header has to carry
   it because Clang resolves the call while dumping the AST, before any generated
   header exists (#418's invariant).
+
+- **A claim that depends on the code should name the condition that would end
+  it (#425, #433).** A diagnostic, a doc paragraph or a test comment that
+  states *why* something is refused is a claim about the current
+  implementation, and implementations move. #425 wrote "raising the pool does
+  not lift this rejection, because this check never reads `PoolSizes`" and
+  added that the remedy would be right again "the day this check can read the
+  size". #433 made it read them, and the reversal was recognisable *as* a
+  reversal in one reading -- no archaeology, no argument about whether the
+  earlier author had been wrong. They had not been; the condition they named
+  had simply been met.
+
+  The cost of omitting the condition is not that the text goes stale. It is
+  that a later reader cannot tell a claim that expired from a claim that was
+  never true, and those want opposite responses: the first is updated, the
+  second is a defect to go looking for siblings of. Prefer "X is refused
+  because Y" over "X is wrong", and say what would make Y false.
+
+  The corollary for tests: the assertion that pins such a claim is the thing
+  that will fail when the condition is met, and that is its job. `#425`'s
+  `raising_the_pool_does_not_lift_an_overlapping_store` failing was the
+  signal #433 had landed, not an obstacle to landing it -- but only because
+  it asserted the *measured behaviour* (three identical diagnostics) rather
+  than the reasoning behind it.
 
 - **`oz2c` names the tool. `oz_`/`OZ_` names the code. Nothing is named after
   the crate.** The transpiler answered to two names for most of its life:
