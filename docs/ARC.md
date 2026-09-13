@@ -85,7 +85,7 @@ transpile-compile-run under ASan for the oz_static half.
 | 2.5.2 | Assigning a `__strong` lvalue: retain new, release old | `IMPLEMENTED` | `classify_store` (`emit.rs:590`) — the one predicate both `staticbar` and the emitter ask (#405). Four destinations: ivar, managed local, `static` local, file-scope object, and since #429 a slot spelled `id` is a strong slot in all four |
 | 2.5.2 | …including the self-assignment case `c = c` | `IMPLEMENTED` | `LocalStore::BorrowedIdent` emits retain-before-release for exactly this (`emit.rs:3115`) |
 | 2.5.3 | Initialization is a null store followed by an assignment | `IMPLEMENTED` | `+alloc` memsets the whole instance (`companion.rs:576`), so every slot starts null |
-| 2.5.4 | Destruction is equivalent to assigning null | `IMPLEMENTED` | Scope-exit release (`arc_exit`, `emit.rs:6280`); ivars via `_oz_release_ivars` (`companion.rs:391`) |
+| 2.5.4 | Destruction is equivalent to assigning null | `IMPLEMENTED` | Scope-exit release (`arc_exit`); ivars via `_oz_release_ivars` (`companion.rs:391`). Since #459 the strong-local set is **body-scoped**: it holds names, and a name left behind by an earlier body used to answer for a later body's local of the same name — releasing a borrowed reference. `managed_locals_are_body_scoped.rs` pins both orderings |
 | 2.5.5 | **Moving** a `__strong` lvalue: load, write null, release at end of full-expression | `UNEXAMINED` | Untested and unimplemented; no construct in the accepted subset moves a slot. Recorded so it is not mistaken for covered |
 | 2.6.1 | Weak-unavailable types | `N/A` | No `__weak` |
 | 2.6.2 | `__autoreleasing` must have automatic storage duration | `N/A` | No pool |
@@ -170,7 +170,6 @@ Ordered by direction, because a leak and a double free are not the same bug
 
 | issue | § | what |
 |---|---|---|
-| #459 | 2.5.4 | a borrowed local is released because an *earlier method* has an owning local of the same name. Source-order dependent; needs no cast or attribute |
 | #458 | 1.3.2, 3.1, 3.3 | `ns_returns_not_retained` on a family selector: oz_static releases what ARC says it does not own |
 | #460 | 1.3.4 | `__bridge_retained` emits no retain, so the C side is handed a freed slot |
 
@@ -219,5 +218,6 @@ run:
   fall-back rule that leaks every `id`-typed ivar — a configuration no shipped
   path uses.
 
-And #459 is expressible in neither, because both assert on a single emitted
-function and that defect needs two methods.
+And #459 was expressible in neither, because both assert on a single emitted
+function while that defect needs two methods *and* their order — which is why
+it has its own file, `managed_locals_are_body_scoped.rs`, rather than a row.

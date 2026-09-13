@@ -2035,6 +2035,65 @@ correct release and did not -- the release came from a preceding method's
 owning `t`. Any fixture for #458, #460 or #461 has to use distinct local names
 or it passes for the wrong reason.
 
+## A strong-local decision belongs to the body it was made in (#459)
+
+The first defect #447's matrix turned up, and the most reachable ARC defect
+this project has had: **two ordinary methods, and reordering them is the whole
+difference.**
+
+```objc
+- (void)make { Thing *t = [[Thing alloc] init]; (void)[t tag]; }
+- (int)borrow:(Thing *)arg { Thing *t = arg; return [t tag]; }
+```
+
+`-borrow:` released the caller's reference. Written the other way round it was
+correct.
+
+`EmitCtx::arc_managed_locals` and `arc_managed_slots` hold **names**, and
+`owned_locals_of` consults them by name alone. `collect_local_decls` computed
+the right answer per body -- `managed_object_locals(body, ..)` is properly
+scoped -- and then `extend`ed a context-wide set that was never cleared.
+Bodies render in source order, so only a *preceding* body could contaminate a
+later one, which is exactly the order dependence.
+
+Three things worth keeping.
+
+**The containment is not where I expected, and only measuring showed it.** A
+plain C function builds its own `EmitCtx::new(...)`, so its set starts empty
+and free functions were never affected; every method in an `@implementation`
+shares one context. The regression test for the free-function case was written
+expecting to fail without the fix and passes either way -- it is kept as a
+control, because if free functions are ever moved onto the shared context that
+test is what notices they have joined the contaminated set.
+
+**Reset in the one function, not at each call site.** The first fix added a
+`collect_local_decls_for_body` wrapper at the two top-level sites and left the
+`block_literal` site alone. It worked, and it is one added caller away from
+reintroducing the bug -- the same argument `collect_local_decls`'s own doc
+comment already makes for driving both passes from one place. The landed fix
+replaces the sets inside that function, so every caller gets it. `ctx.scope`
+is deliberately *not* reset alongside them, and the asymmetry is the point:
+that map answers "what C type does this identifier have", which a block body
+needs of its enclosing body; these two answer "does ARC manage this slot",
+which no block body needs, because capturing an enclosing local is a located
+error and a `__block` local is excluded from the managed set anyway.
+
+**The blast radius was measured by asking which sources *could* differ, not by
+diffing everything.** The fix can only change output where an object-typed
+local name is declared in one body and again in a later body of the same file.
+A tree-sitter scan over all 81 behaviour cases, 40 adapted cases, 34 samples
+and SDK sources, and px-keyboard's 8 found **12** such files; transpiling those
+12 with and without the fix produced **byte-identical** output, and the scan
+proves the remaining 151 sources cannot be affected. That is a stronger
+statement than a byte count over everything and cost one incremental rebuild:
+the reuse is real and the later declarations are all owning, so nothing in the
+tree was relying on the stale name.
+
+Worth noting what the reuse means for the corpora as a gate: eight behaviour
+cases *do* declare the same object local in two bodies and none of them
+declares a borrowed one second, which is why 121 cases under ASan and LSan
+were green over a use-after-free reachable in two lines.
+
 ## Standing design rules
 
 - **Never silently degrade.** Anything outside the supported subset is a hard,
