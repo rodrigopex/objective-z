@@ -179,7 +179,6 @@ Ordered by direction, because a leak and a double free are not the same bug
 | #460 | 1.3.4 | `__bridge_transfer` emits no release for the +1 it took over |
 | #461 | 2.6.5, 2.7.2 | an out-parameter store is an untracked strong destination |
 | #454 | — | `goto` emits no scope releases |
-| #450 | — | `arc::analyze`'s fixed point terminates early on a C-factory chain |
 
 **Silent degrade — accepted and then ignored, which this project's standing
 rule forbids:**
