@@ -953,6 +953,27 @@ measurement rather than by review.
 
 `tests/no_dead_ivars.rs` is the standing check, and it matches tokens.
 
+**#417 asked for that name back, and it was refused (item 3).** The issue reads
+`oz_refcount` as "the one root-object field without the underscore its sibling
+`_meta` has" and asks for `_refcount` -- which is the name of the field deleted
+above, for being dead. Three things in the tree say why it cannot come back: the
+paragraph you are reading; `tests/no_dead_ivars.rs`, whose stated reason for
+matching whole identifier tokens is precisely that `_refcount` must not match
+inside `oz_refcount`, so the rename would have made the test's own rationale
+incoherent; and `emit.rs`'s note that the field is spelled in full *because* the
+dead one sat beside it. `include/runtime_legacy/Foundation/Object.h` still
+carries an `atomic_t _refcount`, so the collision is live rather than
+historical.
+
+The premise behind the item is narrower than it looks. CLAUDE.md's
+underscore rule governs **ivars an author writes**, not fields the transpiler
+synthesizes; `_meta` and `oz_refcount` are both synthesized, so the
+inconsistency between them is real, but the `oz_` is deliberate and
+load-bearing rather than an oversight. Renaming `_meta` the other way is worse
+still: three behaviour drivers assert on `obj->base._meta.class_id` and were
+once unbuildable purely because of that spelling. Item 3 is closed on that
+reasoning, not implemented.
+
 
 The most reusable thing the old document held. Every entry below is something
 that reported success while the thing it named was broken.
