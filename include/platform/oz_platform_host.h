@@ -305,9 +305,14 @@ static inline void oz_sys_heap_free(void *obj)
  *
  * Defined in the generated oz_dispatch.c — requires struct OZHeap
  * to be complete.
+ *
+ * `oz_static_`, not `oz_heap_`: declared here, defined by the companion, so
+ * they belong to the generated namespace the way `oz_static_retain_count`
+ * does (#417, #418). The old spelling collided by word order with the PAL
+ * functions they call — `oz_heap_obj_alloc` calling `oz_heap_alloc_obj`.
  */
-void *oz_heap_obj_alloc(struct OZHeap *heap, size_t size);
-void oz_heap_obj_free(void *obj);
+void *oz_static_heap_alloc(struct OZHeap *heap, size_t size);
+void oz_static_heap_free(void *obj);
 
 #endif /* OZ_HEAP_SUPPORT */
 

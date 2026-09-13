@@ -295,9 +295,21 @@ static inline size_t oz_heap_used_bytes(struct oz_heap_inner *inner)
  * Defined in the generated oz_dispatch.c — requires struct OZHeap
  * to be complete, which is only guaranteed after all class headers
  * have been included.
+ *
+ * `oz_static_`, not `oz_heap_`, and that is the point (#417). These two are
+ * *declared* here and *defined* by the companion, so they belong to the
+ * generated namespace the way `oz_static_retain_count` does — declared in a
+ * public header for Clang's sake, synthesized in the C (#418). Under
+ * `oz_heap_` they read as PAL functions and collided by word order with the
+ * PAL functions they call: `oz_heap_obj_alloc` calling `oz_heap_alloc_obj`,
+ * and `oz_heap_obj_free` calling `oz_heap_free_obj`. Two anagrams, two
+ * layers, one concept — the worst pair in the tree.
+ *
+ * The PAL's own spelling is the one that stays: subsystem, verb, then
+ * qualifier, as `oz_mem_blocks_alloc_contiguous` already had it.
  */
-void *oz_heap_obj_alloc(struct OZHeap *heap, size_t size);
-void oz_heap_obj_free(void *obj);
+void *oz_static_heap_alloc(struct OZHeap *heap, size_t size);
+void oz_static_heap_free(void *obj);
 
 #endif /* OZ_HEAP_SUPPORT */
 

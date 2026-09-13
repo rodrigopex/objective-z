@@ -250,7 +250,7 @@ fn a_slab_less_class_frees_through_the_heap_only() {
         body
     );
     assert!(
-        body.contains("oz_heap_obj_free"),
+        body.contains("oz_static_heap_free"),
         "the heap branch is the only way an instance can have been \
          allocated; got:\n{}",
         body
