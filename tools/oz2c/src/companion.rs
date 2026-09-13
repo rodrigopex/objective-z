@@ -1716,6 +1716,7 @@ not tied to one (not from source) */\n",
              \tif (self && self->_meta.deallocating) {{\n\
              \t\toz_platform_print(\"oz: retain of %s during its own dealloc\\n\",\n\
              \t\t\t\t  oz_class_name(self));\n\
+             \t\toz_platform_flush();\n\
              \t\toz_assert_msg(0, \"retain during dealloc -- this object is being \
 torn down; the class is named on the line above\");\n\
              \t}}\n\
@@ -1763,10 +1764,17 @@ vtable\") -- never mutated at runtime. */\n",
              \t *\n\
              \t * Printed and then asserted rather than asserted with the class\n\
              \t * in the message: oz_assert_msg takes a plain const char * and no\n\
-             \t * format arguments, so naming the class is the print's job. */\n\
+             \t * format arguments, so naming the class is the print's job.\n\
+             \t *\n\
+             \t * The flush is not decoration. printf to anything but a terminal\n\
+             \t * is fully buffered and abort() does not flush stdio, so on glibc\n\
+             \t * this line reached a buffer that was then discarded -- the\n\
+             \t * assertion text survived on stderr and the class name did not.\n\
+             \t * It read as a trap that could not name a class. */\n\
              \tif (oz_atomic_get(&self->oz_refcount) <= 0) {{\n\
              \t\toz_platform_print(\"oz: over-release of %s\\n\",\n\
              \t\t\t\t  oz_class_name(self));\n\
+             \t\toz_platform_flush();\n\
              \t\toz_assert_msg(0, \"over-release -- this refcount was already 0; \
 the class is named on the line above\");\n\
              \t}}\n\

@@ -249,6 +249,25 @@ static inline void *oz_current_thread(void)
 #define OZ_PLATFORM_PRINT(...) printf(__VA_ARGS__)
 #define OZ_PLATFORM_SNPRINT(...) snprintf(__VA_ARGS__)
 
+/*
+ * Push buffered output out before something that will not return.
+ *
+ * `printf` to anything but a terminal is fully buffered, and `abort()` does
+ * not flush stdio -- so a diagnostic printed immediately before an assert
+ * is discarded precisely when it matters. #452's refcount traps print the
+ * class name and then abort, and on glibc the class line and everything
+ * before it vanished while the assertion text (stderr, unbuffered)
+ * survived. It looked like the trap had failed to name the class; it had
+ * named it into a buffer nobody flushed.
+ *
+ * `NULL` rather than `stdout`: every stream, because the caller is about to
+ * stop the program and anything still held is lost.
+ */
+static inline void oz_platform_flush(void)
+{
+        (void)fflush(NULL);
+}
+
 /* ------------------------------------------------------------------ */
 /* Heap allocator — malloc-backed wrapper for dynamicAllocWithHeap:           */
 /* ------------------------------------------------------------------ */
