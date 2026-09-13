@@ -63,8 +63,8 @@ transpile-compile-run under ASan for the oz_static half.
 | 1.3.2 | `ns_returns_not_retained`: overrides a family's implicit +1 | `REFUSED` | Same walk. This is the one that reached a **use-after-free**: ARC read it and said +0, oz_static called `-copy` +1 and released the caller's object. Refusing it is also what makes § 3.1's family rule safe to widen — no attribute can contradict a family (#458) |
 | 1.3.3 | `objc_autoreleaseReturnValue` / `objc_retainAutoreleasedReturnValue` return convention | `N/A` | No autorelease pool exists, so the convention has nowhere to stand. A function must pick +1 or +0 and declare it consistently (STATUS.md:1077-1082) |
 | 1.3.4 | `(__bridge T)` transfers nothing | `IMPLEMENTED` | `is_bridging_cast` holds it back from all three ownership questions (`arc.rs:1417`) |
-| 1.3.4 | `(__bridge_retained T)` retains, handing +1 to the recipient | `GAP` | **Use-after-free.** No retain emitted; the local is still released at scope exit. #460 |
-| 1.3.4 | `(__bridge_transfer T)` releases at the end of the full expression | `GAP` | Leak. No release emitted. #460 |
+| 1.3.4 | `(__bridge_retained T)` retains, handing +1 to the recipient | `REFUSED` | A located error since #460 (`staticbar::check_bridging_casts`). It emitted no retain, so the local was still released at scope exit and C was handed a freed slot — and the stale read *succeeded* first, which is why it was silent. Refused rather than implemented: the tree has zero uses, and emission is sequenced after the `oz_static_*` respelling |
+| 1.3.4 | `(__bridge_transfer T)` releases at the end of the full expression | `REFUSED` | Same walk (#460). It emitted no release, stranding the +1 it took over from C |
 | 1.4 | Object ↔ non-object conversion is ill-formed without a bridge | `DELEGATED` | `cast of Objective-C pointer type 'Thing *' to C pointer type 'void *' requires a bridged cast` |
 | 1.4 | …except a cast to an integer type, which is allowed | `IMPLEMENTED` | Clang accepts it; oz_static deliberately leaks it rather than releasing through an integer slot (#380, `integer_slot_ownership.rs`) |
 | 1.5 | Known-semantics conversions (CF audited functions, `cf_returns_*`) | `N/A` | No Core Foundation and no C retainable pointer types on this target |
@@ -168,15 +168,21 @@ Ordered by direction, because a leak and a double free are not the same bug
 
 **Corrupting — these free an object that is still referenced:**
 
-| issue | § | what |
-|---|---|---|
-| #460 | 1.3.4 | `__bridge_retained` emits no retain, so the C side is handed a freed slot |
+**None.** All four were closed in one pass: #458 (`ns_returns_not_retained`
+against the create rule), #459 (a name-keyed strong-local set outliving its
+body), and #460's two bridging casts. Every one was found by walking this
+document's rules rather than by a report, and every one came from source
+`clang -fobjc-arc -Weverything` accepts silently.
+
+That is worth keeping as a claim someone can falsify rather than a boast: it
+means the shapes *this file has verdicts for* no longer free a live object. It
+does not mean the emitter honours every verdict at every site — see "What this
+file does not cover".
 
 **Leaking:**
 
 | issue | § | what |
 |---|---|---|
-| #460 | 1.3.4 | `__bridge_transfer` emits no release for the +1 it took over |
 | #461 | 2.6.5, 2.7.2 | an out-parameter store is an untracked strong destination |
 | #454 | — | `goto` emits no scope releases |
 
