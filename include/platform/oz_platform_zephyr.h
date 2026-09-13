@@ -29,6 +29,41 @@ static inline void oz_slab_free(oz_slab_t *slab, void *mem)
 }
 
 /* ------------------------------------------------------------------ */
+/* Slab leak detection — outstanding allocations at exit              */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The Zephyr half of the exit-time live-object census (#451). The host
+ * backend has had these two since the beginning; this backend had
+ * neither, which is why `oz_check_all_slabs()` could not be built on
+ * target at all -- and on target is where it matters most, because
+ * `k_mem_slab` is static memory and an unreleased object is invisible
+ * by construction. No sanitizer runs here, so this is the only
+ * instrument there is.
+ *
+ * `k_mem_slab_num_used_get` is not a field read: the count lives behind
+ * the accessor, and reading `slab->num_used` directly is what
+ * `tests/pal/test_slab.c` does on the *host* struct, which has no
+ * counterpart here.
+ */
+static inline uint32_t oz_slab_outstanding_count(oz_slab_t *slab)
+{
+        return k_mem_slab_num_used_get(slab);
+}
+
+static inline int oz_slab_check_leaks(oz_slab_t *slab, const char *name)
+{
+        uint32_t used = k_mem_slab_num_used_get(slab);
+
+        if (used > 0) {
+                printk("LEAK: %s has %u outstanding allocation(s)\n", name,
+                       used);
+                return 1;
+        }
+        return 0;
+}
+
+/* ------------------------------------------------------------------ */
 /* Contiguous block allocator — sys_mem_blocks pass-through            */
 /* ------------------------------------------------------------------ */
 

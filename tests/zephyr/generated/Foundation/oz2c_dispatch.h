@@ -219,6 +219,12 @@ struct BoxedTest *BoxedTest_oz_alloc(void);
 void BoxedTest_oz_free(struct BoxedTest *obj);
 void BoxedTest_oz_release_ivars(struct BoxedTest *self);
 
+/* synthesized: the exit-time live-object census -- the number of classes
+ * whose slab still holds an outstanding allocation, each named on stderr.
+ * Zero means every slab block this program handed out was handed back.
+ * Defined in oz2c_dispatch.c (not from source) */
+int oz_check_all_slabs(void);
+
 /* protocol dispatch: routes 'init' to whichever class implements it */
 void * OZ_PROTOCOL_SEND_init(struct OZObject *self);
 /* protocol dispatch: routes 'dealloc' to whichever class implements it */

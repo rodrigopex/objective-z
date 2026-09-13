@@ -223,11 +223,20 @@ def _run_pipeline_inner(m_path: Path, test_file: Path, tmpdir: Path,
             stdout="", stderr=f"Transpile failed:\n{err}")
 
     # Step 3: Generate test_main.c
+    #
+    # `--census oz2c_dispatch.h` wires in the exit-time live-object census
+    # (#451). One flag here covers *both* corpora and every cell of the
+    # compiler/-O matrix, because this one file generates the main() for
+    # every behaviour and adapted case -- including the ARC cases under
+    # `tests/adapted/`, which had no leak oracle of any kind. It is
+    # unconditional rather than opt-in: a census nothing calls reports zero
+    # leaks for the same reason a missing one does.
     test_main = tmpdir / "test_main.c"
     result = subprocess.run(
         [sys.executable, str(GEN_MAIN),
          "--scan", str(test_file),
-         "--output", str(test_main)],
+         "--output", str(test_main),
+         "--census", "oz2c_dispatch.h"],
         capture_output=True, text=True)
     if result.returncode != 0:
         return subprocess.CompletedProcess(
