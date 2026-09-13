@@ -99,7 +99,7 @@ pub struct ClassInfo {
     /// in the parsed source really defines -- as opposed to `methods`, which
     /// also holds everything only *declared* in an `@interface`.
     ///
-    /// oz_static is a whole-program transpiler: it emits a definition for a
+    /// oz2c is a whole-program transpiler: it emits a definition for a
     /// method exactly when it parsed one, or when it synthesizes one (a
     /// property accessor). So this is the authority on what the generated C
     /// will actually contain, and referencing anything else produces a link
@@ -491,7 +491,7 @@ impl Program {
     /// This is close to, but no longer identical with, the Python
     /// pipeline's `_classify_dispatch` (`tools/oz_transpile/resolve.py`),
     /// which additionally forces `dealloc` and `init` to be dynamic.
-    /// oz_static needs neither: `dealloc` has its own const-vtable
+    /// oz2c needs neither: `dealloc` has its own const-vtable
     /// mechanism, and an overridden `init` is caught by the same
     /// hierarchy analysis as any other selector.
     pub fn is_dynamically_dispatched(&self, selector: &str, is_class_method: bool) -> bool {
@@ -538,13 +538,13 @@ impl Program {
     /// Answerable only with a Clang AST; without one everything is assumed
     /// defined, which is the previous behavior. A `@synthesize`d accessor
     /// has no body in the AST either, so property accessors are treated as
-    /// defined -- oz_static emits those itself
+    /// defined -- oz2c emits those itself
     /// (`emit::render_synthesized_accessor`).
     /// Will the generated C contain a definition of `class_name`'s
     /// `selector`? Referencing one that it will not is a link error, so this
     /// gates the protocol-dispatch table (`companion::render_protocol_dispatch`).
     ///
-    /// The parse is the authority, not the Clang AST. oz_static emits a
+    /// The parse is the authority, not the Clang AST. oz2c emits a
     /// definition exactly when it parsed an `@implementation` defining the
     /// method, or when it synthesizes the accessor for a `@property`, so it
     /// already knows the answer without asking anyone. The AST is consulted
@@ -574,7 +574,7 @@ impl Program {
         if info.defined_selectors.contains(&(selector.to_string(), is_class_method)) {
             return true;
         }
-        // A `@property`'s accessor has no body in source because oz_static
+        // A `@property`'s accessor has no body in source because oz2c
         // writes it (`emit::render_synthesized_accessor`).
         if info.properties.iter().any(|prop| {
             prop.getter_sel.as_deref() == Some(selector)
@@ -701,7 +701,7 @@ impl Program {
     /// bound on the receiver's real class -- `Base *b = (Base *)[Sub
     /// alloc];` is still a `Sub` -- so a direct call to the declared
     /// type's own implementation is sound only when no subclass could
-    /// have overridden it. oz_static sees the whole program as one
+    /// have overridden it. oz2c sees the whole program as one
     /// translation unit, so this analysis is exact rather than
     /// conservative.
     /// Every class whose implementation of `selector` a send can actually
@@ -869,7 +869,7 @@ pub struct Diagnostic {
     /// several genuinely different fixes: the `-retain` rejection offers
     /// three (let ARC manage it, opt the slot out with
     /// `__unsafe_unretained`, or read the count with
-    /// `oz_static_retain_count`), and they were one 90-word sentence
+    /// `oz_retain_count`), and they were one 90-word sentence
     /// before this (#457).
     pub help: Vec<String>,
     /// The source file `line`/`col` refer to, once `resolve_in` has run.

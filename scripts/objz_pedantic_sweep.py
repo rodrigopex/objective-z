@@ -59,7 +59,7 @@ import tempfile
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # Samples this sweep does not build, and why. Not a skip of convenience:
-# excluded by the board, not by anything in oz_static.
+# excluded by the board, not by anything in oz2c.
 SKIP = {
     "smp_shared": "needs CONFIG_SMP; only qemu_cortex_a53/smp selects it",
 }
@@ -81,7 +81,7 @@ KNOWN_PEDANTIC = {
         2,
         "GPIO_DT_SPEC_GET(DT_ALIAS(led0), gpios) in the sample's own "
         "passthrough C. The violation is inside Zephyr's macro rather than "
-        "in anything oz_static emits, and no spelling of that call avoids "
+        "in anything oz2c emits, and no spelling of that call avoids "
         "it.",
     ),
     (
@@ -104,7 +104,7 @@ KNOWN_PEDANTIC = {
         "ZBUS_LISTENER_DEFINE above it is discarded on the Objective-C "
         "side and so leaves Clang no symbol to check ZBUS_CHAN_ADD_OBS "
         "against. The violation is inside Zephyr's own "
-        "FOR_EACH_NONEMPTY_TERM, not in anything oz_static emits -- same "
+        "FOR_EACH_NONEMPTY_TERM, not in anything oz2c emits -- same "
         "class as the two entries above. Its trailing `;` *was* a third "
         "site and is fixed rather than listed: ZBUS_OBS_DECLARE "
         "terminates each declaration itself, so the semicolon was an "

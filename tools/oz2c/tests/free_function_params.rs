@@ -176,7 +176,7 @@ int main(int argc, char **argv) {
 
 /// The bar is unchanged: an `id` parameter still cannot receive a send, since
 /// its class is genuinely unknown. Seeding the scope must not turn "unknown
-/// type" into a silent guess -- oz_static never degrades quietly.
+/// type" into a silent guess -- oz2c never degrades quietly.
 #[test]
 fn an_id_parameter_is_still_rejected() {
     let src = format!(

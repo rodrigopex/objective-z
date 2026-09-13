@@ -150,8 +150,8 @@ fn function_body(source_c: &str, name: &str) -> String {
 fn counts(body: &str) -> (usize, usize, usize) {
     (
         body.matches("_oz_alloc()").count(),
-        body.matches("oz_static_retain(").count(),
-        body.matches("oz_static_release(").count(),
+        body.matches("oz_retain(").count(),
+        body.matches("oz_release(").count(),
     )
 }
 

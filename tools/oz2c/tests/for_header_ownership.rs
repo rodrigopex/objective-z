@@ -334,7 +334,7 @@ int main(void)
 /// (#332), so `(long)makeThing()` reports a `+1` while the slot holding
 /// it cannot be released as an object. Measured rather than reasoned --
 /// the statement-level twin of this shape, `long n = (long)makeThing();`,
-/// emits `oz_static_release((struct OZObject *)(n))` against a `long`
+/// emits `oz_release((struct OZObject *)(n))` against a `long`
 /// today, because `owned_locals_of` has no such check of its own.
 /// That is a separate defect; the guard here is what keeps this arm from
 /// reproducing it.
@@ -366,7 +366,7 @@ int main(void)
         out.source_c
     );
     assert!(
-        !out.source_c.contains("oz_static_release((struct OZObject *)(n))"),
+        !out.source_c.contains("oz_release((struct OZObject *)(n))"),
         "a non-pointer slot must not be released as an object:\n{}",
         out.source_c
     );

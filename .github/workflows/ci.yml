@@ -10,7 +10,7 @@ on:
 # Two clangs, both 19, differing by target -- and that is the point.
 #
 # Every job that needs clang needs it for the same reason: the Python
-# pipeline and oz_static's `--ast` both read a Clang JSON AST, and that
+# pipeline and oz2c's `--ast` both read a Clang JSON AST, and that
 # AST decides ivar ownership and method definedness in the generated C.
 # Until #269 this workflow had three answers at once -- `apt install
 # clang-20` in eight places, `objz_find_clang()` silently falling through
@@ -171,7 +171,7 @@ jobs:
       # writes makes both of them 19; before it, this leg compiled with
       # Ubuntu's preinstalled 18.1 while dumping ASTs with 20 -- two
       # clangs in one job, neither of them chosen.
-      # The corpora run through oz_static now, so this job needs the
+      # The corpora run through oz2c now, so this job needs the
       # binary. The Python backend needed no build step, which is
       # exactly why repointing failed here first and nowhere locally:
       # `oz2c_build` looks for target/debug/oz2c, and every
@@ -203,7 +203,7 @@ jobs:
       - name: Install Python dependencies
         run: pip install pytest jinja2 tree-sitter tree-sitter-objc
 
-      # The corpora run through oz_static now, so this job needs the
+      # The corpora run through oz2c now, so this job needs the
       # binary. The Python backend needed no build step, which is
       # exactly why repointing failed here first and nowhere locally:
       # `oz2c_build` looks for target/debug/oz2c, and every
@@ -241,7 +241,7 @@ jobs:
       - name: Install Python dependencies
         run: pip install pytest jinja2 tree-sitter tree-sitter-objc
 
-      # The corpora run through oz_static now, so this job needs the
+      # The corpora run through oz2c now, so this job needs the
       # binary. The Python backend needed no build step, which is
       # exactly why repointing failed here first and nowhere locally:
       # `oz2c_build` looks for target/debug/oz2c, and every
@@ -285,7 +285,7 @@ jobs:
       - name: Install Python dependencies
         run: pip install pytest jinja2 tree-sitter tree-sitter-objc
 
-      # The corpora run through oz_static now, so this job needs the
+      # The corpora run through oz2c now, so this job needs the
       # binary. The Python backend needed no build step, which is
       # exactly why repointing failed here first and nowhere locally:
       # `oz2c_build` looks for target/debug/oz2c, and every
@@ -328,7 +328,7 @@ jobs:
       - name: Install Python dependencies
         run: pip install pytest jinja2 tree-sitter tree-sitter-objc
 
-      # The corpora run through oz_static now, so this job needs the
+      # The corpora run through oz2c now, so this job needs the
       # binary. The Python backend needed no build step, which is
       # exactly why repointing failed here first and nowhere locally:
       # `oz2c_build` looks for target/debug/oz2c, and every
@@ -649,7 +649,7 @@ jobs:
   # Zephyr integration tests (native_sim)
   #
   # What this proves changed with the port to oz2c: the C committed under
-  # tests/zephyr/generated/ is oz_static's output now, not the Python
+  # tests/zephyr/generated/ is oz2c's output now, not the Python
   # pipeline's, so a green run finally says something about the default
   # backend running on Zephyr. It says it about *committed* C --
   # CMakeLists.txt globs the directory rather than transpiling -- which is

@@ -289,7 +289,7 @@ int main(void)
         out.source_c
     );
     assert!(
-        out.source_c.contains("oz_static_release((struct OZObject *)(scratch));"),
+        out.source_c.contains("oz_release((struct OZObject *)(scratch));"),
         "the pending release must still run before the return; got:\n{}",
         out.source_c
     );

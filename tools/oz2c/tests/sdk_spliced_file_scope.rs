@@ -69,7 +69,7 @@ fn sdk_sources() -> Vec<(String, String)> {
     out
 }
 
-/// The part of a `.m` that oz_static splices into the generated header for
+/// The part of a `.m` that oz2c splices into the generated header for
 /// that origin: everything ahead of the first `@implementation`.
 ///
 /// A file with no `@implementation` at all -- `src/OZLog.m` is one, a

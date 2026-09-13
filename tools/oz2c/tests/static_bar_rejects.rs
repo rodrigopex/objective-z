@@ -257,7 +257,7 @@ fn selector_expression_rejected_when_the_option_is_off() {
 fn undefined_superclass_rejected() {
     // OZ-093: a class extending a superclass never declared in this
     // translation unit (e.g. a real Foundation class only ever pulled in
-    // via `#import <Foundation/Foundation.h>`, which oz_static doesn't
+    // via `#import <Foundation/Foundation.h>`, which oz2c doesn't
     // resolve) must be a named, located diagnostic -- not the raw panic
     // this used to produce in `companion::topological_order`. Deliberately
     // doesn't use `PREAMBLE`: the whole point is that `OZObject` is never
@@ -515,8 +515,8 @@ void tick(void)
 /// not, so both releases were emitted for the *same* reference:
 ///
 /// ```c
-/// if (cached != nil) { oz_static_release((struct OZObject *)(cached)); }
-/// (oz_static_release((struct OZObject *)(cached)), cached = Thing_oz_alloc());
+/// if (cached != nil) { oz_release((struct OZObject *)(cached)); }
+/// (oz_release((struct OZObject *)(cached)), cached = Thing_oz_alloc());
 /// ```
 ///
 /// Two releases of one reference -- a segfault on the host, not a leak.
@@ -680,7 +680,7 @@ int main(void)
 ///
 /// Reading a refcount is not lost, and never depended on the message
 /// spelling. `include/oz_sdk/Foundation/OZObject.h` has called
-/// `oz_static_retain_count()` "the only refcount entry point Objective-C
+/// `oz_retain_count()` "the only refcount entry point Objective-C
 /// source may spell" since #418 -- a sentence true of the design and false
 /// of the implementation until this change. The second half of this test is
 /// that claim, compiled.
@@ -708,7 +708,7 @@ int main(void)
     );
     let diags = common::expect_reject(&rejected);
     assert!(
-        diags.contains("retainCount") && diags.contains("oz_static_retain_count"),
+        diags.contains("retainCount") && diags.contains("oz_retain_count"),
         "the rejection must name the selector and the call that replaces it, got:\n{}",
         diags
     );
@@ -723,7 +723,7 @@ int main(void)
 int main(void)
 {
 	Thing *t = [Thing alloc];
-	printf(\"rc=%d\\n\", oz_static_retain_count(t));
+	printf(\"rc=%d\\n\", oz_retain_count(t));
 	return 0;
 }
 "

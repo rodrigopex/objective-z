@@ -2,7 +2,7 @@
 //
 // progress_observer.rs - the pipeline reports which pass it has reached.
 //
-// A px-keyboard build spends ~30s in the oz_static path and prints two
+// A px-keyboard build spends ~30s in the oz2c path and prints two
 // lines, which from the outside is indistinguishable from a hang (#299).
 // `progress::Observer` is how the pipeline says where it is.
 //
@@ -130,7 +130,7 @@ fn each_ast_dump_is_reported_by_index_and_size() {
 
 /// The sequence stops at the pass that failed.
 ///
-/// oz_static has no soft-diagnostic mode, so the first pass to produce a
+/// oz2c has no soft-diagnostic mode, so the first pass to produce a
 /// diagnostic is the last one that runs. A report must not claim a later
 /// phase was entered -- that would attribute time to work that never
 /// happened.

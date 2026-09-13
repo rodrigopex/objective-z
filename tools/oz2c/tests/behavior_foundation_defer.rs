@@ -14,7 +14,7 @@
 // `defer_block_ivar_test.c` driver) is a regression test for a bug where
 // a block ivar's `^`-to-`*` C conversion emitted invalid declarator
 // syntax (`void (*)(...) _block` instead of `void (*_block)(...)`). That
-// bug class used not to apply to oz_static, which copied ivar
+// bug class used not to apply to oz2c, which copied ivar
 // declarations through verbatim; `emit::lower_ivar_decl` now does the
 // conversion, so the test is ported below as
 // `block_ivar_declares_valid_function_pointer`.
@@ -32,7 +32,7 @@
 // `DeferTest`'s `_cleanup` ivar is released automatically when the owner is
 // deallocated (`companion::render_release_ivars`), so its `-dealloc` must
 // NOT release it by hand -- doing so is rejected, because the two releases
-// together would be a double free. This is where oz_static deliberately
+// together would be a double free. This is where oz2c deliberately
 // parts company with the oracle, whose `_emit_user_dealloc` appends the
 // automatic releases after the user's body and so double-releases silently.
 

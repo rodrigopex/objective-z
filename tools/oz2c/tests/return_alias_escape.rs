@@ -55,7 +55,7 @@
 // these functions hand back `+1`, so the caller's scope exit already
 // releases, and an explicit release on top is a second one. Written
 // that way the tests still passed -- the `deallocating` flag in
-// `oz_static_release` absorbs the extra -- which would have made this file
+// `oz_release` absorbs the extra -- which would have made this file
 // blind to exactly the double free it is meant to guard against.
 
 mod common;
@@ -113,9 +113,9 @@ fn program(body: &str) -> String {
 /// carry; this copy was left behind.
 ///
 /// It was not academic here. `a_returned_ivar_is_not_retained` asserts the
-/// *absence* of `oz_static_retain` in `Holder_held`, and the span this
+/// *absence* of `oz_retain` in `Holder_held`, and the span this
 /// used to return started at `Holder_held`'s prototype and ran on through
-/// the spliced `OZObject.h`. #418 put `int oz_static_retain_count(id obj);`
+/// the spliced `OZObject.h`. #418 put `int oz_retain_count(id obj);`
 /// in that header, so the test began failing on a substring of a
 /// declaration in a file it was never meant to read -- and had been
 /// passing only because nothing in that span happened to match.
@@ -171,12 +171,12 @@ int main(void)
     let out = oz2c::transpile(&src).expect("should transpile");
     let body = function_body(&out.source_c, "makeAliased");
     assert!(
-        !body.contains("oz_static_release"),
+        !body.contains("oz_release"),
         "the owner is still released while its reference is handed back:\n{}",
         body
     );
     assert!(
-        !body.contains("oz_static_retain"),
+        !body.contains("oz_retain"),
         "an alias needs no retain -- the owner is simply kept:\n{}",
         body
     );
@@ -222,7 +222,7 @@ int main(void)
     let out = oz2c::transpile(&src).expect("should transpile");
     let body = function_body(&out.source_c, "makeCastAliased");
     assert!(
-        !body.contains("oz_static_release"),
+        !body.contains("oz_release"),
         "the cast hid the alias again:\n{}",
         body
     );
@@ -309,12 +309,12 @@ int main(void)
     let out = oz2c::transpile(&src).expect("should transpile");
     let body = function_body(&out.source_c, "makeViaCall");
     assert!(
-        body.contains("oz_static_retain"),
+        body.contains("oz_retain"),
         "an unprovable return must be retained, not handed back at +0:\n{}",
         body
     );
     assert!(
-        body.contains("oz_static_release"),
+        body.contains("oz_release"),
         "the owned local is still this function's to release:\n{}",
         body
     );
@@ -356,7 +356,7 @@ int main(void)
     let out = oz2c::transpile(&src).expect("should transpile");
     let main_body = function_body(&out.source_c, "int main");
     assert!(
-        main_body.contains("oz_static_release"),
+        main_body.contains("oz_release"),
         "the caller was not told to release the reference it was handed:\n{}",
         main_body
     );
@@ -383,12 +383,12 @@ Thing *passBack(Thing *p)
     let out = oz2c::transpile(&src).expect("should transpile");
     let body = function_body(&out.source_c, "passBack");
     assert!(
-        !body.contains("oz_static_retain"),
+        !body.contains("oz_retain"),
         "a parameter is the caller's reference and needs no retain:\n{}",
         body
     );
     assert!(
-        body.contains("oz_static_release"),
+        body.contains("oz_release"),
         "the local is still owned and must be released:\n{}",
         body
     );
@@ -419,7 +419,7 @@ fn a_returned_ivar_is_not_retained() {
     let out = oz2c::transpile(&src).expect("should transpile");
     let body = function_body(&out.source_c, "Holder_held");
     assert!(
-        !body.contains("oz_static_retain"),
+        !body.contains("oz_retain"),
         "a strong ivar's reference is already accounted for:\n{}",
         body
     );
@@ -443,7 +443,7 @@ Thing *echo(Thing *p)
     let out = oz2c::transpile(&src).expect("should transpile");
     let body = function_body(&out.source_c, "echo");
     assert!(
-        !body.contains("oz_static_retain") && !body.contains("_oz_sync_ret_"),
+        !body.contains("oz_retain") && !body.contains("_oz_sync_ret_"),
         "a return owing nothing must not grow a retain or a temporary:\n{}",
         body
     );

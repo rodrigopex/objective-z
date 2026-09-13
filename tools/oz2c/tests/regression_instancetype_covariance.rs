@@ -5,8 +5,8 @@
 // `instancetype` covaries with the *receiver's* static type, not with
 // whichever class actually defines/implements the method -- three spots
 // in emit.rs/companion.rs got this wrong, surfaced by piloting a real
-// `#import <Foundation/Foundation.h>` build through oz_static (not just
-// oz_static's own hand-built fixtures):
+// `#import <Foundation/Foundation.h>` build through oz2c (not just
+// oz2c's own hand-built fixtures):
 //
 //   1. `[[Sub alloc] init]` where `Sub` inherits `-init` from an ancestor
 //      (the plain instance-message path in emit.rs's render_message).

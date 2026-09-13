@@ -44,7 +44,7 @@ fn usage() -> ExitCode {
 /// no-AST baseline it is most often diffed against.
 /// `eprintln!` with the one prefix every oz2c error line carries.
 ///
-/// The binary is `oz2c`; `oz_static` is the crate it is built from, and
+/// The binary is `oz2c`; `oz2c` is the crate it is built from, and
 /// naming the crate told a reader nothing they could act on. A macro
 /// rather than the literal at each site, because it *was* the literal at
 /// twelve of them and a thirteenth would have drifted (#456).
@@ -177,7 +177,7 @@ fn main() -> ExitCode {
                 i += 1;
             }
             // Clang resolves types; tree-sitter does not. Supplying the AST
-            // is what lets oz_static know which ivars are objects the class
+            // is what lets oz2c know which ivars are objects the class
             // owns -- including `id`-typed ones, which it otherwise has to
             // skip rather than risk releasing a non-object. Produce it with
             // `-fobjc-arc`, or the dump carries no ownership at all.
@@ -383,7 +383,7 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
-    // oz_static infers the root class (the one class with no superclass)
+    // oz2c infers the root class (the one class with no superclass)
     // rather than being told it, so `--root-class` is a cross-check on the
     // build system's expectation, not an input to codegen: it catches a
     // target configured for a root that isn't actually the root, which
@@ -543,8 +543,8 @@ fn main() -> ExitCode {
                 written.push(h_path);
                 written.push(c_path);
             }
-            let dispatch_h = foundation_dir.join("oz_static_dispatch.h");
-            let dispatch_c = foundation_dir.join("oz_static_dispatch.c");
+            let dispatch_h = foundation_dir.join("oz2c_dispatch.h");
+            let dispatch_c = foundation_dir.join("oz2c_dispatch.c");
             if !manifest_only {
                 let _ = fs::write(&dispatch_h, out.companion_h);
                 let _ = fs::write(&dispatch_c, out.companion_c);
@@ -581,7 +581,7 @@ fn main() -> ExitCode {
                  * emits its own trailing newline, so this goes out with
                  * `eprint!` rather than through `oz_err!` (#457). The
                  * first line is still a self-contained summary, which is
-                 * what `oz_static_build.py` reads. */
+                 * what `oz2c_build.py` reads. */
                 eprint!("{}", oz2c::render::render(&d, &resolved.text));
             }
             ExitCode::FAILURE

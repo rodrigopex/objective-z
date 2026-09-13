@@ -19,7 +19,7 @@
 // scope-exit release destroyed the object immediately, so the ivar
 // dangled; and the synthesized dealloc later released that freed block a
 // second time. `-fsanitize=address` reports `heap-use-after-free` inside
-// `oz_static_release`.
+// `oz_release`.
 //
 // Same root cause as #351 -- an ownership decision keyed on a *syntactic
 // form* rather than on the reference -- which is why the fix is the same
@@ -133,7 +133,7 @@ fn both_spellings_of_an_owned_ivar_store_lower_identically() {
         ("explicit", &explicit, "_explicit"),
     ] {
         assert!(
-            body.contains("oz_static_retain"),
+            body.contains("oz_retain"),
             "the {} store takes no retain, so the ivar holds a reference nothing accounts for:\n{}",
             label,
             body
@@ -147,7 +147,7 @@ fn both_spellings_of_an_owned_ivar_store_lower_identically() {
          * unchanged; only its spelling was. */
         assert!(
             body.contains(&format!(
-                "oz_static_release((struct OZObject *)(self->{}))",
+                "oz_release((struct OZObject *)(self->{}))",
                 ivar
             )),
             "the {} store does not release what the ivar held before:\n{}",
@@ -300,7 +300,7 @@ fn a_scalar_ivar_stored_through_self_is_untouched() {
     let out = oz2c::transpile(&src).expect("should transpile");
     let body = function_body(&out.source_c, "Counter_bump");
     assert!(
-        !body.contains("oz_static_retain") && !body.contains("_oz_prev_"),
+        !body.contains("oz_retain") && !body.contains("_oz_prev_"),
         "a scalar store grew refcount traffic:\n{}",
         body
     );
@@ -331,7 +331,7 @@ fn an_unretained_ivar_stored_through_self_is_untouched() {
     let out = oz2c::transpile(&src).expect("should transpile");
     let body = function_body(&out.source_c, "Backref_pointAt_");
     assert!(
-        !body.contains("oz_static_retain") && !body.contains("_oz_prev_"),
+        !body.contains("oz_retain") && !body.contains("_oz_prev_"),
         "an unretained ivar must not be retained or release what it held:\n{}",
         body
     );
@@ -423,7 +423,7 @@ fn both_spellings_of_an_owned_array_element_store_lower_identically() {
 
     for (label, body) in [("bare", &bare), ("self->", &via_self)] {
         assert!(
-            body.contains("oz_static_retain"),
+            body.contains("oz_retain"),
             "the {} array store takes no retain, so the element dangles:\n{}",
             label,
             body

@@ -163,7 +163,7 @@ def main() -> int:
 
         # The ztest drivers under tests/zephyr/src/ were written against the
         # Python pipeline's generated ABI -- `<Class>_ozh.h` headers,
-        # `Class_alloc`, `OZObject_release`, `OZ_CLASS_X`. oz_static emits one
+        # `Class_alloc`, `OZObject_release`, `OZ_CLASS_X`. oz2c emits one
         # header per *origin file* and its own spellings, so the same shim the
         # behaviour corpus uses bridges the difference and the drivers stay
         # unmodified. See tests/tools/oz2c_build.py.

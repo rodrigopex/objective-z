@@ -8,11 +8,11 @@
 // descriptions of code, and so can rot without anything noticing:
 //
 //   * `DELEGATED` -- `clang -fobjc-arc` refuses the construct before `oz2c`
-//     sees it, so oz_static needs no rule of its own. This is the whole
+//     sees it, so oz2c needs no rule of its own. This is the whole
 //     reason the transpiler does not reimplement ARC's front end, and it
 //     rests on a compiler this repo does not own. A Clang upgrade, a changed
 //     target triple or a dropped flag can retire any of these silently.
-//   * `REFUSED` -- a located oz_static error.
+//   * `REFUSED` -- a located oz2c error.
 //
 // #443 is the precedent and the reason this file exists in this shape. The
 // eleven rejections in `static_bar_rejects.rs` enforce a rule `-fobjc-arc`
@@ -24,9 +24,9 @@
 // credits it with.
 //
 // **What a failure here means.** Not "the code is broken" -- these tests
-// exercise almost no oz_static code. It means a verdict in `docs/ARC.md` is
+// exercise almost no oz2c code. It means a verdict in `docs/ARC.md` is
 // now wrong, and the rule it covers may have become reachable. Fix the
-// matrix and decide whether oz_static now needs its own rule, rather than
+// matrix and decide whether oz2c now needs its own rule, rather than
 // relaxing the assertion.
 //
 // Deliberately *not* asserted here: whether a release is correctly placed.
@@ -219,7 +219,7 @@ fn delegated_rules_are_still_refused_by_clang() {
          longer does. That does not mean a test is wrong -- it means the rule may \
          now be reachable, because tree-sitter is the primary frontend and is more \
          permissive than Clang. Update the verdict in docs/ARC.md and decide \
-         whether oz_static needs a rule of its own.\n\n{}",
+         whether oz2c needs a rule of its own.\n\n{}",
         broken.join("\n\n")
     );
 }
@@ -284,13 +284,13 @@ fn each_delegated_refusal_is_attributable_to_arc() {
     );
 }
 
-/// One `REFUSED` row: a rule oz_static enforces itself, with a located error.
+/// One `REFUSED` row: a rule oz2c enforces itself, with a located error.
 struct Refused {
     section: &'static str,
     rule: &'static str,
     /// A whole source, since `staticbar` needs a class to scan.
     source: &'static str,
-    /// A fragment of oz_static's own diagnostic.
+    /// A fragment of oz2c's own diagnostic.
     diagnostic: &'static str,
 }
 
@@ -321,7 +321,7 @@ const REFUSED: &[Refused] = &[
     },
 ];
 
-/// Every `REFUSED` verdict that is oz_static's own rule *and has no other
+/// Every `REFUSED` verdict that is oz2c's own rule *and has no other
 /// home*.
 ///
 /// Thin on purpose, and not exhaustive by design -- a `REFUSED` verdict is
@@ -336,15 +336,15 @@ const REFUSED: &[Refused] = &[
 ///
 /// What is left for this file is the rejections a reader would otherwise
 /// assume were Clang's. Both rows below are cases where
-/// `clang -fobjc-arc` **accepts** the source and oz_static does not, so
+/// `clang -fobjc-arc` **accepts** the source and oz2c does not, so
 /// nothing but this test says the refusal is ours to keep.
 #[test]
-fn refused_rules_are_located_oz_static_errors() {
+fn refused_rules_are_located_oz2c_errors() {
     for row in REFUSED {
         let diags = common::expect_reject(&format!("{}{}", common::ozobject_src(), row.source));
         assert!(
             diags.contains(row.diagnostic),
-            "\u{a7} {} -- {}\nexpected oz_static's diagnostic to mention {:?}, got:\n{}",
+            "\u{a7} {} -- {}\nexpected oz2c's diagnostic to mention {:?}, got:\n{}",
             row.section,
             row.rule,
             row.diagnostic,

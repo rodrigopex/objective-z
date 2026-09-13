@@ -470,7 +470,7 @@ ADD_OBS(chan, second_marker, 3)
     );
 }
 
-/// Code oz_static synthesized -- a hoisted prototype, a slab definition,
+/// Code oz2c synthesized -- a hoisted prototype, a slab definition,
 /// a dispatch thunk -- stays attributed to the generated file, which is
 /// where it genuinely lives. Every such directive has to name the line it
 /// is really on, or `list` would show the wrong generated code; and at

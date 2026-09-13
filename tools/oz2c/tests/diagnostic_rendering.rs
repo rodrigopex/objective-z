@@ -37,7 +37,7 @@ fn repo_root() -> PathBuf {
 }
 
 fn scratch_dir(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("oz_static_diag_render_{}", name));
+    let dir = std::env::temp_dir().join(format!("oz2c_diag_render_{}", name));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(dir.join("inc")).unwrap();
     fs::create_dir_all(dir.join("src")).unwrap();
@@ -110,7 +110,7 @@ fn the_frame_points_at_the_offending_construct() {
     assert!(out.starts_with("oz2c error: "), "first line must be the summary:\n{}", out);
     assert!(
         out.lines().next().unwrap().contains("'-retain' cannot be sent"),
-        "the summary must stand alone -- oz_static_build.py reads only it:\n{}",
+        "the summary must stand alone -- oz2c_build.py reads only it:\n{}",
         out
     );
 
@@ -144,7 +144,7 @@ fn the_frame_points_at_the_offending_construct() {
     );
     assert!(out.contains("__unsafe_unretained"), "the opt-out remedy is missing:\n{}", out);
     assert!(
-        out.contains("oz_static_retain_count"),
+        out.contains("oz_retain_count"),
         "the refcount-reading remedy is missing:\n{}",
         out
     );

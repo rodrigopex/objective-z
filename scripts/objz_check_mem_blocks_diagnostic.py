@@ -48,7 +48,7 @@ import sys
 
 # The message has to name the option and quote the construct that needs
 # it. `OZ_MEM_BLOCKS_DEFINE` is what makes it *located*: GCC's expansion
-# notes carry it down to the `oz_static_dispatch.c` line holding the pool.
+# notes carry it down to the `oz2c_dispatch.c` line holding the pool.
 REQUIRED = (
     "CONFIG_SYS_MEM_BLOCKS=y",
     "OZ_MEM_BLOCKS_DEFINE",

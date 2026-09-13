@@ -11,7 +11,7 @@
 // one of them -- emitting the enclosing method's releases inside the
 // *hoisted* function, where those names do not exist:
 //
-//     oz_static_release((struct OZObject *)(outerKeep));   <- not in scope
+//     oz_release((struct OZObject *)(outerKeep));   <- not in scope
 //
 // `error: 'outerKeep' undeclared (first use in this function)`. The whole
 // transpile produces C that cannot compile, so every case here is a hard
@@ -96,7 +96,7 @@ fn outside_hoisted_blocks(source_c: &str) -> String {
 }
 
 fn release_of(name: &str) -> String {
-    format!("oz_static_release((struct OZObject *)({}))", name)
+    format!("oz_release((struct OZObject *)({}))", name)
 }
 
 /// The case #342 was filed on, reduced from the issue: an owned local in
@@ -292,7 +292,7 @@ int main(void)
     let tail_of_break: String = before_break
         .lines()
         .rev()
-        .take_while(|l| l.contains("oz_static_release"))
+        .take_while(|l| l.contains("oz_release"))
         .collect::<Vec<_>>()
         .join("\n");
     assert!(

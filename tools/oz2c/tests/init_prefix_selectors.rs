@@ -6,7 +6,7 @@
 // those four letters. Three of the five then treated the receiver's `+1`
 // as handed back through the return value, so for
 // `[[Thing alloc] initialValue]` the *`int`* became the reference:
-// `oz_static_release` was passed the integer and dereferenced it.
+// `oz_release` was passed the integer and dereferenced it.
 //
 // The tests that matter here **run** the program. The defect's signature
 // is a segfault, not a wrong string, and it was invisible to every check
@@ -23,7 +23,7 @@ fn program(decls: &str, body: &str) -> String {
 /// The issue's own reproduction.
 ///
 /// Without the fix this prints `before` and exits on signal 11 --
-/// `oz_static_release` is handed the integer 42 as an object pointer.
+/// `oz_release` is handed the integer 42 as an object pointer.
 #[test]
 fn an_int_returning_init_prefixed_selector_is_not_an_initialiser() {
         let src = program(
@@ -138,7 +138,7 @@ int main(void) {
 \t * release used to do (#428). */
 \t{
 \t\tSensor *s = [[Sensor alloc] initWithValue:7];
-\t\tprintf(\"v=%d rc=%d\\n\", [s value], oz_static_retain_count(s));
+\t\tprintf(\"v=%d rc=%d\\n\", [s value], oz_retain_count(s));
 \t}
 \tprintf(\"done\\n\");
 \treturn 0;
@@ -170,7 +170,7 @@ fn plain_init_still_pairs_with_alloc() {
 int main(void) {
 \t{
 \t\tPlain *p = [[Plain alloc] init];
-\t\tprintf(\"rc=%d\\n\", oz_static_retain_count(p));
+\t\tprintf(\"rc=%d\\n\", oz_retain_count(p));
 \t}
 \tprintf(\"done\\n\");
 \treturn 0;

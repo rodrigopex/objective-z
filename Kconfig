@@ -137,7 +137,7 @@ config OBJZ_DEBUG_LINES
 
 	  Covered: method bodies, plain C function bodies and the functions
 	  hoisted from block literals -- the code you actually step
-	  through. Code oz_static synthesizes (slab definitions,
+	  through. Code oz2c synthesizes (slab definitions,
 	  _oz_release_ivars, dispatch thunks, introspection tables) keeps
 	  pointing at the generated .c, which is where it genuinely lives.
 
@@ -160,7 +160,7 @@ config OBJZ_DEFAULT_DESCRIPTION
 	  value, so the linker cannot know the branch is unreachable and
 	  keeps the whole chain behind it: the protocol dispatch,
 	  OZObject's implementation (176 bytes, of which 110 is formatting
-	  the address), the synthesized oz_static_class_name (40 bytes) and
+	  the address), the synthesized oz_class_name (40 bytes) and
 	  one name string per class. Measured on mps2/an385:
 	  samples/hello_category, which contains no %@ at all, is
 	  26820 bytes with this on and 26456 with it off.

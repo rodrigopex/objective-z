@@ -66,7 +66,7 @@ static int g_deallocs = 0;
 /// **before** a method that merely *borrows* one.
 ///
 /// `-borrow:` must release nothing -- `arg` is the caller's. Before the fix
-/// it emitted `oz_static_release(t)` and destroyed a live object one call
+/// it emitted `oz_release(t)` and destroyed a live object one call
 /// in, which the dealloc count sees as `1` where it must be `0`.
 #[test]
 fn a_borrowed_local_survives_an_owning_namesake_declared_earlier() {
@@ -262,14 +262,14 @@ fn the_borrowing_method_emits_no_release() {
 
     let borrow = extract_fn(&c, "int P_borrow_");
     assert!(
-        !borrow.contains("oz_static_release"),
+        !borrow.contains("oz_release"),
         "P_borrow_ borrows its argument and must emit no release:\n{}",
         borrow
     );
 
     let make = extract_fn(&c, "void P_make");
     assert_eq!(
-        make.matches("oz_static_release").count(),
+        make.matches("oz_release").count(),
         1,
         "P_make owns its local and must still release it exactly once:\n{}",
         make

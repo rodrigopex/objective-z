@@ -244,9 +244,9 @@ fn find_sibling_impl(header_path: &Path, impl_dirs: &[PathBuf]) -> Option<PathBu
 /// Unwrap a `#ifdef __clang__` / ... / `#endif` guard to just its
 /// middle line(s) -- several real headers wrap their
 /// `@compatibility_alias` line in this (a compiler-portability check
-/// meaningless once inlined directly, since oz_static has no
+/// meaningless once inlined directly, since oz2c has no
 /// `#import`/`#include` resolution of its own to have made the
-/// `@compatibility_alias` necessary in the first place). oz_static's
+/// `@compatibility_alias` necessary in the first place). oz2c's
 /// top-level emit pass elides a bare `compatibility_alias_declaration`
 /// to a comment, but doesn't recurse into `#ifdef`/`#endif`
 /// conditionals to find one nested inside, so left wrapped it would
@@ -779,7 +779,7 @@ fn resolve_into(
         // A quoted `#include` that reaches no Objective-C is left exactly
         // as written: it is pure C, the C compiler resolves it the same
         // way it always did, and taking it over would only move work that
-        // was never oz_static's. An `#import` is always spliced, whatever
+        // was never oz2c's. An `#import` is always spliced, whatever
         // it reaches -- it is Objective-C's own directive, and its target
         // may still be needed for the chain (`oz_sdk/objc/objc.h` declares
         // nothing itself; its whole body is `#import

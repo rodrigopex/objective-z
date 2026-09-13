@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // behavior_blocks.rs - OZ-092: port of tests/behavior/cases/blocks/ (the
-// Python-pipeline oracle) to oz_static. All 3 fixtures are in scope: the
+// Python-pipeline oracle) to oz2c. All 3 fixtures are in scope: the
 // static bar only rejects *capturing* blocks, and none of these capture
 // self/an ivar/an enclosing local -- see staticbar.rs's check_block_capture.
 //
@@ -102,7 +102,7 @@ int main(void) {{
 /// Adapted from block_as_method_param.m/_test.c. The Python oracle's C
 /// harness passes a plain C function where a block-typed parameter is
 /// expected (Python erases blocks to function pointers at the ABI level,
-/// so that's a valid call there); oz_static has no separate test harness
+/// so that's a valid call there); oz2c has no separate test harness
 /// language to exploit that shortcut in. Instead this exercises the more
 /// interesting structural case the fixture is really about -- a block
 /// *typed* parameter (`(int (^)(int))blk`) -- with an actual `^(...)`

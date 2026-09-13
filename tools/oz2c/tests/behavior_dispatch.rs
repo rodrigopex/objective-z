@@ -248,7 +248,7 @@ int main(void) {
 /// The Python pipeline forces `{dealloc, init, isEqual:,
 /// getDescription:maxLength:}` to protocol dispatch and otherwise
 /// devirtualizes only when it can infer the receiver's *concrete* class
-/// (`_try_infer_concrete_class`). oz_static decides by class hierarchy
+/// (`_try_infer_concrete_class`). oz2c decides by class hierarchy
 /// analysis instead (`Program::has_overriding_subclass`): it sees the
 /// whole program, so a direct call is kept exactly when no subclass
 /// overrides the selector and routed through the class_id switch when one

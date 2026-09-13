@@ -13,7 +13,7 @@
 //     *rebuilds* the field from `own_ivars` was ever wrong.
 //
 //   - An array of objects was released as though the array itself were one
-//     object: `oz_static_release((struct OZObject *)self->_leaves)` reads a
+//     object: `oz_release((struct OZObject *)self->_leaves)` reads a
 //     refcount out of the first element's pointer value. Corruption, not a
 //     leak, and it compiled silently.
 //

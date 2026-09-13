@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // behavior_error.rs - OZ-092 (#190): port of the Python pipeline's "error"
-// category behavior fixtures (tests/behavior/cases/error/) to oz_static.
+// category behavior fixtures (tests/behavior/cases/error/) to oz2c.
 //
 // Ported from:
 //   - tests/behavior/cases/error/release_nil_safe.m
@@ -18,9 +18,9 @@ fn release_and_retain_nil_are_safe() {
     //   - test_release_nil_no_crash: releasing nil must not crash.
     //   - test_retain_nil_returns_null: retaining nil must return null.
     //   - test_retain_count_nil_is_zero: the refcount of nil is 0. This
-    //     used to be skipped as having "no oz_static equivalent -- no
+    //     used to be skipped as having "no oz2c equivalent -- no
     //     public retainCount accessor at all", which #418 made untrue:
-    //     `oz_static_retain_count` is the single entry point for reading
+    //     `oz_retain_count` is the single entry point for reading
     //     one, and `-retainCount` lowers to it.
     //
     // The two sends this used to be written with -- `[m release]` and
@@ -44,11 +44,11 @@ fn release_and_retain_nil_are_safe() {
 
 int main(void) {
 	Marker *m = 0;
-	oz_static_release((struct OZObject *)m);
-	Marker *r = (Marker *)oz_static_retain((struct OZObject *)m);
+	oz_release((struct OZObject *)m);
+	Marker *r = (Marker *)oz_retain((struct OZObject *)m);
 	printf(\"release_nil_ok=1\\n\");
 	printf(\"retain_nil_is_null=%d\\n\", r == 0 ? 1 : 0);
-	printf(\"retain_count_nil=%d\\n\", oz_static_retain_count((struct OZObject *)m));
+	printf(\"retain_count_nil=%d\\n\", oz_retain_count((struct OZObject *)m));
 	return 0;
 }
 "
@@ -66,8 +66,8 @@ fn alloc_free_alloc_yields_independent_fresh_object() {
     //     data.
     //
     // Skipped: test_slab_exhaustion_returns_null (a 2-slot pool's third
-    // alloc returns null) has no oz_static equivalent -- that test is
-    // exercising Python's slab-pool mechanics specifically. oz_static's
+    // alloc returns null) has no oz2c equivalent -- that test is
+    // exercising Python's slab-pool mechanics specifically. oz2c's
     // `{Class}_oz_alloc` is malloc-based with no fixed capacity (see
     // companion.rs's render_alloc_free doc comment), so there is no
     // bounded pool to exhaust. See OZ-092 (#190).

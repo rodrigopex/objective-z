@@ -7,7 +7,7 @@
 // invisible to a driver that only checks return values, and
 // `just test-cross-backend` compares Unity results rather than allocation
 // balance, so 71/71 MATCH said nothing about either. Only pointing LSan at
-// oz_static's own output made them visible.
+// oz2c's own output made them visible.
 //
 // These tests count `-dealloc` calls instead of using a sanitizer, for a
 // reason worth stating: `-fsanitize=leak` is unsupported on
@@ -692,10 +692,10 @@ int main(void) {
 /// `-init...` consumes its receiver's +1 and hands it back, so `t` and `u`
 /// are one pointer and one reference. Widening `is_owning_expr` -- the
 /// one-line change -- releases both: `heap-use-after-free ... READ of size
-/// 4` in `oz_static_release` under ASan.
+/// 4` in `oz_release` under ASan.
 ///
 /// This asserts on the generated C rather than on a dealloc counter, and
-/// that is not laziness. A second `oz_static_release` on a freed object
+/// that is not laziness. A second `oz_release` on a freed object
 /// reads a refcount that is already 0, so `oz_atomic_dec_and_test` returns
 /// false and no second `-dealloc` runs: **the double free is invisible to a
 /// dealloc counter, and the host slab clamps `num_used` at 0 so it is
@@ -746,7 +746,7 @@ int main(void) { return 0; }
         .next()
         .unwrap_or("");
     assert_eq!(
-        body.matches("oz_static_release").count(),
+        body.matches("oz_release").count(),
         1,
         "one object, one reference, so exactly one release; got:\n{}",
         body
@@ -755,7 +755,7 @@ int main(void) { return 0; }
     // gave the same pointer -- which is also what keeps the release ahead
     // of nothing that still reads `t`.
     assert!(
-        body.contains("oz_static_release((struct OZObject *)(u));"),
+        body.contains("oz_release((struct OZObject *)(u));"),
         "the surviving release must name the receiver; got:\n{}",
         body
     );
@@ -1368,7 +1368,7 @@ int main(void) {
 ///
 /// Asserted on the **emitted C**, deliberately, and this is the trap the
 /// predecessors documented: an over-release is invisible to a dealloc
-/// counter, because the second `oz_static_release` sees a refcount already
+/// counter, because the second `oz_release` sees a refcount already
 /// at 0 and returns before `-dealloc`, and the host slab clamps `num_used`
 /// at 0. So a counter and a slot count are both blind here. What is
 /// checkable is that no call-site temporary was taken at all.
@@ -1419,7 +1419,7 @@ int main(void) { return 0; }
      * release happens in `Holder_oz_release_ivars`, not here. A second
      * release in this body would be one pointer freed twice. */
     assert_eq!(
-        body.matches("oz_static_release").count(),
+        body.matches("oz_release").count(),
         1,
         "only the release the source already owed; got:\n{}",
         body
@@ -1473,7 +1473,7 @@ int main(void) { return 0; }
         .next()
         .unwrap_or("");
     assert_eq!(
-        body.matches("oz_static_release").count(),
+        body.matches("oz_release").count(),
         1,
         "one object, one reference, so exactly one release; got:\n{}",
         body
@@ -1617,7 +1617,7 @@ int main(void) {
 ///
 /// The allocation has no name, so no scope-exit release reaches it, and the
 /// send's *value* is `void`, so `discarded_owning_value` (#322/#327) saw
-/// nothing to release either. Zero `oz_static_release` calls were emitted
+/// nothing to release either. Zero `oz_release` calls were emitted
 /// for it.
 ///
 /// `Foo=1` is the whole assertion: three sends through one slab slot cannot
@@ -1698,7 +1698,7 @@ int main(void) {
 ///
 /// Asserted on the **emitted C**, and for the reason the four predecessors
 /// recorded: an over-release is invisible to a dealloc counter, because the
-/// second `oz_static_release` sees a refcount already at 0 and returns
+/// second `oz_release` sees a refcount already at 0 and returns
 /// before `-dealloc`, and the host slab clamps `num_used` at 0. A counter
 /// and a slot count are both blind here. What is checkable is that no
 /// receiver temporary was taken.
@@ -1751,7 +1751,7 @@ int main(void) { return 0; }
      * released by #322's discarded-result arm, and `f` at scope exit. A
      * third release would be one pointer freed twice. */
     assert_eq!(
-        body.matches("oz_static_release").count(),
+        body.matches("oz_release").count(),
         2,
         "only the releases the source already owed; got:\n{}",
         body

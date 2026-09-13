@@ -6,7 +6,7 @@
 #
 # Every case here goes through the real Clang AST path, which is what
 # distinguishes it from tools/oz2c/tests/{class_objects,introspection,
-# reflection}.rs: those transpile a single string with oz_static alone, so a
+# reflection}.rs: those transpile a single string with oz2c alone, so a
 # construct Clang itself refuses -- `Nil`, whose int-to-Class cast ARC
 # disallows -- would pass there and fail a real build.
 

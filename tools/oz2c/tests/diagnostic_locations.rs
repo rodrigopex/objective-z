@@ -42,7 +42,7 @@ fn repo_root() -> PathBuf {
 }
 
 fn scratch_dir(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("oz_static_diag_locations_{}", name));
+    let dir = std::env::temp_dir().join(format!("oz2c_diag_locations_{}", name));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(dir.join("inc")).unwrap();
     fs::create_dir_all(dir.join("src")).unwrap();

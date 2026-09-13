@@ -782,7 +782,7 @@ pub fn collect(source: &str) -> (Program, Vec<crate::model::Diagnostic>) {
     /*
      * And the ARC ownership attributes, for the fourth time the same
      * reason -- plus one of its own: `ns_returns_not_retained` on a
-     * create-rule selector makes ARC and oz_static disagree about who owns
+     * create-rule selector makes ARC and oz2c disagree about who owns
      * the result, which is a use-after-free rather than a leak (#458).
      * None of the body-scoped entry points sees a method *declaration* in
      * an `@interface`, which is where these are usually written.
@@ -800,7 +800,7 @@ pub fn collect(source: &str) -> (Program, Vec<crate::model::Diagnostic>) {
 
     // A `superclass` reference that doesn't resolve to a class actually
     // collected above (e.g. a real Foundation class only ever pulled in
-    // via `#import <Foundation/Foundation.h>` -- oz_static has no import
+    // via `#import <Foundation/Foundation.h>` -- oz2c has no import
     // resolution of its own, so it's genuinely undefined in this
     // translation unit) must be a named, located hard error here, not a
     // downstream panic: every later pass -- `companion::topological_order`
@@ -814,7 +814,7 @@ pub fn collect(source: &str) -> (Program, Vec<crate::model::Diagnostic>) {
             diagnostics.push(crate::model::Diagnostic::at(
                 format!(
                     "class '{}' extends '{}', but no class '{}' is defined in this source \
-(oz_static has no #import resolution -- provide a single, self-contained translation unit)",
+(oz2c has no #import resolution -- provide a single, self-contained translation unit)",
                     name, sup, sup
                 ),
                 source,
@@ -1438,7 +1438,7 @@ fn resolve_properties(classes: &mut std::collections::HashMap<String, ClassInfo>
                     // all) with an ivar already declared under the
                     // bare name itself: Python's oracle (`resolve.py`'s
                     // `_synthesize_properties`) accepts this too, only
-                    // adding a non-fatal warning diagnostic -- oz_static
+                    // adding a non-fatal warning diagnostic -- oz2c
                     // has no non-fatal diagnostic channel (see
                     // `lib::transpile`'s doc comment: any diagnostic at
                     // all is a hard error), so matching Python's actual

@@ -26,12 +26,12 @@ include_guard(GLOBAL)
 #
 #   Objective-Z: Using non-Zephyr-SDK Clang 18.1: /usr/bin/clang
 #
-# into a 1400-line log that nobody read. The AST facts oz_static relies
+# into a 1400-line log that nobody read. The AST facts oz2c relies
 # on for ivar ownership and method definedness were being produced by
 # clang 18.1 while the project was tested against 19 — and while CI
 # separately installed clang 20 and never used it. Anything that decides
 # whether generated code is correct should not degrade quietly; that is
-# oz_static's own standing rule, and this is the build applying it to
+# oz2c's own standing rule, and this is the build applying it to
 # itself.
 #
 function(objz_find_clang)

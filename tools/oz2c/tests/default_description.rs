@@ -18,7 +18,7 @@
 // as #351 and #352, and the point of both fixes was to stop keying
 // behaviour on which spelling the author used.
 //
-// The class's own name comes from `oz_static_class_name`, synthesized into
+// The class's own name comes from `oz_class_name`, synthesized into
 // the companion source where the class-id switch is available, and
 // declared in `OZObject.h` -- not only in the companion header -- because
 // `src/OZObject.m` calls it and that file is also compiled alone for the
@@ -195,13 +195,13 @@ fn the_class_name_lookup_covers_every_class() {
     let out = oz2c::transpile(&src).expect("should transpile");
     let c = &out.companion_c;
     assert!(
-        c.contains("const char *oz_static_class_name(struct OZObject *self)"),
+        c.contains("const char *oz_class_name(struct OZObject *self)"),
         "no class-name lookup was synthesized:\n{}",
         c
     );
     for class in ["OZObject", "Plain"] {
         assert!(
-            c.contains(&format!("case OZ_STATIC_CLASS_{}: return \"{}\";", class, class)),
+            c.contains(&format!("case OZ_CLASS_{}: return \"{}\";", class, class)),
             "`{}` is missing from the class-name lookup:\n{}",
             class,
             c
@@ -209,7 +209,7 @@ fn the_class_name_lookup_covers_every_class() {
     }
     assert!(c.contains("return \"nil\";"), "a nil receiver is dereferenced:\n{}", c);
     assert!(
-        out.companion_h.contains("const char *oz_static_class_name(struct OZObject *self);"),
+        out.companion_h.contains("const char *oz_class_name(struct OZObject *self);"),
         "the lookup is not declared in the companion header:\n{}",
         out.companion_h
     );

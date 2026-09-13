@@ -10,7 +10,7 @@ pipeline is wired up wrong.
 
 It used to feed the Python pipeline a *committed AST fixture*
 (`tools/oz_transpile/tests/fixtures/simple_led.ast.json`), which does not
-port: oz_static parses the source itself. Pointing it at the source instead
+port: oz2c parses the source itself. Pointing it at the source instead
 makes it a stricter test than it was -- the parse is now part of what is
 being smoke-tested, where before it was pre-baked into the fixture.
 

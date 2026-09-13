@@ -328,7 +328,7 @@ int main(void)
     );
     let out = oz2c::transpile(&src).expect("should transpile");
     assert!(
-        !out.source_c.contains("oz_static_retain((struct OZObject *)(m))"),
+        !out.source_c.contains("oz_retain((struct OZObject *)(m))"),
         "an `int` slot cannot name the temporary and must not be retained; got:\n{}",
         out.source_c
     );
@@ -411,11 +411,11 @@ int main(void)
 /// struct Thing *t = ...;
 /// switch (i) {
 /// case 0:
-///     oz_static_release(t);   /* break only exits the switch */
+///     oz_release(t);   /* break only exits the switch */
 ///     break;
 /// }
 /// Thing_n(t);                 /* freed */
-/// oz_static_release(t);       /* and again */
+/// oz_release(t);       /* and again */
 /// ```
 ///
 /// A use-after-free *and* a double free, in a `switch` inside a loop with
@@ -448,7 +448,7 @@ int main(void)
 ",
     );
     let out = oz2c::transpile(&src).expect("should transpile");
-    let releases = out.source_c.matches("oz_static_release((struct OZObject *)(t))").count();
+    let releases = out.source_c.matches("oz_release((struct OZObject *)(t))").count();
     assert_eq!(
         releases, 1,
         "`t` must be released once, at the end of the iteration -- not by the switch's \
@@ -488,9 +488,9 @@ int main(void)
     );
     let out = oz2c::transpile(&src).expect("should transpile");
     assert!(
-        out.source_c.contains("oz_static_release((struct OZObject *)(t));\n\tcontinue;")
-            || out.source_c.contains("oz_static_release((struct OZObject *)(t));\n\t\t\tcontinue;")
-            || out.source_c.contains("oz_static_release((struct OZObject *)(t));")
+        out.source_c.contains("oz_release((struct OZObject *)(t));\n\tcontinue;")
+            || out.source_c.contains("oz_release((struct OZObject *)(t));\n\t\t\tcontinue;")
+            || out.source_c.contains("oz_release((struct OZObject *)(t));")
                 && out.source_c.contains("continue;"),
         "`continue` must release the iteration's local on its way out; got:\n{}",
         out.source_c

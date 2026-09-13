@@ -2,7 +2,7 @@
 //
 // behavior_pools.rs - the slab allocator and its sizing.
 //
-// oz_static used to allocate every object with plain malloc, which is
+// oz2c used to allocate every object with plain malloc, which is
 // unbounded, so nothing about pool sizing was observable. Objects now come
 // from a per-class `OZ_SLAB_DEFINE` slab (`companion::render_alloc_free`):
 // a real `k_mem_slab` on Zephyr, and on host a malloc-backed slab that

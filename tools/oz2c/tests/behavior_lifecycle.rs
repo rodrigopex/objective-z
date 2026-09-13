@@ -16,7 +16,7 @@ use common::{compile_and_run, ozobject_src};
 // tests/behavior/cases/lifecycle/alloc_failure_enomem.{m,_test.c} is not
 // ported here: it declares a pool of size 1 (`/* oz-pool: Box=1 */`) and
 // asserts that the *second* alloc against an exhausted slab returns NULL.
-// oz_static's `{Class}_oz_alloc` is plain malloc-based, not slab-backed
+// oz2c's `{Class}_oz_alloc` is plain malloc-based, not slab-backed
 // (see companion.rs's render_alloc_free doc comment and OZ-092/#190's own
 // note on this), so there is no fixed-size pool to exhaust on demand.
 // The behavior this fixture is really guarding -- alloc returning NULL
@@ -30,7 +30,7 @@ use common::{compile_and_run, ozobject_src};
 /// Ported from tests/behavior/cases/lifecycle/alloc_returns_valid.{m,_test.c}.
 /// Original asserted: alloc returns non-null, sets the class id
 /// (`w->base._meta.class_id`), and sets the refcount to 1. Both backends now
-/// spell that the same way: oz_static's root embeds the PAL's own
+/// spell that the same way: oz2c's root embeds the PAL's own
 /// `struct oz_metadata` as `_meta`, with `oz_refcount` a sibling. A non-root
 /// class reaches either through the `base` embedding hop.
 #[test]
@@ -60,7 +60,7 @@ fn alloc_returns_valid_pointer_class_id_and_refcount() {
 int main(void) {
 	Widget *w = [Widget alloc];
 	printf(\"nonnull=%d\\n\", w != 0);
-	printf(\"class_id_matches=%d\\n\", w->base._meta.class_id == OZ_STATIC_CLASS_Widget);
+	printf(\"class_id_matches=%d\\n\", w->base._meta.class_id == OZ_CLASS_Widget);
 	printf(\"refcount=%d\\n\", oz_atomic_get(&w->base.oz_refcount));
 	/* No release by hand (#428): `w` is an owned local, so ARC releases
 	 * it when main's scope ends. */
@@ -75,7 +75,7 @@ int main(void) {
 /// Ported from tests/behavior/cases/lifecycle/dealloc_frees_slab.{m,_test.c}.
 /// Original name/setup ("oz-pool: Slot=1") is specific to Python's
 /// fixed-size slab pool: allocate the pool's one block, release it, and
-/// prove the block is returned to the pool by allocating again. oz_static
+/// prove the block is returned to the pool by allocating again. oz2c
 /// has no slab -- `{Class}_oz_alloc`/`_oz_free` are plain malloc/free (see
 /// companion.rs) -- so there is no pool to exhaust or return a block to.
 /// The equivalent guarantee that *does* carry over: `-dealloc`/`release`
@@ -120,9 +120,9 @@ int main(void) {
 /// Classic ObjC pattern: `-dealloc` retains+releases self. Without a
 /// re-entrancy guard, the nested release (rc 1->0 again) would trigger
 /// `-dealloc` a second time -> infinite recursion / stack overflow.
-/// oz_static's companion.rs generates this guard directly on the root's
+/// oz2c's companion.rs generates this guard directly on the root's
 /// `_meta.deallocating` flag (set before the dispatch switch runs, checked
-/// by `oz_static_release` before it would recurse). Reaching the printf
+/// by `oz_release` before it would recurse). Reaching the printf
 /// after `[p release]` without crashing/hanging is the proof the guard
 /// works, mirroring the original's `TEST_PASS()` (pass == "we got here").
 #[test]
@@ -147,8 +147,8 @@ fn dealloc_reentrant_guard() {
 	 *
 	 * No [super dealloc] either: the chain above an override is called
 	 * automatically now (companion::dealloc_chain). */
-	oz_static_retain((struct OZObject *)self);
-	oz_static_release((struct OZObject *)self);
+	oz_retain((struct OZObject *)self);
+	oz_release((struct OZObject *)self);
 }
 @end
 
@@ -212,7 +212,7 @@ int main(void) {
 /// Ported from tests/behavior/cases/lifecycle/init_sets_fields.{m,_test.c}.
 /// `-init` chains to `[super init]` and sets ivar defaults; the original
 /// asserted both fields via the Python pipeline's `OZ_PROTOCOL_SEND_init`
-/// dispatch helper. oz_static has no such helper (dispatch is always
+/// dispatch helper. oz2c has no such helper (dispatch is always
 /// compile-time-fixed direct calls), so `-init` is just an ordinary
 /// instance method here, requiring OZObject to declare/define its own
 /// `-init` (a no-op returning self) for `[super init]` to resolve.

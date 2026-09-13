@@ -19,7 +19,7 @@
 //     why this only bites where the exact-match list is the sole authority.
 //   * **use-after-free** -- `- (Thing *)copy
 //     __attribute__((ns_returns_not_retained))` returning a borrowed ivar.
-//     ARC reads the attribute and says `+0`; oz_static said `+1` and
+//     ARC reads the attribute and says `+0`; oz2c said `+1` and
 //     released at scope exit. ASan `heap-use-after-free`, from a source
 //     `clang -fobjc-arc -Weverything` accepts with zero diagnostics.
 //
@@ -33,7 +33,7 @@
 // One more guard, and the corpus already held the counterexample:
 // `tests/adapted/mulle_spec/retain_release_balance.m` declares
 // `- (int)allocOk`, which the family rule puts in the `alloc` family by
-// spelling alone. Treating it as `+1` hands `oz_static_release` an `int` --
+// spelling alone. Treating it as `+1` hands `oz_release` an `int` --
 // exactly #398, signal 11. Clang is no help: it accepts `- (int)allocOk`,
 // `- (int)newCount` and `- (int)copyFlag` under `-fobjc-arc` silently,
 // measured. So the family rule is guarded by what the method returns, the
@@ -214,7 +214,7 @@ void drive(Remote *r)
         );
         let out = oz2c::transpile(&src).expect("inside the static subset");
         let body = one_function(&out.source_c, "void drive");
-        let releases = body.matches("oz_static_release").count();
+        let releases = body.matches("oz_release").count();
         let expected = usize::from(row.owning);
         assert_eq!(
             releases, expected,
@@ -250,7 +250,7 @@ void drive(Remote *r)
     let out = oz2c::transpile(&src).expect("inside the static subset");
     let body = one_function(&out.source_c, "void drive");
     assert_eq!(
-        body.matches("oz_static_release").count(),
+        body.matches("oz_release").count(),
         1,
         "'_copyThing' is in the copy family with the underscore ignored:\n{}",
         body

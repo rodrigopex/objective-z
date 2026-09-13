@@ -13,7 +13,7 @@
 // the malloc-based `OZDictionary_oz_initWithKeysValues` builder
 // (`companion::render_dict_support`). `-objectForKey:`'s `[k isEqual:key]`
 // (`k` a bare `id` key) is what originally motivated generalizing
-// oz_static's dynamic dispatch (see the dispatch-fix commit) -- without
+// oz2c's dynamic dispatch (see the dispatch-fix commit) -- without
 // it, this whole fixture would be unportable.
 
 mod common;

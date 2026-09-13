@@ -82,11 +82,11 @@ fn declares_a_class(source: &str) -> bool {
 ///
 ///   * `-ferror-limit=0`. These fixtures are deliberately not valid ARC
 ///     Objective-C -- they reach into `w->base._meta`, call
-///     `oz_static_retain`/`oz_static_release`/`oz_static_retain_count`, and
-///     name `OZ_STATIC_CLASS_*` constants that only the generated C
+///     `oz_retain`/`oz_release`/`oz_retain_count`, and
+///     name `OZ_CLASS_*` constants that only the generated C
 ///     defines. (They used to send `-release` explicitly as well; #428 made
-///     that a located error in oz_static too, so the one kind of error this
-///     flag existed for that oz_static also refused is gone -- the rest
+///     that a located error in oz2c too, so the one kind of error this
+///     flag existed for that oz2c also refused is gone -- the rest
 ///     remain.) Every one of those is an *ordinary* error, which
 ///     Clang reports and carries on past, leaving the declarations intact.
 ///     At the default limit of 20, though, the twenty-first becomes
@@ -162,7 +162,7 @@ pub fn ast_dump_file(m_path: &Path, ast_path: &Path) {
         Ok(facts) if !facts.is_empty() => {}
         Ok(_) => panic!(
             "the Clang AST dump of '{}' describes no ivars and no method bodies, so \
-             oz_static would refuse it. Clang said:\n{}",
+             oz2c would refuse it. Clang said:\n{}",
             m_path.display(),
             String::from_utf8_lossy(&out.stderr)
         ),
@@ -222,7 +222,7 @@ pub fn compile_and_run_strict(source: &str, stem: &str) -> String {
 /// helper with it from both this stub and the Zephyr PAL.
 ///
 /// This used to also force `-include zephyr/kernel.h`, standing in for a
-/// propagation oz_static didn't do: a companion header's prototypes could
+/// propagation oz2c didn't do: a companion header's prototypes could
 /// mention `struct k_timer` with nothing having declared it at that point.
 /// `imports::collect_system_includes` now carries the source's own angled
 /// includes into that header, so a plain `-I` is enough and the ordering
@@ -257,7 +257,7 @@ pub fn compile_and_run_with_heap(source: &str, stem: &str) -> String {
 /// `compile_and_run_with_heap` plus arbitrary extra flags on the two `-c`
 /// compiles.
 ///
-/// Exists for `-DOZ_STATIC_TRAP_POOL_EXHAUSTION`, which is the only way to
+/// Exists for `-DOZ_TRAP_POOL_EXHAUSTION`, which is the only way to
 /// reach the exhaustion traps at all and therefore the only way to prove
 /// they compile. A trap that *fires* aborts the process, so a test that
 /// defines the macro compiles the program and does not depend on its
@@ -390,8 +390,8 @@ fn compile_and_run_inner(
 
     let main_c = dir.join(format!("{}.c", stem));
     fs::write(&main_c, &out.source_c).unwrap();
-    fs::write(dir.join("oz_static_dispatch.h"), &out.companion_h).unwrap();
-    let dispatch_c = dir.join("oz_static_dispatch.c");
+    fs::write(dir.join("oz2c_dispatch.h"), &out.companion_h).unwrap();
+    let dispatch_c = dir.join("oz2c_dispatch.c");
     fs::write(&dispatch_c, &out.companion_c).unwrap();
 
     let main_o = dir.join("main.o");
@@ -453,13 +453,13 @@ pub fn expect_reject(source: &str) -> String {
 // (or the corresponding cut-list marker below stops matching and panics
 // loudly, telling us exactly what needs updating).
 //
-// oz_static has no `#import`/`#include` resolution -- it parses one
+// oz2c has no `#import`/`#include` resolution -- it parses one
 // file's text as-is -- so a class's header and implementation still need
 // to be combined into a single translation unit. `assemble` below does
 // only that mechanical join, plus stripping the two lines that only make
 // sense across multiple files (`#pragma once`, `#import ...`) and
 // unwrapping the `#ifdef __clang__ / @compatibility_alias .../ #endif`
-// guard some headers use (oz_static's top-level emit pass elides a bare
+// guard some headers use (oz2c's top-level emit pass elides a bare
 // `compatibility_alias_declaration` to a comment, but doesn't recurse
 // into `#ifdef`/`#endif` conditionals to find one nested inside, so left
 // wrapped it would pass through as invalid raw ObjC text -- and the
@@ -467,7 +467,7 @@ pub fn expect_reject(source: &str) -> String {
 // anyway, since this harness's `cc` always defines `__clang__`).
 //
 // A few classes (OZArray; OZNumber for one method) need real content
-// removed or added on top of that, because they use something oz_static
+// removed or added on top of that, because they use something oz2c
 // can't yet resolve or a cross-file dependency this host harness can't
 // pull in. Those cuts are done as small, named, marker-anchored
 // transforms (`remove_line_containing`/`remove_line_range`/
@@ -477,7 +477,7 @@ pub fn expect_reject(source: &str) -> String {
 
 /// Drop `#pragma once` and `#import ...` lines -- meaningless once this
 /// is inlined into a single generated translation unit rather than
-/// `#import`ed (oz_static has no import/include resolution at all).
+/// `#import`ed (oz2c has no import/include resolution at all).
 fn strip_import_and_pragma_lines(src: &str) -> String {
     src.lines()
         .filter(|line| {
@@ -649,7 +649,7 @@ pub fn oznumber_src() -> String {
         "/* synthesized stub (not from source): the real _oz_get_log_precision\n * \
 lives in src/OZLog.c, which needs Zephyr's printk plus the Python\n * \
 pipeline's own generated dispatch headers -- neither available on host.\n * \
-Plain (not static/inline): oz_static's own companion header now declares\n * \
+Plain (not static/inline): oz2c's own companion header now declares\n * \
 this symbol too (see companion.rs), and a static definition can't follow\n * \
 a non-static declaration. */\n\
 int _oz_get_log_precision(void) {{ return -1; }}\n\n{}",
@@ -675,7 +675,7 @@ pub fn ozstring_src() -> String {
 /// copied through verbatim; `emit::lower_ivar_decl` now strips the ARC
 /// qualifier and turns the block declarator into a function pointer, so
 /// the real header's spelling goes through untouched. Requires `OZObject`
-/// (`common::ozobject_src`) in scope as the root class; oz_static has no
+/// (`common::ozobject_src`) in scope as the root class; oz2c has no
 /// full ARC (tracked separately as #189), but an owned object ivar *is*
 /// released automatically when its owner is deallocated
 /// (`companion::render_release_ivars`), so an owner's `-dealloc` does not
@@ -725,7 +725,7 @@ pub fn ozdefer_src() -> String {
 /// `OZArray.m` either -- the real pipeline synthesizes it at emit-time as
 /// `{Name}_initWithItems` (a template-generated, item-pool-backed
 /// `static inline`, see `tools/oz_transpile/templates/class_header.h.j2`).
-/// oz_static's equivalent, `OZArray_oz_initWithItems`, is generated by
+/// oz2c's equivalent, `OZArray_oz_initWithItems`, is generated by
 /// `companion::render_array_support` (malloc-based instead of
 /// pool-based) and never written to ObjC source at all -- it backs the
 /// `@[...]` boxed array literal desugar in `emit.rs`, the same way
@@ -753,7 +753,7 @@ pub fn ozarray_src() -> String {
 /// verbatim (only the two generic adaptations), including its own
 /// `malloc`/`free` for the growable `_data` buffer (real string-growth
 /// logic already present in the source, unrelated to the object's own
-/// alloc/free machinery oz_static synthesizes -- see #199 for that
+/// alloc/free machinery oz2c synthesizes -- see #199 for that
 /// separate, Zephyr-only concern). Subclasses `OZString`
 /// (`common::ozstring_src`), inheriting `_data`/`_length` and
 /// overriding `-dealloc` to free `_data`. No `[super dealloc]`, which is
@@ -936,7 +936,7 @@ impl ScratchDir {
     /// recycled.
     pub fn new(label: &str) -> ScratchDir {
         let path = std::env::temp_dir().join(format!(
-            "oz_static_{}_{}_{}",
+            "oz2c_{}_{}_{}",
             label,
             checkout_key(),
             std::process::id()

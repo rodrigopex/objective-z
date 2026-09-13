@@ -48,8 +48,8 @@ fn compile_link_run(
         fs::write(outdir.join(format!("{}.h", stem)), h).unwrap();
         fs::write(outdir.join(format!("{}.c", stem)), c).unwrap();
     }
-    fs::write(outdir.join("oz_static_dispatch.h"), companion_h).unwrap();
-    let dispatch_c = outdir.join("oz_static_dispatch.c");
+    fs::write(outdir.join("oz2c_dispatch.h"), companion_h).unwrap();
+    let dispatch_c = outdir.join("oz2c_dispatch.c");
     fs::write(&dispatch_c, companion_c).unwrap();
 
     let mut object_files = Vec::new();
@@ -69,7 +69,7 @@ fn compile_link_run(
         ]);
         object_files.push(o_path);
     }
-    let dispatch_o = outdir.join("oz_static_dispatch.o");
+    let dispatch_o = outdir.join("oz2c_dispatch.o");
     cc(&[
         "-DOZ_PLATFORM_HOST",
         "-I",
@@ -256,7 +256,7 @@ fn boxed_array_literal_helper_prototype_is_visible_across_files() {
 /// issue_090_header_preservation.m`, the Python pipeline's own regression
 /// test for the same bug ("transpiler drops struct/union/enum/macro
 /// definitions from companion headers when they are not referenced by ObjC
-/// interface members"). oz_static dropped three of the five kinds:
+/// interface members"). oz2c dropped three of the five kinds:
 ///
 /// - a `struct`/`union` definition with a body matched no arm in
 ///   `emit_split`, which builds each file only from what its arms push, so

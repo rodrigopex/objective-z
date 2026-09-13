@@ -31,7 +31,7 @@
 // `__bridge` and all six are correct. So this refuses nothing that exists
 // and turns two silent memory bugs into build errors -- the #430 → #458
 // precedent. Implementing them needs new emission and is sequenced after
-// the `oz_static_*` respelling; it is a product question (is CF-style
+// the `oz2c_*` respelling; it is a product question (is CF-style
 // hand-off supported?) rather than a correctness one.
 //
 // What this file therefore has to pin is *both* halves: the two refusals,

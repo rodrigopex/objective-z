@@ -5,7 +5,7 @@
 # one every mechanism in this repo finds.
 #
 # Shared by every CI job that needs a clang, which is most of them: the
-# Python pipeline and oz_static's `--ast` both read a Clang JSON AST, and
+# Python pipeline and oz2c's `--ast` both read a Clang JSON AST, and
 # that AST decides ivar ownership and method definedness in the generated
 # C. There is one script rather than eight inline blocks because eight
 # inline blocks is how the workflow ended up with three different clangs

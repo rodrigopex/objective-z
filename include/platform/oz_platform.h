@@ -78,7 +78,7 @@ static inline size_t oz_heap_used_bytes(struct oz_heap_inner *inner)
  *     definition never arrives here -- which is why this half cannot
  *     live there.
  *
- * By this point oz_static has replaced any block literal in the
+ * By this point oz2c has replaced any block literal in the
  * arguments with the name of the function it hoisted out of it, so the
  * target macro receives a function pointer, which is what
  * `Z_TIMER_INITIALIZER`'s `.expiry_fn` and `zbus_observer::callback`
@@ -101,7 +101,7 @@ static inline size_t oz_heap_used_bytes(struct oz_heap_inner *inner)
 #endif
 
 /*
- * `OZFN`'s other half. By the time the generated C sees this, oz_static has
+ * `OZFN`'s other half. By the time the generated C sees this, oz2c has
  * replaced the block literal with the name of the function it hoisted out
  * of it, so the argument is already the function pointer the field wanted
  * and this only has to get out of the way (#300).

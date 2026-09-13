@@ -244,7 +244,7 @@ int main(void)
 // *compiler CI does not run locally*. `emit` only ever *read*
 // `__unsafe_unretained`, as a marker on the source node -- three
 // ownership readers ask `node_text(...).contains(...)`. It never stripped
-// it on the way out, and oz_static substitutes source text in place, so
+// it on the way out, and oz2c substitutes source text in place, so
 // the qualifier travelled verbatim into the generated `.c`. Plain C has no
 // such keyword: gcc answers `'__unsafe_unretained' undeclared`.
 //
@@ -417,8 +417,8 @@ fn an_unsafe_unretained_local_in_main_compiles() {
 int main(void)
 {
 \t__unsafe_unretained Counted *c = [Counted alloc];
-\tprintf(\"rc=%d\\n\", oz_static_retain_count(c));
-\toz_static_release((struct OZObject *)c);
+\tprintf(\"rc=%d\\n\", oz_retain_count(c));
+\toz_release((struct OZObject *)c);
 \tprintf(\"freed_ok\\n\");
 \treturn 0;
 }

@@ -97,7 +97,7 @@ static inline int _oz_write_default_description(const char *class_name, unsigned
 - (int)getDescription:(char *)buf maxLength:(size_t)maxLen
 {
 #if OZ_DEFAULT_DESCRIPTION
-	return _oz_write_default_description(oz_static_class_name(self),
+	return _oz_write_default_description(oz_class_name(self),
 					     (unsigned long)self, buf, maxLen);
 #else
 	(void)buf;

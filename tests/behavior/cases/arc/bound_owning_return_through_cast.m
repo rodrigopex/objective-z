@@ -36,11 +36,11 @@
  * receiver's +1 and hands it back, so `Thing *t = (Thing *)[u init];` is
  * one object under two names and exactly one release is owed. Both
  * releases would land at the *same* scope exit, and a second
- * `oz_static_release` on a freed object reads a refcount that is already
+ * `oz_release` on a freed object reads a refcount that is already
  * zero, returns early without a second `-dealloc`, and leaves the host
  * slab's used count clamped at zero -- so no slot count and no dealloc
  * counter can tell the two apart. What it is is a read of freed memory
- * inside `oz_static_release`, which `just test-behavior
+ * inside `oz_release`, which `just test-behavior
  * --sanitize=address` reports and this file's assertions cannot. The
  * host-independent gate for it is
  * `arc_leak_regressions.rs::init_bound_through_a_cast_is_released_exactly_once`,

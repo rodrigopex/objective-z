@@ -5,7 +5,7 @@
 // API (#419).
 //
 //   1. **Heap exhaustion was silent.** The slab allocator has carried
-//      `OZ_STATIC_TRAP_POOL_EXHAUSTION` since the pools work; the heap
+//      `OZ_TRAP_POOL_EXHAUSTION` since the pools work; the heap
 //      allocator had a bare `return (struct {name} *)0;` and nothing else.
 //      The comment on the slab trap says why that matters -- "that nil
 //      then travels", surfacing as `EXC_BAD_ACCESS` inside a function with
@@ -123,7 +123,7 @@ fn heap_allocator_carries_a_named_trap_under_the_macro() {
     let all = generated(&heap_only_program(MAIN));
     let body = function_body(&all, "Sensor_oz_dynamic_alloc_with_heap");
     assert!(
-        body.contains("#ifdef OZ_STATIC_TRAP_POOL_EXHAUSTION"),
+        body.contains("#ifdef OZ_TRAP_POOL_EXHAUSTION"),
         "the heap allocator must carry the exhaustion trap; got:\n{}",
         body
     );
@@ -137,7 +137,7 @@ fn heap_allocator_carries_a_named_trap_under_the_macro() {
         "the system-heap arm must say which heap ran out; got:\n{}",
         body
     );
-    let trap = body.find("#ifdef OZ_STATIC_TRAP_POOL_EXHAUSTION").unwrap();
+    let trap = body.find("#ifdef OZ_TRAP_POOL_EXHAUSTION").unwrap();
     let ret = body.find("return (struct Sensor *)0;").unwrap();
     assert!(
         trap < ret,
@@ -157,11 +157,11 @@ fn the_heap_trap_is_opt_in() {
     /* Not vacuous: without a trap at all there is nothing to be opt-in
      * about, and this would pass on the pre-#419 emission. */
     assert!(
-        body.contains("#ifdef OZ_STATIC_TRAP_POOL_EXHAUSTION"),
+        body.contains("#ifdef OZ_TRAP_POOL_EXHAUSTION"),
         "there has to be a trap for it to be opt-in; got:\n{}",
         body
     );
-    let guarded = body.split("#ifdef OZ_STATIC_TRAP_POOL_EXHAUSTION").next().unwrap();
+    let guarded = body.split("#ifdef OZ_TRAP_POOL_EXHAUSTION").next().unwrap();
     assert!(
         !guarded.contains("oz_assert"),
         "nothing may assert ahead of the guard, or the trap is on by \
@@ -186,7 +186,7 @@ fn the_heap_trap_compiles_with_the_macro_defined() {
     let out = compile_and_run_with_heap_and_cc_flags(
         &heap_only_program(MAIN),
         "heap_trap_macro_defined",
-        &["-DOZ_STATIC_TRAP_POOL_EXHAUSTION"],
+        &["-DOZ_TRAP_POOL_EXHAUSTION"],
     );
     assert_eq!(out, "named=7\nsystem=9\n");
 }
@@ -238,7 +238,7 @@ fn a_slab_allocated_class_in_the_same_program_keeps_its_slab() {
 }
 
 /// A slab-less class's `{name}_oz_free` must not name a slab that does not
-/// exist, and must still be defined -- `oz_static_release`'s class_id
+/// exist, and must still be defined -- `oz_release`'s class_id
 /// switch calls it for every class in the program.
 #[test]
 fn a_slab_less_class_frees_through_the_heap_only() {
@@ -250,7 +250,7 @@ fn a_slab_less_class_frees_through_the_heap_only() {
         body
     );
     assert!(
-        body.contains("oz_static_heap_free"),
+        body.contains("oz_heap_free"),
         "the heap branch is the only way an instance can have been \
          allocated; got:\n{}",
         body

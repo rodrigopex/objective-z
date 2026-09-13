@@ -16,7 +16,7 @@
  * and Objective-C refuses block-to-function-pointer conversion in every
  * position, so it cannot be written directly -- Clang rejects the file, and
  * Clang has to parse it for the AST oracle. `OZM` is the escape: its
- * arguments are discarded unparsed on the Objective-C side, while oz_static
+ * arguments are discarded unparsed on the Objective-C side, while oz2c
  * rewrites the invocation into the real macro for the C compiler, by which
  * point the literal has become the name of a hoisted function. See
  * include/oz_sdk/Foundation/OZMacro.h.

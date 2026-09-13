@@ -25,9 +25,9 @@
 //
 // What #272 was *filed* for -- a Zephyr definition macro taking an inline
 // block, `ZBUS_LISTENER_DEFINE(n, ^(...){ ... })` -- turns out not to be
-// writable at all, and for a reason outside oz_static: Objective-C refuses
+// writable at all, and for a reason outside oz2c: Objective-C refuses
 // block-to-function-pointer conversion in every position, so a file spelling
-// it is rejected by Clang however well oz_static lowers it. That finding is
+// it is rejected by Clang however well oz2c lowers it. That finding is
 // recorded in
 // `a_macro_invocation_is_hoisted_though_the_shape_is_not_valid_objc`, which
 // is the one case here whose shape is not an advertised idiom.
@@ -275,7 +275,7 @@ int main(void) {
 /// An argument whose parameter does not appear in the replacement list is
 /// discarded rather than expanded or parsed, so Clang never type-checks the
 /// block at all -- it only has to lex. `...` absorbs any unprotected comma in
-/// the block body. Under the C arm oz_static has already replaced the literal
+/// the block body. Under the C arm oz2c has already replaced the literal
 /// with its hoisted function's name, so the argument really is a function
 /// pointer and this is a plain `K_TIMER_DEFINE`. Verified both ways by hand:
 /// valid under `clang -x objective-c -fobjc-arc -fblocks`, and the generated
@@ -311,7 +311,7 @@ int main(void) { return 0; }
 
 /// The `OZ_TIMER_DEFINE` shape end to end: a variadic macro that discards its
 /// block argument under `__OBJC__`, so the source is valid Objective-C, and
-/// expands to the real Zephyr macro in the C oz_static emits.
+/// expands to the real Zephyr macro in the C oz2c emits.
 ///
 /// This is the case that makes the idiom real rather than merely lowered, and
 /// it pins the two properties it rests on: the literal is replaced by the

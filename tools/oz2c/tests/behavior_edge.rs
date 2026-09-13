@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // behavior_edge.rs - port of the Python-pipeline "edge" behavior category
-// (tests/behavior/cases/edge/) to oz_static, per OZ-092. All 8 upstream
+// (tests/behavior/cases/edge/) to oz2c, per OZ-092. All 8 upstream
 // fixtures are in scope: multiple_args_method, nil_returns_zero,
 // empty_class_no_methods, deep_inheritance, plus boxed_enum, boxed_float,
 // boxed_expression, boxed_call_expr -- now that OZNumber exists
@@ -11,7 +11,7 @@
 // expression/function-call result in the real Python pipeline too.
 //
 // Uses the real `OZObject` (`common::ozobject_src`) as the root class,
-// same as every other oz_static test file.
+// same as every other oz2c test file.
 
 mod common;
 use common::{compile_and_run, ozobject_src as PREAMBLE, oznumber_src};
@@ -53,7 +53,7 @@ fn nil_returns_zero() {
     // The Python pipeline's version also checks
     // `OZObject_retainCount((struct OZObject *)0) == 0`, which used to be
     // skipped here for want of any retainCount equivalent -- #418 supplied
-    // one, `oz_static_retain_count`, so the third assertion is back.
+    // one, `oz_retain_count`, so the third assertion is back.
     //
     // All three are written as calls to the generated runtime's own
     // functions rather than as `[r retain]` / `[r release]`, which ARC
@@ -67,11 +67,11 @@ fn nil_returns_zero() {
 
 int main(void) {{
 	OZObject *r = 0;
-	OZObject *result = oz_static_retain(r);
+	OZObject *result = oz_retain(r);
 	printf(\"retain_nil_is_null=%d\\n\", result == 0);
-	oz_static_release(r);
+	oz_release(r);
 	printf(\"release_nil_ok\\n\");
-	printf(\"retain_count_nil=%d\\n\", oz_static_retain_count(r));
+	printf(\"retain_count_nil=%d\\n\", oz_retain_count(r));
 	return 0;
 }}
 ",
@@ -86,7 +86,7 @@ fn empty_class_no_methods() {
     // Ported from tests/behavior/cases/edge/empty_class_no_methods.m /
     // _test.c: a class with no ivars and no declared methods must still
     // get a working alloc, a correctly-assigned class id, and a refcount
-    // that starts at 1. oz_static has no `__objc_refcount_get` helper, so
+    // that starts at 1. oz2c has no `__objc_refcount_get` helper, so
     // the refcount is read directly via the PAL's `oz_atomic_get` on the
     // root-synthesized `oz_refcount` field, reached through the `base`
     // hop since EmptyClass isn't itself the root.
@@ -102,7 +102,7 @@ fn empty_class_no_methods() {
 int main(void) {{
 	EmptyClass *obj = [EmptyClass alloc];
 	printf(\"nonnull=%d\\n\", obj != 0);
-	printf(\"class_id=%d\\n\", obj->base._meta.class_id == OZ_STATIC_CLASS_EmptyClass);
+	printf(\"class_id=%d\\n\", obj->base._meta.class_id == OZ_CLASS_EmptyClass);
 	printf(\"refcount=%d\\n\", oz_atomic_get(&obj->base.oz_refcount));
 	return 0;
 }}
@@ -181,7 +181,7 @@ int main(void) {{
 #[test]
 fn boxed_enum_boxes_int_via_oznumber() {
     // boxed_enum.m: `_boxed = @(code);` where `code` is an enum-typed
-    // (here: plain int, oz_static has no enum-in-param-position support
+    // (here: plain int, oz2c has no enum-in-param-position support
     // to spare) method parameter -- boxes through OZNumber's int32 path.
     let src = format!(
         "{}{}\n\

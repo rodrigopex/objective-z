@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// astinfo.rs - facts read from a Clang AST JSON dump that oz_static cannot
+// astinfo.rs - facts read from a Clang AST JSON dump that oz2c cannot
 // safely derive on its own.
 //
-// oz_static parses with tree-sitter, which gives it syntax but no type
+// oz2c parses with tree-sitter, which gives it syntax but no type
 // resolution: it can see that an ivar is written `id _thing`, not whether
 // `_thing` is an object the class owns. That distinction decides whether a
 // generated dealloc releases the ivar, and getting it wrong is not a
@@ -14,8 +14,8 @@
 // Clang already knows. With `-fobjc-arc` it writes the ARC ownership
 // qualifier directly into each declaration's `qualType`, so the AST dump the
 // Python pipeline already produces is an authoritative answer to exactly the
-// question oz_static cannot answer alone. This module reads that answer;
-// nothing else here depends on Clang, and with no AST supplied oz_static
+// question oz2c cannot answer alone. This module reads that answer;
+// nothing else here depends on Clang, and with no AST supplied oz2c
 // falls back to its own conservative rule (see
 // `model::Program::owned_object_ivars`).
 
@@ -80,7 +80,7 @@ pub struct AstFacts {
     /// are defined: Clang preprocesses `#import`s, so a dump of one `.m`
     /// carries every interface it imports and no other file's
     /// implementations. Treating "interface seen" as "I would have seen the
-    /// bodies" made oz_static drop the declaration of everything the SDK
+    /// bodies" made oz2c drop the declaration of everything the SDK
     /// implements in `src/*.m` -- `OZ_PROTOCOL_SEND_getDescription_maxLength_`
     /// among them -- while still emitting the calls, so the generated C
     /// stopped compiling. Now the guard abstains unless this dump really
@@ -148,7 +148,7 @@ impl AstFacts {
             // `@interface` declaration has none. A `@synthesize`d accessor
             // also has none, which is why callers must ask
             // `Program::method_is_defined` rather than reading this directly
-            // -- oz_static generates those itself.
+            // -- oz2c generates those itself.
             if let (Some(class), Some(selector)) = (owner, node.name.as_deref()) {
                 let has_body = node
                     .inner
@@ -281,7 +281,7 @@ impl AstFacts {
 /// the ivar is a raw buffer that `OZArray`/`OZDictionary` free as memory
 /// rather than release as an object.
 ///
-/// Block ivars are excluded even though ARC does own them. oz_static lowers
+/// Block ivars are excluded even though ARC does own them. oz2c lowers
 /// a block to a plain C function pointer (`emit::lower_ivar_decl`), so there
 /// is no object to release and passing one to a release call would treat
 /// code as a heap object.
@@ -362,7 +362,7 @@ mod tests {
     /// `countByEnumeratingWithState:objects:count:` is the real case this
     /// exists for: declared in `OZArray.h`, never defined in `OZArray.m`.
     /// The `enumerationIndex` row is the trap -- no body either, but only because it
-    /// is `@synthesize`d, and oz_static does emit that accessor.
+    /// is `@synthesize`d, and oz2c does emit that accessor.
     #[test]
     fn distinguishes_definitions_from_bare_declarations() {
         let json = r#"{

@@ -36,7 +36,7 @@ fn transpiles(src: &str) -> bool {
 /// never matched a bare-declared name and the capture was accepted. The
 /// consequence was loud but unhelpful: the hoisted function could not see the
 /// variable, giving `use of undeclared identifier 'n'` against generated code
-/// the user never wrote, with no located oz_static diagnostic.
+/// the user never wrote, with no located oz2c diagnostic.
 #[test]
 fn bare_declared_local_captured_by_block_rejected() {
     let bare = format!(
