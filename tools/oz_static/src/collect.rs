@@ -779,6 +779,16 @@ pub fn collect(source: &str) -> (Program, Vec<crate::model::Diagnostic>) {
      */
     diagnostics.extend(crate::staticbar::check_autoreleasepool(root, source));
 
+    /*
+     * And the ARC ownership attributes, for the fourth time the same
+     * reason -- plus one of its own: `ns_returns_not_retained` on a
+     * create-rule selector makes ARC and oz_static disagree about who owns
+     * the result, which is a use-after-free rather than a leak (#458).
+     * None of the body-scoped entry points sees a method *declaration* in
+     * an `@interface`, which is where these are usually written.
+     */
+    diagnostics.extend(crate::staticbar::check_ownership_attributes(root, source));
+
     // A `superclass` reference that doesn't resolve to a class actually
     // collected above (e.g. a real Foundation class only ever pulled in
     // via `#import <Foundation/Foundation.h>` -- oz_static has no import
