@@ -42,20 +42,35 @@ fn usage() -> ExitCode {
 /// ivars: "these dumps say nothing" is a legitimate answer to ask for, and
 /// making it an error would mean the oracle could not record the
 /// no-AST baseline it is most often diffed against.
+/// `eprintln!` with the one prefix every oz2c error line carries.
+///
+/// The binary is `oz2c`; `oz_static` is the crate it is built from, and
+/// naming the crate told a reader nothing they could act on. A macro
+/// rather than the literal at each site, because it *was* the literal at
+/// twelve of them and a thirteenth would have drifted (#456).
+///
+/// `scripts/objz_check_oz2c_diagnostics.py` greps for this text, so the
+/// two move together or `hw-build-check` fails on both boards.
+macro_rules! oz_err {
+    ($($arg:tt)*) => {
+        eprintln!("oz2c error: {}", format_args!($($arg)*))
+    };
+}
+
 fn dump_merged_ast_facts(ast_paths: &[PathBuf]) -> ExitCode {
     let mut facts = oz_static::astinfo::AstFacts::default();
     for path in ast_paths {
         let text = match fs::read_to_string(path) {
             Ok(text) => text,
             Err(e) => {
-                eprintln!("oz_static: error: cannot read --ast '{}': {}", path.display(), e);
+                oz_err!("cannot read --ast '{}': {}", path.display(), e);
                 return ExitCode::FAILURE;
             }
         };
         match oz_static::astinfo::AstFacts::from_json(&text) {
             Ok(one) => facts.merge(one),
             Err(e) => {
-                eprintln!("oz_static: error: --ast '{}': {}", path.display(), e);
+                oz_err!("--ast '{}': {}", path.display(), e);
                 return ExitCode::FAILURE;
             }
         }
@@ -202,7 +217,7 @@ fn main() -> ExitCode {
                 match oz_static::pools::parse_pool_sizes(spec) {
                     Ok(sizes) => pool_overrides.extend(sizes),
                     Err(why) => {
-                        eprintln!("oz_static: error: --pool-sizes: {}", why);
+                        oz_err!("--pool-sizes: {}", why);
                         return ExitCode::FAILURE;
                     }
                 }
@@ -217,8 +232,8 @@ fn main() -> ExitCode {
                 match spec.parse::<usize>() {
                     Ok(slots) => item_pool_size = Some(slots),
                     Err(_) => {
-                        eprintln!(
-                            "oz_static: error: --item-pool-size: '{}' is not a number",
+                        oz_err!(
+                            "--item-pool-size: '{}' is not a number",
                             spec
                         );
                         return ExitCode::FAILURE;
@@ -334,7 +349,7 @@ fn main() -> ExitCode {
 
     for path in &entry_paths {
         if !path.is_file() {
-            eprintln!("oz_static: error: no such input file: '{}'", path.display());
+            oz_err!("no such input file: '{}'", path.display());
             return ExitCode::FAILURE;
         }
     }
@@ -358,7 +373,7 @@ fn main() -> ExitCode {
         match oz_static::imports::resolve_entry_files(&entry_paths, &include_dirs, &impl_dirs) {
             Ok(r) => r,
             Err(e) => {
-                eprintln!("oz_static: error: {}", e);
+                oz_err!("{}", e);
                 return ExitCode::FAILURE;
             }
         };
@@ -381,16 +396,16 @@ fn main() -> ExitCode {
         match program.root_class() {
             Some(actual) if actual == expected => {}
             Some(actual) => {
-                eprintln!(
-                    "oz_static: error: --root-class '{}' does not match this program's root class \
+                oz_err!(
+                    "--root-class '{}' does not match this program's root class \
                      '{}' (the root is inferred as the class with no superclass, not configured)",
                     expected, actual
                 );
                 return ExitCode::FAILURE;
             }
             None => {
-                eprintln!(
-                    "oz_static: error: --root-class '{}' was requested but this program declares \
+                oz_err!(
+                    "--root-class '{}' was requested but this program declares \
                      no root class (every class has a superclass)",
                     expected
                 );
@@ -409,7 +424,7 @@ fn main() -> ExitCode {
         match fs::metadata(path) {
             Ok(meta) => ast_sizes.push(meta.len() as usize),
             Err(e) => {
-                eprintln!("oz_static: error: cannot read --ast '{}': {}", path.display(), e);
+                oz_err!("cannot read --ast '{}': {}", path.display(), e);
                 return ExitCode::FAILURE;
             }
         }
@@ -492,8 +507,8 @@ fn main() -> ExitCode {
             let foundation_dir = outdir.join("Foundation");
             if !manifest_only {
                 if let Err(e) = fs::create_dir_all(&foundation_dir) {
-                    eprintln!(
-                        "oz_static: error: cannot create '{}': {}",
+                    oz_err!(
+                        "cannot create '{}': {}",
                         foundation_dir.display(),
                         e
                     );
@@ -540,7 +555,7 @@ fn main() -> ExitCode {
                 let manifest_text: String =
                     written.iter().map(|p| format!("{}\n", p.display())).collect();
                 if let Err(e) = fs::write(path, manifest_text) {
-                    eprintln!("oz_static: error: cannot write manifest '{}': {}", path.display(), e);
+                    oz_err!("cannot write manifest '{}': {}", path.display(), e);
                     return ExitCode::FAILURE;
                 }
             }
@@ -562,7 +577,7 @@ fn main() -> ExitCode {
              * arrived with. */
             for mut d in diags {
                 d.resolve_in(&resolved.source_map);
-                eprintln!("oz_static: error: {}", d);
+                oz_err!("{}", d);
             }
             ExitCode::FAILURE
         }
