@@ -12,15 +12,25 @@ pub fn parse(source: &str) -> Tree {
     parser.parse(source, None).expect("tree-sitter parse returned None")
 }
 
-/// (line, col) 1-based **in `source`**, for diagnostics.
+/// (line, col) 1-based **in `source`**.
 ///
 /// `source` is the merged, `#import`-resolved buffer, so this is a
 /// position in that buffer and not in any file on disk -- the two differ
-/// by however much splicing inserted or dropped ahead of the offset. A
-/// diagnostic wants exactly this, since the offending text is what the
-/// caller is being shown. Anything that has to name a *file* -- a `#line`
-/// directive, a symbol named after where it was written -- wants
-/// `imports::ResolvedSource::source_location` instead (#305).
+/// by however much splicing inserted or dropped ahead of the offset.
+///
+/// **This is not what a diagnostic wants.** It used to be: this comment
+/// read "a diagnostic wants exactly this, since the offending text is
+/// what the caller is being shown", which was wrong -- the caller is
+/// being shown a line number they cannot open, and for a 9-line file
+/// with the SDK spliced in that number was 1989 (#456). A diagnostic
+/// goes through `model::Diagnostic::at`, which keeps the *offset* so
+/// `resolve_in` can name the real file and line.
+///
+/// What still wants this is a position that has to index the merged
+/// buffer itself: a symbol named after where it was written, which must
+/// stay stable for the generated C to stay byte-identical (`emit.rs`
+/// names temporaries this way). Anything naming a *file* wants
+/// `imports::ResolvedSource::source_location` (#305).
 pub fn line_col(source: &str, byte_offset: usize) -> (usize, usize) {
     let mut line = 1;
     let mut col = 1;
