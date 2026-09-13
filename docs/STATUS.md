@@ -2220,6 +2220,80 @@ use-after-free; `__bridge_transfer` names the leak. An author who reads
 which is the same standard #425 set for a remedy: a diagnostic makes a
 claim, and the claim has to be the true one for that input.
 
+## The fourth jump, and two expectations that did not survive measurement (#454)
+
+Every release here is emitted explicitly at each exit — there is no
+`__attribute__((cleanup))` and no unwinding — so each kind of exit needs its
+own arm. Normal scope end has `arc_exit`, `return` has
+`render_return_statement`, `break` and `continue` have `render_loop_jump`.
+`goto` had none, and `is_jump_statement` counted it anyway, which
+*suppresses* the trailing scope release on the reasoning that a jump emits
+its own. So the release was suppressed and never replaced.
+
+**The root cause was neither half of that.** `needs_translation` lists
+`break_statement`, `continue_statement` and `return_statement` to force the
+emitter to descend into a subtree, and `goto_statement` was absent. So
+`if (n) { goto done; }` — an Objective-C-free subtree — was copied verbatim
+and no renderer saw the jump at all. Adding `render_goto` without that entry
+leaves the arm **unreachable for the only spelling that matters**, which is
+what the first attempt here did. `return_statement` is on that list because
+#283 hit precisely this shape: a `return` nested in an ObjC-free `if`,
+skipping its loop's release, found by LeakSanitizer and invisible to a test
+that only checked return values.
+
+Both halves are load-bearing: four of the six tests fail without either, and
+the two that survive both are the controls.
+
+### Two expectations that did not survive
+
+Worth recording because both were stated confidently, relayed onward, and
+wrong — and because the measurements were cheap in each case.
+
+**It needs no scope graph.** I expected the release set to require a scope
+*graph* rather than the emitter's `Vec<ArcScope>` stack, on the reasoning
+that a `goto`'s target is arbitrary where a `break`'s is structural. It does
+not: `goto_statement` carries its label as a `statement_identifier` and
+`labeled_statement` carries the matching one, so the set is "live scopes that
+do not also contain the label" — `releases_up_to_jump_target`'s existing
+`start_byte` comparison with a different target search. One rule covers both
+jump directions.
+
+**The backward-`goto` hazard does not exist.** `staticbar::LOOP_KINDS` is
+`["for_statement", "while_statement", "do_statement"]`, so the loop-escape
+bar cannot see a loop built from a backward `goto`, and `pools.rs` counts one
+slot per allocation site without asking whether the reference outlives the
+iteration. That reads like an unbounded-allocation hole. It is not one: the
+scope that allocates also *closes* inside the loop body, so it releases per
+iteration and one slot suffices — measured at three iterations on a one-slot
+pool, three deallocs, no nil. The non-finding is pinned as
+`a_backward_goto_forming_a_loop_needs_one_slot` so it is not re-derived.
+
+### What Clang refuses, so the emitter need not
+
+Probed with this project's own flags rather than recalled:
+
+| shape | `clang -fobjc-arc` |
+|---|---|
+| forward `goto` out of a scope holding an owned local | accepts |
+| backward `goto` re-entering an allocating scope | accepts |
+| `goto` **into** a scope, skipping a declaration | **rejects** |
+| `goto` **over** a declaration at the same level | **rejects** |
+
+The two rejections are ARC § 2.6.6 (`cannot jump from this goto statement to
+its label`) and they are the genuinely hard shapes. So what reaches the
+emitter is exactly the two cases one rule handles — another `DELEGATED`
+verdict earning its place in [docs/ARC.md](ARC.md).
+
+### One instrument failure, for the record
+
+The first draft emitted the bare name `t` where a release belonged, because
+it mirrored `releases_up_to_jump_target`'s body but not its last line — that
+function ends in `release_lines(&names, ctx)`. Both sides are
+`Vec<String>`, so the type checker had nothing to say; only reading the
+generated C did. The same shape as the extractor that made `@synchronized`
+look like a leak: when a helper and its caller agree on a type and disagree
+on a meaning, the compiler is not the instrument.
+
 ## Standing design rules
 
 - **`oz2c` names the tool. `oz_`/`OZ_` names the code. Nothing is named after
