@@ -1,4 +1,4 @@
-# oz_static status
+# oz2c status
 
 What `oz2c` does, what has been measured, and what has not. A status record,
 not a claim of readiness.
@@ -62,7 +62,7 @@ hidden a defect.
 | Kernel lock validation | `CONFIG_SPIN_VALIDATE` silent on ARM (14/14) and SMP (10/10) |
 | Generated C warnings | `-Wall -Wextra` clean across all samples |
 | Pedantic sweep on target | Gate at **10 sites**, every one inside Zephyr's own macros |
-| Zephyr integration (ztest) | **18 cases in 5 suites** over committed oz_static output |
+| Zephyr integration (ztest) | **18 cases in 5 suites** over committed oz2c output |
 
 ## What is not verified
 
@@ -249,7 +249,7 @@ initializer needs a null pointer constant, and `((blk), 0)` or
 `((void)sizeof(blk), 0)` are not ones -- they have the value zero and a
 pointer initializer rejects them. So the block goes unparsed either way, and
 a signature mismatch surfaces from GCC on generated code rather than from
-oz_static on the source. That is a real gap, not a detail.
+oz2c on the source. That is a real gap, not a detail.
 
 One shape of it has since moved to the right side of that line, and only
 because the name was reserved rather than the signature checked -- see
@@ -260,7 +260,7 @@ because the name was reserved rather than the signature checked -- see
 The return type, by writing it on the literal -- `^uint32_t(int seed) { ... }`
 is carried into the hoisted function (#303). Worth knowing because it is the
 only way to type a callback that does not return `int`: with no return type
-written, oz_static takes the enclosing block-pointer declaration's if there
+written, oz2c takes the enclosing block-pointer declaration's if there
 is one, and otherwise *guesses* from the body, where any return-with-value
 means `int`.
 
@@ -282,7 +282,7 @@ does not now.
 
 Nothing may be *declared* with that name -- not a block or function or method
 parameter, not an ivar, not a plain C struct field, not a local. `id` is
-Objective-C's untyped object pointer, and oz_static rewrites it as one
+Objective-C's untyped object pointer, and oz2c rewrites it as one
 wherever a declaration uses it.
 
 Clang accepts the name, because shadowing a typedef with a declarator is
@@ -352,7 +352,7 @@ seventh cause and #246: two walks over the same thing, one of them complete.
 Fixing it uncovered a second defect that had been sitting behind it. An
 owned array of objects was released with
 
-    oz_static_release((struct OZObject *)self->_leaves);
+    oz_release((struct OZObject *)self->_leaves);
 
 -- the array cast to an object pointer, so the refcount is read out of the
 first element's pointer value. That is corruption rather than a leak, and
@@ -426,7 +426,7 @@ loop:
 ```c
 struct OZObject *_oz_prev_L381_C3_1 = (struct OZObject *)(self->_ivar);
 for (i = 0; i < 4; i++) {
-        (self->_ivar = Foo_dup(...), oz_static_release(_oz_prev_L381_C3_1));
+        (self->_ivar = Foo_dup(...), oz_release(_oz_prev_L381_C3_1));
 }
 ```
 
@@ -542,9 +542,9 @@ updated.
 
 It went unnoticed for as long as the span it wrongly returned happened not
 to contain the strings its assertions look for. #418 added
-`int oz_static_retain_count(id obj);` to the spliced `OZObject.h`, and
+`int oz_retain_count(id obj);` to the spliced `OZObject.h`, and
 `a_returned_ivar_is_not_retained` -- which asserts the *absence* of
-`oz_static_retain` in `Holder_held` -- went red on a substring of a
+`oz_retain` in `Holder_held` -- went red on a substring of a
 declaration in a header it was never meant to read. The test had been
 passing by luck, and a name change is what collected the debt.
 
@@ -837,7 +837,7 @@ right and the wrong number was the one that agreed with expectations.
 Worse than the omission: had the sweep covered them, the answer would not have
 been "all identical" either. `tests/adapted/gnustep/nil_msgSend_types.m:22` reads
 `id result = [nilObj init];`, and `-init` is an owning send, so #400's fix makes
-that local ARC-managed and emits `oz_static_release((struct OZObject *)(result))`
+that local ARC-managed and emits `oz_release((struct OZObject *)(result))`
 at scope exit -- correct, safe on nil, and a real difference. The honest figure
 was 120 of 121 with one expected change, not 81 of 81 with none.
 
@@ -1005,13 +1005,13 @@ that reported success while the thing it named was broken.
   the `%@` branch is always present and the whole chain behind it stays
   reachable: the dispatch, `OZObject_getDescription_maxLength_` (4 B to
   176 B, of which 110 is formatting the address), the synthesized
-  `oz_static_class_name` (40 B) and one name string per class.
+  `oz_class_name` (40 B) and one name string per class.
 
   "The linker will drop it" is a claim about reachability, and reachability
   is decided by the call graph rather than by what the program appears to
   use. The corollary is the useful half: with
   `CONFIG_OBJZ_DEFAULT_DESCRIPTION=n` the call itself is compiled out, and
-  then the linker does strip all of it -- `oz_static_class_name` is absent
+  then the linker does strip all of it -- `oz_class_name` is absent
   from the ELF and the same sample builds to **26456 B, byte for byte the
   pre-#354 baseline**. So the gate is what makes the cost optional; the
   original reasoning was not wrong about `--gc-sections`, it was wrong
@@ -1086,7 +1086,7 @@ no `ObjCARCOpt`.
 That third one is the load-bearing difference. **Clang emits retain and
 release naively at every binding and deletes the redundant pairs in an
 LLVM pass.** `oz2c` emits C for GCC, and nothing downstream elides
-anything, because `oz_static_retain`/`oz_static_release` are ordinary C
+anything, because `oz_retain`/`oz_release` are ordinary C
 functions: the counter is an atomic RMW, which may not be removed or
 reordered, and the decrement gates a call to `-dealloc`, which is an
 observable effect. Measured with the Zephyr ARM GCC at `-O2` on a
@@ -1214,7 +1214,7 @@ change.
 **It is ARC's optimizer, hand-written at the source level.** Clang emits
 retain and release naively at every binding and deletes the redundant
 pairs in an LLVM pass; that pass is the only reason ARC is cheap. `oz2c`
-emits C for GCC, where `oz_static_retain`/`oz_static_release` are ordinary
+emits C for GCC, where `oz_retain`/`oz_release` are ordinary
 functions whose counter is an atomic RMW and whose decrement gates a call
 to `-dealloc` -- so nothing downstream elides anything, measured at every
 setting including whole-program LTO. The elision therefore has to happen
@@ -1611,7 +1611,7 @@ above an enclosing loop, above a braced body included. Measured on `main`:
 ```c
 struct OZObject *_oz_prev_L397_C3_1 = (struct OZObject *)(self->_kid);
 for (int i = 0; i < 3; i++) {
-	(self->_kid = pick(a), oz_static_retain(...), oz_static_release(_oz_prev_L397_C3_1));
+	(self->_kid = pick(a), oz_retain(...), oz_release(_oz_prev_L397_C3_1));
 }
 ```
 
@@ -1674,7 +1674,7 @@ or on a branch the source never takes. The fix for those is not a
 different release site but a different shape — a comma expression over a
 **declaration-only** temporary:
 
-    (tmp = makeThing(), v = Thing_n(tmp), oz_static_release(tmp), v)
+    (tmp = makeThing(), v = Thing_n(tmp), oz_release(tmp), v)
 
 The declaration is hoisted through `ctx.pre_stmts` and only the
 assignment and the release stay inside. That split is why this needed no
@@ -1734,7 +1734,7 @@ So the header is **rewritten** rather than the statement wrapped —
 {
 	struct Thing *t = makeThing();
 	for (; i < 1; i++) { ... }
-	oz_static_release((struct OZObject *)(t));
+	oz_release((struct OZObject *)(t));
 }
 ```
 
@@ -1766,7 +1766,7 @@ Removing either broke exactly one test, and a different one each time.
 
 Worth recording as a defect this uncovered rather than fixed: the
 **statement-level** twin, `long n = (long)makeThing();`, emits
-`oz_static_release((struct OZObject *)(n))` against a `long` today —
+`oz_release((struct OZObject *)(n))` against a `long` today —
 `owned_locals_of_in` has no type check of its own, which is why the
 header arm has to supply one.
 
@@ -1831,11 +1831,11 @@ operands and was live on `main`:
 struct Thing *t = ...;
 switch (i) {
 case 0:
-	oz_static_release(t);   /* break only exits the switch */
+	oz_release(t);   /* break only exits the switch */
 	break;
 }
 Thing_n(t);                 /* freed */
-oz_static_release(t);       /* and again */
+oz_release(t);       /* and again */
 ```
 
 `ArcScope::is_loop_body` conflated "a `break` stops here" with "this is a
@@ -2006,10 +2006,10 @@ Three lessons, and the third is the one worth carrying:
 - **The verdict categories did the work, not the prose.** Forcing every rule
   into `IMPLEMENTED` / `DELEGATED` / `REFUSED` / `N/A` / `GAP` is what made the
   gaps visible: each is a rule that had no verdict, and writing "what does
-  oz_static do here?" next to "what does ARC require?" is a question the
+  oz2c do here?" next to "what does ARC require?" is a question the
   existing prose never asked in that form.
 - **`DELEGATED` is the most valuable category and the most fragile.** Most of
-  ARC's front-end rules need no oz_static implementation because
+  ARC's front-end rules need no oz2c implementation because
   `-fobjc-arc` refuses them first, and #443 already asserts the flag is on
   every path. But the flag being present is not the same as the *refusal*
   still happening -- a Clang upgrade or a changed triple can retire one
@@ -2110,7 +2110,7 @@ the selector's exact text.
 ### Widening it alone would have made things worse
 
 Two attributes exist precisely to contradict the family a selector is
-spelled into, and oz_static reads neither. `ns_returns_not_retained` on a
+spelled into, and oz2c reads neither. `ns_returns_not_retained` on a
 create-rule selector is the corrupting case, and it was already reachable
 before any widening:
 
@@ -2122,7 +2122,7 @@ before any widening:
 ```
 
 ARC reads the attribute and says `+0`, so the caller owes nothing.
-oz_static exact-matched `copy`, called it `+1`, and released at scope exit
+oz2c exact-matched `copy`, called it `+1`, and released at scope exit
 -- freeing an object the caller never owned while the ivar still held it.
 `heap-use-after-free` under ASan, from a source
 `clang -fobjc-arc -Weverything` accepts with **zero** diagnostics.
@@ -2153,7 +2153,7 @@ A scan of all **305** distinct selectors in the tree found exactly one that
 the family rule newly reaches:
 `tests/adapted/mulle_spec/retain_release_balance.m` declares
 `- (int)allocOk`. "alloc" followed by `O` is in the `alloc` family by
-spelling, and treating it as `+1` hands `oz_static_release` an `int` --
+spelling, and treating it as `+1` hands `oz_release` an `int` --
 which is #398 verbatim, where `[[Thing alloc] initialValue]` released the
 integer 42 and dereferenced it. Signal 11.
 
@@ -2161,7 +2161,7 @@ integer 42 and dereferenced it. Signal 11.
 alloc-family method must return a retainable object pointer, and
 `clang -fobjc-arc` accepts `- (int)allocOk`, `- (int)newCount` and
 `- (int)copyFlag` with no diagnostic at all -- measured, not assumed. So
-this guard is oz_static's own and cannot be delegated.
+this guard is oz2c's own and cannot be delegated.
 
 The scan is the method worth copying: before widening any name-based rule,
 enumerate every name in the tree the widening newly reaches, rather than
@@ -2200,8 +2200,8 @@ made a deliberate escape hatch. So the refusal refuses nothing that exists
 and converts two silent memory bugs into build errors, which is the
 #430 → #458 precedent. Implementing them properly needs new emission and
 is a product question -- is CF-style hand-off to C supported? -- rather
-than a correctness one, so it is sequenced behind the `oz_static_*`
-respelling as its own issue.
+than a correctness one, so it is sequenced behind #462's respelling of the
+emitted ABI as its own issue.
 
 **The refusal and the opacity are complementary, not redundant**, and this
 is the part worth keeping. `is_bridging_cast` still lists all three, and
@@ -2222,6 +2222,54 @@ claim, and the claim has to be the true one for that input.
 
 ## Standing design rules
 
+- **`oz2c` names the tool. `oz_`/`OZ_` names the code. Nothing is named after
+  the crate.** The transpiler answered to two names for most of its life:
+  `oz2c` as the binary and the justfile recipe, `oz_static` as the crate, the
+  directory, the cmake module, four emitted ABI functions, the per-class id
+  macro, the generated dispatch header, the output directory, the diagnostic
+  prefix and the banner it signed its output with -- 1851 occurrences over 183
+  files (#462). Two layers now, not three: `oz_`/`OZ_` for C and `_oz_` for
+  per-class internals, with `oz2c` reserved for *files the tool produces*
+  (`oz2c_dispatch.h`, `oz2c_generated/`, `oz2c_build.py`). A new emitted
+  symbol takes `oz_`.
+
+  Three things this cost, each worth more than the rename:
+
+  **It reversed a merged decision, and that is allowed to happen.** #417 had
+  just given the heap bridge the crate prefix, arguing that a name the PAL
+  *declares* and the companion *defines* belongs to a namespace of its own; it
+  landed with a test asserting exactly that. #462 overrules it, so
+  `oz_heap_alloc` now sits one qualifier from the PAL's `oz_heap_alloc_obj` --
+  closer than #417 wanted, and the accepted price of one prefix per layer. The
+  word-order rule #417 was really fixing survives untouched. Reintroducing a
+  third prefix to restore the distance is the thing not to do.
+
+  **A blind substitution of a guard test can invert it.** #417's test asserted
+  `!out.contains("<retired>_heap_alloc_obj")` -- a name no spelling could
+  produce, there to catch a replace that caught the PAL alongside the bridge.
+  Substituting the prefix turns it into an assertion against
+  `oz_heap_alloc_obj`, the PAL's real symbol, which generated C genuinely
+  calls: vacuously true becomes false. It was rewritten by hand, and the
+  replacement needed a fixture #417's did not -- `companion.rs` emits two heap
+  arms, and a program declaring no `OZHeap` gets `return oz_sys_heap_alloc(size)`,
+  which never names the PAL pair at all. Asserting against that output failed,
+  correctly, on the first run.
+
+  **`\b` is the wrong anchor on the left.** 23 occurrences sat behind `\t`
+  inside emission string literals in `companion.rs` and `emit.rs`, and the
+  trap flag sat behind `-D`; both are word characters, so a left-anchored
+  pattern skips them. The result is an emitter where some sites emit the old
+  name and some the new -- which compiles, and fails at link. Anchor on the
+  right instead (`oz_static_release\b`), which also stops `_obj` suffixes
+  being rewritten. Found by counting occurrences, not by reading the diff.
+
+  The one place the old name survives on purpose is this file, which is the
+  archive: `tools/oz_static/PARITY.md` is cited three times, twice as runnable
+  `git show` / `git log` commands against the retired `python-backend-final`
+  branch, and a rename would turn two working commands into broken ones.
+  `tools/oz2c/tests/naming_tool_identity.rs` enforces the rest, and excludes
+  this file for that reason and no other.
+
 - **Never silently degrade.** Anything outside the supported subset is a hard,
   *located* error. This is deliberate, not a gap someone forgot to fill.
 - **A diagnostic's remedy has to be findable, not merely present.** #456 gave
@@ -2229,7 +2277,7 @@ claim, and the claim has to be the true one for that input.
   diagnosis and every remedy fused into it. The `-retain` rejection ran to 90
   words and carried *three* distinct fixes -- let ARC manage the lifetime, opt
   the slot out with `__unsafe_unretained`, read the count with
-  `oz_static_retain_count` -- and a reader had to find the imperative clause
+  `oz_retain_count` -- and a reader had to find the imperative clause
   inside the prose. So `help` is a `Vec`, not an `Option`, and a `note` tier
   carries the reason, which is neither diagnosis nor remedy (#457).
 
@@ -2360,7 +2408,7 @@ claim, and the claim has to be the true one for that input.
   `tests/tools/compile_and_run.py`, `tools/oz2c/tests/common/mod.rs`,
   `scripts/regen_zephyr_tests.py`, and `scripts/objz_check_compile_db.py`'s
   `REQUIRED_FLAGS` -- under which each of those sends is a compile error.
-  oz_static parses with tree-sitter rather than Clang, which is the only
+  oz2c parses with tree-sitter rather than Clang, which is the only
   reason they were ever reachable; `emit::released_by_hand` was then built to
   *accommodate* one, so that ARC stood back from any local the author
   released. Its own doc comment called that "a feature of its own", which is
@@ -2377,7 +2425,7 @@ claim, and the claim has to be the true one for that input.
   Three consequences worth stating rather than leaving to be rediscovered:
 
   - **Rejecting `[super dealloc]` required synthesizing the chain it drove.**
-    `oz_static_release`'s dispatch called `find_defining_dealloc(class)` and
+    `oz_release`'s dispatch called `find_defining_dealloc(class)` and
     nothing else, so only the *most-derived* `-dealloc` ever ran and a
     superclass's own body ran only because a subclass spelled the send.
     Without `companion::dealloc_chain` there would have been no spelling that
@@ -2397,16 +2445,16 @@ claim, and the claim has to be the true one for that input.
     refuses**, with nothing weighed per selector -- hence
     `ARC_FORBIDDEN_SELECTORS`, since `retainCount` is forbidden without being
     owned and the old name could not say that. Reading a refcount never
-    depended on the message spelling: `oz_static_retain_count()` is the plain
+    depended on the message spelling: `oz_retain_count()` is the plain
     C call #418 made the single entry point. The divergence this bullet used
     to record is gone.
   - **The C API is a deliberate escape hatch, decided rather than tolerated
-    (#437).** `oz_static_retain` and `oz_static_release` are declared in the
+    (#437).** `oz_retain` and `oz_release` are declared in the
     generated companion header, so a `.m` file's plain C can drive a refcount
     by hand. **ARC governs Objective-C; it has no opinion about a C call**, so
     the rejection is a rule about the source language and not an enforced
     invariant -- and that is the chosen answer, not an admission. Narrowing
-    the exports to `oz_static_retain_count` alone was the alternative and was
+    the exports to `oz_retain_count` alone was the alternative and was
     rejected for a concrete reason worth recording: **there is no ARC-legal
     Objective-C spelling that drives one shared object's refcount up and down
     without also serialising on a slot.** A strong-slot store is ARC's way to
@@ -2453,7 +2501,7 @@ claim, and the claim has to be the true one for that input.
     retain cycle cannot do it, because holding the object means its refcount
     never reached zero in the first place.
     `behavior_lifecycle::dealloc_reentrant_guard` keeps the coverage by
-    calling `oz_static_retain`/`oz_static_release` directly, which is exactly
+    calling `oz_retain`/`oz_release` directly, which is exactly
     what the two sends lowered to -- so the guard is still exercised, but no
     longer by anything an ARC-legal Objective-C program can write.
 
@@ -2504,9 +2552,9 @@ claim, and the claim has to be the true one for that input.
   `tests/no_dead_ivars.rs` now fails on any Foundation ivar the SDK's own
   sources never touch, so this is enforced rather than remembered.
 - **An invariant about an object's header has to hold on every side that
-  touches it.** `oz_static_release` checked `_meta.immortal` before its
+  touches it.** `oz_release` checked `_meta.immortal` before its
   decrement and its comment stated the rule -- "their refcount is not tracked
-  either". `oz_static_retain` incremented with no check at all, so the rule
+  either". `oz_retain` incremented with no check at all, so the rule
   held in one direction and the count of every immortal object climbed for the
   life of the program (#373). Nothing caught it for two reasons worth
   remembering. The nine tests in `behavior_immortal_literals.rs` all exercised
@@ -2787,8 +2835,14 @@ claim, and the claim has to be the true one for that input.
 - **`__objc_` is retired as a prefix, and a leading double underscore is never
   ours to spell.** C reserves it to the implementation, so every name under it
   was undefined behaviour waiting for a toolchain to claim the spelling.
-  Synthesized and internal names are `oz_static_` (companion-wide) or `_oz_`
-  (per-class). `__objc_refcount_get` was the last survivor in the live tree and
+  Synthesized and internal names are `oz_` (C-side, companion-wide) or `_oz_`
+  (per-class). There were three layers until #462: the companion's own names
+  carried `oz_static_`, the transpiler's crate name at the time, on the
+  reasoning that a
+  name the tool synthesizes is distinguishable from one a human writes. That
+  is now retired -- `oz2c` names the *tool*, and only files it produces carry
+  it (`oz2c_dispatch.h`, `oz2c_generated/`). Code gets `oz_`/`OZ_`.
+  `__objc_refcount_get` was the last survivor in the live tree and
   went in #418; the prefix remains only in `runtime_legacy/`, which is not
   compiled, and in one `#define` bridge in `tests/tools/oz2c_build.py` that
   exists so behaviour drivers written against the retired Python pipeline's ABI
@@ -2798,14 +2852,17 @@ claim, and the claim has to be the true one for that input.
   as the code.
 - **One concept gets one public name, and a second name for it is usually a
   signature problem wearing a naming problem's clothes.** `__objc_refcount_get`
-  and `oz_static_retain_count` did the same thing, and the reason there were two
-  is the part worth keeping: `oz_static_retain_count` took `struct <root> *`, and
+  and the refcount reader did the same thing, and the reason there were two
+  is the part worth keeping. (That reader was spelled `oz_retain_count`
+  when #418 settled this, and is `oz_retain_count` since #462 retired the
+  `oz_static_` prefix; #418's own commits and diffs read the older name
+  throughout.) It took `struct <root> *`, and
   `include/oz_sdk/Foundation/OZObject.h` has to declare whatever Objective-C
   source calls -- Clang resolves the call while dumping the AST, before any
   generated header exists -- while being unable to name a generated struct. So
   the second name existed purely to have an `id`-typed parameter. Collapsing the
   two meant changing the *signature*, not deleting a line: the companion emits
-  `int oz_static_retain_count(id obj)` now, `id` is `void *` in generated C, and
+  `int oz_retain_count(id obj)` now, `id` is `void *` in generated C, and
   every internal caller keeps passing a root-struct pointer and converts
   implicitly.
 
@@ -2864,7 +2921,7 @@ claim, and the claim has to be the true one for that input.
   is the larger one and is easy to miss by measuring `bss` alone.
 - **An allocator that can fail must name the failure, and one switch must cover
   every allocator that can.** The slab path has had
-  `OZ_STATIC_TRAP_POOL_EXHAUSTION` since the pools work; the heap path had a
+  `OZ_TRAP_POOL_EXHAUSTION` since the pools work; the heap path had a
   bare `return (struct {name} *)0;`, so heap exhaustion travelled exactly the
   way slab exhaustion used to -- `EXC_BAD_ACCESS` inside a function with
   nothing to do with the cause. #419 gave it the same trap, under the same

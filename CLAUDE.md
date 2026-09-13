@@ -16,7 +16,7 @@ Platform Abstraction Layer (PAL) for zero-cost Zephyr integration.
 
 **The transpiler is `tools/oz2c/` (the `oz2c` binary, Rust).** It is the only
 backend. A second, Python implementation (`tools/oz_transpile/`, a 3-pass Clang-AST
-pipeline) was retired: it implemented no construct oz_static lacks, had been unable to
+pipeline) was retired: it implemented no construct oz2c lacks, had been unable to
 build any sample on target since #267, and its one unique contribution --
 `just test-cross-backend`, an independent behavioural oracle -- is gone with it. The
 implementation is readable at the **`python-backend-final`** tag rather than kept as an
@@ -222,7 +222,7 @@ Three standing design rules, easy to violate with good intentions:
   *override* is the one exception: it is the cleanup hook, and the chain above it is
   called automatically
   (`companion::dealloc_chain`), so `[super dealloc]` is redundant rather than required.
-  Reading a refcount is permitted, through `oz_static_retain_count` -- a plain C call,
+  Reading a refcount is permitted, through `oz_retain_count` -- a plain C call,
   and the only refcount entry point Objective-C source may spell, since `-retainCount`
   joined the forbidden five in #436. `@autoreleasepool` is refused for the neighbouring
   reason (#430): with no `-autorelease` nothing can be pending, so a pool has nothing to
@@ -252,14 +252,14 @@ What it was: a 3-pass Clang-AST pipeline (`collect.py` / `resolve.py` / `emit.py
 Why it went, measured rather than assumed:
 
 - all 71 behaviour and 40 adapted cases *as the corpus stood then* transpile **and
-  run** through oz_static, under gcc/clang × -O0/-O2, ASan, UBSan and
+  run** through oz2c, under gcc/clang × -O0/-O2, ASan, UBSan and
   LeakSanitizer (the behaviour corpus is 81 cases now);
-- it implemented no construct oz_static lacks — `@try` was in its own
+- it implemented no construct oz2c lacks — `@try` was in its own
   `_UNSUPPORTED_AST_KINDS`, `@selector`/`@protocol()` appeared only in kind lists with
   no emission rule, reflection selectors were absent entirely, and there was no
   variadic support anywhere, so `OZLog` could never have gone through it —
-  oz_static has since implemented reflection outright (#226), which it never did;
-- Objective-C in a `#define` body crashed it with a `RecursionError`, where oz_static
+  oz2c has since implemented reflection outright (#226), which it never did;
+- Objective-C in a `#define` body crashed it with a `RecursionError`, where oz2c
   rejects it with a located error (#238);
 - it had been unable to build **any** sample on target since #267 left a deleted
   `src/OZTimer.m` in its source list, and no gate noticed.
@@ -267,7 +267,7 @@ Why it went, measured rather than assumed:
 What its removal cost, stated rather than absorbed: `just test-cross-backend` was the
 only *independent* implementation to check behaviour against, 71/71 MATCH. Nothing
 replaces that. What replaces its role as a gate is the corpora running through
-oz_static under sanitizers — which is what found two real ARC leaks (#283) that
+oz2c under sanitizers — which is what found two real ARC leaks (#283) that
 cross-backend agreement never caught, since it compared Unity results rather than
 allocation balance.
 
@@ -331,7 +331,7 @@ Retained as reference for transpiler development. Not compiled — the runtime c
   result
 - **`tests/zephyr/`** — 18 Zephyr integration cases in 5 ztest suites (`native_sim` +
   `ztest` + `twister`), over C committed under `tests/zephyr/generated/`. That C is
-  **oz_static's output** since the port, so a green run says something about the
+  **oz2c's output** since the port, so a green run says something about the
   default backend; `scripts/regen_zephyr_tests.py` regenerates it and the
   `generated-freshness` CI job fails if the tree is stale
 - **`tests/objc-reference/`** — Legacy runtime tests (reference only, not compiled)
@@ -344,12 +344,12 @@ Retained as reference for transpiler development. Not compiled — the runtime c
 - Use `/* comment */` for documentation, `/** comment */` for Doxygen (not `//`)
 - Always use curly braces with `if`, even single-line blocks
 - Avoid `typedef` for structs — use explicit `struct objc_xxx` names (exception: public API types like `id`, `SEL`, `Class` per ObjC spec)
-- **Internal and synthesized functions: `oz_static_` (companion-wide) or `_oz_`
+- **Internal and synthesized functions: `oz_` (companion-wide) or `_oz_`
   (per-class). The `__objc_` prefix is retired — don't add one.** A leading double
   underscore is reserved to the implementation in C, so every name under it was
   undefined behaviour waiting for a toolchain to claim it. `__objc_refcount_get` was
   its last survivor in the live tree and went in #418, replaced by
-  `oz_static_retain_count`, which already did the same job. The prefix still appears
+  `oz_retain_count`, which already did the same job. The prefix still appears
   in `src/runtime_legacy/` and `include/runtime_legacy/` (not compiled) and as one
   `#define` bridge in `tests/tools/oz2c_build.py`, which exists so behaviour
   drivers written against the old ABI stay unmodified — neither is a precedent
@@ -358,4 +358,11 @@ Retained as reference for transpiler development. Not compiled — the runtime c
 
 ### Commit Messages
 
-Conventional commits: `feat(transpiler): description`, `fix(transpiler): description`, `build: description`, `samples: description`
+Conventional commits, scoped to what changed: `feat(oz2c):`, `fix(oz2c):`,
+`build:`, `docs:`, `samples:`. Append the issue number — `fix(oz2c): ... (#238)`.
+Add `!` for a behavioural break.
+
+The scope for transpiler work is `oz2c`. It documented `transpiler` here while
+187 of the first 770 commits actually used the crate's old name, and #462
+settled on one spelling; those older subjects stay as the historical record
+they are, so a `git log --grep` on the scope alone splits at that boundary.

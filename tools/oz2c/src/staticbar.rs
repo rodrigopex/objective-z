@@ -1285,8 +1285,8 @@ const ARC_FORBIDDEN_SELECTORS: &[&str] =
 /// Implementing them stays available and is strictly better *if* CF-style
 /// hand-off to C is meant to be supported -- that is a product question,
 /// not a correctness one, and the refusal does not foreclose it. It would
-/// also need new emission, which wants sequencing after the `oz2c_*`
-/// respelling rather than before it.
+/// also need new emission, which wanted sequencing after #462's respelling
+/// of the emitted ABI rather than before it.
 ///
 /// Plain `__bridge` is deliberately **not** here, and
 /// `arc::is_bridging_cast` keeps naming all three: the list there is what

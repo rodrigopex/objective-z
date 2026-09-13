@@ -62,7 +62,7 @@ Pipeline: `.m` → tree-sitter CST → `oz2c` → `.c` + `.h` → GCC/Clang → 
 The drivers were written against the retired Python pipeline's generated ABI
 (`<Class>_ozh.h`, `Class_alloc`, `OZObject_release`) and are kept unmodified;
 `tests/tools/oz2c_build.py` writes a shim bridging those names to
-oz_static's. That backend is readable at the `python-backend-final` tag.
+oz2c's. That backend is readable at the `python-backend-final` tag.
 
 ## Adapted Test Sources
 

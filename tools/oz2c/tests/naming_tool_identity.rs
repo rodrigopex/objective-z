@@ -36,6 +36,7 @@
 
 mod common;
 use common::ozobject_src;
+use std::process::Command;
 
 /// Built by concatenation; see the header comment.
 const RETIRED_LOWER: &str = concat!("oz_", "static");
@@ -86,4 +87,66 @@ fn the_abi_is_spelled_on_the_c_side_prefix() {
 			all
 		);
 	}
+}
+
+/// `docs/STATUS.md` is the archive, and is excluded for that reason and no
+/// other.
+///
+/// It is where retired names are explained rather than erased -- it already
+/// names `__objc_refcount_get`, `oz_heap_obj_alloc` and the retired Python
+/// pipeline throughout -- so a rename narrative that could not spell what it
+/// retired would be useless to the reader who greps the old name. It also
+/// cites `<retired>/PARITY.md` three times, twice as runnable `git show` /
+/// `git log` commands against the `python-backend-final` branch, where that
+/// path still exists; rewriting those would turn two working commands into
+/// broken ones.
+///
+/// Every other tracked file is strict.
+fn is_the_archive(line: &str) -> bool {
+	line.starts_with("docs/STATUS.md:")
+}
+
+fn repo_root() -> std::path::PathBuf {
+	std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+		.join("../..")
+		.canonicalize()
+		.expect("the crate sits two levels below the repo root")
+}
+
+/// The tree-wide half.
+///
+/// `git grep` rather than a directory walk, for three reasons: it *is* the
+/// end-state predicate ("no tracked file"), `-I` skips binaries, and it never
+/// descends into `tools/oz2c/target/`, which is gitignored and full of old
+/// binaries with the string compiled into them. A walk would have to
+/// blocklist that by hand and would go stale.
+#[test]
+fn no_tracked_file_outside_the_archive_carries_the_retired_name() {
+	let out = Command::new("git")
+		.args(["grep", "-I", "-n", "-e", RETIRED_LOWER, "-e", RETIRED_UPPER, "--", "."])
+		.current_dir(repo_root())
+		.output()
+		.expect("git grep must run; a guard that skips is not a guard");
+
+	/* Exit 1 is `git grep` finding nothing, which is success here. Anything
+	 * above that is git failing to search at all, and must not be mistaken
+	 * for a clean tree. */
+	let code = out.status.code().unwrap_or(-1);
+	assert!(
+		code == 0 || code == 1,
+		"git grep failed (exit {}), so this proved nothing:\n{}",
+		code,
+		String::from_utf8_lossy(&out.stderr)
+	);
+
+	let stdout = String::from_utf8_lossy(&out.stdout);
+	let offenders: Vec<&str> = stdout.lines().filter(|l| !is_the_archive(l)).collect();
+	assert!(
+		offenders.is_empty(),
+		"{} line(s) carry the transpiler's retired name. `oz2c` names the tool, \
+		 `oz_`/`OZ_` names the code, and only `docs/STATUS.md` may spell what was \
+		 retired:\n{}",
+		offenders.len(),
+		offenders.join("\n")
+	);
 }
