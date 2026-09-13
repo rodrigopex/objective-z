@@ -23,7 +23,7 @@ use std::path::{Path, PathBuf};
 use oz2c::imports::{resolve_entry_files, resolve_imports, ResolvedSource};
 
 fn scratch_dir(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("oz_static_source_map_{}", name));
+    let dir = std::env::temp_dir().join(format!("oz2c_source_map_{}", name));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(dir.join("inc")).unwrap();
     fs::create_dir_all(dir.join("src")).unwrap();

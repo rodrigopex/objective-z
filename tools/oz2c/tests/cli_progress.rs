@@ -139,7 +139,7 @@ fn every_progress_line_is_prefixed() {
     let result = run(&[], &src, &out);
     let stdout = String::from_utf8_lossy(&result.stdout);
     for line in stdout.lines() {
-        assert!(line.starts_with("oz_static: "), "unprefixed line: {:?}", line);
+        assert!(line.starts_with("oz2c: "), "unprefixed line: {:?}", line);
     }
 }
 
@@ -156,7 +156,7 @@ fn quiet_prints_nothing_on_stdout_and_the_old_summary_on_stderr() {
     assert_eq!(String::from_utf8_lossy(&result.stdout), "");
     let stderr = String::from_utf8_lossy(&result.stderr);
     assert!(
-        stderr.starts_with("oz_static: ") && stderr.contains("files generated in"),
+        stderr.starts_with("oz2c: ") && stderr.contains("files generated in"),
         "got: {:?}",
         stderr
     );

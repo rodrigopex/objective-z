@@ -33,7 +33,7 @@ use oz2c::imports::{resolve_entry_files, ResolvedSource};
 use oz2c::Options;
 
 fn scratch_dir(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("oz_static_line_directives_{}", name));
+    let dir = std::env::temp_dir().join(format!("oz2c_line_directives_{}", name));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(dir.join("inc")).unwrap();
     fs::create_dir_all(dir.join("src")).unwrap();
