@@ -211,8 +211,8 @@ static inline void *oz_current_thread(void)
 /* Formatted output — printf                                           */
 /* ------------------------------------------------------------------ */
 
-#define oz_platform_print(fmt, ...) printf(fmt, ##__VA_ARGS__)
-#define oz_platform_snprint(buf, len, fmt, ...) snprintf(buf, len, fmt, ##__VA_ARGS__)
+#define OZ_PLATFORM_PRINT(fmt, ...) printf(fmt, ##__VA_ARGS__)
+#define OZ_PLATFORM_SNPRINT(buf, len, fmt, ...) snprintf(buf, len, fmt, ##__VA_ARGS__)
 
 /* ------------------------------------------------------------------ */
 /* Heap allocator — malloc-backed wrapper for dynamicAllocWithHeap:           */

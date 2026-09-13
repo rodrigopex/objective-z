@@ -156,7 +156,7 @@ config OBJZ_DEFAULT_DESCRIPTION
 
 	  Costs ~360 bytes of flash, and costs them on every program that
 	  calls OZLog at all -- not only those using %@. The %@ branch
-	  lives in oz_log's body and the format string is a run-time
+	  lives in OZLog's body and the format string is a run-time
 	  value, so the linker cannot know the branch is unreachable and
 	  keeps the whole chain behind it: the protocol dispatch,
 	  OZObject's implementation (176 bytes, of which 110 is formatting

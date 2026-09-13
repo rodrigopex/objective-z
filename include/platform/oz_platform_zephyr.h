@@ -187,8 +187,8 @@ static inline void *oz_current_thread(void)
 /* Formatted output — printk                                           */
 /* ------------------------------------------------------------------ */
 
-#define oz_platform_print(fmt, ...) printk(fmt, ##__VA_ARGS__)
-#define oz_platform_snprint(buf, len, fmt, ...) snprintk(buf, len, fmt, ##__VA_ARGS__)
+#define OZ_PLATFORM_PRINT(fmt, ...) printk(fmt, ##__VA_ARGS__)
+#define OZ_PLATFORM_SNPRINT(buf, len, fmt, ...) snprintk(buf, len, fmt, ##__VA_ARGS__)
 
 /* ------------------------------------------------------------------ */
 /* Heap allocator — sys_heap + spinlock wrapper for dynamicAllocWithHeap:     */
