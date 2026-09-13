@@ -2168,6 +2168,58 @@ enumerate every name in the tree the widening newly reaches, rather than
 reasoning about which ones it might.
 
 
+## Three bridging casts, three meanings, one predicate (#460)
+
+`arc::is_bridging_cast` names `__bridge`, `__bridge_transfer` and
+`__bridge_retained` and treats them identically -- as a signal to hold
+ownership *back*, so none of the three ownership questions looks through
+them. That is exactly right for the first and wrong for the other two, in
+opposite directions:
+
+- **`__bridge_retained`** hands a `+1` to the C side, so ARC retains. No
+  retain was emitted, and the local was still released at scope exit --
+  leaving C holding a freed slot. `heap-use-after-free` under ASan. The
+  stale read *succeeded* first and printed the right value, which is the
+  trap recorded above: a use-after-free is silent until the allocator
+  reuses the block.
+- **`__bridge_transfer`** takes a `+1` over from C, so ARC releases it. No
+  release was emitted. A leak.
+
+Both from sources `clang -fobjc-arc -Weverything` accepts with zero
+diagnostics. The eleventh ownership decision keyed on a syntactic form, and
+the form here is a *set* of three spellings collapsed into one answer.
+
+**Refused rather than implemented, and the choice was measured before it
+was argued.** Across `src/`, `include/`, `samples/`, `tests/` and
+px-keyboard the tree has **zero** uses of either kind; all six bridging
+casts are plain `__bridge` and all six are correct --
+`px-keyboard/src/PXLEDController.m:61,143` round-trips `self` through a
+Zephyr `k_timer` user_data, and `samples/smp_shared/src/main.m:207-208`
+casts through `__bridge` to drive a refcount by hand via the C API #437
+made a deliberate escape hatch. So the refusal refuses nothing that exists
+and converts two silent memory bugs into build errors, which is the
+#430 → #458 precedent. Implementing them properly needs new emission and
+is a product question -- is CF-style hand-off to C supported? -- rather
+than a correctness one, so it is sequenced behind the `oz_static_*`
+respelling as its own issue.
+
+**The refusal and the opacity are complementary, not redundant**, and this
+is the part worth keeping. `is_bridging_cast` still lists all three, and
+narrowing it to the one surviving spelling would be the quiet mistake: an
+*ordinary* cast is looked through on purpose (#332,
+`arc::value_behind_casts`), so a bridging cast that fell into that path
+would have its operand's ownership read as the binding's, and
+`Thing *t = (__bridge Thing *)[Thing alloc];` would count `+1` twice. A
+test asserts the round trip through `void *` yields exactly one dealloc
+rather than two, because that is the only way to say it from outside a
+private predicate.
+
+**And two diagnostics, not one.** `__bridge_retained` names the
+use-after-free; `__bridge_transfer` names the leak. An author who reads
+"use-after-free" for a leak learns the wrong thing about their own code,
+which is the same standard #425 set for a remedy: a diagnostic makes a
+claim, and the claim has to be the true one for that input.
+
 ## Standing design rules
 
 - **Never silently degrade.** Anything outside the supported subset is a hard,
