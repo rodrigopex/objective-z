@@ -1219,6 +1219,119 @@ const ARC_FORBIDDEN_SELECTORS: &[&str] =
 /// as a `compound_statement` whose first child is the literal token
 /// `@autoreleasepool`, ahead of the usual `{`. That shape test used to live
 /// in `emit::is_autoreleasepool_shape`, which this replaces.
+/// The ARC attributes that *contradict* an ownership answer oz_static
+/// derives some other way, and are therefore refused rather than ignored.
+///
+/// Each one exists to override a convention: `ns_returns_not_retained`
+/// takes a create-rule selector *out* of the owning set,
+/// `ns_returns_retained` puts an arbitrary one *in*, `ns_consumed` and
+/// `ns_consumes_self` move an argument's release to the callee, and
+/// `objc_method_family` reassigns a selector's family outright.
+///
+/// oz_static reads none of them, and silently ignoring them is not a
+/// harmless gap -- it is a use-after-free (#458). Measured:
+///
+/// ```objc
+/// - (Thing *)copy __attribute__((ns_returns_not_retained))
+/// {
+///         return _shared;        /* a borrowed ivar */
+/// }
+/// ```
+///
+/// ARC reads the attribute and says `+0`, so the caller owes nothing.
+/// `copy` is a create-rule selector, so oz_static says `+1` and releases
+/// at scope exit -- freeing an object the caller never owned, while the
+/// ivar still holds it. `-dealloc` then releases the freed block again.
+/// ASan reports `heap-use-after-free`, from a source
+/// `clang -fobjc-arc -Weverything` accepts with **zero** diagnostics.
+///
+/// Refused rather than implemented, and the reason is the same one #430
+/// gives for `@autoreleasepool`: a spelling whose meaning is a mechanism
+/// the backend does not have must not be quietly accepted. Implementing
+/// them needs the Clang AST read for attributes, which `astinfo.rs` does
+/// not do yet (#453) -- so until it does, the honest answer is a located
+/// error. Nothing in `src/`, `include/`, `samples/`, `tests/` or
+/// px-keyboard uses any of the five, so this refuses nothing that exists.
+///
+/// **And refusing them is what makes the family rule safe to widen.**
+/// `arc::create_rule_family_of` now matches ARC's families rather than six
+/// exact spellings, which is only sound while no attribute can contradict
+/// the family a selector is spelled into. The two halves of #458 are one
+/// change for that reason and must not be separated.
+///
+/// `objc_precise_lifetime` and `objc_externally_retained` are deliberately
+/// **not** here. They constrain ARC's freedom to move traffic rather than
+/// reassigning ownership, and every release this backend emits is already
+/// precise -- so ignoring them changes no answer. They are #461's, which is
+/// about a different defect: they reach the generated C unlowered.
+const OWNERSHIP_ATTRIBUTES: &[&str] = &[
+    "ns_returns_retained",
+    "ns_returns_not_retained",
+    "ns_consumed",
+    "ns_consumes_self",
+    "objc_method_family",
+];
+
+/// Refuse an ARC ownership attribute wherever it appears.
+///
+/// A whole-root walk for the reason `check_manual_memory_sends` and
+/// `check_autoreleasepool` both give: this is a fact about the
+/// declaration, not about the body it sits in, and none of `staticbar`'s
+/// body-scoped entry points sees a method *declaration* in an
+/// `@interface` at all.
+///
+/// The attribute parses as an `attribute_specifier` whose `argument_list`
+/// holds the name as an `identifier` -- `objc_method_family(none)` nests
+/// one level deeper, so the walk looks at every identifier beneath the
+/// specifier rather than only its first child.
+pub fn check_ownership_attributes(root: Node, src: &str) -> Vec<Diagnostic> {
+    let mut diags = Vec::new();
+    walk_ownership_attributes(root, src, &mut diags);
+    diags
+}
+
+fn walk_ownership_attributes(node: Node, src: &str, diags: &mut Vec<Diagnostic>) {
+    if node.kind() == "attribute_specifier" {
+        if let Some(name) = named_ownership_attribute(node, src) {
+            err(
+                diags,
+                src,
+                node,
+                format!(
+                    "'{name}' is not supported: it overrides an ownership answer oz_static                      derives from the selector and the method's return type, and oz_static does                      not read it -- so accepting it silently means ARC and the attribute                      disagree, which is a use-after-free rather than a leak (#458). Remove the                      attribute and let the create rule decide: name a '+1' factory 'copy',                      'new', 'mutableCopy' or 'alloc' (or any selector whose first component                      begins with one of those), and anything else is '+0'"
+                ),
+            );
+            /* One diagnostic per specifier: a second identifier under the
+             * same `__attribute__((...))` is the same mistake. */
+            return;
+        }
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        walk_ownership_attributes(child, src, diags);
+    }
+}
+
+/// The ownership attribute named under `spec`, if any.
+fn named_ownership_attribute(spec: Node, src: &str) -> Option<&'static str> {
+    fn search(node: Node, src: &str) -> Option<&'static str> {
+        if node.kind() == "identifier" {
+            let text = node_text(node, src).trim();
+            if let Some(found) = OWNERSHIP_ATTRIBUTES.iter().copied().find(|a| *a == text) {
+                return Some(found);
+            }
+        }
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            if let Some(found) = search(child, src) {
+                return Some(found);
+            }
+        }
+        None
+    }
+    search(spec, src)
+}
+
 pub fn check_autoreleasepool(root: Node, src: &str) -> Vec<Diagnostic> {
     let mut diags = Vec::new();
     walk_autoreleasepool(root, src, &mut diags);

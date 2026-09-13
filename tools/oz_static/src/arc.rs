@@ -193,13 +193,22 @@ fn is_initialiser(program: &Program, _class: Option<&str>, selector: &str) -> bo
     declared
 }
 
-/// Selectors that are +1 by convention rather than by analysis, matching
-/// Objective-C's own naming rule (the "create rule"): these transfer
-/// ownership whatever their body does.
+/// The create-rule selectors in their **exact** spellings -- the ones that
+/// are +1 whatever the program declares about them.
 ///
-/// **One constant, two readers.** `is_owning_selector` and
-/// `creates_reference` both answer from this list and neither spells it
-/// again. They used to carry separate copies, which is one drift away from
+/// This list is no longer the whole rule, and the correction is #458's:
+/// it used to claim it was "matching Objective-C's own naming rule (the
+/// create rule)" and it was an exact string comparison. ARC matches a
+/// *family*, which is `CREATE_RULE_FAMILIES` and
+/// `is_create_rule_selector`. What survives here is the narrower job of
+/// naming the spellings that need no corroboration: these are the SDK's
+/// own, and a program whose headers were not collected must not lose the
+/// `alloc`/`init` pairing and start double-accounting -- the same
+/// exemption `is_initialiser` makes for `init` itself.
+///
+/// **One rule, two readers.** `is_owning_selector` and `creates_reference`
+/// both answer from `is_create_rule_selector` and neither spells the
+/// matching again. They used to carry separate copies, which is one drift away from
 /// the defect the next paragraph describes -- and exactly the "same fix
 /// twice" shape `docs/STATUS.md` warns about, since adding a selector to
 /// one and not the other leaks silently.
@@ -219,8 +228,89 @@ fn is_initialiser(program: &Program, _class: Option<&str>, selector: &str) -> bo
 pub const CREATE_RULE_SELECTORS: &[&str] =
     &["alloc", "dynamicAlloc", "dynamicAllocWithHeap:", "new", "copy", "mutableCopy"];
 
+/// The same six, as **families** rather than exact spellings.
+///
+/// ARC does not match a fixed string. A selector is in a family when its
+/// first component *is* the family name, or begins with it and the next
+/// character is not a lowercase letter -- so `-newThing`, `-copyThing`,
+/// `-copyWithZone:` and `-mutableCopyWithZone:` are all `+1`, and
+/// `-newer`, `-allocate` and `-copying` are not (spec § 3.1). Leading
+/// underscores are ignored.
+///
+/// `dynamicAllocWithHeap:` is absent because `dynamicAlloc` as a family
+/// already covers it; the two heap allocators are this project's own
+/// additions to ARC's five, on the reasoning
+/// `CREATE_RULE_SELECTORS` records.
+const CREATE_RULE_FAMILIES: &[&str] =
+    &["dynamicAlloc", "mutableCopy", "alloc", "copy", "new"];
+
+/// Which create-rule family `selector` is spelled into, if any.
+///
+/// Spelling only. `is_create_rule_selector` is the question with the guard
+/// on it, and everything should ask that one instead.
+fn create_rule_family_of(selector: &str) -> Option<&'static str> {
+    let bare = selector.trim_start_matches('_');
+    /* A family is matched against the first component -- the text before
+     * the first colon -- not the whole selector: `-copyWithZone:` is in
+     * the copy family and `initWithCopy:` is not in any. */
+    let first = bare.split(':').next().unwrap_or(bare);
+    CREATE_RULE_FAMILIES.iter().copied().find(|family| {
+        let Some(rest) = first.strip_prefix(family) else {
+            return false;
+        };
+        match rest.chars().next() {
+            None => true,
+            Some(next) => !next.is_ascii_lowercase(),
+        }
+    })
+}
+
+/// Is `selector` `+1` by the create rule -- and does what it returns allow
+/// that to be true?
+///
+/// **The guard is the whole safety argument, and the corpus already holds
+/// the counterexample.** `tests/adapted/mulle_spec/retain_release_balance.m`
+/// declares `- (int)allocOk`, which ARC's family rule puts in the `alloc`
+/// family by spelling alone. Treating it as `+1` hands `oz_static_release`
+/// an `int` -- exactly #398, where `[[Thing alloc] initialValue]` released
+/// the integer 42 and dereferenced it. Clang is no help: it accepts
+/// `- (int)allocOk`, `- (int)newCount` and `- (int)copyFlag` under
+/// `-fobjc-arc` with no diagnostic at all, measured.
+///
+/// So this mirrors `is_initialiser` exactly, for the same reason and with
+/// the same three cases:
+///
+///   - an **exact** create-rule spelling is always owning, whatever the
+///     program declares. These are the SDK's own, and a program whose
+///     headers were not collected must not lose the `alloc`/`init`
+///     pairing.
+///   - any other family spelling qualifies only if **every** declaration
+///     of that selector in the program returns an object pointer.
+///   - a family spelling no declaration matches is **not** owning, which
+///     leaks rather than corrupts.
+fn is_create_rule_selector(program: &Program, selector: &str) -> bool {
+    if CREATE_RULE_SELECTORS.contains(&selector) {
+        return true;
+    }
+    if create_rule_family_of(selector).is_none() {
+        return false;
+    }
+    let mut declared = false;
+    for class in program.classes.values() {
+        for sig in &class.methods {
+            if sig.selector == selector {
+                declared = true;
+                if !returns_object_pointer(sig) {
+                    return false;
+                }
+            }
+        }
+    }
+    declared
+}
+
 fn is_owning_selector(program: &Program, class: Option<&str>, selector: &str) -> bool {
-    CREATE_RULE_SELECTORS.contains(&selector)
+    is_create_rule_selector(program, selector)
         || selector == "retain"
         || is_initialiser(program, class, selector)
 }
@@ -1163,8 +1253,8 @@ pub fn binds_ownership(
 ///     block. Releasing the discarded result too would be a double free.
 ///     So an `init` send is followed back to its receiver rather than
 ///     trusted on its name.
-fn creates_reference(selector: &str) -> bool {
-    CREATE_RULE_SELECTORS.contains(&selector)
+fn creates_reference(program: &Program, selector: &str) -> bool {
+    is_create_rule_selector(program, selector)
 }
 
 /// The +1 reference throwing `node`'s value away would abandon, or None
@@ -1475,10 +1565,16 @@ pub fn dispatch_ownership(
     selector: &str,
     is_class_method: bool,
 ) -> DispatchOwnership {
-    /* Convention beats analysis, and applies whatever the class: `alloc`
-     * and the create-rule selectors are +1 from every implementor by
-     * definition, so there is nothing to disagree about. */
-    if creates_reference(selector) {
+    /* Convention beats analysis, and applies whatever the class: a
+     * create-rule selector is +1 from every implementor, so there is
+     * nothing for `reachable_implementors` to disagree about.
+     *
+     * "By definition" was the old wording and #458 made it too strong.
+     * The family half of the rule is conditional -- a family-spelled
+     * selector counts only while every declaration of it returns an
+     * object pointer -- so `is_create_rule_selector` needs the program,
+     * and the unanimity it checks is what keeps this arm sound. */
+    if creates_reference(program, selector) {
         return DispatchOwnership::Owning;
     }
     if selector == "retain" || is_initialiser(program, receiver, selector) {
@@ -1507,7 +1603,7 @@ fn created_by(
     class: Option<&str>,
     owning: &OwningMethods,
 ) -> bool {
-    if creates_reference(selector) {
+    if creates_reference(program, selector) {
         return true;
     }
     if selector == "retain" || is_initialiser(program, class, selector) {

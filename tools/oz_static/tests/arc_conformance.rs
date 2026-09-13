@@ -321,12 +321,23 @@ const REFUSED: &[Refused] = &[
     },
 ];
 
-/// Every `REFUSED` verdict that is oz_static's own rule.
+/// Every `REFUSED` verdict that is oz_static's own rule *and has no other
+/// home*.
 ///
-/// Thin on purpose: `static_bar_rejects.rs` already holds the eleven
-/// memory-management refusals and is the right home for them. What lives
-/// here is the rejections `docs/ARC.md` credits to oz_static *and not* to
-/// Clang -- the ones where a reader might otherwise assume delegation.
+/// Thin on purpose, and not exhaustive by design -- a `REFUSED` verdict is
+/// pinned wherever its own reasoning lives, and duplicating it here is the
+/// "same fix twice" shape `docs/STATUS.md` warns about. The other homes:
+///
+///   * `static_bar_rejects.rs` -- the memory-management sends (#428, #436).
+///   * `method_family_ownership.rs` -- the five ARC ownership attributes
+///     (#458), together with the family rule whose soundness depends on
+///     them being refused.
+///   * `emit`'s own tests -- `@autoreleasepool` (#430).
+///
+/// What is left for this file is the rejections a reader would otherwise
+/// assume were Clang's. Both rows below are cases where
+/// `clang -fobjc-arc` **accepts** the source and oz_static does not, so
+/// nothing but this test says the refusal is ours to keep.
 #[test]
 fn refused_rules_are_located_oz_static_errors() {
     for row in REFUSED {
