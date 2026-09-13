@@ -2365,6 +2365,18 @@ on a meaning, the compiler is not the instrument.
   `tools/oz2c/tests/naming_tool_identity.rs` enforces the rest, and excludes
   this file for that reason and no other.
 
+  **A `-D` flag is the one interface the rename could not carry forward.**
+  Every other renamed name is a compile or link error at the old spelling, so
+  a stale caller is told. A macro tested with `#ifdef` is not: a build passing
+  `-DOZ_STATIC_DEBUG_REFCOUNT` after #472 compiles clean, links clean, and
+  runs with the instruments absent -- the one failure mode an instrument must
+  not have, because the flag's whole purpose is to be trusted when it is on.
+  `OZ_DEBUG_REFCOUNT` (#452) is the current spelling and `CONFIG_OBJZ_DEBUG_REFCOUNT`
+  the Kconfig option that supplies it; the Kconfig help points here rather than
+  spelling the retired name itself, so the guard above stays strict. This is
+  also why `OZ_TRAP_POOL_EXHAUSTION` kept a name it had outgrown, and why
+  renaming either one belongs in a release note rather than in a diff alone.
+
 - **Never silently degrade.** Anything outside the supported subset is a hard,
   *located* error. This is deliberate, not a gap someone forgot to fill.
 - **A diagnostic's remedy has to be findable, not merely present.** #456 gave

@@ -639,6 +639,12 @@ function(objz_transpile_sources_static target)
     if(CONFIG_OBJZ_HEAP)
         target_compile_definitions(${target} PRIVATE OZ_HEAP_SUPPORT)
     endif()
+    # The refcount instruments (#452). Off unless asked for: each is a branch
+    # on every retain and release, and the traps abort rather than report,
+    # which is right for a test build and wrong for a shipped one.
+    if(CONFIG_OBJZ_DEBUG_REFCOUNT)
+        target_compile_definitions(${target} PRIVATE OZ_DEBUG_REFCOUNT)
+    endif()
 
     # Real oz_sdk headers keep ARC ownership qualifiers (__unsafe_unretained,
     # etc.) for the Python pipeline's Clang-AST analysis, which genuinely

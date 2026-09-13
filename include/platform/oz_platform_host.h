@@ -44,6 +44,21 @@ static inline int oz_slab_alloc(oz_slab_t *slab, void **mem)
 static inline void oz_slab_free(oz_slab_t *slab, void *mem)
 {
         free(mem);
+#ifdef OZ_DEBUG_REFCOUNT
+        /* The clamp below is the third thing that makes a double free
+         * invisible, after the refcount reaching -1 silently and the dealloc
+         * switch's `default:` arm breaking without a word: `num_used` is
+         * already 0, so a second free changes nothing and no count is ever
+         * wrong afterwards (#452).
+         *
+         * Host only, and deliberately. Zephyr's `oz_slab_free` is a
+         * pass-through to `k_mem_slab_free`, which keeps its own accounting
+         * and has no `num_used` here to underflow -- there is nothing at this
+         * layer to assert about on that backend. */
+        oz_assert_msg(slab->num_used > 0,
+                      "slab free with no outstanding allocation -- this slot was freed "
+                      "twice, or returned to the wrong slab");
+#endif
         if (slab->num_used > 0) {
                 slab->num_used--;
         }
