@@ -4,15 +4,29 @@
 // and only where it does something (#452).
 //
 // **Why this pins emitted text rather than behaviour.** The poison is not
-// observable from a host test. `oz_slab_free` on the host backend is
-// `free()`, and the allocator owns the block from that moment: probed on
-// arm64 macOS, an object whose ivar held `0x11111111` and whose body poison
-// was `0xA5` read back `0x00000003` after the free. Zephyr's
-// `k_mem_slab_free` is gentler -- it writes only the free-list link, into
-// the block's first word -- so on target the body poison survives and the
-// `class_id` stamp does not. Either way the only thing a host harness can
-// check is that the right C is generated; `refcount_traps.rs` carries the
-// measurement and the reasoning.
+// observable from a host test, and the freed object it describes is not a
+// testable subject at all. `oz_slab_free` on the host backend is `free()`,
+// and the allocator owns the block from that moment -- so what a later read
+// finds there is the allocator's business, and the two hosts this ran on
+// disagree:
+//
+//   * arm64 macOS -- an object whose ivar held `0x11111111` and whose body
+//     poison was `0xA5` read back `0x00000003` after the free. Neither the
+//     stamp nor the body poison survived.
+//   * Linux/glibc in CI -- worse than lost. glibc writes a tcache `next`
+//     pointer over the first word, and `_meta` is the root struct's first
+//     member, so bit 12 of that pointer *is* `_meta.immortal`: a release of
+//     the freed object returns at the immortal check above the trap, and
+//     the over-release is never seen. A double-release fixture that aborts
+//     on macOS exits 0 there.
+//
+// Zephyr's `k_mem_slab_free` is the gentle case -- it writes only the
+// free-list link, into the block's first word -- so on target the body
+// poison survives and the `class_id` stamp does not.
+//
+// So the only thing any host harness can honestly check is that the right C
+// is generated. `refcount_traps.rs` carries the rest of the reasoning, and
+// stages its over-release on a *live* object for exactly this reason.
 //
 // That makes these assertions worth more than they look: they are the whole
 // gate on a feature whose effect nothing here can see.

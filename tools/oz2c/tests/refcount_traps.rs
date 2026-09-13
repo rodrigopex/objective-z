@@ -22,6 +22,34 @@
 // `-release` and a send of it is a hard located error (#428). It is the same
 // reason `samples/smp_shared` declares the ABI by hand (#437) -- there is no
 // Objective-C way to drive a refcount.
+//
+// **Why the over-release is staged on a live object rather than by
+// releasing a freed one.** The obvious fixture is two releases: the first
+// deallocates, the second is the over-release. It is not a test, because
+// reaching the trap means reading `_meta` and `oz_refcount` out of storage
+// the allocator has taken back, and what it finds there is the allocator's
+// business. Measured, the same fixture disagrees across hosts:
+//
+//   * arm64 macOS -- the trap fires, and the class prints as `?`, because
+//     malloc left something <= 0 in the refcount word and a `class_id`
+//     matching no class.
+//   * Linux/glibc in CI -- the program **runs to completion and exits 0**.
+//     glibc writes a tcache `next` pointer over the first word, `_meta` is
+//     the root struct's first member, and the pointer's bit 12 is
+//     `_meta.immortal` -- so `oz_release` returns at the immortal check
+//     *above* the trap and the over-release is never seen.
+//
+// That is not a trap that sometimes misses; it is a test whose subject is
+// undefined behaviour. So these tests drive the refcount to 0 on an object
+// that is still alive -- `oz_atomic_init(&w->base.oz_refcount, 0)`, the
+// same reach into the root struct `behavior_edge.rs` already makes -- and
+// then release it. That is exactly the trap's condition ("released at
+// refcount 0"), it is fully defined, it fires identically on every
+// platform, and because the object is live `oz_class_name` can read a real
+// `class_id` and **name the class**.
+//
+// The freed case is left untested deliberately. `poison_emission.rs`
+// explains what poisoning can and cannot recover there.
 
 mod common;
 use common::{compile_and_run, expect_trap, ozobject_src as PREAMBLE};
@@ -31,19 +59,15 @@ use common::{compile_and_run, expect_trap, ozobject_src as PREAMBLE};
 ///
 /// **`w` carries one release that is not in `extra`.** `[Widget alloc]` is
 /// `+1` and `w` is a strong local, so ARC releases it at the end of the
-/// scope -- after the `printf("survived")` below. Every count here is
-/// therefore one higher than the explicit calls suggest, which matters for
-/// *where* a trap fires as much as whether:
+/// scope -- after the `printf("survived")` below. Any explicit release in
+/// `extra` is therefore *additional*, which is why a balanced program here
+/// releases nothing explicitly.
 ///
-/// | explicit | total | flagged outcome |
-/// |---|---|---|
-/// | 0 | 1 | correct; runs to completion |
-/// | 1 | 2 | the second release is ARC's, so the trap fires *after* "survived" |
-/// | 2 | 3 | the trap fires at the second explicit call, before "survived" |
-///
-/// This was found the hard way: the control below used to pass with one
-/// explicit release because it never defined the flag, so the trap it was
-/// controlling for was not compiled in.
+/// That cost a wrong test: the control below used to pass with one explicit
+/// release, because it never defined the flag and so the trap it was
+/// controlling for was not compiled in. With the flag on, one explicit
+/// release plus ARC's is an over-release, and the trap fires after
+/// "survived".
 fn program(extra: &str) -> String {
     format!(
         "{}{}{}{}",
@@ -80,21 +104,24 @@ int main(void)
     )
 }
 
-/// Releasing an object whose refcount is already 0 aborts instead of
-/// returning as though nothing happened.
+/// Releasing an object whose refcount is already 0 aborts, and names the
+/// class while doing it.
 ///
-/// It does *not* name the class, and the assertion below pins that rather
-/// than wishing otherwise -- the comment there records why poisoning cannot
-/// change it, measured on both allocators.
+/// The refcount is driven to 0 on a **live** object, so the trap's
+/// condition is met with nothing freed -- see the note at the top of this
+/// file for why the freed variant is not a test. Two things follow that the
+/// freed variant could not show:
 ///
-/// Two releases: the first takes it 1 -> 0 and deallocates, the second is the
-/// over-release. Without the flag this is silent -- `oz_atomic_dec_and_test`
-/// is a fetch-sub compared against 1, so the second leaves -1 and returns.
+///   * it fires on every platform, because nothing here reads storage the
+///     allocator owns;
+///   * `oz_class_name` reads a real `class_id` and prints **`Widget`**,
+///     which is what the print-then-assert shape exists for. The class is
+///     unknowable only *after* a free.
 #[test]
-fn an_over_release_aborts_rather_than_returning_silently() {
+fn an_over_release_aborts_and_names_the_class() {
     let src = program(
         "\
-	oz_release((struct OZObject *)w);
+	oz_atomic_init(&w->base.oz_refcount, 0);
 	oz_release((struct OZObject *)w);
 ",
     );
@@ -104,49 +131,15 @@ fn an_over_release_aborts_rather_than_returning_silently() {
         "the trap must say what the fault was; got:\n{}",
         out
     );
-    /* **The class prints as `?`, and poisoning did not change that.** This
-     * assertion was written expecting to flip to "freed" once `_oz_free`
-     * stamped `OZ_CLASS_ID_FREED`. The stamp is now emitted -- see
-     * `poison_emission.rs` -- and this still reads `?`, measured rather
-     * than assumed. The reason is the one thing the plan did not account
-     * for: **the allocator owns the block the moment it is handed back, and
-     * writes its own bookkeeping into it.**
-     *
-     *   * Zephyr's `k_mem_slab_free` links the block into its free list by
-     *     writing the next pointer *into the block*: `*(char **) mem =
-     *     slab->free_list` (`kernel/mem_slab.c`). `_meta` is the root
-     *     struct's first member, so `class_id` is at offset 0 -- exactly
-     *     what that pointer lands on.
-     *   * The host's `oz_slab_free` is `free()`, and malloc is worse than
-     *     that: probed on arm64 macOS, an object whose ivar was
-     *     `0x11111111` and whose body poison was `0xA5` read back
-     *     `0x00000003` after the free, so *neither* the stamp nor the body
-     *     poison survives here. On the host that is fine -- ASan is the
-     *     stronger instrument and the corpora already run under it.
-     *
-     * So the `?` is not a shortfall waiting on a feature. **On a true
-     * double free the class is not knowable from the object**, and the only
-     * designs that would change that are the ones #452 rejected: a
-     * quarantine (a slot held back is a slot the next allocation cannot
-     * have, and `pools.rs` counts one slot per site) or a new root field at
-     * an offset the free-list link misses (four bytes on every object, and
-     * an ABI that differs between flagged and unflagged builds).
-     *
-     * What poisoning does buy is on target, where the body past the root
-     * prefix is untouched by the free-list write -- so a use-after-free
-     * that reads an *ivar* gets `0xA5A5A5A5` instead of plausible stale
-     * data. That is not observable from this harness, which is host-only;
-     * it needs the Zephyr backend. */
     assert!(
-        out.contains("over-release of ?"),
-        "the class is not knowable from a freed object -- the allocator overwrites `_meta` \
-         when it takes the block back, so the stamp is gone by the time the trap reads it; \
-         got:\n{}",
+        out.contains("over-release of Widget"),
+        "a live over-release must name the class -- that is the whole reason the trap prints \
+         before it asserts, `oz_assert_msg` taking no format arguments; got:\n{}",
         out
     );
     assert!(
         !out.contains("survived"),
-        "it must abort at the second release, not carry on to the end of main; got:\n{}",
+        "it must abort at the release, not carry on to the end of main; got:\n{}",
         out
     );
 }
@@ -170,7 +163,7 @@ fn an_over_release_aborts_rather_than_returning_silently() {
 ///     release for `w` is *two* -- a real over-release. Turning the flag on
 ///     made the trap fire, correctly, after "survived". The balanced
 ///     program is the one that releases nothing explicitly and lets ARC do
-///     it: see the table on `program`.
+///     it, which is what `program`'s comment now spells out.
 #[test]
 fn a_correct_release_does_not_trip_the_trap() {
     let src = program("");
@@ -186,26 +179,30 @@ fn a_correct_release_does_not_trip_the_trap() {
     );
 }
 
-/// And the same program, unflagged, survives the double release.
+/// The same over-release, unflagged, is survived in silence.
 ///
-/// This is the behaviour the old `double_release_guard` case asserted, and it
-/// is worth keeping as a row rather than deleting: turning the instruments on
-/// must not be the only way the program is *safe*, only the way the fault is
-/// *visible*. The guard still absorbs the second release; the trap is what
-/// tells you it happened.
+/// This is the behaviour the Unity `double_release_guard` case was named
+/// for, and it is worth a row rather than deleting: turning the instruments
+/// on must not be the only thing making the program *survive*, only the
+/// thing making the fault *visible*.
+///
+/// Deterministic for the same reason as the test above -- the object is
+/// live. `oz_atomic_dec_and_test` is `atomic_fetch_sub(t, 1) == 1`, so a
+/// release at 0 leaves -1 and reports false, and the ARC release at scope
+/// end takes it to -2 and reports false again. Both return quietly, which
+/// is exactly the silence #452 exists to break.
 #[test]
-fn without_the_flag_a_double_release_is_survived_silently() {
+fn without_the_flag_an_over_release_is_survived_silently() {
     let src = program(
         "\
-	oz_release((struct OZObject *)w);
+	oz_atomic_init(&w->base.oz_refcount, 0);
 	oz_release((struct OZObject *)w);
 ",
     );
-    let out = compile_and_run(&src, "trap_double_release_unflagged");
+    let out = compile_and_run(&src, "trap_over_release_unflagged");
     assert_eq!(
         out, "alive\nsurvived\n",
-        "unflagged, the second release returns quietly -- which is exactly the silence \
-         #452 exists to break; got:\n{}",
+        "unflagged, a release at refcount 0 returns quietly; got:\n{}",
         out
     );
 }
