@@ -1130,7 +1130,8 @@ fn reserved_name_err(diags: &mut Vec<Diagnostic>, src: &str, node: Node) {
     );
 }
 
-/// The four selectors ARC owns, and which user code therefore cannot send.
+/// The five selectors Clang refuses under `-fobjc-arc`, and which user code
+/// therefore cannot send.
 ///
 /// Not a list of "discouraged" spellings: ARC is always enabled here, and
 /// every Clang path in this repo passes `-fobjc-arc`
@@ -1186,6 +1187,68 @@ const ARC_FORBIDDEN_SELECTORS: &[&str] =
 /// because the question is which selector was sent and not what it was sent
 /// to -- the "key ownership on the reference, never on a syntactic form"
 /// rule, applied to a rejection.
+/// Reject `@autoreleasepool { ... }`.
+///
+/// **Not because it misbehaves.** The block really is an ordinary ARC
+/// scope: `emit` dropped the token and ran the same `arc_enter`/`arc_exit`
+/// bookkeeping as `render_scoped_block`, so everything allocated inside was
+/// released at the closing brace. Behaviour was correct.
+///
+/// It is rejected because the keyword promises a mechanism that does not
+/// exist here and cannot (#430):
+///
+///   - **There is no `-autorelease`.** It is in no SDK header, and a send of
+///     it is a hard located error -- one of the five selectors ARC forbids
+///     (`ARC_FORBIDDEN_SELECTORS`, #428/#436). So no reference can ever be
+///     *pending* at the closing brace, and a drain would have nothing to do.
+///   - **There is no pool object.** `OZAutoreleasePool` exists only under
+///     `src/runtime_legacy/`, which no CMake file references.
+///
+/// So the construct was accepted for its syntax alone, and a reader porting
+/// Cocoa code got immediate reclaim at scope exit where the keyword promises
+/// deferred reclaim at a drain point. In Cocoa those differ observably; here
+/// the difference is unreachable, because the mechanism that creates it is
+/// refused. Accepting a keyword whose meaning is a mechanism the backend
+/// does not have is exactly what the never-silently-degrade rule forbids --
+/// and "it happens to behave correctly" is the argument that kept
+/// `__objc_refcount_get` public for a year (#418).
+///
+/// A whole-root walk for the reason `check_manual_memory_sends` gives: this
+/// is a fact about the construct, not about the body it sits in, and
+/// `walk_for_reject` treats a block literal as opaque.
+///
+/// tree-sitter-objc gives the construct no node kind of its own -- it parses
+/// as a `compound_statement` whose first child is the literal token
+/// `@autoreleasepool`, ahead of the usual `{`. That shape test used to live
+/// in `emit::is_autoreleasepool_shape`, which this replaces.
+pub fn check_autoreleasepool(root: Node, src: &str) -> Vec<Diagnostic> {
+    let mut diags = Vec::new();
+    walk_autoreleasepool(root, src, &mut diags);
+    diags
+}
+
+fn walk_autoreleasepool(node: Node, src: &str, diags: &mut Vec<Diagnostic>) {
+    if node.kind() == "compound_statement" {
+        let mut cursor = node.walk();
+        if node.children(&mut cursor).next().map(|c| c.kind()) == Some("@autoreleasepool") {
+            err(
+                diags,
+                src,
+                node,
+                "'@autoreleasepool' has no meaning in the static subset: there is no \
+                 '-autorelease' -- ARC forbids the send, so nothing can ever be pending -- and \
+                 no pool object, so a drain would have nothing to drain. Delete the keyword and \
+                 keep the braces: a plain braced scope is what already ran, and ARC releases \
+                 everything the scope owns at the closing brace",
+            );
+        }
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        walk_autoreleasepool(child, src, diags);
+    }
+}
+
 pub fn check_manual_memory_sends(root: Node, src: &str) -> Vec<Diagnostic> {
     let mut diags = Vec::new();
     walk_manual_memory_sends(root, src, &mut diags);

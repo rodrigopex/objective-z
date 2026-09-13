@@ -1552,9 +1552,6 @@ fn needs_translation(node: Node, src: &str) -> bool {
     if node.kind() == "type_qualifier" && is_arc_qualifier(node_text(node, src)) {
         return true;
     }
-    if is_autoreleasepool_shape(node) {
-        return true;
-    }
     if node.kind() == "string_literal" {
         return is_boxed_string_literal(node);
     }
@@ -1894,9 +1891,6 @@ fn render_expr(node: Node, ctx: &mut EmitCtx) -> (String, String) {
         }
         "synchronized_statement" => render_synchronized_statement(node, ctx),
         "return_statement" => render_return_statement(node, ctx),
-        "compound_statement" if is_autoreleasepool_shape(node) => {
-            render_autoreleasepool_statement(node, ctx)
-        }
         // Only a block that owns object locals is rewritten; every other one
         // stays byte-identical, so ARC adds no churn where it changes nothing.
         "compound_statement" if declares_owned_local(node, ctx) => {
@@ -3992,83 +3986,7 @@ fn render_return_statement(node: Node, ctx: &mut EmitCtx) -> (String, String) {
     }
 }
 
-/// Is `node` an `@autoreleasepool { ... }` block? tree-sitter-objc gives
-/// it no node kind of its own -- it parses as an ordinary
-/// `compound_statement` whose first child is the literal token
-/// `@autoreleasepool`, ahead of the usual `{`. This is the one place that
-/// distinction is tested; everywhere else a bare `{ ... }` is left alone,
-/// so an ordinary nested block is unaffected.
-fn is_autoreleasepool_shape(node: Node) -> bool {
-    if node.kind() != "compound_statement" {
-        return false;
-    }
-    let mut cursor = node.walk();
-    let first_kind = node.children(&mut cursor).next().map(|c| c.kind());
-    first_kind == Some("@autoreleasepool")
-}
 
-/// `@autoreleasepool { body }` unwrapped to a plain compound statement --
-/// no pool object, no drain. Matches the Python pipeline exactly
-/// (`emit.py`: accepted syntactically and simply unwrapped to its inner
-/// compound statement -- there is no `OZAutoreleasePool` class or
-/// `-autorelease` method anywhere in this SDK). oz_static has no ARC
-/// either way (#189), so there is nothing here for a real pool to drain;
-/// the only thing that has to happen is dropping the `@autoreleasepool`
-/// token itself, which is not a real C token and would otherwise fail to
-/// compile verbatim.
-///
-/// Always runs when `is_autoreleasepool_shape` matches, even if nothing
-/// inside the body needs translating -- unlike the ordinary "byte-
-/// identical when untranslated" shortcut elsewhere, leaving the token in
-/// place is never valid, so there is no shortcut to take.
-fn render_autoreleasepool_statement(node: Node, ctx: &mut EmitCtx) -> (String, String) {
-    let mut cursor = node.walk();
-    let children: Vec<Node> = node.children(&mut cursor).collect();
-    // children[0] = "@autoreleasepool", children[1] = "{", last = "}".
-    let stmts = &children[2..children.len() - 1];
-
-    // A pool block is an ordinary scope as far as ownership goes, so it does
-    // the same ARC bookkeeping as `render_scoped_block` -- see `arc_enter`
-    // for what went wrong while it did not.
-    arc_enter(ctx, node);
-    let mut ended_with_jump = false;
-    let mut rendered_stmts: Vec<(String, &str)> = Vec::with_capacity(stmts.len());
-    for stmt in stmts {
-        let rendered = render_expr(*stmt, ctx).0;
-        let combined = if ctx.pre_stmts.is_empty() {
-            rendered
-        } else {
-            let pre = ctx.pre_stmts.join("\n\t");
-            ctx.pre_stmts.clear();
-            format!("{}\n\t{}", pre, rendered)
-        };
-        rendered_stmts.push((combined, node_text(*stmt, ctx.src)));
-        arc_note(*stmt, ctx);
-        ended_with_jump = is_jump_statement(*stmt);
-    }
-    let releases = arc_exit(ctx, ended_with_jump);
-
-    let mut out = String::from("{\n");
-    for (rendered, original) in &rendered_stmts {
-        if rendered == original {
-            out.push('\t');
-            out.push_str(original);
-        } else {
-            out.push_str("\t/* ");
-            out.push_str(&one_line(original));
-            out.push_str(" */\n\t");
-            out.push_str(rendered);
-        }
-        out.push('\n');
-    }
-    for line in &releases {
-        out.push('\t');
-        out.push_str(line);
-        out.push('\n');
-    }
-    out.push('}');
-    (out, "id".to_string())
-}
 
 fn render_forin_statement(node: Node, ctx: &mut EmitCtx) -> (String, String) {
     let (line, col) = line_col(ctx.src, node.start_byte());
@@ -6277,11 +6195,18 @@ fn braced_group(lines: &[&String]) -> String {
 ///
 /// The three `arc_*` helpers exist so that every block renderer does the
 /// same bookkeeping. They were factored out after `@autoreleasepool` was
-/// found to do none of it: its arm sits before the ARC one in
+/// found to do none of it: its arm sat *before* the ARC one in
 /// `render_expr`'s match, so a pool block that declared an owned local got
 /// the pool renderer and never the releases. `samples/heap_alloc` leaked
-/// every object it allocated that way -- and it says so in its own expected
+/// every object it allocated that way -- and it said so in its own expected
 /// output, which no compile or link could have checked.
+///
+/// That arm is gone: `@autoreleasepool` is refused outright now
+/// (`staticbar::check_autoreleasepool`, #430), since there is no
+/// `-autorelease` to make anything pending and no pool to drain. The
+/// helpers outlive it and the lesson does: a second block renderer that
+/// forgets this bookkeeping leaks silently, and the only thing that caught
+/// it last time was a sample's expected output.
 fn arc_enter(ctx: &mut EmitCtx, body: Node) {
     ctx.arc_scopes.push(ArcScope::for_body(body));
 }

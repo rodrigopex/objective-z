@@ -772,6 +772,14 @@ pub fn collect(source: &str) -> (Program, Vec<crate::model::Diagnostic>) {
      */
     diagnostics.extend(crate::staticbar::check_manual_memory_sends(root, source));
 
+    /*
+     * And `@autoreleasepool`, for the third time the same reason: the
+     * construct is refused wherever it appears, and what makes it refusable
+     * is that `-autorelease` is one of the sends above -- with no way to
+     * make a reference pending, a pool has nothing to drain (#430).
+     */
+    diagnostics.extend(crate::staticbar::check_autoreleasepool(root, source));
+
     // A `superclass` reference that doesn't resolve to a class actually
     // collected above (e.g. a real Foundation class only ever pulled in
     // via `#import <Foundation/Foundation.h>` -- oz_static has no import
