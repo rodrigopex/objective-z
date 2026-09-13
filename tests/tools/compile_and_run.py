@@ -25,7 +25,17 @@ POOL_RE = re.compile(r"/\*\s*oz-pool:\s*(.+?)\s*\*/")
 HEAP_RE = re.compile(r"/\*\s*oz-heap\s*\*/")
 #: `Widget_alloc()` / `Widget_oz_alloc()` in a hand-written Unity driver --
 #: an allocation oz2c cannot see. See `_default_pool_sizes`.
-DRIVER_ALLOC_RE = re.compile(r"\b(\w+?)(?:_oz)?_alloc\s*\(")
+#:
+#: Anchored on an initial capital because a *class* allocator is the only
+#: thing this is looking for, and the PAL's own allocators end in `_alloc`
+#: too -- `oz_slab_alloc`, `oz_heap_alloc`. A driver that reaches for one
+#: of those (the census drivers under `tests/behavior/census/` do) was read
+#: as declaring a class named `oz_slab`, and the resulting
+#: `--pool-sizes oz_slab=4` is a hard error from
+#: `PoolSizes::unknown_overrides` (#451). Class names here are CamelCase
+#: and `oz_` is reserved to generated and PAL code (CLAUDE.md), so the two
+#: namespaces cannot collide.
+DRIVER_ALLOC_RE = re.compile(r"\b([A-Z]\w*?)(?:_oz)?_alloc\s*\(")
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))

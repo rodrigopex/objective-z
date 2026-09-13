@@ -260,6 +260,17 @@ int oz_check_all_slabs(void)
 	leaked += oz_slab_check_leaks(&oz_slab_OZNumber, "OZNumber");
 	leaked += oz_slab_check_leaks(&oz_slab_BoxedTest, "BoxedTest");
 
+	if (leaked > 0) {
+		/* The report is the whole value of this call, and a caller
+		 * may exit or abort straight after it. #452 measured stdio
+		 * losing a diagnostic that way: `printf` to anything but a
+		 * terminal is fully buffered and neither `abort()` nor
+		 * `_exit()` flushes it. Flushing every stream also keeps the
+		 * report ordered against whatever the program printed on
+		 * stdout, which is what a reader is comparing it to. No-op
+		 * on Zephyr, where printk has already left. */
+		oz_platform_flush();
+	}
 	return leaked;
 }
 

@@ -54,7 +54,17 @@ def _find_llvm_clang() -> str:
 
 #: `Widget_alloc()` / `Widget_oz_alloc()` in a hand-written ztest driver --
 #: an allocation oz2c cannot see. See `_collect_pool_sizes`.
-DRIVER_ALLOC_RE = re.compile(r"\b(\w+?)(?:_oz)?_alloc\s*\(")
+#:
+#: Anchored on an initial capital because a *class* allocator is the only
+#: thing this is looking for, and the PAL's own allocators end in `_alloc`
+#: too: `oz_slab_alloc`, `oz_heap_alloc`, `k_mem_slab_alloc`. An unanchored
+#: pattern read `oz_slab_alloc(&census_slab, &a)` in `src/test_census.c` as
+#: a class called `oz_slab` and produced `--pool-sizes oz_slab=4`, which
+#: `PoolSizes::unknown_overrides` rejects outright -- a hard error naming
+#: neither the driver nor the reason (#451). Class names here are
+#: CamelCase and the `oz_` prefix is reserved to generated and PAL code
+#: (CLAUDE.md), so the two namespaces cannot collide.
+DRIVER_ALLOC_RE = re.compile(r"\b([A-Z]\w*?)(?:_oz)?_alloc\s*\(")
 
 
 def _collect_pool_sizes(m_paths: list[Path], driver_text: str) -> str:
