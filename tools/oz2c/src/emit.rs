@@ -1632,7 +1632,7 @@ fn needs_translation(node: Node, src: &str) -> bool {
      * translation needed", `rebuild_or_text` copies its source text
      * verbatim, and `__unsafe_unretained` reaches the generated `.c`
      * (#428). The same family as #367's unlowered `id<Proto>` parameter. */
-    if node.kind() == "type_qualifier" && is_arc_qualifier(node_text(node, src)) {
+    if is_stripped_arc_spelling(node, src) {
         return true;
     }
     if node.kind() == "string_literal" {
@@ -2060,7 +2060,7 @@ fn render_expr(node: Node, ctx: &mut EmitCtx) -> (String, String) {
          * rather than being silently accepted as an unretained strong
          * reference, which is the exact bug the qualifier exists to
          * prevent. `lower_ivar_decl` rejects it outright for an ivar. */
-        "type_qualifier" if is_arc_qualifier(node_text(node, ctx.src)) => {
+        _ if is_stripped_arc_spelling(node, ctx.src) => {
             (String::new(), "void".to_string())
         }
         "call_expression" if !unhoisted_owning_operands(node, ctx).is_empty() => {
@@ -6684,6 +6684,68 @@ fn render_stmt_with_comment(node: Node, ctx: &mut EmitCtx, indent: &str) -> Stri
 /// everywhere else).
 const STRIPPED_ARC_QUALIFIERS: &[&str] = &["__strong", "__unsafe_unretained", "__autoreleasing"];
 
+/// ARC *attributes* that reach the generated C and are not C.
+///
+/// A sibling list rather than more entries in `STRIPPED_ARC_QUALIFIERS`:
+/// that const holds `type_qualifier` spellings and #448 owns what goes in
+/// it, while these parse as an `attribute_specifier`. Two lists, one
+/// predicate -- `is_stripped_arc_spelling` -- because the drift this
+/// neighbourhood guards against is between the *positions* a spelling can
+/// be forgotten in, not between the two kinds of spelling.
+///
+/// Only these two. The five ownership-carrying attributes
+/// (`ns_returns_retained`, `ns_returns_not_retained`, `ns_consumed`,
+/// `ns_consumes_self`, `objc_method_family`) are **refused** by
+/// `staticbar::check_ownership_attributes` (#458) and must never be
+/// stripped: dropping one silently makes ARC and the attribute disagree,
+/// which is a use-after-free rather than a leak. These two only sharpen a
+/// release ARC already emits precisely, so ignoring them changes no
+/// answer -- but they are still not C, and GCC warns
+/// `attribute directive ignored` while Apple clang errors outright
+/// ("only applies to retainable types"), so they cannot be left in (#461).
+const STRIPPED_ARC_ATTRIBUTES: &[&str] =
+    &["objc_precise_lifetime", "objc_externally_retained"];
+
+/// Does `node` carry an ARC-only spelling that must not reach the C?
+///
+/// The one predicate all four strip positions call, so a spelling handled
+/// in one and forgotten in another cannot happen -- which is exactly how
+/// `__unsafe_unretained` reached the generated C from ten positions in
+/// #428. A `type_qualifier` and an `attribute_specifier` are both answered
+/// here rather than at the call sites, so adding a third kind of spelling
+/// is one edit and not four.
+fn is_stripped_arc_spelling(node: Node, src: &str) -> bool {
+    match node.kind() {
+        "type_qualifier" => is_arc_qualifier(node_text(node, src)),
+        "attribute_specifier" => named_stripped_attribute(node, src).is_some(),
+        _ => false,
+    }
+}
+
+/// The stripped attribute named under `spec`, if any.
+///
+/// Looks at every identifier beneath the specifier rather than only its
+/// first child, the way `staticbar::named_ownership_attribute` does, so a
+/// nested argument list is still seen.
+fn named_stripped_attribute(spec: Node, src: &str) -> Option<&'static str> {
+    fn search(node: Node, src: &str) -> Option<&'static str> {
+        if node.kind() == "identifier" {
+            let text = node_text(node, src).trim();
+            if let Some(found) = STRIPPED_ARC_ATTRIBUTES.iter().copied().find(|a| *a == text) {
+                return Some(found);
+            }
+        }
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            if let Some(found) = search(child, src) {
+                return Some(found);
+            }
+        }
+        None
+    }
+    search(spec, src)
+}
+
 /// Is this qualifier's text one oz2c drops on the way out?
 ///
 /// One predicate rather than two `contains` calls over two lists, because
@@ -6928,9 +6990,18 @@ fn collect_ivar_lowering_edits(
                      runtime, so it would silently behave as an unretained strong ivar) -- use \
                      '__unsafe_unretained' and clear it explicitly",
                 );
-            } else if is_arc_qualifier(text) {
+            } else if is_stripped_arc_spelling(node, ctx.src) {
                 edits.push((node.start_byte() - origin..node.end_byte() - origin, String::new()));
             }
+            return;
+        }
+        /* The attribute twin of the arm above. An ivar declaration is
+         * copied into the generated struct as text, so an ARC attribute on
+         * one reaches the C exactly as a qualifier did before #428 -- and
+         * this match is a *position*, which is why both spellings ask one
+         * predicate rather than each arm carrying its own list (#461). */
+        "attribute_specifier" if is_stripped_arc_spelling(node, ctx.src) => {
+            edits.push((node.start_byte() - origin..node.end_byte() - origin, String::new()));
             return;
         }
         "block_pointer_declarator" => {
@@ -8725,7 +8796,7 @@ fn arc_qualifier_edits(node: Node, src: &str) -> Vec<(Range<usize>, String)> {
         if node.kind() == "block_literal" {
             return;
         }
-        if node.kind() == "type_qualifier" && is_arc_qualifier(&src[node.byte_range()]) {
+        if is_stripped_arc_spelling(node, src) {
             let mut end = node.end_byte();
             let bytes = src.as_bytes();
             while end < src.len() && (bytes[end] == b' ' || bytes[end] == b'\t') {
