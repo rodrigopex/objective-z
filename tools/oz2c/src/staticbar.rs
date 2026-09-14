@@ -1815,24 +1815,45 @@ const OWNERSHIP_ATTRIBUTES: &[&str] = &[
 /// the token, and pointing at it is the whole job. What would need Clang's
 /// resolved declarations is the *inferred* qualifier on a plain `T **`
 /// (#461, ARC §2.7.2), where there is no token to point at.
-pub fn check_weak_qualifier(root: Node, src: &str) -> Vec<Diagnostic> {
+pub fn check_refused_qualifiers(root: Node, src: &str) -> Vec<Diagnostic> {
     let mut diags = Vec::new();
     walk_weak_qualifier(root, src, &mut diags);
     diags
 }
 
+/// The two ownership qualifiers oz2c refuses, and the reason each gives.
+///
+/// Both are refused rather than stripped, and the distinction matters:
+/// `emit::STRIPPED_ARC_QUALIFIERS` drops `__strong` and
+/// `__unsafe_unretained` because each *is* the behaviour this target
+/// already has, so dropping the word changes nothing. Neither of these two
+/// has that property -- one would need a runtime and the other a pool, and
+/// quietly dropping a word whose mechanism does not exist is the silent
+/// degrade the project's standing rule forbids.
+const REFUSED_QUALIFIERS: &[(&str, &str)] = &[
+    (
+        "__weak",
+        "'__weak' is not supported: nothing zeroes a weak reference without a runtime, so it \
+         would silently behave as an unretained strong reference -- which is the bug the \
+         qualifier exists to prevent. Use '__unsafe_unretained' and clear it explicitly",
+    ),
+    (
+        "__autoreleasing",
+        "'__autoreleasing' has no meaning in the static subset: there is no pool to release \
+         into -- ARC forbids '-autorelease', so nothing can ever be pending, and \
+         '@autoreleasepool' is refused for the same reason. Delete the qualifier: the \
+         declaration then carries the default '__strong', and ARC releases what it owns at \
+         the closing brace, which is the only timing this target has",
+    ),
+];
+
 fn walk_weak_qualifier(node: Node, src: &str, diags: &mut Vec<Diagnostic>) {
-    if node.kind() == "type_qualifier" && node_text(node, src).trim() == "__weak" {
-        err(
-            diags,
-            src,
-            node,
-            "'__weak' is not supported: nothing zeroes a weak reference without a runtime, \
-             so it would silently behave as an unretained strong reference -- which is the \
-             bug the qualifier exists to prevent. Use '__unsafe_unretained' and clear it \
-             explicitly",
-        );
-        return;
+    if node.kind() == "type_qualifier" {
+        let text = node_text(node, src).trim();
+        if let Some((_, message)) = REFUSED_QUALIFIERS.iter().find(|(name, _)| *name == text) {
+            err(diags, src, node, *message);
+            return;
+        }
     }
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {

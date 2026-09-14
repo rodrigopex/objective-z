@@ -6874,7 +6874,7 @@ fn render_stmt_with_comment(node: Node, ctx: &mut EmitCtx, indent: &str) -> Stri
 /// deliberately absent -- it is rejected rather than stripped (see
 /// `lower_ivar_decl` for an ivar, `render_expr`'s `type_qualifier` arm for
 /// everywhere else).
-const STRIPPED_ARC_QUALIFIERS: &[&str] = &["__strong", "__unsafe_unretained", "__autoreleasing"];
+const STRIPPED_ARC_QUALIFIERS: &[&str] = &["__strong", "__unsafe_unretained"];
 
 /// ARC *attributes* that reach the generated C and are not C.
 ///
@@ -7178,7 +7178,7 @@ fn collect_ivar_lowering_edits(
             let text = node_text(node, ctx.src).trim();
             if text == "__weak" {
                 /* Unreachable since #448, and kept as defence rather than
-                 * deleted. `staticbar::check_weak_qualifier` refuses the
+                 * deleted. `staticbar::check_refused_qualifiers` refuses the
                  * qualifier in every position from `collect`, and
                  * `transpile_observed` propagates a front-end diagnostic
                  * with `?` before `emit::emit` runs -- so nothing that goes

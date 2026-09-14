@@ -45,7 +45,7 @@ fn weak_property_rejected() {
 ///
 /// **The ivar was the only position that worked**, and since #448 the
 /// refusal is one whole-tree walk over `type_qualifier` nodes
-/// (`staticbar::check_weak_qualifier`), so the general rule and all ten
+/// (`staticbar::check_refused_qualifiers`), so the general rule and all ten
 /// positions live in `weak_every_position.rs`. This case stays as the
 /// control for the position that never regressed, and its wording
 /// assertion moved with the message: the diagnostic no longer says
