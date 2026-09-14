@@ -333,6 +333,13 @@ const REFUSED: &[Refused] = &[
 ///     (#458), together with the family rule whose soundness depends on
 ///     them being refused.
 ///   * `emit`'s own tests -- `@autoreleasepool` (#430).
+///   * `weak_every_position.rs` -- `__weak` in all ten positions a
+///     `type_qualifier` reaches, and the matching proof that
+///     `__unsafe_unretained` is accepted in each, since that is the remedy
+///     the diagnostic names (#448). The two rows below stay: they are the
+///     *ivar* and the *property attribute*, which were the only two
+///     refusals before that walk existed, and they are the two cases where
+///     `clang -fobjc-arc` accepts the source outright.
 ///
 /// What is left for this file is the rejections a reader would otherwise
 /// assume were Clang's. Both rows below are cases where
