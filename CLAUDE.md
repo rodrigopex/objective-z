@@ -5,8 +5,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project Overview
 
 **Version: `tools/oz2c/Cargo.toml`** — the transpiler carries its own semantic
-version, bumped in the same commit as the change it describes (patch for a fix, minor
-for a new construct or a pre-1.0 break). The repo-level `VERSION` file sits at v0.5.99
+version. **A PR declares the *kind* of bump and does not carry the number.** The kind
+is already in the conventional-commit subject: `fix(oz2c):` is a patch, `feat(oz2c):`
+or a `!` break is a minor (pre-1.0). The number is assigned **just before merge**, as
+the final commit on the PR that is next to land — because the number is a function of
+kind *and merge order*, and merge order is the one thing an author cannot know.
+
+Changed 2026-09-14 after measuring the cost: 12 of 50 commits on `main` in one day
+touched this file, one per PR, so **every merge forced a rebase on every other open
+PR** — N−1 rebases per merge, by arithmetic. And the property the old rule seemed to
+buy does not exist: the version string is **write-only**. `CARGO_PKG_VERSION` appears
+nowhere in the crate, there is no `--version` flag, it reaches no generated output, and
+no gate or CI job asserts it. Carrying it through review verified nothing while
+colliding with every sibling branch. Eight of the nine version incidents recorded in
+this repo were *created* by carrying the number, not caught by it. The repo-level `VERSION` file sits at v0.5.99
 and no longer moves: it tracked the outgoing Python pipeline through a scheme that tied
 `PATCHLEVEL` to an issue id, which is retired. Don't bump it.
 
