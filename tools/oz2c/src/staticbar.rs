@@ -1828,6 +1828,114 @@ fn named_ownership_attribute(spec: Node, src: &str) -> Option<&'static str> {
     search(spec, src)
 }
 
+/// Refuse a `+1` written through a dereferenced pointer (#461).
+///
+/// ARC spec § 2.6.5 makes `T __autoreleasing *` an out-parameter written by
+/// pass-by-writeback, and § 2.7.2 says an unqualified `T *` parameter
+/// *infers* `__autoreleasing`. So `*out = <+1>` is a store into an
+/// ARC-managed slot -- and it is the one strong destination nothing here
+/// walks. `render_strong_ivar_assign` and `render_strong_local_assign`
+/// between them cover an ivar, a managed local, a `static` local and a
+/// file-scope object; a `*p` lvalue is none of the four. On the caller's
+/// side the variable is written only through a pointer, so
+/// `managed_object_locals`' "something `Owning` is ever stored" test never
+/// fires and it joins no scope either. The reference is created and nobody
+/// owns it: a leak, and the #359 shape at a fifth site.
+///
+/// **Refused rather than implemented, and keyed on the `+1` rather than on
+/// the shape.** ARC's own answer is writeback through a temporary that is
+/// autoreleased, and there is no pool here to autorelease into -- the
+/// #430 precedent, where a keyword whose mechanism does not exist is
+/// refused rather than quietly accepted.
+///
+/// Keying on the shape would have been wrong, and the SDK proves it:
+/// `OZArray.h:28` and `OZDictionary.h:30` declare
+/// `objects:(__unsafe_unretained id *)stackbuf`, a pointer-to-object-pointer
+/// parameter the callee writes through, and it is correct -- the buffer
+/// takes borrowed references. A refusal keyed on "a pointer written
+/// through" refuses fast enumeration. The question is whether a `+1` goes
+/// in, which is `arc::binds_ownership` -- the same predicate
+/// `classify_store` asks about a named local.
+///
+/// Parses its own tree for the reason `generics::check_program` does: this
+/// needs `program.owning_methods`, which `arc::analyze` fills in after
+/// `collect` has run, so it cannot sit beside the refusals `collect`
+/// registers.
+pub fn check_out_parameter_stores(source: &str, program: &Program) -> Vec<Diagnostic> {
+    let tree = crate::parse::parse(source);
+    let mut diags = Vec::new();
+    walk_out_parameter_stores(tree.root_node(), source, program, &mut diags);
+    diags
+}
+
+/// Is `node` a dereference -- `*p` rather than `&p`?
+///
+/// `pointer_expression` is the grammar's node for both, distinguished by
+/// its `operator` field. Taken from tree-sitter-objc 3.0.2's own
+/// `node-types.json` rather than from tree-sitter-c, whose spelling this
+/// grammar does not always share.
+fn is_dereference(node: Node, src: &str) -> bool {
+    node.kind() == "pointer_expression"
+        && node
+            .child_by_field_name("operator")
+            .is_some_and(|op| node_text(op, src).trim() == "*")
+}
+
+fn walk_out_parameter_stores(
+    node: Node,
+    src: &str,
+    program: &Program,
+    diags: &mut Vec<Diagnostic>,
+) {
+    if node.kind() == "assignment_expression" {
+        let mut cursor = node.walk();
+        let parts: Vec<Node> = node.children(&mut cursor).collect();
+        if let (Some(lhs), Some(rhs)) = (parts.first(), parts.last()) {
+            if is_dereference(*lhs, src)
+                && crate::arc::binds_ownership(*rhs, src, program, &program.owning_methods)
+            {
+                /* Tiered rather than fused, per #457: the diagnosis, the
+                 * reason, and one line per remedy. This refusal names the
+                 * *store* the author made, where the qualifier refusal
+                 * names the token they wrote -- two sites, one rule. */
+                err_detailed(
+                    diags,
+                    src,
+                    node,
+                    Rejection {
+                        message: "a '+1' stored through a dereferenced pointer is owned \
+                                  by nobody"
+                            .to_string(),
+                        note: Some(
+                            "ARC would hand it to the caller's variable by writeback \
+                             through an autoreleased temporary, and the static subset \
+                             has no pool to autorelease into. So the store releases \
+                             nothing, and the caller's variable -- written only through \
+                             the pointer -- joins no scope either: the reference leaks"
+                                .to_string(),
+                        ),
+                        help: vec![
+                            "return the object instead, so the '+1' travels as a return \
+                             value that the caller's own scope owns and releases"
+                                .to_string(),
+                            "or, if the pointer is a borrowed buffer rather than an \
+                             owning out-parameter, declare it '__unsafe_unretained' and \
+                             store a borrowed reference -- which is what \
+                             'countByEnumeratingWithState:objects:count:' does"
+                                .to_string(),
+                        ],
+                    },
+                );
+                return;
+            }
+        }
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        walk_out_parameter_stores(child, src, program, diags);
+    }
+}
+
 pub fn check_autoreleasepool(root: Node, src: &str) -> Vec<Diagnostic> {
     let mut diags = Vec::new();
     walk_autoreleasepool(root, src, &mut diags);

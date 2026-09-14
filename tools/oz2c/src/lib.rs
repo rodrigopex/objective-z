@@ -231,6 +231,9 @@ fn front_end(
     program.heap_support = options.heap_support;
     program.introspection = options.introspection;
     program.reflection = options.reflection;
+    /* Needs `program.owning_methods`, which the pass above fills in, so it
+     * cannot sit with the refusals `collect` registers (#461). */
+    diagnostics.extend(staticbar::check_out_parameter_stores(text, &program));
     obs.enter(progress::Phase::Generics);
     diagnostics.extend(generics::check_program(text, &program));
     if !diagnostics.is_empty() {
