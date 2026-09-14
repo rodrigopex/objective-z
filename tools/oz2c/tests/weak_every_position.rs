@@ -333,3 +333,90 @@ fn each_written_token_is_reported() {
         diags
     );
 }
+/// `__autoreleasing` is refused in the same ten positions, for a different
+/// reason and with a different remedy.
+///
+/// It was the one qualifier with neither support nor a diagnostic: silently
+/// dropped by `emit::STRIPPED_ARC_QUALIFIERS`, which is the exact thing
+/// this project's standing rule forbids. The strip list is for qualifiers
+/// whose word can go because the behaviour is already what the target does
+/// -- `__strong` and `__unsafe_unretained` -- and this one needs a pool
+/// that does not exist, so dropping the word changed the program's meaning
+/// silently.
+///
+/// #430 settled the precedent one word larger: `@autoreleasepool` is
+/// refused because a keyword whose mechanism does not exist must not be
+/// quietly accepted. Its diagnostic offers a remedy ("delete the keyword
+/// and keep the braces"), and so does this one -- deleting the qualifier
+/// leaves the default `__strong`, and with no pool, scope exit is the only
+/// release timing the target has.
+#[test]
+fn autoreleasing_is_refused_in_every_position() {
+    for (name, body) in POSITIONS {
+        let diags = common::expect_reject(&program(body, "__autoreleasing"));
+        assert!(
+            diags.contains("'__autoreleasing' has no meaning in the static subset"),
+            "the '{}' position must be refused; got:\n{}",
+            name,
+            diags
+        );
+        assert!(
+            diags.contains("Delete the qualifier"),
+            "and must name a remedy the author can take, which is #425's bar and what #430's \
+             own refusal does; got:\n{}",
+            diags
+        );
+    }
+}
+
+/// The remedy for `__autoreleasing` is accepted: deleting it leaves the
+/// default, and the default is supported everywhere.
+///
+/// Stated as its own case because the two refusals in this file offer
+/// *different* remedies -- `__weak` names a replacement qualifier,
+/// `__autoreleasing` names a deletion -- and both have to be honoured by
+/// the checker or the diagnostic is the defect #425 was.
+#[test]
+fn deleting_autoreleasing_is_accepted_everywhere() {
+    for (name, body) in POSITIONS {
+        /* The remedy verbatim: the qualifier is gone, nothing replaces it. */
+        let src = program(body, "");
+        assert!(
+            oz2c::transpile(&src).is_ok(),
+            "the '{}' position tells the author to delete the qualifier, so the declaration \
+             without it must be accepted; got:\n{}",
+            name,
+            oz2c::transpile(&src)
+                .err()
+                .map(|d| d.iter().map(|x| x.to_string()).collect::<Vec<_>>().join("\n"))
+                .unwrap_or_default()
+        );
+    }
+}
+
+/// The strip list keeps exactly the two qualifiers whose word can go.
+///
+/// `__strong` and `__unsafe_unretained` are dropped because each *is* the
+/// behaviour this target already has, so the word carries no information
+/// the output needs. The guard is that neither of the two refused
+/// qualifiers is ever added back to that list: a refused qualifier that is
+/// also stripped would be accepted silently by whichever path reached the
+/// strip first, which is how `__autoreleasing` came to have no diagnostic
+/// at all.
+#[test]
+fn the_supported_qualifiers_are_still_stripped_and_not_refused() {
+    for qualifier in ["__strong", "__unsafe_unretained"] {
+        let body = POSITIONS.iter().find(|(n, _)| *n == "local").expect("row present").1;
+        let src = program(body, qualifier);
+        let out = oz2c::transpile(&src).expect("a supported qualifier must be accepted");
+        assert!(
+            !out.source_c.lines().any(|l| {
+                let t = l.trim_start();
+                !t.starts_with("/*") && !t.starts_with("#include") && t.contains(qualifier)
+            }),
+            "'{}' must be stripped from the emitted declaration, not copied into it -- \
+             Linux GCC rejects an ARC qualifier in plain C even where Apple clang accepts it",
+            qualifier
+        );
+    }
+}

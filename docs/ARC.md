@@ -75,9 +75,9 @@ transpile-compile-run under ASan for the oz2c half.
 |---|---|---|---|
 | 2.2 | `__strong` is the default and holds a reference | `IMPLEMENTED` | For ivars from the Clang AST (`astinfo::is_owned_object`, `astinfo.rs:288`); for locals by analysis. Stripped from output (`STRIPPED_ARC_QUALIFIERS`) |
 | 2.2 | `__unsafe_unretained` takes no ownership | `IMPLEMENTED` | Honoured at every site — `owned_locals_of:5004`, `retained_bindings:5126`, `managed_object_locals:760`, `collect.rs:438`, `model.rs:259` |
-| 2.2 | `__autoreleasing` | `GAP` | **Silently stripped** (`emit.rs:6453`). The one qualifier with neither support nor a diagnostic; no pool exists, so it can mean nothing. #430 settles the precedent in the other direction — `@autoreleasepool` is now refused because a keyword whose mechanism does not exist must not be quietly accepted — and this qualifier is the same case one word smaller. #448 |
+| 2.2 | `__autoreleasing` | `REFUSED` | `staticbar::check_refused_qualifiers`, the same whole-tree walk as `__weak` (#448). Removed from `emit::STRIPPED_ARC_QUALIFIERS`, which now holds exactly the two qualifiers whose *word* can go because each **is** the behaviour this target already has. #430 settled the precedent one word larger — a keyword whose mechanism does not exist must not be quietly accepted — and the remedy is the same shape: delete the qualifier, and the declaration carries the default `__strong`, which with no pool is the only release timing available. `deleting_autoreleasing_is_accepted_everywhere` pins that the remedy transpiles in all ten positions, so it is the checker's own behaviour rather than advice beside it (#425's bar) |
 | 2.2 | `__weak` is a zeroing weak reference | `N/A` by decision | No runtime can zero one. `__unsafe_unretained` is the supported opt-out and the cycle-breaker |
-| 2.2 | …and `__weak` must therefore be refused, not ignored | `REFUSED` | `staticbar::check_weak_qualifier`, one whole-tree walk over `type_qualifier` nodes, so every position is one function's answer (#448). Ten positions measured: nine reached the generated C before that walk and only an ivar was refused. **The property is two spellings, not one** — `collect.rs`'s attribute parse refuses `@property (weak)`, and `@property () __weak T *w` is the qualifier, which was *not* covered; this row previously recorded the position as done on the strength of the attribute rule. Pinned in `weak_every_position.rs`, including that `__unsafe_unretained` is accepted in all ten, so the remedy is one the checker honours (#425's bar) |
+| 2.2 | …and `__weak` must therefore be refused, not ignored | `REFUSED` | `staticbar::check_refused_qualifiers`, one whole-tree walk over `type_qualifier` nodes, so every position is one function's answer (#448). Ten positions measured: nine reached the generated C before that walk and only an ivar was refused. **The property is two spellings, not one** — `collect.rs`'s attribute parse refuses `@property (weak)`, and `@property () __weak T *w` is the qualifier, which was *not* covered; this row previously recorded the position as done on the strength of the attribute rule. Pinned in `weak_every_position.rs`, including that `__unsafe_unretained` is accepted in all ten, so the remedy is one the checker honours (#425's bar) |
 | 2.4 | Property ownership from a modifier (`strong`, `copy`, `assign`, `unsafe_unretained`) | `IMPLEMENTED` | `collect.rs:535`; synthesized strong setter is retain-new / assign / release-old (`emit.rs:7047`) |
 | 2.4 | `weak` property | `REFUSED` | `collect.rs:558`. oz2c's own rule, **not** delegated: Clang *accepts* a `weak` property declaration |
 | 2.4 | `__autoreleasing` is forbidden on a property | `DELEGATED` | Clang refuses it |
@@ -192,8 +192,21 @@ rule forbids:**
 
 | issue | § | what |
 |---|---|---|
-| #448 | 2.2 | `__autoreleasing` anywhere — silently stripped by `emit::STRIPPED_ARC_QUALIFIERS`. The `__weak` half is closed; this half is a verdict question (refuse, on #430's precedent) rather than a missing walk, and is awaiting that decision |
 | #461 | 4.4, 5.5 | **closed** — the two are stripped at all four positions by one predicate. Narrowed by #458, which *refuses* the three that carry ownership meaning; what was left was the two that do not, and a lowering defect is all it was |
+
+**Every row now carries a verdict.** With #448's two qualifiers refused, the
+`GAP` column is empty for the first time: 68 rows, none of them a gap. The
+legend keeps the verdict because the next spec reading will need it.
+
+Two cautions, because "no gaps" is a weaker claim than it sounds. It is a
+statement about the **coverage of this document**, not a proof about the
+transpiler — a row can carry a verdict and have the wrong one, and several did.
+#433's row said the rejection was insensitive to pool size, which stopped being
+true when the check learned to read it; this row's own `__weak` entry recorded
+the property as covered on the strength of the *attribute* rule while the
+*qualifier* spelling reached the generated C. Both were verdicts, and both were
+wrong. And the two `UNEXAMINED` rows below are not gaps but are not assurances
+either: they are labelled so they cannot be mistaken for covered.
 
 **`UNEXAMINED` — recorded, not scheduled:**
 

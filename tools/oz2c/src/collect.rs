@@ -883,7 +883,7 @@ pub fn collect(source: &str) -> (Program, Vec<crate::model::Diagnostic>) {
      * C, so every host gate can pass over output that only CI or a target
      * build rejects (#448).
      */
-    diagnostics.extend(crate::staticbar::check_weak_qualifier(root, source));
+    diagnostics.extend(crate::staticbar::check_refused_qualifiers(root, source));
 
     diagnostics.extend(crate::staticbar::check_bridging_casts(root, source));
 
