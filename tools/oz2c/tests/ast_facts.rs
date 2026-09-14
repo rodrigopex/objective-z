@@ -245,12 +245,20 @@ fn concatenated_top_level_objects_are_read_as_a_stream() {
 /// The fields Clang writes and the oracle ignores are skipped, not
 /// mis-parsed.
 ///
-/// A real dump carries `id`, `loc`, `range`, `mangledName`, `valueCategory`
-/// and more on nearly every node. Deserializing into a narrow struct means
-/// serde walks past them without allocating -- which is the whole point,
-/// since materialising them as a `serde_json::Value` tree cost 1.30 GB
-/// resident on px-keyboard. This pins that ignoring them does not change
-/// what is read.
+/// A real dump carries `mangledName`, `valueCategory`, `desugaredQualType`,
+/// `access`, `isReferenced` and more on nearly every node. Deserializing
+/// into a narrow struct means serde walks past them without allocating --
+/// which is the whole point, since materialising them as a
+/// `serde_json::Value` tree cost 1.30 GB resident on px-keyboard. This
+/// pins that ignoring them does not change what is read.
+///
+/// **`id`, `loc` and `range` are no longer among the ignored**, as they
+/// were when this test was written: #453 reads them to attribute an ARC
+/// mark to a source position, and measured the cost of doing so at 34 ms
+/// against 35 ms on a 49 MB dump. So the ivar below now also produces a
+/// `qual` row, and its `loc` carries an offset because a location naming a
+/// line and no offset does not occur -- 0 of 32,465 locations across 22
+/// real dumps.
 #[test]
 fn unrelated_clang_fields_are_ignored() {
     let noisy = r#"{
@@ -262,7 +270,7 @@ fn unrelated_clang_fields_are_ignored() {
          "mangledName": "_OBJC_CLASS_Noisy", "valueCategory": "prvalue",
          "inner": [
            {"id": "0x7f8b3", "kind": "ObjCIvarDecl", "name": "_held",
-            "loc": {"line": 4}, "isReferenced": true,
+            "loc": {"line": 4, "offset": 41}, "isReferenced": true,
             "type": {"desugaredQualType": "id", "qualType": "__strong id",
                      "typeAliasDeclId": "0x7f8b9"},
             "access": "private", "bitwidth": 0}
@@ -277,9 +285,11 @@ fn unrelated_clang_fields_are_ignored() {
             "class Noisy".to_string(),
             "impl Noisy".to_string(),
             "ivar Noisy _held owned".to_string(),
+            "qual ObjCIvarDecl _held __strong x.m:4+41".to_string(),
         ],
         "the ignored fields must not change the facts -- note `qualType` is \
-         read and the `desugaredQualType` beside it is not"
+         read and the `desugaredQualType` beside it is not, and that the \
+         `qual` row resolves `x.m` from the TranslationUnitDecl two levels up"
     );
 }
 
