@@ -48,6 +48,18 @@ struct Node<'a> {
     name: Option<Cow<'a, str>>,
     #[serde(rename = "type", borrow, default)]
     ty: Option<TypeRef<'a>>,
+    /// Clang's own node identity, and the only way to tell one node from a
+    /// second printing of the same node -- see `WalkState::seen_marks`.
+    #[serde(borrow, default)]
+    id: Option<Cow<'a, str>>,
+    /// `ARCProduceObject` and its siblings ride on an `ImplicitCastExpr`'s
+    /// `castKind`, which is the whole of what makes them findable.
+    #[serde(rename = "castKind", borrow, default)]
+    cast_kind: Option<Cow<'a, str>>,
+    #[serde(default)]
+    loc: Option<Loc>,
+    #[serde(default)]
+    range: Option<Range>,
     #[serde(borrow, default)]
     inner: Vec<Node<'a>>,
 }
@@ -56,6 +68,220 @@ struct Node<'a> {
 struct TypeRef<'a> {
     #[serde(rename = "qualType", borrow, default)]
     qual_type: Option<Cow<'a, str>>,
+}
+
+/// One of Clang's source locations, as it is actually written in the dump.
+///
+/// **Every field is optional, and that is the point.** Clang delta-encodes
+/// these against the location it printed last: a dump repeats `file` only
+/// when the file changes and `line` only when the line changes, so the
+/// overwhelming majority of locations carry nothing but `offset` and `col`.
+/// Measured on a 701 KB dump of a 29-line source: 1,389 locations carry a
+/// position, **10** of them name a file, 333 name a line, and 1,056 are an
+/// offset alone. Reading one of these nodes on its own therefore yields a
+/// position that cannot be resolved; resolving it is a stateful fold over
+/// the walk, which is what `WalkState` is (#453).
+///
+/// No lifetime parameter: `file` appears on ~10 nodes in a whole dump, so
+/// owning those few strings costs nothing measurable and keeps this type
+/// free of the borrow plumbing every other field here needs.
+#[derive(serde::Deserialize, Default)]
+struct Loc {
+    #[serde(default)]
+    file: Option<String>,
+    #[serde(default)]
+    line: Option<u32>,
+    #[serde(default)]
+    offset: Option<u64>,
+    /// Where the token came from inside a macro *definition*. Absorbed for
+    /// its delta effect and never adopted as a position: a reader told that
+    /// an ownership question sits inside `OZ_LOG`'s body cannot act on it.
+    #[serde(rename = "spellingLoc", default)]
+    spelling_loc: Option<Box<Loc>>,
+    /// Where the macro was *used*. This is the position a reader can act
+    /// on, so it is what a macro-nested location resolves to.
+    ///
+    /// Not a corner: **888 of 32,465 locations across 22 real dumps are
+    /// nested this way** rather than carrying flat fields. Reading them as
+    /// empty would silently attribute every mark inside a macro expansion
+    /// to whatever enclosing statement happened to have a flat location --
+    /// approximately right, and wrong without saying so.
+    #[serde(rename = "expansionLoc", default)]
+    expansion_loc: Option<Box<Loc>>,
+}
+
+/// A node's source range. Only `begin` is read: it is the position a
+/// diagnostic points at, and an expression's `end` is what its last
+/// subexpression already reports.
+#[derive(serde::Deserialize, Default)]
+struct Range {
+    #[serde(default)]
+    begin: Option<Loc>,
+    #[serde(default)]
+    end: Option<Loc>,
+}
+
+/// A resolved source position: which file, which line, which byte.
+///
+/// `offset` as well as `line` because ARC's marks are per-expression and a
+/// line routinely holds several: `Slot *s = [Slot alloc];` carries both the
+/// `+1` and the binding that consumes it. The offset is what distinguishes
+/// two sites on one line, and it is also what
+/// `imports::ResolvedSource::source_location` speaks, so it is the common
+/// currency between Clang's view of the file and oz2c's merged buffer.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct AstPos {
+    pub file: String,
+    pub line: u32,
+    pub offset: u64,
+}
+
+impl std::fmt::Display for AstPos {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{}:{}", self.file, self.line)
+    }
+}
+
+/// An ARC transfer Clang marked, and the syntactic position it sits in.
+///
+/// The position is not decoration: **it is the whole discriminator.**
+/// Measured over 22 dumps of the `arc`, `memory` and `lifecycle` corpora,
+/// `ARCProduceObject` on a `ReturnStmt` appears identically on a method
+/// returning `[Thing alloc]`, one returning a borrowed ivar, and one
+/// returning its own parameter -- and identically again whether or not the
+/// selector is in the create-rule family, so it says nothing about the
+/// caller-side transfer (`newThing`, `copyWithZone:` and `makeThing` carry
+/// the same pair). What separates them is the *other* mark and where it
+/// sits: a `+1` consumed inside the body shows as `ARCConsumeObject` at the
+/// position that consumed it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ArcMark {
+    /// `ARCProduceObject`, `ARCConsumeObject`, `ARCReclaimReturnedObject`
+    /// or `ARCExtendBlockObject`, verbatim as Clang spells it.
+    pub kind: String,
+    /// The nearest enclosing node kind that an ownership question is asked
+    /// in -- `VarDecl`, `BinaryOperator`, `ReturnStmt`, `ObjCMessageExpr`,
+    /// `CStyleCastExpr` and so on. Derived from real dumps rather than
+    /// invented; see `POSITION_KINDS`.
+    pub position: String,
+    pub at: AstPos,
+}
+
+/// An ownership qualifier Clang wrote into a declaration's type.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OwnershipQual {
+    /// `VarDecl`, `ParmVarDecl`, `FieldDecl` or `ObjCIvarDecl`.
+    pub decl_kind: String,
+    pub name: String,
+    /// `__strong`, `__weak`, `__unsafe_unretained` or `__autoreleasing`.
+    pub qualifier: String,
+    pub at: AstPos,
+}
+
+/// The node kinds that count as "a position an ownership question is asked
+/// in", for the purpose of attributing a mark.
+///
+/// Every entry was observed carrying a mark in a dump of this repo's own
+/// corpora, except the compound-assignment, literal and control-flow kinds,
+/// which are here because oz2c asks the ownership question in them
+/// (`arc::hoists_owning_operand`, the collection literals of #449) and
+/// their absence from the corpus is a gap in the corpus rather than a fact
+/// about ARC. A kind that is *not* listed leaves the position inherited
+/// from further out, which is the conservative direction: the mark is still
+/// recorded, attributed to the nearest position that is named.
+const POSITION_KINDS: &[&str] = &[
+    "VarDecl",
+    "ParmVarDecl",
+    "FieldDecl",
+    "ObjCIvarDecl",
+    "ReturnStmt",
+    "BinaryOperator",
+    "CompoundAssignOperator",
+    "ObjCMessageExpr",
+    "CallExpr",
+    "CStyleCastExpr",
+    "ArraySubscriptExpr",
+    "InitListExpr",
+    "ConditionalOperator",
+    "ObjCBoxedExpr",
+    "ObjCArrayLiteral",
+    "ObjCDictionaryLiteral",
+    "ObjCForCollectionStmt",
+    "IfStmt",
+    "WhileStmt",
+    "ForStmt",
+    "SwitchStmt",
+    "CompoundStmt",
+];
+
+/// The ARC transfer marks, as Clang's `castKind` spells them.
+const ARC_MARK_KINDS: &[&str] = &[
+    "ARCProduceObject",
+    "ARCConsumeObject",
+    "ARCReclaimReturnedObject",
+    "ARCExtendBlockObject",
+];
+
+/// The four ARC ownership qualifiers, longest first.
+///
+/// Order matters: `__unsafe_unretained` contains no other entry as a
+/// substring, but matching must not stop at a prefix, and searching
+/// longest-first makes that impossible to get wrong by rearranging.
+const OWNERSHIP_QUALIFIERS: &[&str] =
+    &["__unsafe_unretained", "__autoreleasing", "__strong", "__weak"];
+
+/// The carried state a location fold needs: the last file and line Clang
+/// printed, and the node ids whose marks have already been recorded.
+///
+/// **The dedupe set is load-bearing, not hygiene.** Clang prints a
+/// `VarDecl`'s initializer twice -- once in the enclosing method's
+/// declaration list and again under its `CompoundStmt`'s `DeclStmt` -- with
+/// the same node `id` both times. Measured: a dump of one three-line method
+/// yields 6 mark nodes at 5 distinct ids. Without the set every binding's
+/// `+1` is counted twice and an audit reports a discrepancy that does not
+/// exist.
+#[derive(Default)]
+struct WalkState {
+    file: Option<String>,
+    line: Option<u32>,
+    seen_marks: HashSet<String>,
+}
+
+impl WalkState {
+    /// Apply one location to the carried state, returning it resolved if it
+    /// names a byte at all.
+    ///
+    /// Called in the order Clang prints the fields -- `loc`, then
+    /// `range.begin`, then `range.end` -- because that order *is* the
+    /// encoding: each location is a delta against whatever was printed
+    /// immediately before it, not against its parent.
+    fn absorb(&mut self, loc: &Loc) -> Option<AstPos> {
+        if let Some(file) = &loc.file {
+            self.file = Some(file.clone());
+        }
+        if let Some(line) = loc.line {
+            self.line = Some(line);
+        }
+        if let Some(offset) = loc.offset {
+            return Some(AstPos {
+                file: self.file.clone()?,
+                line: self.line?,
+                offset,
+            });
+        }
+        /* No flat position. Either the location is empty -- 2,050 of the
+         * 32,465 measured are `{}` -- or it is macro-nested, in which case
+         * the expansion is the position a reader can act on. The spelling
+         * is absorbed first so its delta effect is not lost, then
+         * discarded. */
+        if let Some(spelling) = &loc.spelling_loc {
+            self.absorb(spelling);
+        }
+        if let Some(expansion) = &loc.expansion_loc {
+            return self.absorb(expansion);
+        }
+        None
+    }
 }
 
 /// Per-class ivar ownership, keyed `(class, ivar)`.
@@ -86,6 +312,25 @@ pub struct AstFacts {
     /// stopped compiling. Now the guard abstains unless this dump really
     /// covered the class's implementation.
     implemented_classes: HashSet<String>,
+    /// Every ARC transfer Clang marked, in walk order, deduplicated by node
+    /// id. Recorded for *every* file the dump covers, not only the source
+    /// under transpilation: this module does not know which file a caller
+    /// cares about, and filtering here would throw away the only copy.
+    /// A caller narrows with `marks_in`.
+    ///
+    /// Worth knowing what the ratio is before reading a total: of 152 marks
+    /// over the `arc`, `memory` and `lifecycle` corpora, **45 -- 29.6% --
+    /// were in the SDK's own sources rather than the case under test**, and
+    /// all 45 were the same shape (`ARCProduceObject` on a `ReturnStmt`).
+    /// An unfiltered report's largest row is SDK boilerplate.
+    arc_marks: Vec<ArcMark>,
+    /// Every declaration Clang wrote an ownership qualifier into, in walk
+    /// order. Same whole-dump scope as `arc_marks`, and the same skew: the
+    /// first fifteen in a dump of a 29-line case were all in
+    /// `include/oz_sdk`. Bounded by measurement rather than hope -- a real
+    /// Zephyr build's 56 MB of dumps carry 954 qualifier occurrences in
+    /// total.
+    ownership_quals: Vec<OwnershipQual>,
 }
 
 impl AstFacts {
@@ -105,9 +350,14 @@ impl AstFacts {
          * superset of what was accepted before. */
         let mut stream = serde_json::Deserializer::from_str(text).into_iter::<Node>();
         let mut saw_any = false;
+        /* One `WalkState` across the whole stream, not one per document:
+         * the location encoding is a delta against the last location
+         * *printed*, and `-ast-dump-filter` concatenating several top-level
+         * declarations does not restart that. */
+        let mut state = WalkState::default();
         for doc in &mut stream {
             let node = doc.map_err(|e| format!("not valid Clang AST JSON: {}", e))?;
-            facts.walk(&node, None);
+            facts.walk(&node, None, &mut state, None, None);
             saw_any = true;
         }
         if !saw_any {
@@ -129,8 +379,77 @@ impl AstFacts {
         Self::from_json(&text)
     }
 
-    fn walk(&mut self, node: &Node, owner: Option<&str>) {
+    /// Walk one node, carrying four things down: which class we are inside
+    /// (`owner`), the mutable location fold (`state`), the innermost
+    /// resolved position (`here`), and the innermost syntactic position an
+    /// ownership question is asked in (`position`).
+    ///
+    /// `here` is inherited rather than read per node because **the mark
+    /// node carries no location of its own.** An `ImplicitCastExpr` -- the
+    /// node `castKind` rides on -- has a `range` and no `loc`, and in the
+    /// dumps measured for #453 even the range resolved only through the
+    /// carried file. A mark's position is therefore its nearest enclosing
+    /// node's, which is also the position a reader would point at.
+    fn walk(
+        &mut self,
+        node: &Node,
+        owner: Option<&str>,
+        state: &mut WalkState,
+        here: Option<AstPos>,
+        position: Option<&str>,
+    ) {
         let kind = node.kind.as_deref().unwrap_or("");
+        /* Absorb in Clang's own print order -- see `WalkState::absorb`. */
+        let mut here = here;
+        if let Some(loc) = &node.loc {
+            if let Some(pos) = state.absorb(loc) {
+                here = Some(pos);
+            }
+        }
+        if let Some(range) = &node.range {
+            if let Some(begin) = &range.begin {
+                if let Some(pos) = state.absorb(begin) {
+                    here = Some(pos);
+                }
+            }
+            /* Absorbed for its delta effect on the carried file and line,
+             * and deliberately not adopted as the position: a node's end is
+             * not where a diagnostic should point. */
+            if let Some(end) = &range.end {
+                state.absorb(end);
+            }
+        }
+        if let Some(cast) = node.cast_kind.as_deref() {
+            if ARC_MARK_KINDS.contains(&cast) {
+                let id = node.id.as_deref().unwrap_or("");
+                /* An empty id cannot be deduplicated, so it is recorded:
+                 * a mark reported twice is a false discrepancy, but a mark
+                 * dropped is a missed one, and only the latter is silent. */
+                if id.is_empty() || state.seen_marks.insert(id.to_string()) {
+                    if let Some(at) = here.clone() {
+                        self.arc_marks.push(ArcMark {
+                            kind: cast.to_string(),
+                            position: position.unwrap_or("<unattributed>").to_string(),
+                            at,
+                        });
+                    }
+                }
+            }
+        }
+        if matches!(kind, "VarDecl" | "ParmVarDecl" | "FieldDecl" | "ObjCIvarDecl") {
+            let qual = node.ty.as_ref().and_then(|t| t.qual_type.as_deref()).unwrap_or("");
+            if let Some(found) = OWNERSHIP_QUALIFIERS.iter().find(|q| qual.contains(**q)) {
+                if let (Some(name), Some(at)) = (node.name.as_deref(), here.clone()) {
+                    self.ownership_quals.push(OwnershipQual {
+                        decl_kind: kind.to_string(),
+                        name: name.to_string(),
+                        qualifier: (*found).to_string(),
+                        at,
+                    });
+                }
+            }
+        }
+        let position = if POSITION_KINDS.contains(&kind) { Some(kind) } else { position };
         // An @implementation re-declares its class's ivars, so both node
         // kinds establish the same owner; taking either is correct.
         let owner = if matches!(kind, "ObjCInterfaceDecl" | "ObjCImplementationDecl") {
@@ -173,7 +492,7 @@ impl AstFacts {
             }
         }
         for child in &node.inner {
-            self.walk(child, owner);
+            self.walk(child, owner, state, here.clone(), position);
         }
     }
 
@@ -190,6 +509,8 @@ impl AstFacts {
         self.defined_methods.extend(other.defined_methods);
         self.classes.extend(other.classes);
         self.implemented_classes.extend(other.implemented_classes);
+        self.arc_marks.extend(other.arc_marks);
+        self.ownership_quals.extend(other.ownership_quals);
     }
 
     /// Whether `class`'s `ivar` is an object the class owns, or `None` if
@@ -223,6 +544,38 @@ impl AstFacts {
         self.owned_object.is_empty() && self.defined_methods.is_empty()
     }
 
+    /// Every ARC transfer mark the dumps carry, in walk order.
+    pub fn arc_marks(&self) -> &[ArcMark] {
+        &self.arc_marks
+    }
+
+    /// Every ownership-qualified declaration the dumps carry.
+    pub fn ownership_quals(&self) -> &[OwnershipQual] {
+        &self.ownership_quals
+    }
+
+    /// The marks whose file path ends with `suffix`.
+    ///
+    /// A suffix rather than an equality test because the two sides spell
+    /// the same file differently: Clang echoes the path as it was given on
+    /// its command line (`tests/behavior/cases/arc/x.m`) while a caller
+    /// holds whatever path *it* was given, which may be absolute. Matching
+    /// on the tail is what makes those meet without either side
+    /// canonicalising a path that may not exist on this machine.
+    ///
+    /// This is the filter that turns a dump-wide total into a statement
+    /// about one source -- see `arc_marks` for why 29.6% of a corpus's
+    /// marks are not in the file under test.
+    pub fn marks_in(&self, suffix: &str) -> Vec<&ArcMark> {
+        self.arc_marks.iter().filter(|m| m.at.file.ends_with(suffix)).collect()
+    }
+
+    /// The ownership-qualified declarations whose file path ends with
+    /// `suffix`. Same matching rule as `marks_in`.
+    pub fn quals_in(&self, suffix: &str) -> Vec<&OwnershipQual> {
+        self.ownership_quals.iter().filter(|q| q.at.file.ends_with(suffix)).collect()
+    }
+
     /// Every fact the merged dumps carry, as sorted lines -- what
     /// `oz2c --dump-ast-facts` prints.
     ///
@@ -254,6 +607,31 @@ impl AstFacts {
         }
         for class in &self.implemented_classes {
             lines.push(format!("impl {}", class));
+        }
+        /* The marks and the qualifiers join the fact set for the reason
+         * stated above: a refactor that stopped reading them would
+         * otherwise be invisible in generated C, because nothing in the
+         * emitted output depends on them -- `--check-arc` is an audit, not
+         * a codegen input.
+         *
+         * The byte offset is printed as well as the line, and the lines are
+         * **not** deduplicated. Both follow from what this baseline is
+         * diffed across: two builds of oz2c over the *same* dumps, where
+         * the offset is fixed and is the only thing distinguishing two
+         * marks on one line -- `Slot *s = [Slot alloc];` carries the `+1`
+         * and the binding that consumes it. Collapsing equal lines would
+         * hide one of a pair, which is the silent direction. */
+        for mark in &self.arc_marks {
+            lines.push(format!(
+                "mark {} {} {}+{}",
+                mark.kind, mark.position, mark.at, mark.at.offset
+            ));
+        }
+        for qual in &self.ownership_quals {
+            lines.push(format!(
+                "qual {} {} {} {}+{}",
+                qual.decl_kind, qual.name, qual.qualifier, qual.at, qual.at.offset
+            ));
         }
         lines.sort();
         lines
@@ -385,6 +763,287 @@ mod tests {
         assert!(!facts.has_method_body("OZArray", "countByEnumeratingWithState:objects:count:"));
         assert!(!facts.has_method_body("OZArray", "enumerationIndex"));
         assert!(facts.knows_class("OZArray"));
+    }
+
+    /// A dump excerpt in the shape Clang really emits: **the file is named
+    /// once**, and every location after it carries an offset alone.
+    ///
+    /// Written this way deliberately. A fixture that repeated `"file"` on
+    /// each location would pass whether or not the fold exists, which is
+    /// the vacuous-test failure this repo has paid for before -- so the
+    /// only location here that names a file is the first, and the two marks
+    /// below it can only resolve if the carried state works.
+    ///
+    /// The `ImplicitCastExpr` nodes carry `range` and no `loc`, and the
+    /// binding's initializer is printed twice under one id, both copied
+    /// from a real `clang -Xclang -ast-dump=json -fobjc-arc` run over
+    /// `tests/behavior/cases/arc/reassign_releases_old.m`.
+    fn delta_encoded_dump() -> &'static str {
+        r#"{
+          "kind": "TranslationUnitDecl",
+          "inner": [
+            {
+              "id": "0x1",
+              "kind": "ObjCImplementationDecl",
+              "name": "ArcReassignTest",
+              "loc": { "file": "cases/arc/reassign_releases_old.m", "line": 17, "offset": 300 },
+              "inner": [
+                {
+                  "id": "0x2",
+                  "kind": "ObjCMethodDecl",
+                  "name": "run",
+                  "loc": { "line": 18, "offset": 320 },
+                  "inner": [
+                    {
+                      "id": "0x3",
+                      "kind": "VarDecl",
+                      "name": "s",
+                      "loc": { "line": 20, "offset": 347 },
+                      "type": { "qualType": "Slot *__strong" },
+                      "inner": [
+                        {
+                          "id": "0xDUP",
+                          "kind": "ImplicitCastExpr",
+                          "castKind": "ARCConsumeObject",
+                          "range": { "begin": { "offset": 352 }, "end": { "offset": 366 } }
+                        }
+                      ]
+                    },
+                    {
+                      "id": "0x4",
+                      "kind": "CompoundStmt",
+                      "inner": [
+                        {
+                          "id": "0x5",
+                          "kind": "DeclStmt",
+                          "inner": [
+                            {
+                              "id": "0x3",
+                              "kind": "VarDecl",
+                              "name": "s",
+                              "loc": { "line": 20, "offset": 347 },
+                              "type": { "qualType": "Slot *__strong" },
+                              "inner": [
+                                {
+                                  "id": "0xDUP",
+                                  "kind": "ImplicitCastExpr",
+                                  "castKind": "ARCConsumeObject",
+                                  "range": { "begin": { "offset": 352 } }
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "id": "0x6",
+                          "kind": "BinaryOperator",
+                          "range": { "begin": { "line": 21, "offset": 369 } },
+                          "inner": [
+                            {
+                              "id": "0x7",
+                              "kind": "ImplicitCastExpr",
+                              "castKind": "ARCConsumeObject",
+                              "range": { "begin": { "offset": 371 } }
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }"#
+    }
+
+    /// The fold resolves a location that names neither file nor line.
+    ///
+    /// This is the constraint the whole design rests on: measured on a
+    /// 701 KB dump of a 29-line source, 10 of 1,389 positions name a file
+    /// and 1,056 are an offset alone, so a per-node read yields nothing
+    /// resolvable.
+    #[test]
+    fn resolves_locations_clang_delta_encoded() {
+        let facts = AstFacts::from_json(delta_encoded_dump()).expect("parses");
+        let marks = facts.arc_marks();
+        assert_eq!(marks.len(), 2, "two distinct marks: {:#?}", marks);
+        for mark in marks {
+            assert_eq!(
+                mark.at.file, "cases/arc/reassign_releases_old.m",
+                "the file was named once, on a node far above this mark"
+            );
+        }
+        /* The binding's mark inherits line 20 from the `VarDecl`; the
+         * reassignment's own range named line 21, so it must not have
+         * inherited. */
+        assert_eq!((marks[0].at.line, marks[0].at.offset), (20, 352));
+        assert_eq!((marks[1].at.line, marks[1].at.offset), (21, 371));
+    }
+
+    /// A mark printed twice under one node id is recorded once.
+    ///
+    /// Clang prints a `VarDecl`'s initializer both in the enclosing
+    /// method's declaration list and under its `CompoundStmt`'s
+    /// `DeclStmt`. Counting it twice would report a discrepancy at every
+    /// binding in the program -- and every binding is where the corpus's
+    /// largest population of marks lives (49 of 107 in-file marks).
+    #[test]
+    fn a_node_printed_twice_is_one_mark() {
+        let facts = AstFacts::from_json(delta_encoded_dump()).expect("parses");
+        let at_352: Vec<_> =
+            facts.arc_marks().iter().filter(|m| m.at.offset == 352).collect();
+        assert_eq!(at_352.len(), 1, "id 0xDUP appears twice in the dump: {:#?}", at_352);
+    }
+
+    /// A mark is attributed to the position it sits in, not to its own node
+    /// kind -- every mark is an `ImplicitCastExpr`, which says nothing.
+    ///
+    /// The position is the discriminator, and that is measured rather than
+    /// assumed: `ARCProduceObject` on a `ReturnStmt` appears identically on
+    /// a method returning `[Thing alloc]`, one returning a borrowed ivar,
+    /// and one returning its own parameter, and identically again whether
+    /// or not the selector is in the create-rule family.
+    #[test]
+    fn a_mark_is_attributed_to_its_enclosing_position() {
+        let facts = AstFacts::from_json(delta_encoded_dump()).expect("parses");
+        let positions: Vec<&str> =
+            facts.arc_marks().iter().map(|m| m.position.as_str()).collect();
+        assert_eq!(positions, vec!["VarDecl", "BinaryOperator"]);
+    }
+
+    /// The qualifier on a declaration is recorded with its position.
+    #[test]
+    fn records_the_ownership_qualifier_on_a_local() {
+        let facts = AstFacts::from_json(delta_encoded_dump()).expect("parses");
+        let quals = facts.ownership_quals();
+        assert_eq!(quals.len(), 2, "the VarDecl is printed twice: {:#?}", quals);
+        assert_eq!(quals[0].decl_kind, "VarDecl");
+        assert_eq!(quals[0].name, "s");
+        assert_eq!(quals[0].qualifier, "__strong");
+        assert_eq!(quals[0].at.line, 20);
+    }
+
+    /// `marks_in` narrows a dump-wide total to one source.
+    ///
+    /// Not a convenience: 45 of 152 marks over the `arc`, `memory` and
+    /// `lifecycle` corpora -- 29.6% -- are in the SDK's own sources rather
+    /// than the case under test, and all 45 are the same shape. An
+    /// unfiltered report's largest single row is boilerplate.
+    #[test]
+    fn marks_in_filters_to_one_file() {
+        let facts = AstFacts::from_json(delta_encoded_dump()).expect("parses");
+        assert_eq!(facts.marks_in("reassign_releases_old.m").len(), 2);
+        assert_eq!(facts.marks_in("src/OZObject.m").len(), 0);
+        /* A suffix match, because Clang echoes the path it was given while
+         * a caller may hold an absolute one. */
+        assert_eq!(facts.marks_in("arc/reassign_releases_old.m").len(), 2);
+    }
+
+    /// Reading the rest of the dump does not weaken what it already read.
+    ///
+    /// `dump_lines` is the provable record (#299), so the new rows must be
+    /// additive: every ivar, method, class and impl line the oracle
+    /// produced before is still produced.
+    #[test]
+    fn the_new_rows_are_additive() {
+        let facts = AstFacts::from_json(delta_encoded_dump()).expect("parses");
+        let lines = facts.dump_lines();
+        assert!(lines.iter().any(|l| l == "impl ArcReassignTest"), "{:#?}", lines);
+        assert!(lines.iter().any(|l| l.starts_with("mark ARCConsumeObject VarDecl ")));
+        assert!(lines.iter().any(|l| l.starts_with("qual VarDecl s __strong ")));
+        /* Two marks and two qualifier rows, neither collapsed: equal lines
+         * would mean two sites, and hiding one is the silent direction. */
+        assert_eq!(lines.iter().filter(|l| l.starts_with("mark ")).count(), 2);
+        assert_eq!(lines.iter().filter(|l| l.starts_with("qual ")).count(), 2);
+    }
+
+    /// A location nested inside a macro expansion resolves to the
+    /// expansion, not the spelling.
+    ///
+    /// 888 of 32,465 locations across 22 real dumps are shaped this way, so
+    /// reading them as empty is not a corner case. The concrete instance in
+    /// this repo: `+ (instancetype)alloc { return nil; }` -- `nil` is a
+    /// macro, so the mark on its cast is macro-nested, and resolving the
+    /// expansion moves the reported position from the `return` keyword
+    /// (offset 2632) onto `nil` itself (2639).
+    #[test]
+    fn a_macro_nested_location_resolves_to_the_expansion() {
+        let dump = r#"{
+          "kind": "TranslationUnitDecl",
+          "loc": { "file": "src/OZObject.m", "line": 82, "offset": 2600 },
+          "inner": [
+            {
+              "id": "0x1",
+              "kind": "ObjCMethodDecl",
+              "name": "alloc",
+              "loc": { "line": 83, "offset": 2620 },
+              "inner": [
+                {
+                  "id": "0x2",
+                  "kind": "ReturnStmt",
+                  "range": { "begin": { "line": 84, "offset": 2632 } },
+                  "inner": [
+                    {
+                      "id": "0x3",
+                      "kind": "ImplicitCastExpr",
+                      "castKind": "ARCProduceObject",
+                      "range": {
+                        "begin": {
+                          "spellingLoc": { "file": "stubs/objc.h", "line": 9, "offset": 120 },
+                          "expansionLoc": { "file": "src/OZObject.m", "line": 84, "offset": 2639 }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }"#;
+        let facts = AstFacts::from_json(dump).expect("parses");
+        let marks = facts.arc_marks();
+        assert_eq!(marks.len(), 1);
+        assert_eq!(marks[0].at.file, "src/OZObject.m", "not the macro's own header");
+        assert_eq!(marks[0].at.offset, 2639, "`nil`, not the `return` above it");
+        assert_eq!(marks[0].position, "ReturnStmt");
+    }
+
+    /// An empty `loc` leaves the inherited position alone rather than
+    /// dropping the mark.
+    ///
+    /// 2,050 of the 32,465 measured locations are `{}`. Dropping a mark for
+    /// want of a position of its own would lose it silently, which is the
+    /// one direction this transpiler is not allowed to fail in.
+    #[test]
+    fn an_empty_location_inherits_rather_than_drops() {
+        let dump = r#"{
+          "kind": "TranslationUnitDecl",
+          "loc": { "file": "x.m", "line": 3, "offset": 30 },
+          "inner": [
+            {
+              "id": "0x1",
+              "kind": "VarDecl",
+              "name": "s",
+              "loc": { "line": 4, "offset": 44 },
+              "type": { "qualType": "Thing *__strong" },
+              "inner": [
+                {
+                  "id": "0x2",
+                  "kind": "ImplicitCastExpr",
+                  "castKind": "ARCConsumeObject",
+                  "loc": {},
+                  "range": { "begin": {} }
+                }
+              ]
+            }
+          ]
+        }"#;
+        let facts = AstFacts::from_json(dump).expect("parses");
+        let marks = facts.arc_marks();
+        assert_eq!(marks.len(), 1, "the mark is kept: {:#?}", marks);
+        assert_eq!((marks[0].at.line, marks[0].at.offset), (4, 44), "the VarDecl's");
+        assert_eq!(marks[0].position, "VarDecl");
     }
 
     #[test]
