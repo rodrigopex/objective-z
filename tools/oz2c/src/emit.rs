@@ -4285,6 +4285,61 @@ fn render_return_statement(node: Node, ctx: &mut EmitCtx) -> (String, String) {
 
 
 
+/// What a `for (<Type> <name> in <collection>)` header binds.
+///
+/// **One parse for both readers, which is the whole point of it existing.**
+/// The loop variable is the only receiver binding in the language whose
+/// declaration is not a node: `for_statement`'s children are
+/// `for ( <type parts…> <declarator> in <collection> ) <body>`, so the type
+/// and the name are *siblings* and there is no `declaration`,
+/// `parameter_declaration` or `method_parameter` anywhere in the header.
+///
+/// That is why #502 was a leak rather than a missing match arm.
+/// `arc::collect_declared_types` enumerates node **kinds**, and no kind it
+/// could add would reach this binding -- while the emitter read it here and
+/// emitted a *static* call. The emitter resolving where `arc` does not is
+/// the asymmetry that makes a polled ownership answer reach a send that can
+/// never be polymorphic: `Owner_build((struct Owner *)(it))` with no
+/// release, measured at 0 deallocs against 1.
+///
+/// So `arc` calls this rather than growing a second reader of the same
+/// header. Two resolvers for one question is the shape #405, #435, #481 and
+/// #483 each paid for.
+///
+/// `None` for a `for_statement` that is not a for-in, or whose header this
+/// cannot read. The three `unwrap`s this replaces would have panicked on a
+/// malformed header -- the #494 shape, in a function that had no reason to
+/// be more fragile than its neighbours.
+pub(crate) struct ForinBinding {
+    /// The name the loop binds.
+    pub(crate) var_name: String,
+    /// The declared type's source text, before `render_type`.
+    pub(crate) type_text: String,
+    pub(crate) stars: usize,
+    /// Index of the `in` child, so a caller slicing the same children does
+    /// not have to find it twice.
+    pub(crate) in_pos: usize,
+}
+
+pub(crate) fn forin_binding(node: Node, src: &str) -> Option<ForinBinding> {
+    if node.kind() != "for_statement" {
+        return None;
+    }
+    let mut cursor = node.walk();
+    let children: Vec<Node> = node.children(&mut cursor).collect();
+    let open = children.iter().position(|c| c.kind() == "(")?;
+    let in_pos = children.iter().position(|c| c.kind() == "in")?;
+    if in_pos <= open + 1 {
+        return None;
+    }
+    let decl_nodes = &children[open + 1..in_pos];
+    let declarator = *decl_nodes.last()?;
+    let type_nodes = &decl_nodes[..decl_nodes.len() - 1];
+    let type_text = type_nodes.iter().map(|n| node_text(*n, src)).collect::<Vec<_>>().join(" ");
+    let (var_name, stars) = declarator_name_and_stars(declarator, src);
+    Some(ForinBinding { var_name, type_text, stars, in_pos })
+}
+
 fn render_forin_statement(node: Node, ctx: &mut EmitCtx) -> (String, String) {
     let (line, col) = line_col(ctx.src, node.start_byte());
     if !ctx.program.is_dynamically_dispatched("objectEnumerator", false)
@@ -4302,15 +4357,21 @@ fn render_forin_statement(node: Node, ctx: &mut EmitCtx) -> (String, String) {
 
     let mut cursor = node.walk();
     let children: Vec<Node> = node.children(&mut cursor).collect();
-    let open = children.iter().position(|c| c.kind() == "(").unwrap();
-    let in_pos = children.iter().position(|c| c.kind() == "in").unwrap();
-    let close = children.iter().position(|c| c.kind() == ")").unwrap();
+    let Some(binding) = forin_binding(node, ctx.src) else {
+        ctx.err(
+            node,
+            format!(
+                "for-in loop at {}:{} has no '<Type> <name> in <collection>' header this \
+                 backend can read",
+                line, col
+            ),
+        );
+        return (node_text(node, ctx.src).to_string(), "id".to_string());
+    };
+    let in_pos = binding.in_pos;
+    let close = children.iter().position(|c| c.kind() == ")").unwrap_or(in_pos + 1);
 
-    let decl_nodes = &children[open + 1..in_pos];
-    let declarator = *decl_nodes.last().unwrap();
-    let type_nodes = &decl_nodes[..decl_nodes.len() - 1];
-    let type_text = type_nodes.iter().map(|n| node_text(*n, ctx.src)).collect::<Vec<_>>().join(" ");
-    let (var_name, stars) = declarator_name_and_stars(declarator, ctx.src);
+    let ForinBinding { var_name, type_text, stars, .. } = binding;
     let known: std::collections::HashSet<String> = ctx.program.classes.keys().cloned().collect();
     let c_type = crate::collect::render_type(&type_text, stars, &known);
 

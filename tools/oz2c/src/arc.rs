@@ -1896,6 +1896,64 @@ fn collect_declared_types(
      * one, unlike a `declaration`; `extract_type_and_stars` walks the
      * subtree, so it reaches it, and `declares_name` matches the
      * `identifier` child. Both verified rather than assumed. */
+    /* The for-in loop variable, which is **not a node kind** -- the header
+     * spreads the type and the declarator across siblings of
+     * `for_statement` and contains no `declaration` of any sort, so no
+     * addition to the match below could ever reach it (#502).
+     *
+     * Read through `emit::forin_binding`, the same parse the emitter uses,
+     * rather than slicing the header a second time here. That is the
+     * difference between this fix and the three before it: #481 added a
+     * kind to the list and left the lists needing to track each other,
+     * where this makes one reader answer for both. The asymmetry is what
+     * bites -- the emitter resolving a receiver `arc` does not means a
+     * *statically* dispatched send takes its ownership answer from a poll
+     * over classes it can never be, and `emit::dynamic_dispatch_call`'s
+     * `Ambiguous` refusal cannot save it because that guards a *dynamic*
+     * send. Measured on the leak this closes: 0 deallocs against 1. */
+    if let Some(binding) = crate::emit::forin_binding(node, src) {
+        if binding.var_name == name {
+            let bare = binding.type_text.trim().trim_start_matches("struct ").trim();
+            let class = program.is_class(bare).then(|| bare.to_string());
+            /* **A second *agreeing* binding is not an ambiguity.** Two
+             * loops in one method binding the same name to the same class
+             * is ordinary code:
+             *
+             *     for (Owner *it in a) { [it build]; }
+             *     for (Owner *it in b) { [it build]; }
+             *
+             * and counting them as two declarations made
+             * `declared_class_of` decline, which put the answer back on
+             * the poll and leaked *both* sends. Measured at 0 deallocs
+             * against 2 before this clause; it is why
+             * `two_loops_binding_the_same_name_still_resolve` exists.
+             *
+             * So the increment is skipped only when the class is the one
+             * already found. A binding that *disagrees* still increments
+             * and still makes the lookup decline, which is the behaviour
+             * that matters: a name bound to two different classes cannot
+             * be resolved from a whole-scope walk, and declining is the
+             * safe reading.
+             *
+             * Scoped to this arm deliberately. The same "agreeing
+             * duplicates are fine" argument probably holds for the node
+             * kinds below, but changing their counting is a behaviour
+             * change beyond this fix and none of them has a measured
+             * defect. */
+            let agrees = matches!((&class, &*found), (Some(c), Some(f)) if c == f);
+            if let Some(c) = class {
+                *found = Some(c);
+            }
+            if !agrees {
+                *count += 1;
+            }
+            /* Deliberately no `return`: the loop *body* is a child, and a
+             * declaration there shadows the loop variable. Falling through
+             * lets the walk below see it, and the disagreement then makes
+             * `declared_class_of` decline rather than answer with the
+             * outer binding. */
+        }
+    }
     if matches!(node.kind(), "declaration" | "parameter_declaration" | "method_parameter")
         && declares_name(node, name, src)
     {
