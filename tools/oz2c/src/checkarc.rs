@@ -297,23 +297,43 @@ fn qualifier_table(facts: &AstFacts, suffix: &str) -> Vec<String> {
 
 /// What the oracle cannot answer, stated in the tool's own output.
 ///
-/// Required by #453 and not padding: both halves below are measured, and a
+/// Required by #453 and not padding: every claim below is measured, and a
 /// reader who takes the tables above as complete will draw a conclusion the
 /// dump does not support.
+///
+/// **This text corrects #453's own premise, which is why it is spelled out
+/// rather than summarised.** The issue says a `+1` class send, a `+0` class
+/// send and a protocol send are "marked *identically* --
+/// `ARCReclaimReturnedObject` on all three". They are not: a *family* send
+/// carries `ARCConsumeObject`, and what actually collapses together is a
+/// **non-family** factory and a `+0` send. #361 is still unanswerable, for
+/// a different reason than the issue gives -- and the difference matters,
+/// because "the marks say nothing at a call site" would have made this
+/// whole section of the audit look pointless when the marks are in fact a
+/// redundancy check on the family rule. See `docs/STATUS.md`, "Where
+/// tree-sitter and the Clang AST each sit".
 fn limits() -> Vec<String> {
     vec![
         "  what this audit cannot tell you".to_string(),
-        "    At a call site a +1 class send, a +0 class send and a protocol send are".to_string(),
-        "    marked identically -- ARCReclaimReturnedObject on all three -- because ARC's".to_string(),
-        "    callee autoreleases and its caller always reclaims, a convention this target".to_string(),
-        "    has no pool for. #361 is not answerable from this dump.".to_string(),
+        "    At a call site the marks discriminate create-rule *family membership*, and".to_string(),
+        "    nothing finer. Measured against the pinned clang, one send per line:".to_string(),
+        "      [Thing alloc]         family +1 class send       ARCConsumeObject".to_string(),
+        "      [a copy]              family +1 instance send    ARCConsumeObject".to_string(),
+        "      [Thing factoryThing]  NON-family +1 class send   ARCReclaimReturnedObject".to_string(),
+        "      [a borrowed]          +0 instance send           ARCReclaimReturnedObject".to_string(),
+        "      [s supply]            protocol send              ARCReclaimReturnedObject".to_string(),
+        "    So an ARCConsumeObject at a call site is a redundancy check on the family".to_string(),
+        "    rule `arc::create_rule_family_of` already computes from the selector -- and".to_string(),
+        "    computes with a return-type guard Clang lacks (docs/ARC.md s 3.1). What the".to_string(),
+        "    marks cannot separate is the last three rows from each other: a non-family".to_string(),
+        "    factory looks exactly like a +0 send. That is #361's question, so #361 stays".to_string(),
+        "    unanswerable from this dump.".to_string(),
         String::new(),
-        "    Nor does a mark distinguish the create-rule family. Measured: `newThing`,".to_string(),
-        "    `copyWithZone:` and `makeThing` each carry one ARCProduceObject and one".to_string(),
-        "    ARCConsumeObject, identically, though only the first two return +1 to their".to_string(),
-        "    caller. And ARCProduceObject on a ReturnStmt appears the same on a method".to_string(),
-        "    returning `[Thing alloc]`, one returning a borrowed ivar, and one returning".to_string(),
-        "    its own parameter. The position is the discriminator, not the mark.".to_string(),
+        "    On the callee side the marks say less still. A method's object return carries".to_string(),
+        "    ARCProduceObject whether it returns `[Thing alloc]`, a borrowed ivar, or its".to_string(),
+        "    own parameter; and `newThing`, `copyWithZone:` and `makeThing` each carry one".to_string(),
+        "    ARCProduceObject and one ARCConsumeObject identically, though only the first".to_string(),
+        "    two return +1. The position is the discriminator there, not the mark.".to_string(),
         String::new(),
         "    The position-to-handler column is a declared list in `checkarc.rs`, not a".to_string(),
         "    reading of `emit.rs`. A position missing from it is reported, never hidden --".to_string(),
