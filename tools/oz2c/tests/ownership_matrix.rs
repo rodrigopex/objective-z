@@ -776,6 +776,70 @@ void breakInSwitch(int i)
          * would do now. They stay as they are because the rows are about
          * the emitter's release, not the bar's, and rewriting them would
          * churn a file whose value is that it does not change. */
+        /* ---- a `+1` in *value* position (#477 M1) ----------------------
+         *
+         * Three rows, because the audit's point was that every row above
+         * which *looks* like it covers this puts the `+1` in a
+         * send-operand slot. None of these does: the value is the
+         * conditional itself, or an operand of a comparison.
+         *
+         * `arc::is_owning_expr` had no `conditional_expression` arm at
+         * all before #477 -- the whole #376 machinery is built on operands
+         * of sends and calls, so a `+1` that *is* the value fell through
+         * every net and all three emitted no release whatsoever.
+         *
+         * The retain in the first two is the borrowed arm being
+         * normalised: once the conditional is owning, its destination is
+         * released at scope exit, and that release would fire on the
+         * borrowed reference too. Retaining the other arm is what makes
+         * the value `+1` whichever arm ran -- ARC does the same thing with
+         * a runtime flag, and `emit::render_expr`'s arm says why oz2c does
+         * not need one. */
+        (
+            Shape {
+                what: "a +1 in a conditional's arm is owned by the binding it initialises",
+                func: "ternaryValueSlot",
+                expect: (1, 1, 1),
+                known_defect: None,
+            },
+            "\
+int ternaryValueSlot(int x, Thing *b)
+{
+\tThing *t = x ? [[Thing alloc] init] : b;
+\treturn [t tag];
+}
+",
+        ),
+        (
+            Shape {
+                what: "a conditional in argument position is hoisted, normalised and released",
+                func: "argIsTernary",
+                expect: (1, 1, 1),
+                known_defect: None,
+            },
+            "\
+void argIsTernary(int x)
+{
+\tkeep(x ? [[Thing alloc] init] : g_global);
+}
+",
+        ),
+        (
+            Shape {
+                what: "a +1 compared and dropped in an if condition is released",
+                func: "ifCondition",
+                expect: (1, 0, 1),
+                known_defect: None,
+            },
+            "\
+void ifCondition(void)
+{
+\tif ([[Thing alloc] init] != nil) {
+\t\tkeep(g_global);
+\t}
+}
+",
+        ),
         (
             Shape {
                 what: "a while condition's +1 is released once per iteration",

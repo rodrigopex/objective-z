@@ -5792,12 +5792,19 @@ fn owning_operand_slot(
 enum OperandPosition {
     Argument,
     Receiver,
+    /// An operand of a `binary_expression` -- a `+1` compared and then
+    /// dropped, which is #477 M1's third shape (`if ([[Thing alloc] init]
+    /// != nil)`). Its own prefix because a temporary named `_oz_arg` for
+    /// something that was never an argument is what sends a reader looking
+    /// for a call that is not there.
+    Compared,
 }
 
 impl OperandPosition {
     fn prefix(self) -> &'static str {
         match self {
             OperandPosition::Argument => "_oz_arg",
+            OperandPosition::Compared => "_oz_cmp",
             OperandPosition::Receiver => "_oz_recv",
         }
     }
@@ -6344,6 +6351,47 @@ fn collect_owning_operands_in<'a>(
                 {
                     out.push((value, OperandPosition::Argument));
                 }
+            }
+        }
+    }
+    /* A `+1` an operator consumes and drops -- `if ([[Thing alloc] init]
+     * != nil)`, #477 M1's third shape. The two arms above collect only
+     * what a *send or call* takes, so a value compared rather than passed
+     * fell through: `collect_owning_operands_in` recursed past it without
+     * ever pushing it, and `if_statement`'s arm then found nothing to
+     * hoist. Measured before the fix: no release at all, where the
+     * matrix's `while` and `do-while` condition rows both release once
+     * per iteration -- coverage that reads as covering `if` and does not.
+     *
+     * `conditionally_evaluated` is what keeps `&&` and `||` out: their
+     * right operand may never run, so a hoist would allocate where the
+     * source does not, and `render_comma_operand_expr` takes those
+     * instead. That guard already existed for the send arms and is the
+     * reason this can be a plain collection rather than a special case.
+     *
+     * ARC releases such a value immediately after the condition is
+     * evaluated; a hoist holds it until the end of the statement, so the
+     * object outlives the branch. Longer, not leaked -- and it is the same
+     * lifetime the existing `if_statement` / `switch_statement` arm
+     * already gives a `+1` passed to a send inside a condition, so this
+     * does not introduce a second rule. */
+    if node.kind() == "binary_expression" {
+        for field in ["left", "right"] {
+            let Some(operand) = node.child_by_field_name(field) else {
+                continue;
+            };
+            if !crate::arc::is_owning_expr(
+                operand,
+                ctx.src,
+                ctx.program,
+                &ctx.program.owning_methods,
+            ) {
+                continue;
+            }
+            if !ctx.arg_temps.contains_key(&operand.id())
+                && !conditionally_evaluated(operand, stmt)
+            {
+                out.push((operand, OperandPosition::Compared));
             }
         }
     }
