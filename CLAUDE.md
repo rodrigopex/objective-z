@@ -337,7 +337,7 @@ Retained as reference for transpiler development. Not compiled — the runtime c
 
 ## Working alongside other changes
 
- collects the failure modes that cost real time when several
+`docs/WORKING.md` collects the failure modes that cost real time when several
 branches are in flight: guards that pass while the property is gone, instruments
 that answer a different question than you asked, the version line, rebasing
 across a rename, prose as load-bearing, and why a document is a relay. Every
