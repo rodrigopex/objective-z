@@ -717,6 +717,56 @@ class parsed with ivars, and hard-error naming the class and the `.m` to add.
 
 ## How measurements mislead
 
+### The freed-slot poison cannot survive the free (#452, #445)
+
+`_oz_free` stamps `OZ_CLASS_ID_FREED` into `_meta.class_id` before returning a
+slot, so that `oz_retain`, `oz_release` and the dealloc switch can recognise a
+stale pointer instead of treating it as a live object. **The stamp is emitted
+and cannot be read back.** The reason is the root struct's layout:
+
+```c
+struct OZObject {
+	struct oz_metadata _meta;   /* class_id is at offset 0 */
+	oz_atomic_t oz_refcount;
+};
+```
+
+`_meta` is the first member, so `class_id` occupies the first bytes of every
+object — and those bytes belong to the allocator the instant the block is
+returned. Zephyr's `k_mem_slab_free` writes the free-list pointer into the
+block -- `*(char **) mem = slab->free_list;` at `mem_slab.c:307`, verified
+in `deps/zephyr` -- and glibc writes a tcache `next` pointer there. Either
+overwrites the stamp as part of the free it is meant to outlive.
+
+Measured rather than reasoned about, which is how it was found. Probed on
+macOS while landing #452: an ivar set to `0x11111111` and the body poisoned
+with `0xA5` read back after the free as `class=? v=00000003` -- neither the
+marker nor the poison survived, and the `3` is allocator bookkeeping showing
+through. The prediction that the marker *would* be readable was written into
+#452's handoff as its load-bearing note and was falsified by this probe; the
+reasoning had not accounted for the layout.
+
+Two consequences worth keeping:
+
+- **The over-release trap names the class only for a *live* over-release.**
+  Driving a live object's refcount to zero and releasing again gives
+  `over-release of Widget`. Releasing an *already freed* object gives
+  `over-release of ?`, because the class is no longer knowable from the
+  object. `refcount_traps.rs` tests the first and deliberately does not test
+  the second.
+- **Post-free detection needs a mechanism outside the object.** A side table
+  keyed by address, a generation counter held outside the block, or an explicit
+  decision that it is AddressSanitizer's job on host and unavailable on target.
+  #445 assumed the third was unacceptable ("nothing on target sees a leak at
+  all") without the layout constraint in view, so the question is open rather
+  than answered.
+
+The general shape, which is why this sits here: **an instrument placed inside
+the thing it is watching is destroyed by the event it is watching for.** The
+stamp was not wrong, and no test of its *emission* could have caught this --
+`poison_emission.rs` asserts the store is generated and passes. Only reading
+the value back after the free shows it.
+
 ### Every host gate green over C that is not C (#428)
 
 `__unsafe_unretained` reached the generated `.c` from ten positions and
