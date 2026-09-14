@@ -1221,6 +1221,15 @@ struct EmitCtx<'a> {
     /// Names bound by a param or a local declaration -- these shadow an
     /// ivar of the same name, exactly like plain C/ObjC scoping.
     locals: std::collections::HashSet<String>,
+    /// The parameter names, which are also in `locals` -- C scoping makes a
+    /// parameter behave like one, and `collect_function_params` says why
+    /// inserting them there is safe. They are a *fourth* thing when a `+1`
+    /// is stored into them, though, and `is_slot` enumerates only three
+    /// strong destinations, so such a store lowered to a plain C
+    /// assignment that released nothing (#477 M2). Tracked separately
+    /// because the refusal has to tell a parameter from a local ARC
+    /// declined to manage, and `locals` deliberately cannot.
+    params: std::collections::HashSet<String>,
     diags: Vec<Diagnostic>,
     /// (prototype, full definition) pairs for blocks hoisted out of this
     /// class's methods -- both go into the *primary* generated source (see
@@ -1436,6 +1445,7 @@ impl<'a> EmitCtx<'a> {
             class_name,
             scope,
             locals: HashSet::new(),
+            params: HashSet::new(),
             diags: Vec::new(),
             hoisted_blocks: Vec::new(),
             hoisted_structs: Vec::new(),
@@ -3345,6 +3355,50 @@ fn render_strong_local_assign(
         || ctx.arc_managed_slots.contains(&name)
         || is_file_scope_object(&name, ctx);
     if !is_slot {
+        /* A `+1` into a **parameter** is refused rather than managed
+         * (#477 M2). The three destinations above are the strong slots;
+         * a parameter is a fourth thing, and before this it lowered to a
+         * plain C store that released nothing -- measured, in both the
+         * `parameter_declaration` and `method_parameter` spellings.
+         *
+         * Managing it is what ARC does, and ARC can afford it only
+         * because LLVM takes it back. Measured against
+         * `clang -fobjc-arc`: at `-O0` a parameter is copied into a
+         * strong slot and retained on entry -- `storeStrong(slot, arg)`,
+         * for *every* object parameter, assigned or not -- which is what
+         * makes the release-old-then-assign form sound. At `-O2` the
+         * optimiser proves the parameter `readnone captures(none)` and
+         * deletes the pair outright. oz2c decides elision statically at
+         * emit time and has no such pass, so it would pay that
+         * retain/release permanently, on every object parameter in the
+         * program.
+         *
+         * Reusing the managed-slot store instead is not an option: it is
+         * release-old-then-assign, and a parameter's old value is the
+         * *caller's*, so it would turn this leak into an over-release --
+         * the corrupting direction `ARC.md` § 1.3.1 already refuses
+         * `ns_consumed` for. Precedent for refusing a spelling whose
+         * mechanism the backend lacks: #430, #458, #460.
+         *
+         * Zero occurrences across 187 `.m` files in this repo and
+         * px-keyboard, so this charges nobody today. */
+        if ctx.params.contains(&name) {
+            ctx.err_detailed(
+                node,
+                format!("storing a '+1' into the parameter '{}' is not supported", name),
+                Some(
+                    "a parameter holds the caller's reference, and nothing here owns it:                      releasing it at scope exit would free the caller's object, and                      retaining it on entry to make the slot ours is a cost every object                      parameter would pay -- ARC does that and relies on the optimiser to                      remove it again, which this backend has no pass to do"
+                        .to_string(),
+                ),
+                vec![
+                    format!(
+                        "declare a local for the new object and use that instead of '{}'",
+                        name
+                    ),
+                    "or return the new object and let the caller own it".to_string(),
+                ],
+            );
+        }
         return None;
     }
     let root = ctx.program.root_class()?.to_string();
@@ -6974,6 +7028,7 @@ fn collect_function_params(func_node: Node, ctx: &mut EmitCtx) {
         let name = crate::collect::find_declared_name(child, ctx.src);
         if !name.is_empty() {
             ctx.scope.insert(name.clone(), c_type);
+            ctx.params.insert(name.clone());
             ctx.locals.insert(name);
         }
     }
@@ -7578,8 +7633,10 @@ fn render_method_definition(
 
     ctx.scope = ivars_scope.clone();
     ctx.locals.clear();
+    ctx.params.clear();
     for (pname, ptype) in &sig.params {
         ctx.scope.insert(pname.clone(), ptype.clone());
+        ctx.params.insert(pname.clone());
         ctx.locals.insert(pname.clone());
     }
 
