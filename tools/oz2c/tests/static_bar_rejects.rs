@@ -965,3 +965,63 @@ int freeFnParam(Thing *p)
 		);
 	}
 }
+
+/// A `+1` into an array element that is **not** an ivar is refused (#477 M4).
+///
+/// Reachable through exactly one spelling, and not the one the issue
+/// described. Measured before the refusal:
+///
+/// | shape | before |
+/// |---|---|
+/// | ivar array, `_arr[0]` and `self->_arr[0]` | correct, release-first |
+/// | local `Thing *arr[2]` | already refused -- read as ObjC subscripting |
+/// | file-scope `Thing *g_arr[2]` | already refused, same |
+/// | a local shadowing an ivar array | already refused, same |
+/// | local `id a[2]` | **2 allocations, 0 releases** |
+///
+/// Every class-typed spelling is blocked upstream, because `arr[0]` on a
+/// `Thing` is read as a subscript *message* and `Thing` implements neither
+/// subscript selector. `id` slips through because `class_name_from_type`
+/// answers `None` for it, so nothing reads `a[0]` as a send -- making `id` the
+/// escape hatch for a third ownership defect after #400 and #429.
+///
+/// **So this test uses `id`, deliberately.** A row written against
+/// `Thing *arr[2]` would pass on the pre-existing subscripting refusal while
+/// testing nothing about ownership -- the vacuous shape this file's header
+/// warns about.
+///
+/// The second row is the control: an ivar array is the supported spelling and
+/// must keep its release-first store. A refusal that also caught the ivar case
+/// would read as passing here while breaking the only form that works.
+#[test]
+fn a_plus_one_into_a_non_ivar_array_element_is_refused() {
+	let leaking = format!(
+		"{}{}",
+		PREAMBLE(),
+		"\
+@interface Thing : OZObject
+@end
+@implementation Thing
+@end
+void intoIdArray(void)
+{
+\tid a[2];
+\ta[0] = [[Thing alloc] init];
+\t(void)a;
+}
+"
+	);
+	let diags = expect_reject(&leaking);
+	assert!(
+		diags.contains("element of 'a'"),
+		"the refusal must name the array, got:\n{diags}"
+	);
+	assert!(
+		diags.contains("only an array ivar is a strong slot"),
+		"the note must say why a non-ivar array cannot be managed, got:\n{diags}"
+	);
+	assert!(
+		diags.contains("declare the array as an ivar"),
+		"the help must name the supported spelling (#430's rule), got:\n{diags}"
+	);
+}
