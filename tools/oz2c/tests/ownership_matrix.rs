@@ -43,6 +43,32 @@
 // function that builds the literal, and only the object failing to die
 // reveals it.
 
+// **Why this file transpiles without a Clang AST, when no shipped path
+// does.** `check` calls `oz2c::transpile`, whose `Options::default()` has
+// `require_ast: false`, so every row here is asserted against the
+// fall-back ivar rule (`Program::fallback_owns_object_ivar`) rather than
+// against Clang's qualifiers. #453 raised that as a concern -- a 996-line
+// standing record pinned to a rule nothing ships. It is measured, and the
+// answer is that for *this fixture* the two rules cannot differ:
+//
+//   - The rules diverge on exactly one thing, an ivar tree-sitter cannot
+//     classify. Those collect as `c_type == "void *"` -- `id`,
+//     `id<Protocol>` and `__unsafe_unretained id` all do -- and the
+//     fall-back abstains on every one, which for a plain `id` is a leak.
+//     Measured on a two-ivar fixture: without the AST `Holder` releases 1
+//     ivar, with it 2, the second being `oz_release(self->_anything)`.
+//   - This fixture declares no such ivar. `OZObject` has no ivar block at
+//     all, and `Holder` holds `Thing *_ivar` and `Thing *_arr[2]`, both of
+//     which the fall-back classifies correctly.
+//   - Verified rather than reasoned: every row was run a second time with
+//     a real dump attached via `common::ast_dump_file`, and all 41 shapes
+//     produce identical counts.
+//
+// So the AST-less form is the right thing to pin here -- it keeps 41 rows
+// off a clang dependency they do not need. `no_ivar_needs_the_ast_oracle`
+// below is what keeps that true: add an `id`-typed ivar to the fixture and
+// it fails, rather than the matrix quietly starting to pin a leak.
+
 mod common;
 use common::ozobject_src as PREAMBLE;
 
@@ -169,6 +195,45 @@ fn counts(body: &str) -> (usize, usize, usize) {
         body.matches("oz_retain(").count(),
         body.matches("oz_release(").count(),
     )
+}
+
+/// The fixture must contain no ivar whose ownership only Clang can decide.
+///
+/// This is the guard on the header note above, and it is the whole reason
+/// the note can be trusted a year from now. The condition is exact rather
+/// than a proxy: an ivar tree-sitter cannot resolve collects as
+/// `c_type == "void *"`, and that is precisely the set
+/// `fallback_owns_object_ivar` abstains on -- so one appearing in this
+/// fixture moves some row onto a rule no shipped path uses.
+///
+/// It fires on `__unsafe_unretained id` too, where the fall-back's
+/// abstention happens to be the right answer. That is deliberate: the
+/// check is about whether a row's verdict *depends* on the oracle, not
+/// about whether this particular abstention is correct, and the cost of
+/// the false alarm is reading thirty lines of comment.
+#[test]
+fn no_ivar_needs_the_ast_oracle() {
+    let (program, _) = oz2c::collect::collect(&program(""));
+    let mut needs_oracle = Vec::new();
+    for class in &program.class_order {
+        let Some(info) = program.classes.get(class) else {
+            continue;
+        };
+        for (ivar, c_type) in &info.own_ivars {
+            if c_type.trim() == "void *" {
+                needs_oracle.push(format!("{}.{} ({})", class, ivar, c_type));
+            }
+        }
+    }
+    assert!(
+        needs_oracle.is_empty(),
+        "this fixture now declares ivar(s) only Clang can classify: {:?}\n\
+         Every row here is asserted against the fall-back rule, which \
+         abstains on these -- and for a plain `id` that abstention is a \
+         leak. Either attach a dump the way `common::ast_dump_file` does, \
+         or keep the ivar out of the fixture. See this file's header.",
+        needs_oracle
+    );
 }
 
 fn check(shape: &Shape, body_src: &str) {
