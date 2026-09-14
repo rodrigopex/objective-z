@@ -25,7 +25,8 @@ fn usage() -> ExitCode {
          [--line-directives] [--timings] [--quiet] \
          [--manifest-only] [--dump-cst] \
          <input.m>... <outdir>\n\
-         \x20      oz2c --dump-ast-facts [--ast <ast.json>]..."
+         \x20      oz2c --dump-ast-facts [--ast <ast.json>]...\n\
+         \x20      oz2c --check-arc [-I <dir>]... --ast <ast.json>... <input.m>..."
     );
     ExitCode::FAILURE
 }
@@ -55,6 +56,63 @@ macro_rules! oz_err {
     ($($arg:tt)*) => {
         eprintln!("oz2c error: {}", format_args!($($arg)*))
     };
+}
+
+/// `oz2c --check-arc`: print the ARC audit, one section per entry source.
+///
+/// **Always succeeds.** #453 asks for "an audit tool whose output is a work
+/// queue", not a gate, and that is a design decision rather than an
+/// omission: the two models legitimately differ, because Clang retains on
+/// binding and `arc.rs` elides at source level. A gate here would fail on
+/// every correct program.
+///
+/// One report per entry file rather than one for the whole translation
+/// unit, because the useful question is "what does Clang say about *this*
+/// source" -- the dumps also cover every header the source imports and the
+/// SDK implementations behind them, which is 29.6% of the marks in this
+/// repo's own corpora.
+fn run_check_arc(
+    resolved: &oz2c::imports::ResolvedSource,
+    ast_paths: &[PathBuf],
+    entry_paths: &[PathBuf],
+) -> ExitCode {
+    if ast_paths.is_empty() {
+        oz_err!(
+            "--check-arc compares oz2c against Clang's own marks, so it needs at least \
+             one --ast dump (produce one with `clang -Xclang -ast-dump=json -fsyntax-only \
+             -fobjc-arc`)"
+        );
+        return ExitCode::FAILURE;
+    }
+    let mut facts = oz2c::astinfo::AstFacts::default();
+    for path in ast_paths {
+        match oz2c::astinfo::AstFacts::from_path(path) {
+            Ok(one) => facts.merge(one),
+            Err(e) => {
+                oz_err!("{}", e);
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+    let (mut program, _) = oz2c::collect::collect(&resolved.text);
+    program.ast = Some(facts);
+    /* Read back out of the program rather than kept aside, so the audit
+     * compares against the same facts the transpile path would attach --
+     * one owner for the oracle, not two. */
+    let facts = program.ast.take().expect("just set");
+    for path in entry_paths {
+        /* The file name as Clang would have echoed it. A suffix match is
+         * what reconciles the two spellings -- see `AstFacts::marks_in`. */
+        let suffix = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| path.to_string_lossy().to_string());
+        for line in oz2c::checkarc::report(&program, &facts, &suffix) {
+            println!("{}", line);
+        }
+        println!();
+    }
+    ExitCode::SUCCESS
 }
 
 fn dump_merged_ast_facts(ast_paths: &[PathBuf]) -> ExitCode {
@@ -96,6 +154,7 @@ fn main() -> ExitCode {
     let mut line_directives = false;
     let mut dump_cst = false;
     let mut dump_ast_facts = false;
+    let mut check_arc = false;
     let mut timings = false;
     let mut quiet = false;
     let mut manifest_only = false;
@@ -311,6 +370,14 @@ fn main() -> ExitCode {
                 dump_ast_facts = true;
                 i += 1;
             }
+            // An audit, not a gate: it always succeeds, and its output is a
+            // work queue. Takes the sources and the dumps but no outdir --
+            // it emits nothing, and demanding a directory it would not
+            // write to would make the tool harder to run than to read.
+            "--check-arc" => {
+                check_arc = true;
+                i += 1;
+            }
             arg => {
                 positional.push(arg.to_string());
                 i += 1;
@@ -327,7 +394,7 @@ fn main() -> ExitCode {
      * it prints a dump on stdout and returns before the pipeline, so a
      * progress header above it would be noise in front of the thing the
      * flag exists to show. */
-    let level = if quiet || dump_cst {
+    let level = if quiet || dump_cst || check_arc {
         report::Level::Quiet
     } else if timings {
         report::Level::Timings
@@ -340,12 +407,24 @@ fn main() -> ExitCode {
     // (see `cmake/oz2c.cmake`), and all of them become one
     // translation unit -- see `imports::resolve_entry_files` for why one
     // unit rather than one run per file.
-    if positional.len() < 2 {
-        return usage();
-    }
-    let outdir = Path::new(positional.last().unwrap());
-    let entry_paths: Vec<PathBuf> =
-        positional[..positional.len() - 1].iter().map(PathBuf::from).collect();
+    /* `--check-arc` writes nothing, so it takes sources and no outdir:
+     * demanding a directory it would not touch would make the tool harder
+     * to run than to read. Every other invocation keeps the
+     * `<input.m>... <outdir>` shape. */
+    let (outdir, entry_paths): (Option<&Path>, Vec<PathBuf>) = if check_arc {
+        if positional.is_empty() {
+            return usage();
+        }
+        (None, positional.iter().map(PathBuf::from).collect())
+    } else {
+        if positional.len() < 2 {
+            return usage();
+        }
+        (
+            Some(Path::new(positional.last().unwrap())),
+            positional[..positional.len() - 1].iter().map(PathBuf::from).collect(),
+        )
+    };
 
     for path in &entry_paths {
         if !path.is_file() {
@@ -382,6 +461,14 @@ fn main() -> ExitCode {
         dump_resolved_cst(&resolved);
         return ExitCode::SUCCESS;
     }
+
+    if check_arc {
+        return run_check_arc(&resolved, &ast_paths, &entry_paths);
+    }
+
+    /* Never `None` here: `--check-arc` is the only shape without an
+     * outdir, and it returned above. */
+    let outdir = outdir.expect("an outdir, since --check-arc returned above");
 
     // oz2c infers the root class (the one class with no superclass)
     // rather than being told it, so `--root-class` is a cross-check on the
