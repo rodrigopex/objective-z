@@ -876,3 +876,82 @@ int main(void) {
     let stdout = compile_and_run(&src, "array_literal_in_a_loop_bound_to_a_fresh_local_accepted");
     assert_eq!(stdout, "seen=4\n");
 }
+
+/// A `+1` stored into a **parameter** is refused, in both spellings (#477 M2).
+///
+/// `emit::is_slot` enumerates three strong destinations -- a managed local, a
+/// `static` local, a file-scope object -- and a parameter is in none of them,
+/// so the store lowered to a plain C assignment that released nothing.
+/// Measured in both spellings before the refusal: no release, no retain.
+///
+/// **Two rows because the CST spells them differently.** A free function's
+/// parameter is a `parameter_declaration`; a method's is a
+/// `method_parameter`, and `staticbar.rs`'s own arms note that the first
+/// never sees the second. A refusal written against one spelling and
+/// asserted against one spelling is the shape that reads as covering both.
+///
+/// Refused rather than managed, and the measurement is the argument.
+/// `clang -fobjc-arc` at `-O0` copies the parameter into a strong slot and
+/// retains on entry -- for *every* object parameter, assigned or not -- which
+/// is what makes release-old-then-assign sound. At `-O2` the optimiser proves
+/// it `readnone captures(none)` and deletes the pair. oz2c decides elision
+/// statically at emit time and has no such pass, so it would pay that
+/// permanently. Reusing the managed-slot store without the entry retain would
+/// release the *caller's* object: a leak turned into an over-release, which is
+/// the direction `ARC.md` § 1.3.1 refuses `ns_consumed` for.
+#[test]
+fn a_plus_one_stored_into_a_parameter_is_refused_in_both_spellings() {
+	for (what, body) in [
+		(
+			"parameter_declaration (a free function)",
+			"\
+int freeFnParam(Thing *p)
+{
+\tp = [[Thing alloc] init];
+\treturn [p tag];
+}
+",
+		),
+		(
+			"method_parameter (a method)",
+			"\
+@interface Holder : OZObject
+- (int)take:(Thing *)p;
+@end
+@implementation Holder
+- (int)take:(Thing *)p {
+\tp = [[Thing alloc] init];
+\treturn [p tag];
+}
+@end
+",
+		),
+	] {
+		let src = format!(
+			"{}{}{}",
+			PREAMBLE(),
+			"\
+@interface Thing : OZObject
+- (int)tag;
+@end
+@implementation Thing
+- (int)tag { return 1; }
+@end
+",
+			body
+		);
+		let diags = expect_reject(&src);
+		assert!(
+			diags.contains("parameter 'p'"),
+			"{what}: the refusal must name the parameter, got:\n{diags}"
+		);
+		assert!(
+			diags.contains("caller's reference"),
+			"{what}: the note must say why a parameter is not ours to release, got:\n{diags}"
+		);
+		assert!(
+			diags.contains("declare a local"),
+			"{what}: the help must name the thing to write instead (#430's rule), got:\n{diags}"
+		);
+	}
+}
