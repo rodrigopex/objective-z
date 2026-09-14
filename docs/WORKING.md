@@ -76,9 +76,35 @@ removed nothing, whatever their final text says.
 
 ## 3. The version line
 
-`tools/oz2c/Cargo.toml`'s version travels in the same commit as the change it
-describes. With more than one branch open, that line is the single most
-fragile thing in the repo — it was dropped or collided **ten times** in one day.
+**A PR declares the *kind* of bump and does not carry the number** (changed
+2026-09-14 — see `CLAUDE.md`). The kind is in the conventional-commit subject;
+the number is assigned just before merge, on the PR that is next to land.
+
+Everything below is the history that produced that rule, and still applies to
+any branch that does carry a number — including the transitional ones open when
+it changed.
+
+**Why it changed, measured:** 12 of 50 commits on `main` in one day touched that
+file, one per PR, so **every merge forced a rebase on every other open PR** —
+N−1 rebases per merge. And the version string is **write-only**:
+`CARGO_PKG_VERSION` appears nowhere in the crate, there is no `--version` flag,
+it reaches no generated output, and no gate asserts it. So carrying it through
+review verified nothing.
+
+The sharpest form: **eight of the nine incidents below were created by carrying
+the number, not caught by it.** A safeguard whose failures are all
+self-inflicted is not a safeguard.
+
+**Just-in-time, not post-merge.** `main` requires a PR and nine checks, so the
+number cannot be pushed to `main` directly. It goes on as the **final commit of
+the PR being merged**, once that PR is green and next in the ladder. Only one
+open PR ever carries a number, so no two can collide. The cost is one re-gate on
+the merging PR instead of N−1 rebases on its siblings.
+
+---
+
+With more than one branch open, that line *was* the single most fragile thing in
+the repo — dropped or collided **ten times** in one day.
 
 - **Two branches picking the same next number do not conflict.** The second
   one's edit is byte-identical and already applied, so git drops it silently:
