@@ -2517,6 +2517,111 @@ pre-existing and untouched by this change, and it is the same shape as every
 defect since #355: a position nobody asked the question in. Filed separately
 rather than folded in.
 
+## A qualifier read as text, forty lines from one read as a node (#488)
+
+`emit::is_static_declaration` reads the `storage_class_specifier` **node**, and its own
+comment says why: so it "sees only the storage class and not a `static` appearing
+anywhere else in the text". Forty lines above one of its callers, the ownership
+qualifier was read as a substring of the whole declaration:
+
+```rust
+if is_object && !node_text(node, src).contains("__unsafe_unretained") {
+```
+
+Five sites did that. The cost is a **leak**, and it needs one token in a cast:
+
+```objc
+Foo *a = (__unsafe_unretained Foo *)[Foo make];
+```
+
+`a` is `__strong` — the qualifier belongs to the cast's type, not to the declaration —
+so ARC releases it at scope exit. The substring search saw the token, dropped `a` from
+the managed set, and emitted no release. The control differing by that one token emits
+`oz_release`, and nothing else in the two outputs differs.
+
+### What separates the cast is not depth
+
+The instinct is "read the node instead of the text", and that is not enough on its own.
+The qualifier reaches a variable from three source positions, and tree-sitter puts the
+`type_qualifier` node in two different parents:
+
+```text
+__unsafe_unretained Foo *a;   declaration > type_qualifier
+id __unsafe_unretained g;     declaration > type_qualifier        (after the specifier)
+Foo *__unsafe_unretained b;   declaration > init_declarator > pointer_declarator > type_qualifier
+Foo *d = (__unsafe_unretained Foo *)0;
+                              declaration > init_declarator > cast_expression > ... > type_qualifier
+```
+
+A check on one child position covers some spellings and not others, which is the shape
+of every ARC defect since #351. What actually separates the cast from the three that
+qualify the variable is **which side of the `=` it falls on**, so
+`collect::declares_qualifier` descends the declarator freely and stops at the
+initialiser's value.
+
+### Reading the node is necessary and not sufficient
+
+The obvious fix is "read the node instead of the text", and stopping there leaves a
+second leak untouched. C scopes the two qualifier positions differently:
+
+```objc
+__unsafe_unretained Foo *a, *b;   /* both unretained */
+Foo *__unsafe_unretained a, *b;   /* `a` unretained, `b` __strong */
+```
+
+A qualifier among the *declaration's* own children introduces every declarator, so it
+applies to all of them. One inside a *declarator* applies to that declarator alone. The
+substring search answered the whole declaration -- and so does a per-declaration node
+check, identically -- which made `b` a borrow. `b` holds a `+1` from its own
+initialiser, so nothing released it: one object freed where ARC frees two, measured.
+
+So `collect::qualifies` takes the declaration **and** the declarator, and all five call
+sites moved the check inside their declarator loops. The instrument lesson is the pair,
+not the first half: read the node, *and* narrow the scope to what the language scopes it
+to. A node-precise check at the wrong granularity is still a check on the wrong thing.
+
+### One defect can mask another, and an unreachable site is not a safe one
+
+This is the part worth carrying forward. Four of the five sites were un-backstopped —
+`collect.rs`'s ivar scan is not, because `model::owned_object_ivar_names` returns
+Clang's AST answer and `continue`s before `unretained_ivars` is read (`model.rs:367`).
+Of those four, **only two are demonstrable**:
+
+| site | status |
+| --- | --- |
+| `owned_locals_of` | the leak above; a test that fails against the substring search |
+| `managed_object_locals` | demonstrable; likewise |
+| `retained_bindings` | byte-identical C either way in every shape tried — the binding it would retain is elided, because the owner outlives the borrow in the same scope |
+| `static_object_locals` | **masked by a different defect** |
+
+The last one is the interesting failure. Reaching its qualifier check needs the token
+inside the declaration's initialiser, and a `static` local's initialiser must be a
+constant expression in C, which leaves exactly one shape:
+`static Foo *slot = (__unsafe_unretained Foo *)0;`. That shape loses its release-first
+store — and so does `static Foo *slot = (Foo *)0;`, measured, with no qualifier anywhere.
+A plain cast already unmanages the slot before any qualifier is consulted, so the
+qualifier check is unobservable behind it.
+
+Two conclusions, and the second is the one that is easy to get backwards:
+
+- **A site with no possible test is not thereby a site with no defect.** It can be a
+  site whose defect is hidden by an earlier one on the same path. The absence of a
+  failing test is evidence about reachability, not about correctness.
+- So all four were changed and **two are recorded as unproven**, in the test file's own
+  header. Changing a site for consistency is right; counting it as a closed hole because
+  the suite stayed green is the thing this repo keeps paying for.
+
+### And a "fails loud" that was loud for the wrong reason
+
+The audit's severity note had the dangerous direction failing at the C compiler: a
+macro-spelled qualifier reaching the generated C, where GCC rejects
+`__unsafe_unretained`. Measured, it never reaches GCC. `UNRETAINED Foo *p` arrives as a
+declaration whose *type* is `UNRETAINED`, so a send to it is a located `oz2c` error —
+and the declaration passes through **entirely unlowered**, `Foo` never becoming
+`struct Foo`. Still loud, one stage earlier, and for a reason that does not depend on
+which compiler is downstream. Worth correcting rather than accepting, because "GCC
+catches it" would have credited a backstop that never sees the file.
+
 ## Standing design rules
 
 - **The heap has one name per layer, and the layers are the point (#417).** The
