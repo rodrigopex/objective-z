@@ -19,13 +19,21 @@ gate:
 |---|---|
 | `CARGO EXIT: 0` | the test count — the log was deleted while the job still wrote to it |
 | a clean rebase | a version bump, dropped as already-applied because two branches picked the same number |
-| `!body.contains("oz_static_release")` | any meaning at all, once the emitted symbol became `oz_release` |
+| an absence assertion naming a symbol by its pre-rename spelling | any meaning at all, once the rename landed and the string could no longer occur |
 | a `tomllib` read-back | `name = "oz2c"`, deleted by a regex that spanned conflict markers; a `[package]` table with only `version` is valid TOML |
 | `just test-boards \| tail -20` then `$?` | the entire ARM leg — `tail`'s exit status cannot fail |
 | a grep for the other side of a merge | nothing; the grep was for a *paraphrase* of their wording |
 
 **The rule:** when a gate is green, ask what it would do if the property were
 absent. If the answer is "pass", the gate is decoration.
+
+**A guard that works looks like this.** The row above is phrased without the
+retired symbol's literal spelling because `naming_tool_identity.rs` refused an
+earlier draft of *this file* — only `docs/STATUS.md` may spell what #462
+retired, and CI failed the commit that introduced the quote. A document about
+guards that stopped testing anything was caught by a guard that had not. That
+is the distinction worth internalising: this one names the file, the line and
+the rule it enforces, and it fires on prose as readily as on code.
 
 **Pair every absence check with a presence check**, so the fixture is proven to
 contain the thing whose absence you assert. Asserting absence alone cannot
