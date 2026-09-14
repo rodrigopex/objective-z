@@ -734,7 +734,7 @@ pub(crate) fn static_object_locals(
              * released (#429). `stars == 0` matters -- `id *p` is a pointer
              * *to* an object reference, not one. */
             let is_object = (stars == 1 && program.is_class(bare)) || (stars == 0 && bare == "id");
-            if is_object && !node_text(node, src).contains("__unsafe_unretained") {
+            if is_object {
                 let mut cursor = node.walk();
                 for child in node.children(&mut cursor) {
                     /* `identifier` as well, which a `Class *p` declaration
@@ -750,6 +750,12 @@ pub(crate) fn static_object_locals(
                         child.kind(),
                         "pointer_declarator" | "init_declarator" | "identifier"
                     ) {
+                        /* Per *declarator*: `Foo *__unsafe_unretained a, *b;`
+                         * leaves `b` strong, and answering for the whole
+                         * declaration made it a borrow nothing released. */
+                        if crate::collect::qualifies(node, child, src, "__unsafe_unretained") {
+                            continue;
+                        }
                         let name = crate::collect::find_declared_name(child, src);
                         if !name.is_empty() {
                             found.insert(name);
@@ -799,12 +805,16 @@ pub(crate) fn managed_object_locals(
             // reference, not one.
             let is_object =
                 (stars == 1 && program.is_class(bare)) || (stars == 0 && bare == "id");
-            if is_object && !node_text(node, src).contains("__unsafe_unretained") {
+            if is_object {
                 let mut cursor = node.walk();
                 for child in node.children(&mut cursor) {
                     let bare = child.kind() == "pointer_declarator";
                     let init = child.kind() == "init_declarator";
                     if !bare && !init {
+                        continue;
+                    }
+                    /* Per *declarator* -- see `collect::qualifies`. */
+                    if crate::collect::qualifies(node, child, src, "__unsafe_unretained") {
                         continue;
                     }
                     let name = crate::collect::find_declared_name(child, src);
@@ -5063,9 +5073,6 @@ fn render_block(node: Node, ctx: &mut EmitCtx) -> (String, String) {
 /// load-bearing: `(Thing *)[u init]` hands back `u`'s own +1, and
 /// releasing it here as well frees one pointer twice (#332).
 fn owned_locals_of(decl: Node, ctx: &EmitCtx) -> Vec<String> {
-    if node_text(decl, ctx.src).contains("__unsafe_unretained") {
-        return Vec::new();
-    }
     /* A `static` object local is a strong slot that outlives the scope, so
      * the scope owes it nothing -- the store into it is what manages it
      * (`arc_managed_slots`). Releasing it here destroyed the object on the
@@ -5080,6 +5087,10 @@ fn owned_locals_of(decl: Node, ctx: &EmitCtx) -> Vec<String> {
     let children: Vec<Node> = decl.children(&mut cursor).collect();
     for child in children {
         if child.kind() != "pointer_declarator" && child.kind() != "init_declarator" {
+            continue;
+        }
+        /* Per *declarator*, not per declaration -- see `collect::qualifies`. */
+        if crate::collect::qualifies(decl, child, ctx.src, "__unsafe_unretained") {
             continue;
         }
         // Anything ARC manages as a strong local owns whatever it ends up
@@ -5185,9 +5196,6 @@ fn owned_locals_of(decl: Node, ctx: &EmitCtx) -> Vec<String> {
 ///     `released_by_hand` when a manual `-release` send became a located
 ///     error (#428).
 fn retained_bindings(decl: Node, ctx: &EmitCtx) -> Vec<String> {
-    if node_text(decl, ctx.src).contains("__unsafe_unretained") {
-        return Vec::new();
-    }
     if is_static_declaration(decl, ctx.src) {
         return Vec::new();
     }
@@ -5196,6 +5204,10 @@ fn retained_bindings(decl: Node, ctx: &EmitCtx) -> Vec<String> {
     let children: Vec<Node> = decl.children(&mut cursor).collect();
     for child in children {
         if child.kind() != "init_declarator" {
+            continue;
+        }
+        /* Per *declarator* -- see `collect::qualifies`. */
+        if crate::collect::qualifies(decl, child, ctx.src, "__unsafe_unretained") {
             continue;
         }
         let mut c2 = child.walk();
