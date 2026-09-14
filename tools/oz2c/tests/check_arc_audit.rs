@@ -15,6 +15,7 @@ mod common;
 
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 fn oz2c_binary() -> PathBuf {
     let mut path = std::env::current_exe().expect("test binary path");
@@ -33,9 +34,18 @@ fn audit(case: &str) -> String {
     let src = root.join(case);
     assert!(src.is_file(), "no such corpus case: {}", src.display());
 
+    /* Unique per call, not per case. Keying the directory on the source
+     * stem made two tests that audit the same case race: each removes the
+     * directory on entry, so whichever ran second deleted the other's dump
+     * mid-run and the failure looked like the audit reporting nothing.
+     * `cargo test` runs these in parallel by default, so it surfaced
+     * immediately -- and a flaky gate is worse than no gate. */
+    static SEQ: AtomicUsize = AtomicUsize::new(0);
     let dir = std::env::temp_dir().join(format!(
-        "oz_check_arc_{}",
-        src.file_stem().unwrap().to_string_lossy()
+        "oz_check_arc_{}_{}_{}",
+        src.file_stem().unwrap().to_string_lossy(),
+        std::process::id(),
+        SEQ.fetch_add(1, Ordering::Relaxed)
     ));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("temp dir");
@@ -173,25 +183,33 @@ fn a_synthesized_ivar_is_not_reported_as_a_gap() {
     );
 }
 
-/// The audit states what it cannot answer.
+/// The audit states what it cannot answer, and states it correctly.
 ///
-/// Required by #453, and load-bearing rather than boilerplate: the marks do
-/// not distinguish a `+1` class send from a `+0` one at a call site, nor
-/// the create-rule family from the autorelease convention. A reader who
-/// takes the tables as complete concludes #361 is answerable from this
-/// dump.
+/// Required by #453, and load-bearing rather than boilerplate. The
+/// assertions name the *measured* discrimination rather than the issue's
+/// own account of it: what the marks separate at a call site is create-rule
+/// family membership, and what collapses together is a non-family factory
+/// and a `+0` send -- which is #361's question. Pinning the exact rows
+/// keeps a future edit from quietly restoring the issue's "identical on all
+/// three", which is false.
 #[test]
 fn states_its_own_limits() {
     let report = audit("tests/behavior/cases/arc/reassign_releases_old.m");
     for expected in [
         "what this audit cannot tell you",
-        "ARCReclaimReturnedObject on all three",
-        "#361 is not answerable",
-        "create-rule family",
+        "family membership",
+        "NON-family +1 class send   ARCReclaimReturnedObject",
+        "family +1 class send       ARCConsumeObject",
+        "#361 stays",
         "declared list in `checkarc.rs`",
     ] {
         assert!(report.contains(expected), "missing {:?}:\n{}", expected, report);
     }
+    assert!(
+        !report.contains("identically -- ARCReclaimReturnedObject on all three"),
+        "that claim is measurably false:\n{}",
+        report
+    );
 }
 
 /// Without a dump there is nothing to audit against, and that is an error

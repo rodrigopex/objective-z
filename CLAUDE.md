@@ -188,9 +188,13 @@ from an AST, which is why unexpanded macros survive into the output.
   A Clang JSON AST is supplied via `--ast`, and since #385 it is **required**, not
   optional: `oz2c` refuses a source that declares a class with no dump behind it, as a
   hard located error. It carries the `__strong` qualifiers and the
-  `ARCProduceObject`/`ARCConsumeObject`/`ARCReclaimReturnedObject` marks, and
-  `astinfo.rs` currently reads only `ObjCIvarDecl` of all that. tree-sitter stays the
-  primary frontend for *syntax*; the ownership oracle is Clang's. Every path that
+  `ARCProduceObject`/`ARCConsumeObject`/`ARCReclaimReturnedObject` marks, and since
+  #453 `astinfo.rs` reads all of it — every transfer mark and every ownership
+  qualifier, each attributed to a resolved source position, which is a **stateful
+  fold** rather than a per-node read because Clang delta-encodes locations (10 of
+  1,389 positions in one dump name a file) and the mark node itself carries none.
+  `oz2c --check-arc` is what diffs those against oz2c's own verdicts. tree-sitter
+  stays the primary frontend for *syntax*; the ownership oracle is Clang's. Every path that
   transpiles a program now produces one dump per source — `cmake/oz2c.cmake`,
   `tests/tools/compile_and_run.py`, `tests/smoke/run.py`,
   `scripts/regen_zephyr_tests.py` and the Rust harness (`tests/common/mod.rs`) — and
@@ -213,7 +217,15 @@ from an AST, which is why unexpanded macros survive into the output.
   (`report.rs` is the binary-side half that formats and times)
 - CLI: `--pool-sizes`, `--item-pool-size`, `--heap-support`, `--introspection`,
   `--reflection`, `--line-directives`, `--root-class`, `--ast`, `--allow-missing-ast`,
-  `-I`, `--timings`, `--quiet`, `--manifest-only`, `--dump-cst`, `--dump-ast-facts`.
+  `-I`, `--timings`, `--quiet`, `--manifest-only`, `--dump-cst`, `--dump-ast-facts`,
+  `--check-arc`.
+  `--check-arc` is an audit and not a gate — it **always succeeds**, takes sources and
+  no outdir, and prints a work queue: the ivar-ownership diff (the one question both
+  models answer independently), every ARC transfer grouped by the syntactic position
+  it sits in against the `arc.rs` entry point for that position, and a statement of
+  what the marks cannot discriminate. A gate would be wrong rather than merely strict:
+  Clang retains on binding and `arc.rs` elides, so diffing *release positions* would
+  report a discrepancy at every elided site, which is every site.
   `--ast` is required of any source declaring a class; every other feature flag
   (`--heap-support`, `--introspection`, `--reflection`, `--line-directives`) is off unless
   passed — its absence is what the matching Kconfig option's `n` means, and

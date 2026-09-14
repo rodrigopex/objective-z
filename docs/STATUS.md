@@ -767,6 +767,60 @@ stamp was not wrong, and no test of its *emission* could have caught this --
 `poison_emission.rs` asserts the store is generated and passes. Only reading
 the value back after the free shows it.
 
+### The audit's first run reported two things about itself (#453)
+
+`oz2c --check-arc` diffs oz2c's ownership decisions against the marks
+Clang wrote. Run over the corpus the day it was written, both of its
+findings were about the audit rather than about the transpiler -- which is
+the argument for running an instrument over a corpus you already believe
+is correct, because that is the only condition under which a finding is
+diagnostic of the instrument.
+
+**`[t copy];` reported as a position with no handler.** A `+1` dropped at
+statement level sits in no expression position, so Clang marks the consume
+against the enclosing `CompoundStmt` -- and `arc::discarded_owning_value`
+has handled exactly that since #322. The tool's position-to-handler column
+is a declared list, and the list was incomplete. That is the only direction
+it is allowed to fail in, and the reason the tool says in its own output
+that the column is declared rather than read from `emit.rs`.
+
+**`OZObject.oz_prop_lock` reported as "no Clang answer".** It is
+synthesized onto the root class by `collect::resolve_properties` and
+appears in no source file, so no dump can describe it -- and the report was
+sending a reader to look for it. The general fix was already available in
+the oracle: `knows_class` separates *the dump covered this class and not
+this ivar*, which means oz2c invented the ivar, from *the dump never saw
+this class*, which is the only one of the two that is a gap. Naming
+`oz_prop_lock` would have left every property backing store to be
+rediscovered.
+
+A third, in the same family, in the tool's own test helper: two tests
+auditing the same corpus case keyed their temp directory on the source
+stem, so each removed the other's dump mid-run. Under `cargo test`'s
+default parallelism that presented as the audit reporting nothing, not as
+a collision.
+
+And the claim the tool shipped in its first version was **#453's own**,
+repeated without checking: that at a call site a `+1` class send, a `+0`
+send and a protocol send are marked identically. They are not -- see
+"Where tree-sitter and the Clang AST each sit" above, which had already
+corrected it. Measured a second time during the implementation, one send
+per row:
+
+| send | mark |
+|------|------|
+| `[Thing alloc]` -- family `+1` class | `ARCConsumeObject` |
+| `[a copy]` -- family `+1` instance | `ARCConsumeObject` |
+| `[Thing factoryThing]` -- **non-family** `+1` class | `ARCReclaimReturnedObject` |
+| `[a borrowed]` -- `+0` instance | `ARCReclaimReturnedObject` |
+| `[s supply]` -- protocol | `ARCReclaimReturnedObject` |
+
+What collapses together is a non-family factory and a `+0` send, which is
+#361's question -- so #361 stays unanswerable, for a different reason than
+the issue gives. The difference is not pedantic: "the marks say nothing at
+a call site" would have made that whole section of the audit look pointless
+when the marks are in fact a redundancy check on the family rule.
+
 ### Every host gate green over C that is not C (#428)
 
 `__unsafe_unretained` reached the generated `.c` from ten positions and
@@ -1369,9 +1423,38 @@ sanctioned** -- the Zephyr SDK ships clang, CI pins its version
 already dumps one AST per source. It carries precisely the facts ARC
 decides from: `__strong` / `__unsafe_unretained` qualifiers, and the
 transfer points marked `ARCProduceObject`, `ARCConsumeObject` and
-`ARCReclaimReturnedObject`. `astinfo.rs` reads only `ObjCIvarDecl` today,
-so every local qualifier and every cast kind is parsed and discarded --
-that is head-room, not a design limit.
+`ARCReclaimReturnedObject`. Since #453 `astinfo.rs` reads all of it --
+every transfer mark and every ownership qualifier, each attributed to a
+resolved source position -- and `oz2c --check-arc` is the audit that diffs
+those against oz2c's own verdicts. It read only `ObjCIvarDecl` before
+that, so every local qualifier and every cast kind was parsed and
+discarded.
+
+**Reading it was four measurements, not a parse.** Each one changed the
+design, and none of them is guessable from the JSON:
+
+| what | measured | consequence |
+|------|----------|-------------|
+| Locations are delta-encoded | of 1,389 positions in a 701 KB dump, **10** name a file, 333 a line, 1,056 an offset alone | resolution is a stateful fold in Clang's print order, not a per-node read |
+| The mark node has no location | every mark rides an `ImplicitCastExpr`, which carries `range` and no `loc` | a mark's position is its nearest enclosing node's, inherited downward |
+| Node ids repeat | a dump of one three-line method yields 6 mark nodes at **5** distinct ids -- a `VarDecl` is printed twice, once in the method's decl list and again under its `DeclStmt` | dedupe by `id`, or every binding is counted twice, and bindings hold 49 of 107 in-file marks |
+| Most marks are elsewhere | **45 of 152** marks over the `arc`, `memory` and `lifecycle` corpora are in `src/*.m`, all one shape | filter by file, or the report's largest row is SDK boilerplate |
+
+Two location shapes a hand-written fixture would have got wrong, both
+found by counting them across 22 real dumps rather than by reading the
+parser: **888 of 32,465 locations are macro-nested** (`spellingLoc` /
+`expansionLoc` nested objects rather than flat fields), which resolve to
+the expansion because that is the position a reader can act on -- in this
+repo that moves `+ (instancetype)alloc { return nil; }` off the `return`
+keyword and onto `nil`, which is the macro; and **2,050 are empty `{}`**,
+which inherit rather than drop the mark.
+
+The cost, since #299 made this module's memory the thing to protect:
+**34 ms against 35 ms** on a 49 MB dump of a real Zephyr build, same node
+count, 78 MB peak resident dominated by the file text. Carrying `loc`,
+`range`, `id` and `castKind` on every node is free because serde still
+skips every field not named, and because `Loc` needs no lifetime -- `file`
+appears on ~10 nodes in a whole dump.
 
 Two things measured about it, so the next reader does not have to guess:
 
@@ -1392,7 +1475,9 @@ Two things measured about it, so the next reader does not have to guess:
   `ARCReclaimReturnedObject`. So the three are **not** marked identically,
   and what Clang tells apart is exactly the set `arc::create_rule_family_of`
   already computes from the selector -- and computes with a return-type guard
-  Clang lacks (`docs/ARC.md` s 1.2). So `ARCConsumeObject` at a call site is a
+  Clang lacks (`docs/ARC.md` s 3.1 -- s 1.2 is nil-safe release, and this
+  cited it until #453's implementation checked). So `ARCConsumeObject` at a
+  call site is a
   **redundancy check** on the family rule, not new knowledge. What Clang does
   not tell apart is a non-family factory from a `+0` send, which is #361's
   question -- so #361 stays unanswerable from the AST, for a different reason
