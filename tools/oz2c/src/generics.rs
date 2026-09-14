@@ -298,6 +298,30 @@ fn check_dispatch_signature_agreement(
         .map(|(selector, first_class, first_sig, second_class, second_sig)| {
             let offset = locate_method(root, src, &second_class, &selector)
                 .or_else(|| locate_property_accessor(program, &second_class, &selector));
+            /* Name the `@property` when one is what introduced the
+             * selector. The rule below is about dynamic dispatch and says
+             * nothing about properties, so an author who wrote
+             * `@property (nonatomic) int count;` got a paragraph about
+             * `OZ_PROTOCOL_SEND_count` with no thread back to the line
+             * they wrote -- and `count` and `length` are names the SDK
+             * owns and an author reaches for constantly (#498). */
+            let from_property = [(&second_class, &second_sig), (&first_class, &first_sig)]
+                .iter()
+                .find_map(|(class, _)| {
+                    property_behind_selector(program, class, &selector)
+                        .map(|prop| (prop.name.clone(), (*class).clone()))
+                });
+            let property_note = match &from_property {
+                Some((prop, class)) => format!(
+                    " '{selector}' on {class} is the accessor of '@property {prop}', not a \
+                     method written by hand -- so renaming the property is what renames the \
+                     selector.",
+                    selector = selector,
+                    class = class,
+                    prop = prop
+                ),
+                None => String::new(),
+            };
             Diagnostic::maybe_at(
                 format!(
                     "'{selector}' is dispatched dynamically, so one shared \
@@ -305,13 +329,14 @@ fn check_dispatch_signature_agreement(
                      {first_class} returns '{first_sig}' and {second_class} returns \
                      '{second_sig}'. Dispatch is keyed on the selector name alone, so \
                      the two cannot share one. Rename one of them, or give them the \
-                     same return type.",
+                     same return type.{property_note}",
                     selector = selector,
                     selc = crate::emit::selector_to_c(&selector),
                     first_class = first_class,
                     first_sig = first_sig,
                     second_class = second_class,
-                    second_sig = second_sig
+                    second_sig = second_sig,
+                    property_note = property_note
                 ),
                 src,
                 offset,
@@ -419,6 +444,22 @@ fn locate_method(root: Node, src: &str, class: &str, selector: &str) -> Option<u
 /// CST walk that would have to re-derive the `getter=` resolution and could
 /// disagree with it.
 fn locate_property_accessor(program: &Program, class: &str, selector: &str) -> Option<usize> {
+    property_behind_selector(program, class, selector).map(|prop| prop.decl_offset)
+}
+
+/// The `@property` on `class` whose accessor is named `selector`, if any.
+///
+/// `locate_property_accessor` already asked this question to place the
+/// diagnostic's caret; #498 is that the *message* never said so. A property
+/// called `count` collides with `OZArray`'s `-count`, and the author reads a
+/// paragraph about `OZ_PROTOCOL_SEND_count` and dynamic dispatch with no
+/// hint that a `@property` introduced the selector -- which is what made a
+/// deterministic rule read as "`@synthesize` is unstable".
+fn property_behind_selector<'a>(
+    program: &'a Program,
+    class: &str,
+    selector: &str,
+) -> Option<&'a crate::model::PropertyInfo> {
     let info = program.classes.get(class)?;
     info.properties
         .iter()
@@ -434,7 +475,6 @@ fn locate_property_accessor(program: &Program, class: &str, selector: &str) -> O
                 None => crate::collect::default_setter_sel(&prop.name) == selector,
             }
         })
-        .map(|prop| prop.decl_offset)
 }
 
 /// Reject an owned array of objects with more than one dimension.

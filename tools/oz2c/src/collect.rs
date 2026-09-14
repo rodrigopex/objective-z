@@ -121,7 +121,7 @@ fn extract_protocol(node: Node, src: &str, known_classes: &HashSet<String>) -> P
     };
     let mut methods = Vec::new();
     collect_protocol_methods(node, src, &name, known_classes, &mut methods);
-    ProtocolInfo { name, super_protocols, methods }
+    ProtocolInfo { name, super_protocols, methods, properties: Vec::new() }
 }
 
 /// `method_declaration`s directly inside a protocol body, or nested one
@@ -149,6 +149,60 @@ fn collect_protocol_methods(
             _ => {}
         }
     }
+}
+
+/// Every `property_declaration` inside a protocol body, paired with the
+/// protocol's name.
+///
+/// Mirrors `collect_protocol_methods`' descent, including through
+/// `qualified_protocol_interface_declaration` -- which is what `@optional`
+/// and `@required` produce, so a property under either is found. That
+/// function matched only `method_declaration`, which is why a protocol
+/// `@property` was collected nowhere at all (#498).
+fn collect_protocol_property_nodes<'a>(
+    node: Node<'a>,
+    protocol_name: &str,
+    out: &mut Vec<(String, Node<'a>)>,
+) {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        match child.kind() {
+            "property_declaration" => out.push((protocol_name.to_string(), child)),
+            "qualified_protocol_interface_declaration" => {
+                collect_protocol_property_nodes(child, protocol_name, out)
+            }
+            _ => {}
+        }
+    }
+}
+
+/// The property `prop_name` names, declared by any protocol `conforms`
+/// adopts -- transitively through `super_protocols`.
+///
+/// The walk mirrors `Program::protocol_methods`: same stack, same `visited`
+/// guard against a cyclic `@protocol A <B>` / `@protocol B <A>`. Kept
+/// separate rather than sharing it because this runs inside `collect`,
+/// before a `Program` exists.
+fn protocol_property(
+    conforms: &[String],
+    protocols: &HashMap<String, ProtocolInfo>,
+    prop_name: &str,
+) -> Option<PropertyInfo> {
+    let mut stack: Vec<String> = conforms.to_vec();
+    let mut visited: HashSet<String> = HashSet::new();
+    while let Some(name) = stack.pop() {
+        if !visited.insert(name.clone()) {
+            continue;
+        }
+        let Some(info) = protocols.get(&name) else {
+            continue;
+        };
+        if let Some(found) = info.properties.iter().find(|p| p.name == prop_name) {
+            return Some(found.clone());
+        }
+        stack.extend(info.super_protocols.iter().cloned());
+    }
+    None
 }
 
 pub(crate) fn render_type(type_text: &str, stars: usize, known_classes: &HashSet<String>) -> String {
@@ -784,6 +838,9 @@ pub fn collect(source: &str) -> (Program, Vec<crate::model::Diagnostic>) {
     let mut classes: std::collections::HashMap<String, ClassInfo> = std::collections::HashMap::new();
     let mut class_order = Vec::new();
     let mut protocols: std::collections::HashMap<String, ProtocolInfo> = std::collections::HashMap::new();
+    /* (protocol name, `property_declaration` node), resolved once
+     * `known_classes` is built -- see the comment at the recording site. */
+    let mut protocol_property_nodes: Vec<(String, Node)> = Vec::new();
     // First-seen (line, col) per class, kept only for the
     // superclass-resolution diagnostic below -- not part of `ClassInfo`
     // itself, since nothing downstream needs it.
@@ -797,6 +854,14 @@ pub fn collect(source: &str) -> (Program, Vec<crate::model::Diagnostic>) {
             // matching, not through this parse.
             let known: HashSet<String> = HashSet::new();
             let info = extract_protocol(node, source, &known);
+            /* Recorded, not resolved -- the same reason the `@synthesize`
+             * loop below defers. `extract_property` needs the known-class
+             * set to render a class-typed property (`Thing *p` has to
+             * become `struct Thing *`), and that set does not exist until
+             * every `@interface` has been seen. Extracting here with the
+             * empty set would type an object property as a bare
+             * `Thing *` (#498). */
+            collect_protocol_property_nodes(node, &info.name, &mut protocol_property_nodes);
             protocols.insert(info.name.clone(), info);
             continue;
         }
@@ -827,6 +892,16 @@ pub fn collect(source: &str) -> (Program, Vec<crate::model::Diagnostic>) {
 
     let known_classes: HashSet<String> = classes.keys().cloned().collect();
     let mut diagnostics: Vec<crate::model::Diagnostic> = Vec::new();
+
+    /* The deferred half of protocol property collection (#498). */
+    for (protocol_name, decl) in protocol_property_nodes {
+        let Some(prop) = extract_property(decl, source, &known_classes, &mut diagnostics) else {
+            continue;
+        };
+        if let Some(info) = protocols.get_mut(&protocol_name) {
+            info.properties.push(prop);
+        }
+    }
 
     /*
      * Before anything else, because it is a fact about the *names* in the
@@ -1047,7 +1122,42 @@ pub fn collect(source: &str) -> (Program, Vec<crate::model::Diagnostic>) {
 
     for (name, prop_impl) in synthesizes {
         let (prop_name, ivar) = extract_synthesize(prop_impl, source);
+        /* Read before the mutable borrow, since the protocol lookup needs
+         * the class's `conforms` list and `protocols` at once. */
+        let conforms = classes.get(&name).map(|i| i.conforms.clone()).unwrap_or_default();
         let Some(info) = classes.get_mut(&name) else {
+            /* Unreachable, and here is the reason rather than an
+             * assertion that it is (#498). The recording arm this loop
+             * consumes opens with
+             *
+             *     "class_implementation" => {
+             *         let (name, _, category) = class_header(...);
+             *         if !classes.contains_key(&name) { continue; }
+             *
+             * so every `name` that reaches `synthesizes` has already been
+             * found in `classes`, and nothing removes from that map in
+             * between. Left as a `continue` because there is no input to
+             * point a diagnostic at.
+             *
+             * The first draft of this comment gave a *different* reason --
+             * that pass 1 inserts every implementation's name -- and that
+             * reason is true but does not cover a category, which pass 1
+             * skips. The guard above is what actually holds. Worth the
+             * distinction: an unreachability claim is only as good as the
+             * invariant it names, and the wrong invariant reads as
+             * confirmation.
+             *
+             * Two shapes were tried against it, both silently accepted and
+             * neither reaching here: a category on a class declared
+             * nowhere (filtered by that guard), and an `@implementation`
+             * with no `@interface` (pass 1 inserts it, so the guard
+             * passes). Clang only *warns* on the second, so neither is a
+             * defect this loop should be answering for.
+             *
+             * "I could not find an input" is evidence about reachability,
+             * not about safety: on #448 the same conclusion about
+             * `static_object_locals` turned out to be a *different* defect
+             * masking the path. */
             continue;
         };
         match info.properties.iter_mut().find(|p| p.name == prop_name) {
@@ -1056,16 +1166,39 @@ pub fn collect(source: &str) -> (Program, Vec<crate::model::Diagnostic>) {
                     prop.ivar_name = Some(iv);
                 }
             }
-            None => {
-                diagnostics.push(crate::model::Diagnostic::at(
-                    format!(
-                        "'@synthesize {}' but no '@property {}' is declared on '{}'",
-                        prop_name, prop_name, name
-                    ),
-                    source,
-                    prop_impl.start_byte(),
-                ));
-            }
+            /* Declared by a protocol the class adopts. Clang accepts this
+             * -- it is the idiomatic way to adopt a protocol property --
+             * and oz2c refused it with a message that was wrong about the
+             * cause: the property *is* declared, in a protocol nobody
+             * looked in (#498).
+             *
+             * Adopting it onto the class is what makes the rest of the
+             * pipeline work unchanged: `resolve_properties` below, the
+             * accessor synthesis and the dealloc release all read
+             * `info.properties`, so a protocol property that lands there
+             * is thereafter indistinguishable from one the `@interface`
+             * declared. */
+            None => match protocol_property(&conforms, &protocols, &prop_name) {
+                Some(mut adopted) => {
+                    if let Some(iv) = ivar {
+                        adopted.ivar_name = Some(iv);
+                    }
+                    info.properties.push(adopted);
+                }
+                None => {
+                    diagnostics.push(crate::model::Diagnostic::at(
+                        format!(
+                            "'@synthesize {}' but no '@property {}' is declared on '{}' or on \
+                             any protocol it adopts. A property declared on a *superclass* \
+                             cannot be synthesized again here -- the subclass would be \
+                             claiming the superclass's backing ivar",
+                            prop_name, prop_name, name
+                        ),
+                        source,
+                        prop_impl.start_byte(),
+                    ));
+                }
+            },
         }
     }
 

@@ -116,6 +116,22 @@ pub struct ProtocolInfo {
     /// Methods declared directly by this protocol -- not resolved through
     /// `super_protocols`; use `Program::protocol_methods` for that.
     pub methods: Vec<MethodSig>,
+    /// Properties declared directly by this protocol, same non-transitive
+    /// rule as `methods`.
+    ///
+    /// Collected since #498. Before that a protocol `@property` was
+    /// recorded **nowhere** -- `collect_protocol_methods` matched only
+    /// `method_declaration` -- so `@synthesize` of one was refused with a
+    /// message saying no such property was declared, which was wrong about
+    /// the cause: it was declared, in a protocol nobody looked in.
+    ///
+    /// Note what this is *not* wired into: protocol **conformance**. A
+    /// class that adopts a protocol and provides neither accessor nor
+    /// `@synthesize` is still accepted, where an unmet protocol *method*
+    /// is refused. Making that an error would newly reject programs that
+    /// build today, so it is a separate decision rather than a
+    /// consequence of collecting the data (#498).
+    pub properties: Vec<PropertyInfo>,
 }
 
 #[derive(Debug, Default)]
