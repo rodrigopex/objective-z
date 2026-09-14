@@ -335,6 +335,15 @@ Retained as reference for transpiler development. Not compiled — the runtime c
   `generated-freshness` CI job fails if the tree is stale
 - **`tests/objc-reference/`** — Legacy runtime tests (reference only, not compiled)
 
+## Working alongside other changes
+
+ collects the failure modes that cost real time when several
+branches are in flight: guards that pass while the property is gone, instruments
+that answer a different question than you asked, the version line, rebasing
+across a rename, prose as load-bearing, and why a document is a relay. Every
+rule there carries the incident that earned it. Read it before running more than
+one branch at once.
+
 ## Coding Conventions
 
 ### C/ObjC Style
