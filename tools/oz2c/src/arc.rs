@@ -1180,6 +1180,40 @@ pub fn is_owning_expr(
                 callee.kind() == "identifier" && owning.contains_function(node_text(callee, src))
             })
         }
+        /* A conditional yields `+1` if *either* arm does, which is what
+         * ARC decides -- measured rather than assumed. For
+         * `x ? [[Thing alloc] init] : b`, `clang -fobjc-arc -O0` emits a
+         * flag, retains the joined value unconditionally, and releases the
+         * owning arm's temporary guarded by that flag: the binding owns a
+         * `+1` whichever arm ran.
+         *
+         * Answering yes here is only half of it, and the missing half is a
+         * double free rather than a leak. The destination becomes a managed
+         * local, so the scope-exit release appears -- and it would fire on
+         * the *borrowed* arm's reference too. `emit::render_expr`'s own
+         * `conditional_expression` arm carries the other half: it retains
+         * the non-owning arm so the value really is uniformly `+1`, which
+         * is why the two must not be separated.
+         *
+         * oz2c can be cheaper than ARC here, and the reason is worth
+         * recording: ARC needs the runtime flag because it emits the retain
+         * at the join, where it cannot know which arm ran. oz2c emits C at
+         * the *arm*, where that is statically obvious, so the normalisation
+         * costs one retain in one branch and no flag at all.
+         *
+         * `conditional_expression` appeared nowhere in this file before
+         * #477; `#376`'s machinery is built on operands of sends and calls,
+         * so a `+1` that *is* the value fell through every net. */
+        "conditional_expression" => {
+            let cond_id = node.child_by_field_name("condition").map(|c| c.id());
+            let arms: Vec<Node> = {
+                let mut cursor = node.walk();
+                node.children(&mut cursor)
+                    .filter(|c| Some(c.id()) != cond_id && !matches!(c.kind(), "?" | ":"))
+                    .collect()
+            };
+            arms.into_iter().any(|arm| is_owning_expr(arm, src, program, owning))
+        }
         // A cast says nothing about ownership, and `__bridge` explicitly
         // means "not mine" -- borrowed either way, *here*.
         //

@@ -2071,6 +2071,96 @@ fn render_expr(node: Node, ctx: &mut EmitCtx) -> (String, String) {
             let text = rebuild_or_text(node, ctx);
             (text, call_result_type(node, ctx).unwrap_or_else(|| "id".to_string()))
         }
+        /* The other half of `arc::is_owning_expr`'s conditional arm, and
+         * the half that keeps it from being a double free (#477 M1).
+         *
+         * Once the predicate calls this expression owning, the destination
+         * becomes a managed local and the scope-exit release appears. That
+         * release is correct only if the value really is `+1` whichever arm
+         * ran -- so the non-owning arm is retained here, which is what makes
+         * the two arms agree.
+         *
+         * ARC does the same thing and pays more for it: it retains the
+         * *joined* value and releases the owning arm's temporary under a
+         * runtime flag, because at the join it cannot know which arm ran.
+         * Emitting C at the arm makes that statically obvious, so this costs
+         * one retain in one branch and no flag. Measured against
+         * `clang -fobjc-arc -O0` rather than reasoned about.
+         *
+         * Refused rather than half-done when the borrowed arm is not a name:
+         * the comma form `(oz_retain(X), X)` evaluates `X` twice, which is
+         * only sound for an identifier -- the same constraint
+         * `classify_store` puts on `LocalStore::BorrowedIdent`, and for the
+         * same reason. */
+        "conditional_expression" => {
+            let owning = crate::arc::is_owning_expr(node, ctx.src, ctx.program, &ctx.program.owning_methods);
+            if !owning {
+                return (rebuild_or_text(node, ctx), "id".to_string());
+            }
+            let cond_id = node.child_by_field_name("condition").map(|c| c.id());
+            let arms: Vec<Node> = {
+                let mut cursor = node.walk();
+                node.children(&mut cursor)
+                    .filter(|c| Some(c.id()) != cond_id && !matches!(c.kind(), "?" | ":"))
+                    .collect()
+            };
+            let root = ctx.program.root_class().unwrap_or("OZObject").to_string();
+            let mut ty = "id".to_string();
+            for arm in &arms {
+                if crate::arc::is_owning_expr(*arm, ctx.src, ctx.program, &ctx.program.owning_methods) {
+                    ty = render_expr_type_only(*arm, ctx);
+                    continue;
+                }
+                let text = node_text(*arm, ctx.src).trim();
+                let is_name = arm.kind() == "identifier" || text == "nil" || text == "NULL";
+                if !is_name {
+                    ctx.err_detailed(
+                        *arm,
+                        "a conditional with a '+1' in one arm needs the other arm to be a name",
+                        Some(format!(
+                            "the other arm is retained so the value is '+1' whichever arm runs,                              and that retain names the expression twice -- sound for an                              identifier, not for '{}'",
+                            text
+                        )),
+                        vec![
+                            "bind the other arm to a local first, then use the local in the                              conditional"
+                                .to_string(),
+                            "or bind the '+1' arm to its own local and assign in an 'if'                              instead of a conditional"
+                                .to_string(),
+                        ],
+                    );
+                }
+            }
+            let rebuilt = rebuild(node, ctx, &mut |child, ctx| {
+                if Some(child.id()) == cond_id {
+                    return if needs_translation(child, ctx.src) {
+                        Some(render_expr(child, ctx).0)
+                    } else {
+                        None
+                    };
+                }
+                if matches!(child.kind(), "?" | ":") {
+                    return None;
+                }
+                if crate::arc::is_owning_expr(child, ctx.src, ctx.program, &ctx.program.owning_methods) {
+                    return if needs_translation(child, ctx.src) {
+                        Some(render_expr(child, ctx).0)
+                    } else {
+                        None
+                    };
+                }
+                let inner = if needs_translation(child, ctx.src) {
+                    render_expr(child, ctx).0
+                } else {
+                    node_text(child, ctx.src).to_string()
+                };
+                Some(format!(
+                    "(oz_retain((struct {root} *)({inner})), {inner})",
+                    root = root,
+                    inner = inner
+                ))
+            });
+            (rebuilt, ty)
+        }
         _ => (rebuild_or_text(node, ctx), "id".to_string()),
     }
 }
