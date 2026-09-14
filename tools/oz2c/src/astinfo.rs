@@ -234,17 +234,21 @@ const OWNERSHIP_QUALIFIERS: &[&str] =
 /// printed, and the node ids whose marks have already been recorded.
 ///
 /// **The dedupe set is load-bearing, not hygiene.** Clang prints a
-/// `VarDecl`'s initializer twice -- once in the enclosing method's
-/// declaration list and again under its `CompoundStmt`'s `DeclStmt` -- with
-/// the same node `id` both times. Measured: a dump of one three-line method
-/// yields 6 mark nodes at 5 distinct ids. Without the set every binding's
-/// `+1` is counted twice and an audit reports a discrepancy that does not
-/// exist.
+/// `VarDecl` twice -- once in the enclosing method's declaration list and
+/// again under its `CompoundStmt`'s `DeclStmt` -- with the same node `id`
+/// both times, and its initializer with it. Measured: a dump of one
+/// three-line method yields 6 mark nodes at 5 distinct ids. Without the set
+/// every binding's `+1` is counted twice and an audit reports a discrepancy
+/// that does not exist.
+///
+/// One set for both marks and declarations, because no node is both: a mark
+/// rides on an `ImplicitCastExpr` and a qualifier on a decl, and Clang's
+/// ids are unique per node.
 #[derive(Default)]
 struct WalkState {
     file: Option<String>,
     line: Option<u32>,
-    seen_marks: HashSet<String>,
+    seen_nodes: HashSet<String>,
 }
 
 impl WalkState {
@@ -425,7 +429,7 @@ impl AstFacts {
                 /* An empty id cannot be deduplicated, so it is recorded:
                  * a mark reported twice is a false discrepancy, but a mark
                  * dropped is a missed one, and only the latter is silent. */
-                if id.is_empty() || state.seen_marks.insert(id.to_string()) {
+                if id.is_empty() || state.seen_nodes.insert(id.to_string()) {
                     if let Some(at) = here.clone() {
                         self.arc_marks.push(ArcMark {
                             kind: cast.to_string(),
@@ -439,7 +443,14 @@ impl AstFacts {
         if matches!(kind, "VarDecl" | "ParmVarDecl" | "FieldDecl" | "ObjCIvarDecl") {
             let qual = node.ty.as_ref().and_then(|t| t.qual_type.as_deref()).unwrap_or("");
             if let Some(found) = OWNERSHIP_QUALIFIERS.iter().find(|q| qual.contains(**q)) {
-                if let (Some(name), Some(at)) = (node.name.as_deref(), here.clone()) {
+                let id = node.id.as_deref().unwrap_or("");
+                /* Deduplicated for exactly the reason a mark is: a local's
+                 * `VarDecl` is printed twice, so an audit that did not
+                 * dedupe listed every local twice. */
+                let first_time = id.is_empty() || state.seen_nodes.insert(id.to_string());
+                if let (true, Some(name), Some(at)) =
+                    (first_time, node.name.as_deref(), here.clone())
+                {
                     self.ownership_quals.push(OwnershipQual {
                         decl_kind: kind.to_string(),
                         name: name.to_string(),
@@ -912,12 +923,19 @@ mod tests {
         assert_eq!(positions, vec!["VarDecl", "BinaryOperator"]);
     }
 
-    /// The qualifier on a declaration is recorded with its position.
+    /// The qualifier on a declaration is recorded with its position, and
+    /// recorded **once**.
+    ///
+    /// The `VarDecl` in this fixture is printed twice under one id, exactly
+    /// as Clang prints a local. `--check-arc` listed every local twice
+    /// before this was deduplicated, which is the same defect as counting a
+    /// binding's `+1` twice and just as misleading in a report a reader is
+    /// meant to work through.
     #[test]
-    fn records_the_ownership_qualifier_on_a_local() {
+    fn records_the_ownership_qualifier_on_a_local_once() {
         let facts = AstFacts::from_json(delta_encoded_dump()).expect("parses");
         let quals = facts.ownership_quals();
-        assert_eq!(quals.len(), 2, "the VarDecl is printed twice: {:#?}", quals);
+        assert_eq!(quals.len(), 1, "the VarDecl is printed twice: {:#?}", quals);
         assert_eq!(quals[0].decl_kind, "VarDecl");
         assert_eq!(quals[0].name, "s");
         assert_eq!(quals[0].qualifier, "__strong");
@@ -955,7 +973,7 @@ mod tests {
         /* Two marks and two qualifier rows, neither collapsed: equal lines
          * would mean two sites, and hiding one is the silent direction. */
         assert_eq!(lines.iter().filter(|l| l.starts_with("mark ")).count(), 2);
-        assert_eq!(lines.iter().filter(|l| l.starts_with("qual ")).count(), 2);
+        assert_eq!(lines.iter().filter(|l| l.starts_with("qual ")).count(), 1);
     }
 
     /// A location nested inside a macro expansion resolves to the

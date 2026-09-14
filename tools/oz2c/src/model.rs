@@ -388,23 +388,47 @@ impl Program {
                         continue;
                     }
                 }
-                if info.unretained_ivars.contains(ivar) {
-                    continue;
+                if self.fallback_owns_object_ivar(&name, ivar, c_type) {
+                    out.push(ivar.clone());
                 }
-                if !c_type.trim_start().starts_with("struct ") || !c_type.contains('*') {
-                    continue;
-                }
-                let Some(target) = c_type.trim().strip_prefix("struct ") else {
-                    continue;
-                };
-                let target = target.trim_end_matches('*').trim();
-                if !self.is_class(target) {
-                    continue;
-                }
-                out.push(ivar.clone());
             }
         }
         out
+    }
+
+    /// The syntactic rule used when Clang has no answer for an ivar --
+    /// extracted so it can be *asked* rather than only taken.
+    ///
+    /// `oz2c --check-arc` diffs this against Clang's verdict for every
+    /// ivar, which is the one place the two models answer the same question
+    /// independently. Keeping it inline would have meant the audit
+    /// comparing against a second copy of the rule, and a copy that drifts
+    /// reports agreement it has not checked.
+    ///
+    /// What it cannot see is the whole reason `--ast` is required: it reads
+    /// the *spelling* of a lowered C type, so an `id`-typed ivar -- which
+    /// lowers to no `struct` at all -- is skipped, and skipping it leaks the
+    /// object. On px-keyboard that was 4 of 46 generated files silently
+    /// different (#299).
+    pub fn fallback_owns_object_ivar(
+        &self,
+        class_name: &str,
+        ivar: &str,
+        c_type: &str,
+    ) -> bool {
+        let Some(info) = self.classes.get(class_name) else {
+            return false;
+        };
+        if info.unretained_ivars.contains(ivar) {
+            return false;
+        }
+        if !c_type.trim_start().starts_with("struct ") || !c_type.contains('*') {
+            return false;
+        }
+        let Some(target) = c_type.trim().strip_prefix("struct ") else {
+            return false;
+        };
+        self.is_class(target.trim_end_matches('*').trim())
     }
 
     /// Compile-time-fixed class id (index into class_order), used only for

@@ -5,6 +5,7 @@
 
 pub mod arc;
 pub mod astinfo;
+pub mod checkarc;
 pub mod collect;
 pub mod companion;
 pub mod emit;
