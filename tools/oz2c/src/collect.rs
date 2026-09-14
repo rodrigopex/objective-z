@@ -435,7 +435,7 @@ pub(crate) fn extract_ivars_with_ownership(
         };
         // struct_declarator wraps either `identifier` or `pointer_declarator`.
         let name = find_declared_name(declarator, src);
-        if node_text(decl, src).contains("__unsafe_unretained") {
+        if qualifies(decl, declarator, src, "__unsafe_unretained") {
             unretained.insert(name.clone());
         }
         if let Some(extent) = array_extent(declarator, src) {
@@ -473,6 +473,84 @@ fn array_extent(node: Node, src: &str) -> Option<String> {
     let mut cursor = node.walk();
     let children: Vec<Node> = node.children(&mut cursor).collect();
     children.into_iter().find_map(|c| array_extent(c, src))
+}
+
+/// Does `qualifier` apply to the variable `declarator` declares?
+///
+/// Read off the `type_qualifier` nodes, the way `emit::is_static_declaration`
+/// reads the `storage_class_specifier` node -- and for the same reason,
+/// stated in that function's own comment forty lines from one of the sites
+/// this replaces: it "sees only the storage class and not a `static`
+/// appearing anywhere else in the text". The ownership qualifier was matched
+/// by `node_text(decl).contains(...)` over the whole declaration,
+/// initialiser included.
+///
+/// What that cost is a **leak**, and it needs only one token in a cast:
+///
+/// ```objc
+/// Foo *a = (__unsafe_unretained Foo *)[Foo make];
+/// ```
+///
+/// `a` is `__strong` -- the cast qualifies the cast's type, not the
+/// declaration -- so ARC releases it at scope exit. The substring search saw
+/// the token, dropped `a` from the managed set, and emitted no release.
+/// Measured against the same source with the cast's qualifier removed: the
+/// control emits `oz_release`, this does not, and nothing else in the two
+/// outputs differs.
+///
+/// **Two arguments rather than one, because C gives the two positions
+/// different scopes**, and a per-declaration answer is wrong for the second:
+///
+/// ```objc
+/// __unsafe_unretained Foo *a, *b;   /* both unretained */
+/// Foo *__unsafe_unretained a, *b;   /* `a` unretained, `b` __strong */
+/// ```
+///
+/// The substring search answered the whole declaration and so made `b`
+/// unretained in both -- measured, a leak: `b` holds a `+1` from its own
+/// initialiser and got no release, one object freed where ARC frees two.
+/// Reading the node without also narrowing the scope would have kept that,
+/// which is why "read the node instead of the text" is not on its own the
+/// fix.
+///
+/// A qualifier among the **declaration's** own children introduces every
+/// declarator, so it applies to all of them. One inside a **declarator**
+/// applies to that declarator alone. And one after the `=` applies to
+/// neither -- it belongs to a cast, a compound literal, or a nested
+/// declaration in a block body:
+///
+/// ```text
+/// __unsafe_unretained Foo *a;   declaration > type_qualifier
+/// id __unsafe_unretained g;     declaration > type_qualifier   (after the specifier)
+/// Foo *__unsafe_unretained b;   init_declarator > pointer_declarator > type_qualifier
+/// Foo *d = (__unsafe_unretained Foo *)0;
+///                               init_declarator > cast_expression > ... > type_qualifier
+/// ```
+///
+/// What separates the last is not its depth but which **side of the `=`** it
+/// falls on, so the declarator walk descends freely and stops there.
+pub(crate) fn qualifies(decl: Node, declarator: Node, src: &str, qualifier: &str) -> bool {
+    let mut cursor = decl.walk();
+    let on_the_declaration = decl.children(&mut cursor).any(|child| {
+        child.kind() == "type_qualifier" && node_text(child, src).trim() == qualifier
+    });
+    if on_the_declaration {
+        return true;
+    }
+    fn walk(node: Node, src: &str, qualifier: &str) -> bool {
+        if node.kind() == "type_qualifier" && node_text(node, src).trim() == qualifier {
+            return true;
+        }
+        let mut cursor = node.walk();
+        let children: Vec<Node> = node.children(&mut cursor).collect();
+        let stop = if node.kind() == "init_declarator" {
+            children.iter().position(|c| c.kind() == "=").unwrap_or(children.len())
+        } else {
+            children.len()
+        };
+        children[..stop].iter().any(|c| walk(*c, src, qualifier))
+    }
+    walk(declarator, src, qualifier)
 }
 
 pub(crate) fn find_declared_name(node: Node, src: &str) -> String {
