@@ -3695,6 +3695,99 @@ fn render_strong_array_element_assign(
 /// A genuinely borrowed store -- a parameter, an unretained ivar -- is
 /// left alone: nothing releases it, so the field is an unowned reference
 /// and that is the author's business, exactly as it is in C.
+/// A `+1` stored into an array element that is **not** an ivar (#477 M4).
+///
+/// `staticbar.rs` states the shape outright: "a local or parameter array has
+/// no scope-exit release to pair with and a file-scope one is not in
+/// `owned_object_ivar_names`, so `render_strong_array_element_assign` declines
+/// all three and the store lowers to a plain C one that releases nothing." It
+/// catches that **in a loop** (`LoopEscape::Accumulates`). Outside one,
+/// nothing did.
+///
+/// **Reachable through exactly one spelling, and not the one the issue
+/// described.** Measured:
+///
+/// | shape | before this |
+/// |---|---|
+/// | ivar array, `_arr[0]` and `self->_arr[0]` | correct, release-first |
+/// | local `Thing *arr[2]` | already refused -- read as ObjC subscripting |
+/// | file-scope `Thing *g_arr[2]` | already refused, same |
+/// | a local shadowing an ivar array | already refused, same |
+/// | local `id a[2]` | **2 allocations, 0 releases** |
+///
+/// Every class-typed spelling is blocked upstream, because `arr[0]` on a
+/// `Thing` is read as a subscript *message* and `Thing` implements neither
+/// `objectAtIndexedSubscript:` nor `objectForKeyedSubscript:`. `id` is the one
+/// that slips through, for the reason this file already records twice:
+/// `class_name_from_type` answers `None` for `id`, so nothing reads `a[0]` as
+/// a send. That makes `id` the escape hatch for a third ownership defect after
+/// #400 and #429 -- worth naming, because a fix written against the
+/// class-typed spelling would be untestable and a test written against it
+/// would pass vacuously on the refusal.
+///
+/// **Refused rather than managed, on the bar's own reasoning.** Managing it
+/// needs a scope-exit release per element, and nothing knows which elements
+/// were ever written -- the same unknowable-at-exit problem that made a `+1`
+/// into a parameter a refusal in the same issue. Releasing all of them frees
+/// what was never retained; releasing none is the leak this refuses.
+///
+/// Zero occurrences of an object or `id` C array outside an ivar across this
+/// repo and px-keyboard, so this charges nobody. An ivar array is the
+/// supported spelling and is unaffected.
+fn reject_owning_store_into_non_ivar_array(
+    node: Node,
+    left: Node,
+    right: Node,
+    ctx: &mut EmitCtx,
+) {
+    if left.kind() != "subscript_expression" {
+        return;
+    }
+    /* An ivar array is the supported case and was taken by
+     * `render_strong_array_element_assign` before this runs. */
+    let mut cursor = left.walk();
+    let parts: Vec<Node> = left.children(&mut cursor).collect();
+    let Some(recv) = parts.first().copied() else {
+        return;
+    };
+    /* `assigned_ivar_name` answers with the *name*, not with whether that
+     * name is an ivar -- it returned `Some("a")` for a local `id a[2]`,
+     * which is how this store reached a plain C lowering in the first
+     * place: the array-element renderer could not tell "an ivar array"
+     * from "a local whose name is shaped like one", so it accepted and
+     * then failed later. Measured by instrumenting this guard, not by
+     * reading it.
+     *
+     * So ask the program, exactly as `is_file_scope_object` does for the
+     * same reason. A local shadows an ivar of the same name, in C and
+     * here, so the local check comes first. */
+    if let Some(name) = assigned_ivar_name(recv, ctx) {
+        let shadowed = ctx.locals.contains(&name);
+        let real_ivar = ctx.program.ivar_access_path(&ctx.class_name, &name).is_some();
+        if real_ivar && !shadowed {
+            return;
+        }
+    }
+    if !crate::arc::binds_ownership(right, ctx.src, ctx.program, &ctx.program.owning_methods) {
+        return;
+    }
+    let name = node_text(recv, ctx.src).trim().to_string();
+    ctx.err_detailed(
+        node,
+        format!("storing a '+1' into an element of '{name}' is not supported"),
+        Some(
+            "only an array ivar is a strong slot: a local, parameter or file-scope array              has no scope-exit release to pair the store with, and releasing every              element at scope exit would free the ones that were never written"
+                .to_string(),
+        ),
+        vec![
+            "declare the array as an ivar, where each element is managed".to_string(),
+            format!(
+                "or hold the object in its own local and store a borrowed reference in '{name}'"
+            ),
+        ],
+    );
+}
+
 fn reject_owning_store_into_c_struct(node: Node, left: Node, right: Node, ctx: &mut EmitCtx) {
     if left.kind() != "field_expression" {
         return;
@@ -3817,6 +3910,7 @@ fn render_assignment_expression(node: Node, ctx: &mut EmitCtx) -> (String, Strin
             return rendered;
         }
         reject_owning_store_into_c_struct(node, left, right, ctx);
+        reject_owning_store_into_non_ivar_array(node, left, right, ctx);
     }
     if left.kind() != "field_expression" {
         return pass_through(ctx);
