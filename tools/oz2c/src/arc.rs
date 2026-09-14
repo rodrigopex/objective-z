@@ -671,7 +671,7 @@ fn scan_owning_operands(
             *found = true;
             return;
         }
-        for arg in crate::emit::parse_message(node, src).args {
+        for arg in crate::emit::parse_message(node, src).into_iter().flat_map(|p| p.args) {
             if owning_argument_value(arg, src, program, owning).is_some() {
                 *found = true;
                 return;
@@ -1409,7 +1409,7 @@ pub fn receiver_owning_value<'a>(
     if send.kind() != "message_expression" {
         return None;
     }
-    let parts = crate::emit::parse_message(send, src);
+    let parts = crate::emit::parse_message(send, src)?;
     let selector = statically_performed_selector(send, src).unwrap_or(parts.selector);
     let (receiver_class, _) = message_target(send, src, program);
     if accounts_for_its_receiver(program, receiver_class.as_deref(), &selector) {
@@ -1481,7 +1481,13 @@ fn discards_ownership(
         return created_by(program, &performed, receiver_class.as_deref(), owning);
     }
     if is_initialiser(program, receiver_class.as_deref(), &selector) {
-        let parts = crate::emit::parse_message(node, src);
+        /* A malformed send creates nothing this pass can account for, and
+         * `false` -- borrowed -- is this function's safe reading, as its
+         * own comment above says. `staticbar` refuses the send separately,
+         * so the program never reaches emit either way. */
+        let Some(parts) = crate::emit::parse_message(node, src) else {
+            return false;
+        };
         return discards_ownership(parts.receiver, src, program, owning);
     }
     created_by(program, &selector, receiver_class.as_deref(), owning)
@@ -1688,7 +1694,7 @@ fn created_by(
 /// are readings of the source rather than guesses, and anything else stays
 /// unresolved.
 fn statically_performed_selector(node: Node, src: &str) -> Option<String> {
-    let parts = crate::emit::parse_message(node, src);
+    let parts = crate::emit::parse_message(node, src)?;
     if !matches!(
         parts.selector.as_str(),
         "performSelector:" | "performSelector:withObject:" | "performSelector:withObject:withObject:"

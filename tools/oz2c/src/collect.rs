@@ -847,6 +847,15 @@ pub fn collect(source: &str) -> (Program, Vec<crate::model::Diagnostic>) {
      * `staticbar`'s body-scoped entry points sees every position one can
      * appear in -- `walk_for_reject` treats a block literal as opaque.
      */
+    /*
+     * A malformed send, ahead of the checks below because it is the one
+     * that makes the others reachable: until #494, `emit::parse_message`
+     * could not say "not a send", so `collect::prescan_reflection` panicked
+     * on `[s isEqual other]` before any diagnostic was registered, and
+     * `[s take:n n]` silently dropped a token into valid-looking C.
+     */
+    diagnostics.extend(crate::staticbar::check_malformed_sends(root, source));
+
     diagnostics.extend(crate::staticbar::check_manual_memory_sends(root, source));
 
     /*

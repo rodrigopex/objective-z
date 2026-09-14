@@ -186,7 +186,7 @@ impl<'a> LineDirectives<'a> {
 /// `/* ... */`, so any embedded comment delimiter in the original text (a
 /// real inline comment, or even a string literal containing those two
 /// characters) is neutralized here -- C block comments don't nest.
-fn one_line(text: &str) -> String {
+pub(crate) fn one_line(text: &str) -> String {
     neutralize_comment_delimiters(&text.split_whitespace().collect::<Vec<_>>().join(" "))
 }
 
@@ -2229,27 +2229,72 @@ fn is_super_receiver(parts: &MessageParts, ctx: &EmitCtx) -> bool {
     parts.receiver.kind() == "identifier" && node_text(parts.receiver, ctx.src) == "super"
 }
 
-pub(crate) fn parse_message<'a>(node: Node<'a>, src: &str) -> MessageParts<'a> {
+/// The receiver, selector and arguments of a **well-formed** send, or
+/// `None` when the node is not one.
+///
+/// The `None` is the whole point of this signature, and it used not to
+/// exist. The loop below advanced `i` by three while its guard tested
+/// `i + 1`, so a malformed send did one of two things and neither was a
+/// diagnostic (#494):
+///
+///   * `[s isEqual other]` -- three children, guard `2 < 3` passes,
+///     `children[3]` **panics**. `index out of bounds: the len is 3 but the
+///     index is 3`, and nothing is written to the output directory.
+///   * `[s take:n n]` -- five children, one iteration runs and the guard
+///     then stops it, so the trailing token is **silently dropped** and
+///     `T_take_(self, n)` is emitted: a valid call, from source Clang
+///     rejects with `expected ':'`. Measured: the generated C compiles with
+///     zero errors. That is worse than the panic, which at least stops the
+///     build.
+///
+/// Every caller was written against the assumption that a
+/// `message_expression` is a send, because the return type gave them no way
+/// to ask. There are ten of them across five modules, and #435 centralised
+/// them all on this function -- which is what makes one fix reach every one
+/// of them.
+///
+/// Well-formed means, exactly (confirmed against the parse rather than
+/// assumed):
+///
+/// ```text
+/// [a b]          len 2   receiver, selector
+/// [a b:1]        len 4   receiver, keyword, ':', argument
+/// [a b:1 c:2]    len 7   receiver, then three children per keyword
+/// ```
+///
+/// so `len == 2`, or `len >= 4` with `(len - 1) % 3 == 0` **and** a literal
+/// `:` at every `2 + 3k`. The length test alone is not enough:
+/// `[a b c d]` is four children and passes it, which is the shape that
+/// emitted a call to a selector the author never wrote.
+pub(crate) fn parse_message<'a>(node: Node<'a>, src: &str) -> Option<MessageParts<'a>> {
     let mut cursor = node.walk();
     let children: Vec<Node> =
         node.children(&mut cursor).filter(|c| c.kind() != "[" && c.kind() != "]").collect();
-    let receiver = children[0];
+    let receiver = *children.first()?;
     let mut selector = String::new();
     let mut args = Vec::new();
     if children.len() == 2 {
         selector = node_text(children[1], src).to_string();
     } else {
+        if children.len() < 4 || (children.len() - 1) % 3 != 0 {
+            return None;
+        }
         let mut i = 1;
-        while i + 1 < children.len() {
+        while i + 2 < children.len() {
+            /* The colon is what makes the piece a keyword. Without this
+             * test `[a b c d]` parses as one keyword `b:` taking `d`, and
+             * `c` disappears. */
+            if children[i + 1].kind() != ":" {
+                return None;
+            }
             let piece = children[i];
             selector.push_str(node_text(piece, src));
             selector.push(':');
-            let arg = children[i + 2];
-            args.push(arg);
+            args.push(children[i + 2]);
             i += 3;
         }
     }
-    MessageParts { receiver, selector, args }
+    Some(MessageParts { receiver, selector, args })
 }
 
 /// Build a call to `{class_name} {selector}` as a class method, the way
@@ -4319,7 +4364,20 @@ const PERFORM_SELECTORS: &[&str] = &[
 ];
 
 fn render_message(node: Node, ctx: &mut EmitCtx) -> (String, String) {
-    let parts = parse_message(node, ctx.src);
+    /* Unreachable in a shipped transpile: `staticbar::check_malformed_sends`
+     * refuses a malformed send from `collect`, and `front_end` propagates
+     * that with `?` before `emit` runs. Kept as defence rather than an
+     * `expect`, because the alternative to a located error here is the
+     * panic #494 was. */
+    let Some(parts) = parse_message(node, ctx.src) else {
+        ctx.err(
+            node,
+            "this is not a well-formed message send -- a keyword needs a ':' before its \
+             argument. Clang reports the same source as `expected ':'`"
+                .to_string(),
+        );
+        return (node_text(node, ctx.src).to_string(), "void".to_string());
+    };
     let (recv_text, recv_type) = render_expr(parts.receiver, ctx);
     let arg_pairs: Vec<(String, String)> =
         parts.args.iter().map(|a| render_expr(*a, ctx)).collect();
@@ -5881,7 +5939,7 @@ fn unhoisted_owning_operands<'a>(node: Node<'a>, ctx: &EmitCtx) -> Vec<Node<'a>>
         ) {
             out.push(value);
         }
-        for arg in parse_message(node, ctx.src).args {
+        for arg in parse_message(node, ctx.src).into_iter().flat_map(|p| p.args) {
             if let Some(value) = crate::arc::owning_argument_value(
                 arg,
                 ctx.src,
@@ -6348,7 +6406,7 @@ fn collect_owning_operands_in<'a>(
                 out.push((value, OperandPosition::Receiver));
             }
         }
-        for arg in parse_message(node, ctx.src).args {
+        for arg in parse_message(node, ctx.src).into_iter().flat_map(|p| p.args) {
             let Some(value) = crate::arc::owning_argument_value(
                 arg,
                 ctx.src,
