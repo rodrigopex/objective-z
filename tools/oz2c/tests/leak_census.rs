@@ -369,15 +369,18 @@ fn a_released_object_leaves_the_census_clean() {
 /// asserted: the census reports 1 for a program whose only fault is the
 /// missing scope-end release.
 ///
-/// **This case asserts the defective behaviour `KNOWN_DEFECTS`-style, and
-/// the fix for it is in flight: #477's M1.** When that lands, ARC releases
-/// the `+1` in value position and this case goes red. **A failure here
-/// means M1 landed and is the success signal, not a regression.** The
-/// whole edit is changing the expectation to `"used=1\ncensus=0\n"`; keep
-/// the row rather than deleting it, because it then becomes a second
-/// control -- the census staying silent over a shape that used to leak is
-/// worth pinning too. #449 carries a row phrased the same way for the same
-/// fix.
+/// **#477's M1 has landed, so this is now a control rather than a pinned
+/// defect.** It asserted `census=1` while the `+1` in value position was
+/// never released; `arc::is_owning_expr` gained a `conditional_expression`
+/// arm and `emit::render_expr` the matching arm-normalisation, and the
+/// census reports 0. Converted rather than deleted, exactly as the row
+/// asked to be: the census staying *silent* over a shape that used to leak
+/// is worth pinning, and it is the half a census cannot self-check.
+///
+/// It keeps its value in both directions. `an_object_parked_in_a_file_scope_static_is_reported`
+/// is the same instrument answering 1 where a leak is real, so this row
+/// answering 0 is not the census having stopped running -- the pair is what
+/// makes either number mean anything.
 const VALUE_POSITION_LEAK: &str = "\
 @interface Thing : OZObject
 @end
@@ -408,13 +411,15 @@ fn the_census_catches_a_real_arc_leak_no_sanitizer_can_see() {
     let src = format!("{}\n{}", PREAMBLE(), VALUE_POSITION_LEAK);
     let out = compile_and_run(&src, "census_value_position");
     assert_eq!(
-        out, "used=1\ncensus=1\nLEAK: Thing has 1 outstanding allocation(s)\n",
-        "the +1 from the ternary's true arm is never released (#453), asserted \
-         KNOWN_DEFECTS-style. A FAILURE HERE IS EXPECTED AND GOOD once #477's \
-         M1 lands: it means ARC now releases a +1 in value position. Change \
-         the expectation to \"used=1\\ncensus=0\\n\" and KEEP this row -- it \
-         becomes the control proving the census stays silent over a shape that \
-         used to leak. Do not delete it, and do not read it as a regression in \
-         the census."
+        out, "used=1\ncensus=0\n",
+        "the +1 from the ternary's true arm must be released (#477 M1), and the \
+         census must stay silent about it. This row asserted the leak until M1 \
+         landed and is now the control for the other direction: a census that \
+         reports nothing is indistinguishable from one that is not running, so \
+         this number is only meaningful beside \
+         `an_object_parked_in_a_file_scope_static_is_reported`, which is the \
+         same instrument answering 1. If this says census=1 again, the \
+         conditional arm in `arc::is_owning_expr` or the arm-normalisation in \
+         `emit::render_expr` has regressed -- they are two halves of one fix."
     );
 }
