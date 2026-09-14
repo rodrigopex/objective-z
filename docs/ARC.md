@@ -91,12 +91,12 @@ transpile-compile-run under ASan for the oz2c half.
 | 2.6.1 | Weak-unavailable types | `N/A` | No `__weak` |
 | 2.6.2 | `__autoreleasing` must have automatic storage duration | `N/A` | No pool |
 | 2.6.3 | Conversion between differently-qualified pointers is ill-formed | `DELEGATED` | `casting 'Thing *__strong *' to type 'Thing *__weak *' changes retain/release properties of pointer` |
-| 2.6.5 | Pass-by-writeback through a `T __autoreleasing *` out-parameter | `GAP` | Clang accepts; `*out = <+1>` asks no ownership question and the caller's variable joins no scope. **Leak, and a fifth untracked strong destination** — the #359 shape at a site nobody walked. #461 |
+| 2.6.5 | Pass-by-writeback through a `T __autoreleasing *` out-parameter | `REFUSED` | A located error since #461 (`staticbar::check_out_parameter_stores`). Refused on #430's precedent: ARC's answer is writeback through an *autoreleased* temporary and there is no pool to autorelease into. Keyed on the `+1` (`arc::binds_ownership`), not on the shape — `OZArray.h:28` declares `objects:(__unsafe_unretained id *)stackbuf`, which is the same shape and correct, so a shape-keyed refusal would refuse fast enumeration |
 | 2.6.6 | `__strong` fields of a C struct are managed | `IMPLEMENTED` | Walked and fixed in #359; `ownership_matrix.rs` has the row |
 | 2.6.6 | `__strong` in a **union** is ill-formed | `UNEXAMINED` | Clang *accepted* the probe. Unverified whether oz2c would mismanage it; no construct in the tree uses one |
 | 2.7.1 | An unqualified retainable pointer is inferred `__strong` | `IMPLEMENTED` | The AST states each ivar's ownership outright under `-fobjc-arc` (`model.rs:340`) |
 | 2.7.1 | …except `Class`, inferred `__unsafe_unretained` | `IMPLEMENTED` | Class objects are static and immortal (`companion.rs`, `class_objects.rs`) |
-| 2.7.2 | A `T *` parameter infers `__autoreleasing` | `GAP` | Same site as 2.6.5. #461 |
+| 2.7.2 | A `T *` parameter infers `__autoreleasing` | `REFUSED` | Same site as 2.6.5, and the reason the refusal cannot be keyed on the qualifier: here Clang *infers* it and the token is never written, so nothing spelling-keyed can see it. The store is what is seen |
 
 ## § 3 — Method families
 
@@ -128,7 +128,7 @@ transpile-compile-run under ASan for the oz2c half.
 | 4.3 | Referring to `NSAutoreleasePool` is ill-formed | `N/A` | No such class; Clang's rule is about a Foundation this SDK does not have |
 | 4.4 | `self` is externally retained in a non-`init` method | `DELEGATED` | Clang refuses assigning `self` outside the init family; oz2c never releases `self` |
 | 4.4 | The for-in loop variable is externally retained | `IMPLEMENTED`, unpinned | Verified by probe: no release is emitted for the loop variable. `behavior_forin.rs` and the four `behavior/cases/forin/` cases exercise the construct but assert nothing about refcount traffic, so nothing would notice if this changed |
-| 4.4 | `objc_externally_retained` on a variable | `GAP` | Ignored, and reaches the generated C as an `__attribute__`. #461 |
+| 4.4 | `objc_externally_retained` on a variable | `IMPLEMENTED` (as a strip) | Ignored, which changes no answer, and no longer reaches the generated C: stripped at all four positions by `emit::is_stripped_arc_spelling` (#461). Not *refused*, unlike the five in 1.3.1/1.3.2 — those carry an ownership answer, and silently dropping one is a use-after-free rather than a leak |
 
 ## § 5 — Optimization
 
@@ -143,7 +143,7 @@ be done at the source level because GCC will not
 | 5.2 | ARC may assume non-ARC code balances sensibly | `IMPLEMENTED` by decision | The C API (`oz_retain`/`oz_release`) is a deliberate escape hatch, not an enforced invariant (#437) |
 | 5.3 | Object liveness: an object in a `__strong` slot is live while a later computation depends on it | `IMPLEMENTED` | This is the **escape** half of every release decision — `alias_chain`, `return_needs_retain` (#351). Asking only provenance produced #351, #352, #359, #360 |
 | 5.4 | No object lifetime extension | `IMPLEMENTED` | Scope-exit release rather than a pool; `objc_precise_lifetime` is the default here because there is no imprecise case |
-| 5.5 | `objc_precise_lifetime` forces a precise release | `GAP` (benign) | Ignored, and reaches the generated C as an `__attribute__`. Semantically a no-op — every release here is already precise — so the defect is the unlowered spelling, not the behaviour. #461 |
+| 5.5 | `objc_precise_lifetime` forces a precise release | `IMPLEMENTED` (as a strip) | Semantically a no-op — every release here is already precise — so the defect was only the unlowered spelling, and it is stripped since #461. **Severity note, measured:** this was filed as an instance of #428's macOS-clang-versus-Linux-gcc trap and is the reverse. The SDK's `arm-zephyr-eabi-gcc` 14.3.0 *warns* `attribute directive ignored [-Wattributes]` and compiles (an error only under `CONFIG_COMPILER_WARNINGS_AS_ERRORS`, off by default and unset here), while Apple clang **errors**: `objc_precise_lifetime only applies to retainable types`. Clang is the stricter compiler here |
 
 ## § 6 — Blocks
 
@@ -185,7 +185,7 @@ file does not cover".
 
 | issue | § | what |
 |---|---|---|
-| #461 | 2.6.5, 2.7.2 | an out-parameter store is an untracked strong destination |
+| #461 | 2.6.5, 2.7.2 | **closed** — refused, keyed on the `+1` so the SDK's borrowed fast-enumeration buffer stays legal |
 
 **Silent degrade — accepted and then ignored, which this project's standing
 rule forbids:**
@@ -193,7 +193,7 @@ rule forbids:**
 | issue | § | what |
 |---|---|---|
 | #448 | 2.2 | `__weak` outside an ivar or property; `__autoreleasing` anywhere |
-| #461 | 4.4, 5.5 | `objc_externally_retained` and `objc_precise_lifetime` reach the generated C unlowered. Narrowed by #458, which *refuses* the three that carry ownership meaning — what is left is the two that do not, so this is now a lowering defect only |
+| #461 | 4.4, 5.5 | **closed** — the two are stripped at all four positions by one predicate. Narrowed by #458, which *refuses* the three that carry ownership meaning; what was left was the two that do not, and a lowering defect is all it was |
 
 **`UNEXAMINED` — recorded, not scheduled:**
 
