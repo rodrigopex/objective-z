@@ -489,7 +489,7 @@ fn class_method_callee(node: Node, src: &str, program: &Program) -> Option<Owner
     if node.children(&mut cursor).filter(|c| c.kind() != "[" && c.kind() != "]").count() < 2 {
         return None;
     }
-    let parts = crate::emit::parse_message(node, src);
+    let parts = crate::emit::parse_message(node, src)?;
     let receiver = &src[parts.receiver.byte_range()];
     if !program.is_class(receiver) {
         return None;

@@ -111,7 +111,7 @@ pub(crate) fn message_selector(node: Node, src: &str) -> String {
     if n < 2 {
         return String::new();
     }
-    crate::emit::parse_message(node, src).selector
+    crate::emit::parse_message(node, src).map(|p| p.selector).unwrap_or_default()
 }
 
 struct MethodScope<'a> {
@@ -745,7 +745,9 @@ fn stored_class(
     if value.children(&mut cursor).filter(|c| c.kind() != "[" && c.kind() != "]").count() < 2 {
         return None;
     }
-    let parts = crate::emit::parse_message(value, src);
+    let Some(parts) = crate::emit::parse_message(value, src) else {
+        return None;
+    };
     let receiver = receiver_class(parts.receiver, src, program, scope)?;
     let to_class = parts.receiver.kind() == "identifier"
         && program.is_class(&src[parts.receiver.byte_range()]);
@@ -1858,6 +1860,59 @@ fn walk_weak_qualifier(node: Node, src: &str, diags: &mut Vec<Diagnostic>) {
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
         walk_weak_qualifier(child, src, diags);
+    }
+}
+
+/// A `message_expression` that is not a well-formed send.
+///
+/// The bar's own reason for existing: **the malformation was reaching code
+/// that assumed it away.** `emit::parse_message` had no way to say "not a
+/// send", so ten callers across five modules were written against the
+/// assumption, and a missing colon did one of two things (#494):
+///
+///   * `[s isEqual other]` -- a **panic**, `index out of bounds: the len is
+///     3 but the index is 3`, from `collect::prescan_reflection` before any
+///     check could run. Nothing written to the output directory.
+///   * `[s take:n n]` -- the trailing token **silently dropped** and
+///     `T_take_(self, n)` emitted. Measured: that generated C compiles with
+///     **zero** errors, so nothing downstream catches it either. Worse than
+///     the panic, which at least stops the build.
+///
+/// Refusing it here is what lets `parse_message` return `None` safely: the
+/// program never reaches `emit`, so every `None` arm is defence rather than
+/// a behaviour anyone depends on.
+///
+/// Clang reports the same source as `expected ':'` and points at the
+/// column, so this is a rule oz2c owes rather than one it delegates -- and
+/// on the paths that dump an AST, Clang's refusal is not a backstop we can
+/// rely on: the panic reproduced with a dump present.
+pub fn check_malformed_sends(root: Node, src: &str) -> Vec<Diagnostic> {
+    let mut diags = Vec::new();
+    walk_malformed_sends(root, src, &mut diags);
+    diags
+}
+
+fn walk_malformed_sends(node: Node, src: &str, diags: &mut Vec<Diagnostic>) {
+    if node.kind() == "message_expression" && crate::emit::parse_message(node, src).is_none() {
+        err(
+            diags,
+            src,
+            node,
+            format!(
+                "'{}' is not a well-formed message send: each keyword needs a ':' before its \
+                 argument. Clang reports the same source as `expected ':'`",
+                crate::emit::one_line(node_text(node, src))
+            ),
+        );
+        /* One diagnostic per send. A malformed send's children are not a
+         * reliable shape, so descending to look for a nested one inside it
+         * would report positions the author cannot act on until the outer
+         * send is fixed. */
+        return;
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        walk_malformed_sends(child, src, diags);
     }
 }
 
