@@ -1780,6 +1780,66 @@ const OWNERSHIP_ATTRIBUTES: &[&str] = &[
 /// holds the name as an `identifier` -- `objc_method_family(none)` nests
 /// one level deeper, so the walk looks at every identifier beneath the
 /// specifier rather than only its first child.
+/// `__weak`, wherever it is written.
+///
+/// The qualifier is prohibited by design: nothing can zero a weak reference
+/// without a runtime, so it would behave as an unretained strong reference
+/// -- silently, and that is the exact bug the qualifier exists to prevent.
+/// It is deliberately absent from `emit::STRIPPED_ARC_QUALIFIERS` so that it
+/// fails rather than being quietly dropped.
+///
+/// **It failed in one position out of ten.** Measured on this tree before
+/// the fix, `__weak` reached the generated C verbatim from a local, a
+/// `static` local, a file-scope declaration, a `for`-header declaration, a
+/// method parameter, a plain-C-function parameter, a block parameter, a C
+/// struct field, and the *type* of a property. Only an ivar was refused.
+///
+/// The issue reporting this counted two covered positions, an ivar and a
+/// property, and the property half does not survive measurement: what
+/// `collect.rs` refuses is the property **attribute** `weak`
+/// (`@property (weak) T *w;`), which is not a `type_qualifier` node at all.
+/// The type-qualifier spelling on the same property
+/// (`@property () __weak T *w;`) reached the output. Two different
+/// spellings, one refused and one not, and the report read them as one
+/// position -- so the attribute check stays where it is and this walk does
+/// not touch it.
+///
+/// A whole-tree walk for the same reason as the five checks beside it: the
+/// qualifier is a fact about the declaration it qualifies, not about the
+/// body it sits in, and no body-scoped entry point sees a file-scope
+/// declaration, a struct field, an `@interface` method parameter, or the
+/// inside of a block literal.
+///
+/// **This needs nothing from #453.** A `type_qualifier` node carries a byte
+/// range, so the diagnostic is located from the CST alone; the author wrote
+/// the token, and pointing at it is the whole job. What would need Clang's
+/// resolved declarations is the *inferred* qualifier on a plain `T **`
+/// (#461, ARC §2.7.2), where there is no token to point at.
+pub fn check_weak_qualifier(root: Node, src: &str) -> Vec<Diagnostic> {
+    let mut diags = Vec::new();
+    walk_weak_qualifier(root, src, &mut diags);
+    diags
+}
+
+fn walk_weak_qualifier(node: Node, src: &str, diags: &mut Vec<Diagnostic>) {
+    if node.kind() == "type_qualifier" && node_text(node, src).trim() == "__weak" {
+        err(
+            diags,
+            src,
+            node,
+            "'__weak' is not supported: nothing zeroes a weak reference without a runtime, \
+             so it would silently behave as an unretained strong reference -- which is the \
+             bug the qualifier exists to prevent. Use '__unsafe_unretained' and clear it \
+             explicitly",
+        );
+        return;
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        walk_weak_qualifier(child, src, diags);
+    }
+}
+
 pub fn check_ownership_attributes(root: Node, src: &str) -> Vec<Diagnostic> {
     let mut diags = Vec::new();
     walk_ownership_attributes(root, src, &mut diags);

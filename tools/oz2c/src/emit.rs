@@ -7177,10 +7177,25 @@ fn collect_ivar_lowering_edits(
         "type_qualifier" => {
             let text = node_text(node, ctx.src).trim();
             if text == "__weak" {
+                /* Unreachable since #448, and kept as defence rather than
+                 * deleted. `staticbar::check_weak_qualifier` refuses the
+                 * qualifier in every position from `collect`, and
+                 * `transpile_observed` propagates a front-end diagnostic
+                 * with `?` before `emit::emit` runs -- so nothing that goes
+                 * through the front end arrives here. That it is unexercised
+                 * is recorded in docs/STATUS.md rather than left to be
+                 * rediscovered.
+                 *
+                 * The wording no longer says "ivars": this arm was the ivar
+                 * path and the refusal is now general, so a reader finding
+                 * it should not conclude the prohibition is ivar-only --
+                 * which is the misreading that made #448 undercount the
+                 * covered positions in the first place. */
                 ctx.err(
                     node,
-                    "'__weak' ivars are not supported (nothing zeroes a weak reference without a \
-                     runtime, so it would silently behave as an unretained strong ivar) -- use \
+                    "'__weak' is not supported: nothing zeroes a weak reference without a \
+                     runtime, so it would silently behave as an unretained strong reference \
+                     -- which is the bug the qualifier exists to prevent. Use \
                      '__unsafe_unretained' and clear it explicitly",
                 );
             } else if is_stripped_arc_spelling(node, ctx.src) {

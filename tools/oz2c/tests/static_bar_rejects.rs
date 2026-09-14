@@ -42,6 +42,16 @@ fn weak_property_rejected() {
 /// struct (see `emit::lower_ivar_decl`), but `__weak` is rejected: with
 /// no runtime to zero the reference it would silently behave as an
 /// unretained strong ivar.
+///
+/// **The ivar was the only position that worked**, and since #448 the
+/// refusal is one whole-tree walk over `type_qualifier` nodes
+/// (`staticbar::check_weak_qualifier`), so the general rule and all ten
+/// positions live in `weak_every_position.rs`. This case stays as the
+/// control for the position that never regressed, and its wording
+/// assertion moved with the message: the diagnostic no longer says
+/// "ivars", because saying so is what let a reader conclude the
+/// prohibition was ivar-shaped -- the misreading that had #448 recording
+/// two covered positions when there was one.
 #[test]
 fn weak_ivar_rejected() {
     let src = format!(
@@ -50,7 +60,7 @@ fn weak_ivar_rejected() {
         PREAMBLE()
     );
     let diags = expect_reject(&src);
-    assert!(diags.contains("'__weak' ivars are not supported"), "diagnostics: {}", diags);
+    assert!(diags.contains("'__weak' is not supported"), "diagnostics: {}", diags);
     assert!(diags.contains("unsafe_unretained"), "diagnostics: {}", diags);
 }
 

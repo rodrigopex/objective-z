@@ -874,6 +874,17 @@ pub fn collect(source: &str) -> (Program, Vec<crate::model::Diagnostic>) {
      * freed pointer and the other strands a `+1` (#460). Plain `__bridge`
      * transfers nothing and stays supported.
      */
+    /*
+     * And `__weak`, for the sixth time the same reason -- plus the reason
+     * that made it urgent: it was refused in *one* position out of ten, and
+     * the other nine copied the token into the generated C, where the
+     * failure is the C compiler's on a file the author never wrote. Worse
+     * than that on macOS, where Apple clang accepts ARC qualifiers in plain
+     * C, so every host gate can pass over output that only CI or a target
+     * build rejects (#448).
+     */
+    diagnostics.extend(crate::staticbar::check_weak_qualifier(root, source));
+
     diagnostics.extend(crate::staticbar::check_bridging_casts(root, source));
 
     // A `superclass` reference that doesn't resolve to a class actually
