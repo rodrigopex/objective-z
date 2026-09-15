@@ -750,22 +750,84 @@ Two consequences worth keeping:
 
 - **The over-release trap names the class only for a *live* over-release.**
   Driving a live object's refcount to zero and releasing again gives
-  `over-release of Widget`. Releasing an *already freed* object gives
-  `over-release of ?`, because the class is no longer knowable from the
-  object. `refcount_traps.rs` tests the first and deliberately does not test
-  the second.
-- **Post-free detection needs a mechanism outside the object.** A side table
-  keyed by address, a generation counter held outside the block, or an explicit
-  decision that it is AddressSanitizer's job on host and unavailable on target.
-  #445 assumed the third was unacceptable ("nothing on target sees a leak at
-  all") without the layout constraint in view, so the question is open rather
-  than answered.
+  `over-release of Widget`. Releasing an *already freed* object cannot name
+  the class, because the class is no longer knowable from the object.
+  `refcount_traps.rs` stages the first on a live object and deliberately does
+  not stage the second.
+- **Post-free detection needs a mechanism the free cannot reach.** A side
+  table keyed by address, a generation counter held outside the block, or an
+  explicit decision that it is AddressSanitizer's job on host and unavailable
+  on target. #445 assumed the third was unacceptable ("nothing on target sees
+  a leak at all") without the layout constraint in view.
 
 The general shape, which is why this sits here: **an instrument placed inside
 the thing it is watching is destroyed by the event it is watching for.** The
 stamp was not wrong, and no test of its *emission* could have caught this --
 `poison_emission.rs` asserts the store is generated and passes. Only reading
 the value back after the free shows it.
+
+#### The fourth option: the word just past the link (#490)
+
+The three options above are all *outside* the block, and the list had a gap:
+**a word inside the block that the allocator does not write.** Measured on
+target rather than reasoned about, `oz_refcount` is one, on every Zephyr
+target, by construction:
+
+| | `sizeof(char *)` | `offsetof(oz_refcount)` | `class_id` after free | refcount after free | body poison |
+|---|---|---|---|---|---|
+| `mps2/an385` | 4 | **4** | 588 (`?`) | **intact** | intact |
+| `qemu_cortex_a53` | 8 | **8** | 376 (`?`) | **intact** | intact |
+| arm64 macOS host | 8 | 4 | 5 (`?`) | clobbered | **clobbered** |
+
+`k_mem_slab_free` writes its link over exactly `[0, sizeof(char *))`.
+`oz_atomic_t` is Zephyr's `atomic_t`, which is a `long`; `sizeof(long) ==
+sizeof(char *)` on both ILP32 and LP64; `_meta` is 4 bytes; so the `long`'s
+alignment rounds its offset up to precisely `sizeof(char *)` — the first word
+the link cannot reach, on either width. Not luck, and not a coincidence to be
+re-measured per board. The host backend is the exception and stays one: its
+`oz_atomic_t` is `_Atomic(int)`, so the refcount sits at offset 4 under an
+8-byte write, and macOS malloc took the body as well. ASan is the host answer.
+
+So `_oz_free` now stamps `OZ_REFCOUNT_FREED` there instead of `0`, and
+`oz_retain`/`oz_release` check for it. What that buys, and it is more than
+naming a fault:
+
+**The trap was not merely uninformative on target — it did not run.** This
+section said a release of a freed object gives `over-release of ?`. Measured
+on `mps2/an385`, it gives *nothing*: the free-list link was `0x2000324c`,
+bit 12 of a link **is** `_meta.immortal`, and that bit read back as **1**, so
+`oz_release` returns at the immortal check *above* the trap. On
+`qemu_cortex_a53` the link was `0x40062978` and the same bit read back **0**,
+so there the release would have reached the trap. The two bits are what was
+measured; the abort on one board and not the other follows from them and from
+`oz_release`'s shape rather than from a second observation. One fixture, two
+verdicts, decided by an address — the same shape as the glibc-vs-macOS
+disagreement `refcount_traps.rs` documents, and reached here by a different
+route. The sentinel check runs above every read of `_meta` precisely so no
+clobbered bit can route around it, and
+`poison_emission.rs::the_freed_check_precedes_every_read_of_meta` is what
+holds that position.
+
+`0` was the wrong marker for a second reason, independent of the ordering: it
+is also what a live immortal object holds and what an object mid-teardown
+holds, and `<= 0` is the over-release trap's own condition. One value cannot
+distinguish three states.
+
+What is **still** uncovered on target, stated as a verdict rather than left
+to be discovered: a use of a slot that has since been **reallocated**. The
+marker lives in the block, so the next `_oz_alloc` clears it — which it must,
+or every object after the first free would trap. Catching that needs a side
+table or a generation counter, and neither exists. Option 3 stands for *that*
+case; it no longer has to stand for the double free.
+
+The instrument's own coverage was the other half of the gap. Nothing under
+`tests/zephyr/` defined `OZ_DEBUG_REFCOUNT`, so every line of #452's C had
+never run on a board; the suite now compiles with it, and
+`tests/zephyr/src/test_freed_slot.c` measures the survival and the layout
+that guarantees it. The two halves are deliberately split: the Rust tests
+prove the trap fires and where it sits, staged on a live object so they are
+defined everywhere, and the ztest proves the marker is there to be read.
+Either alone passes while the feature is broken.
 
 ### The audit's first run reported two things about itself (#453)
 

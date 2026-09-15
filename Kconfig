@@ -107,14 +107,40 @@ config OBJZ_DEBUG_REFCOUNT
 	  switch has already passed, so the object is freed under its new
 	  owner.
 
-	  A release whose class_id matches no live class -- a freed or corrupt
-	  pointer. That arm of the dealloc switch was a silent break, which
-	  returns as though the object had been deallocated.
+	  A retain or release of a slot already returned to its slab. _oz_free
+	  stamps OZ_REFCOUNT_FREED into the refcount word on its way out, and
+	  both entry points check for it first. The trap names the slot by
+	  address rather than by class, because the class is genuinely gone:
+	  see below.
 
-	  This is the only instrument that catches a double free on target,
+	  A release whose class_id matches no live class -- a corrupt pointer.
+	  That arm of the dealloc switch was a silent break, which returns as
+	  though the object had been deallocated.
+
+	  This is the only instrument that catches a use-after-free on target,
 	  where AddressSanitizer does not exist. On the host the sanitizers
 	  are the stronger tool and the corpora already run under them; this
 	  is what covers the boards.
+
+	  What it does NOT catch, stated because the shape of the code invites
+	  the opposite assumption (#490):
+
+	  A use of a slot that has since been REALLOCATED. The marker lives in
+	  the block, so the next allocation clears it and the trap falls
+	  silent. Detecting that needs a mechanism outside the block -- a side
+	  table or a generation counter -- and neither exists here. On target
+	  this is uncovered; on the host it is ASan's.
+
+	  Anything through the class_id stamp. OZ_CLASS_ID_FREED is written
+	  into _meta, which is the root struct's first member, and
+	  k_mem_slab_free writes its free-list link over exactly those bytes.
+	  Measured, the id reads back as the link's low bits -- 588 on
+	  mps2/an385, 376 on qemu_cortex_a53 -- so oz_class_name answers "?"
+	  and not "freed". The stamp is legible only in the cases with no
+	  free-list write: a slab-less class, and the hand-off to a waiting
+	  thread. An instrument placed inside the thing it watches is
+	  destroyed by the event it watches for; the refcount word survives
+	  only because it begins just past the link.
 
 	  OZ_DEBUG_REFCOUNT is the macro name, and a -D flag is the one
 	  interface here with no deprecation path. An out-of-tree build
