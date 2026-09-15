@@ -478,13 +478,17 @@ Requires [just](https://github.com/casey/just). Default board: `mps2/an385`.
 | `just flash` / `just f`  | Flash to hardware                   |
 | `just monitor` / `just m` | Serial monitor (tio)               |
 | `just clean` / `just c`  | Remove build directory               |
-| `just clean-twister`   | Remove every checkout's twister output |
+| `just clean-rust`      | Remove `tools/oz2c/target` (1.9 GB)    |
+| `just clean-samples`   | Remove every `samples/*/build`         |
+| `just clean-twister`   | Remove this checkout's twister output  |
+| `just clean-twister-all` | Every checkout's; needs `yes=1`      |
+| `just clean-all`       | Everything regenerable here            |
 | `just test` / `just t`   | Run twister on all samples (ARM)    |
 | `just test-riscv`      | Same samples on RISC-V (13 of 15)      |
 | `just test-smp`        | Two cores (`qemu_cortex_a53/smp`)      |
 | `just test-boards`     | ARM and RISC-V                         |
 | `just test-all-boards` | All three boards, including SMP        |
-| `just test-behavior`   | 78-case behavior corpus through `oz2c` |
+| `just test-behavior`   | 81-case behavior corpus through `oz2c` |
 | `just test-adapted`    | 40 adapted upstream tests              |
 | `just smoke`           | Transpile-and-compile smoke test       |
 | `just test-pal`        | The PAL's own C tests, on the host     |

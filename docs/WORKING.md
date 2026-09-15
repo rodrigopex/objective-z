@@ -230,12 +230,29 @@ context was made required.
   inferred from an issue title, and a repro that did not reproduce.
 - **Attribution is what makes a relay auditable, not accuracy.** A detail that
   arrives attributed gets checked; the same detail unattributed gets absorbed.
-- **Only one session runs twister at a time.** Never `just clean-twister` — it
-  deletes every other lane's output. Remove only your own
-  `/tmp/twister-out-<lane>*` by name, and confirm with `df -h`, since `rip`
-  only moves bytes to the graveyard.
+- **Only one session runs twister at a time.** `just clean-twister` removes
+  **your own** output and nothing else — it walks `outdir` plus each suffix in
+  `outdir_suffixes` by name. This rule used to read "Never `just clean-twister`"
+  because the recipe was `rm -rf /tmp/twister-out*` and destroyed every lane's
+  output; #521 made the recipe do what this rule already said, so the
+  prohibition is gone. `just clean-twister-all` is the every-checkout form —
+  it is the only thing that reaches output orphaned by a deleted worktree, and
+  it needs `yes=1`.
 - **Check nothing is live before deleting a shared output dir**, and read the
-  matches rather than counting them.
+  matches rather than counting them. `clean-twister-all` prints each directory
+  with its size and mtime before asking for `yes=1`, precisely so there is
+  something to read: an mtime from a minute ago is a live sweep.
+- **A name that is a prefix of another name is a delete waiting to happen.**
+  This is why `clean-twister` enumerates its suffixes instead of globbing
+  `{{ outdir }}*`: `spinvalidate` already prefixes `spinvalidate-smp`, and a
+  lane called `oz-477` would sweep `oz-477b`'s output. No two lane names
+  collide today, which is exactly when it is cheap to rule out.
+- **`rip` frees no space, and moves bytes out of reach.** It relocates them to
+  `/tmp/graveyard-$USER` — the same volume, so `df` does not move, and a
+  directory keyed on `$USER` rather than the checkout, so no workspace-scoped
+  recipe may reclaim it either. Every `clean*` recipe here uses `rm -rf` for
+  that reason (#521). Confirm with `df -h` rather than assuming; `clean-all`
+  prints it either side for you.
 - **Tell the owner before pushing to a branch you do not own** — and as the
   owner, **diff before resetting**: `git diff <your-old-head> <remote>` coming
   back empty proves the rebase reproduced your content byte for byte, which you
