@@ -1,0 +1,97 @@
+name: Version omission
+
+# Push on `main`, and deliberately NOT `pull_request` (#512).
+#
+# This is the whole design question the issue left open, so the reasoning
+# is here rather than in a commit message.
+#
+# The check asks: is there a bumpworthy commit since the last version
+# change, with the version unchanged? On a pull request that predicate is
+# true *by design* -- #499 says a branch declares the kind of bump and
+# carries no number, so a correct PR is number-free right up to the
+# moment it is next to land. A required status check on the PR would
+# therefore be red on every correct PR, which is the "fails on correct
+# history" failure the issue rejects the arithmetic gate for, arriving
+# through a different door.
+#
+# So the state the check describes only *exists* after the merge, and
+# after the merge is where it runs. The four options, and what each one
+# would and would not catch:
+#
+#   push on `main` (chosen) -- fires once per merge, against the state
+#     the merge actually produced. Catches all six recorded omissions,
+#     including #508's, where the number was written and gated locally
+#     and the PR was merged from a different head before it could be
+#     pushed. That one is the reason this is a gate and not a habit: no
+#     author-side check can see it, because from the repository's side
+#     "written but never pushed" and "never written" are the same state.
+#     Does not block the merge -- it reports after the fact.
+#
+#   a scheduled job -- identical detection, strictly worse signal. It
+#     reports up to an interval late and its run is attached to a clock
+#     rather than to a merge, so the red X names nobody and points at no
+#     change. Push already covers every way `main` moves.
+#
+#   `merge_group` -- the one option that could block the merge, and it
+#     does not exist here: the `main` ruleset has no `merge_queue` rule
+#     (deletion, non_fast_forward, required_linear_history, pull_request,
+#     required_status_checks -- checked, not assumed), so a `merge_group`
+#     trigger would never fire. Turning a merge queue on would re-run all
+#     nine required contexts per queued PR and change the merge mechanics
+#     of a repo restricted to rebase, which is a far larger change than
+#     the omission it would catch.
+#
+#   a required status check -- rejected above, and worth stating as a
+#     trap rather than an option: this job cannot become one. It never
+#     runs on a pull request, and GitHub holds a required check that
+#     never reports as pending forever, so adding this context to the
+#     ruleset would block every PR permanently. Do not add it.
+#
+# WHAT IT COSTS WHEN IT FIRES, stated plainly, because it is a different
+# cost from a red PR: a red X on `main` cannot be fixed by editing a
+# pull request. The fix is to land the number -- which is the commit the
+# convention already asked for -- so the remedy is the work, not extra
+# work. Nothing is gated on this job: it is not among the nine required
+# contexts and must not become one, so a red here blocks no merge and no
+# release. It is an outstanding-debt marker.
+#
+# And the debt is sticky, by design and worth knowing before the first
+# one: once a bump is missed, every later push to `main` stays red until
+# the number lands, so the red attaches to whoever pushes next rather
+# than to whoever omitted. Replayed over main's last 120 commits, 39
+# states are red and 52 green, and the red runs are exactly the stretches
+# between an omission and the number that absorbed it. The failure
+# message names the specific commits for that reason -- so the person who
+# sees it can tell it is not their commit.
+on:
+  push:
+    branches: [main]
+  # So `main` can be checked, or re-checked after the number lands,
+  # without waiting for the next push.
+  workflow_dispatch:
+
+# A burst of pushes only needs the newest answer; the older runs would
+# report a state that no longer exists.
+concurrency:
+  group: version-omission-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  version-omission:
+    runs-on: ubuntu-latest
+    steps:
+      # `fetch-depth: 0`, and the script fails closed without it. The
+      # check walks back to the last commit that changed the version,
+      # which the default depth-1 checkout does not contain -- and a
+      # shallow walk would answer "nothing ever changed it" and report
+      # success on a repository it never read.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # The logic lives in a script rather than in `run:` so that it is
+      # runnable locally and so that .github/version-omission.test.sh
+      # can drive it -- including its regex, against the six subjects
+      # #512 recorded, whose answers are already known.
+      - name: Is a version bump outstanding?
+        run: .github/version-omission.sh

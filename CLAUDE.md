@@ -22,6 +22,22 @@ this repo were *created* by carrying the number, not caught by it. The repo-leve
 and no longer moves: it tracked the outgoing Python pipeline through a scheme that tied
 `PATCHLEVEL` to an issue id, which is retired. Don't bump it.
 
+**The omission is gated, the number is not** (#512). Making the number a separate,
+final commit made it skippable, and it was skipped six times in about a day — #504,
+#503, #510, #509, #508 and #523's window. `.github/version-omission.sh` fails when a
+`feat`/`fix` or `!` commit *scoped to the crate* is reachable since the last change to
+the version and the version still reads the same. It runs on **`push` to `main` only**
+(`.github/workflows/version-omission.yml`), because on a pull request the branch is
+deliberately number-free and the check would be red on every correct PR;
+`.github/version-omission.test.sh` drives its 30 cases from `rust-tests`. A red there
+is an outstanding-debt marker, not a blocked pipeline — it gates no merge, **must not
+be added to the ruleset's required contexts** (it never runs on a PR, so a required
+context would hang every PR forever), and it stays red on each later push until the
+number lands. It deliberately does **not** compute the number: that gate was built and
+reproduced only 9 of 17 historical transitions, and folding is order-dependent anyway
+— one patch and two breaks off 0.98.0 give 0.100.0 as patch-break-break but 0.100.1
+as break-break-patch.
+
 Objective-Z is an Objective-C transpiler for Zephyr RTOS, packaged as a Zephyr module
 (`zephyr/module.yml`). Converts `.m` sources to plain C — no ObjC runtime needed. Uses the
 Platform Abstraction Layer (PAL) for zero-cost Zephyr integration.
