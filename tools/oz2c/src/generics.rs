@@ -1,7 +1,21 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // generics.rs - `id<Protocol>` and `Container<Arg, ...>` constraint
-// checking. Parity item for tools/oz_transpile/resolve.py's
+// checking, plus the for-in element-type check (#505).
+//
+// The for-in check lives here rather than in `emit.rs`, and that is a
+// consequence of where the information is: `model::Program` stores no
+// element or generic type at all -- `collect::render_type` reduces
+// `OZArray<Owner *> *` to `struct OZArray *` -- so the emitter has
+// nothing to consult even in principle. This pass already walks bodies
+// with a scope, already resolves a literal element's concrete class
+// (`resolve_concrete_class`), and already reports through `Diagnostic`,
+// so checking the header here needs no new carrier threaded through the
+// pipeline. The header itself is read through `emit::forin_binding` --
+// the same reader the emitter and `arc` use, per #502's finding that two
+// independent slicings of one header is how these drift apart.
+//
+// Parity item for tools/oz_transpile/resolve.py's
 // `_validate_generic_types`/`_satisfies_constraint`/`_class_conforms_to`
 // (the Python oracle), which oz2c previously had no counterpart
 // for at all -- its OZArray/OZDictionary test fixtures cut the real
@@ -208,11 +222,45 @@ struct Constrained {
     declared_spelling: String,
 }
 
+/// What a collection in scope is known to hold, element-wise, and how
+/// that was established.
+///
+/// `spelling` is what the diagnostic quotes back at the author as the
+/// evidence -- the declared type (`OZArray<Owner *>`) when they wrote
+/// the element type, or the literal's own text when it was read off the
+/// construction.
+///
+/// **Reading it off a literal is sound rather than heuristic, and that
+/// is a property of the SDK rather than of this pass.**
+/// `OZArray`/`OZDictionary` are immutable: they expose no `addObject:`,
+/// `insertObject:`, `removeObject:` or `setObject:`, and there is no
+/// mutable subclass of either (`OZMutableString` is not a collection).
+/// So once `@[...]` has built a collection, nothing can put a different
+/// class into it, and the element type observed at construction holds
+/// for the collection's whole life. If a mutable collection is ever
+/// added, this inference stops being sound and `Evidence::Literal` has
+/// to go -- `Evidence::Declared` would survive, since a generic
+/// argument constrains every later store too (#505).
+struct ElementClass {
+    class: String,
+    spelling: String,
+    evidence: Evidence,
+}
+
+enum Evidence {
+    /// The author wrote the element type as a generic argument.
+    Declared,
+    /// Read off a homogeneous array literal at construction.
+    Literal,
+}
+
 struct MethodScope {
     /// name -> concrete class, for a plain (unconstrained) declared type.
     plain: HashMap<String, String>,
     /// name -> its constraint(s) + declared spelling.
     constrained: HashMap<String, Constrained>,
+    /// name -> what this collection holds, for the for-in header check.
+    element: HashMap<String, ElementClass>,
 }
 
 pub fn check_program(source: &str, program: &Program) -> Vec<Diagnostic> {
@@ -546,11 +594,32 @@ fn collect_declared_extents(node: Node, src: &str) -> Vec<(String, String)> {
     extents.into_iter().collect()
 }
 
+/// Walks every body this pass checks: `method_definition` for an
+/// `@implementation`'s methods, and `function_definition` for a plain C
+/// function.
+///
+/// **`function_definition` was missing, and that made the whole pass
+/// inert wherever a sample keeps its code.** Only `method_definition`
+/// opened a scope, so a `declaration` inside `main()` never reached
+/// `walk_statements` and no generic argument written there was checked
+/// against anything. Measured rather than reasoned: the identical
+/// mismatched program was rejected from a method body and accepted from
+/// `main()`, and all nine generic declarations in
+/// `samples/transpiled_generics/src/main.m` -- the tree's only sample
+/// that uses generics at all -- sit in `main()`. Adding the arm changed
+/// no verdict on any of the 146 sources in `samples/`,
+/// `tests/behavior/`, `tests/adapted/` and `benchmarks/`: every one of
+/// those declarations is honest, so the extension is reach, not new
+/// strictness (#505).
 fn walk_for_method_bodies(node: Node, src: &str, program: &Program, diags: &mut Vec<Diagnostic>) {
-    if node.kind() == "method_definition" {
+    if matches!(node.kind(), "method_definition" | "function_definition") {
         let mut cursor = node.walk();
         if let Some(body) = node.children(&mut cursor).find(|c| c.kind() == "compound_statement") {
-            let mut scope = MethodScope { plain: HashMap::new(), constrained: HashMap::new() };
+            let mut scope = MethodScope {
+                plain: HashMap::new(),
+                constrained: HashMap::new(),
+                element: HashMap::new(),
+            };
             walk_statements(body, src, program, &mut scope, diags);
         }
         return; // a method body's own nested blocks are walked from here.
@@ -584,6 +653,15 @@ fn walk_statements(node: Node, src: &str, program: &Program, scope: &mut MethodS
                 check_assignment(assign, src, program, scope, diags);
             }
             return;
+        }
+        // A for-in header is checked before its body is walked, so the
+        // loop variable's own binding is never mistaken for a
+        // collection. Falls through to the recursion below rather than
+        // returning, because the body still has to be walked -- a
+        // nested for-in lives there (`nested_forin.m`), and so does
+        // every declaration the loop makes.
+        "for_statement" => {
+            check_forin_header(node, src, program, scope, diags);
         }
         // A block_literal is its own scope, with no access to the
         // enclosing method's locals in the first place (this backend
@@ -676,11 +754,42 @@ fn check_declaration(
         let Some(name_node) = name_node else { continue };
         let name = node_text(name_node, src).to_string();
 
+        // Any element class recorded for this name under an earlier
+        // declaration is stale the moment the name is re-declared, and a
+        // stale entry rejects correct code rather than merely missing a
+        // defect -- so it goes before the new one is considered, whether
+        // or not this declaration establishes a replacement (#505).
+        scope.element.remove(&name);
+        let declared_element = declared_element_class(type_node, src).map(|class| ElementClass {
+            class,
+            spelling: node_text(type_node, src).to_string(),
+            evidence: Evidence::Declared,
+        });
+
         match &declared {
             DeclaredType::PlainClass(class) => {
+                // The author wrote no element type, so read one off the
+                // literal if the literal is homogeneous. Sound because
+                // the collection can never be mutated -- see
+                // `ElementClass`.
+                if let Some(init) = init {
+                    if let Some(inferred) = inferred_element_class(init, src, program, scope) {
+                        scope.element.insert(
+                            name.clone(),
+                            ElementClass {
+                                class: inferred,
+                                spelling: node_text(init, src).to_string(),
+                                evidence: Evidence::Literal,
+                            },
+                        );
+                    }
+                }
                 scope.plain.insert(name, class.clone());
             }
             DeclaredType::Constrained(constraints) => {
+                if let Some(element) = declared_element {
+                    scope.element.insert(name.clone(), element);
+                }
                 scope.constrained.insert(
                     name,
                     Constrained {
@@ -701,7 +810,7 @@ fn check_assignment(
     node: Node,
     src: &str,
     program: &Program,
-    scope: &MethodScope,
+    scope: &mut MethodScope,
     diags: &mut Vec<Diagnostic>,
 ) {
     let mut cursor = node.walk();
@@ -714,11 +823,38 @@ fn check_assignment(
     if lhs.kind() != "identifier" {
         return;
     }
-    let name = node_text(*lhs, src);
-    if let Some(constrained) = scope.constrained.get(name) {
+    let name = node_text(*lhs, src).to_string();
+    if let Some(constrained) = scope.constrained.get(&name) {
         check_value_against_constraints(
-            *rhs, src, program, scope, &constrained.constraints, &constrained.declared_spelling, diags,
+            *rhs, src, program, scope, &constrained.constraints.clone(), &constrained.declared_spelling.clone(), diags,
         );
+    }
+    /* An element class read off a *literal* describes the object that
+     * literal built, not the name -- so assigning the name something
+     * else retires it. Re-read the new right-hand side, and drop the
+     * entry when it establishes nothing: a stale entry here would
+     * reject a correct for-in rather than merely miss a wrong one.
+     *
+     * An `Evidence::Declared` entry survives, because a generic
+     * argument constrains every later store too and the loop above is
+     * what enforces that. */
+    if matches!(scope.element.get(&name), Some(e) if matches!(e.evidence, Evidence::Declared)) {
+        return;
+    }
+    match inferred_element_class(*rhs, src, program, scope) {
+        Some(class) => {
+            scope.element.insert(
+                name,
+                ElementClass {
+                    class,
+                    spelling: node_text(*rhs, src).to_string(),
+                    evidence: Evidence::Literal,
+                },
+            );
+        }
+        None => {
+            scope.element.remove(&name);
+        }
     }
 }
 
@@ -782,6 +918,146 @@ fn check_one(
         src,
         value.start_byte(),
     ));
+}
+
+/// The element class the author *wrote*, from a `Container<Arg, ...>`
+/// declared type.
+///
+/// Takes the **first** generic argument, which is the element type for
+/// `OZArray<T>` and the *key* type for `OZDictionary<K, V>` -- and a
+/// for-in over a dictionary binds its keys, not its values, so the first
+/// argument is right for both. That is read from `src/OZDictionary.m`'s
+/// `-nextObject`, which returns `_keys[_enumerationIndex]`, rather than
+/// assumed from the shape of the header.
+///
+/// Reads the argument nodes with the same punctuation-only filter
+/// `classify_declared_type` uses and takes `first()`, deliberately
+/// *not* `Constrained::constraints[0]`. That list has already dropped
+/// every argument `parse_constraint` declined, so on
+/// `OZDictionary<id, OZNumber *>` its element 0 is the **value** class
+/// and using it would check a for-in header against the wrong half of
+/// the declaration -- rejecting correct code. Pinned by
+/// `forin_element_type.rs`'s `id`-keyed-dictionary control.
+fn declared_element_class(type_node: Node, src: &str) -> Option<String> {
+    if type_node.kind() != "generic_specifier" {
+        return None;
+    }
+    let mut cursor = type_node.walk();
+    let first = type_node
+        .children(&mut cursor)
+        .find(|c| !matches!(c.kind(), "type_identifier" | "<" | ">" | ","))?;
+    match parse_constraint(first, src)? {
+        Constraint::Class(class) => Some(class),
+        Constraint::Protocol(_) => None,
+    }
+}
+
+/// The element class read off an `@[...]` literal, when every element
+/// resolves to the *same* class.
+///
+/// Conservative on both axes, because a wrong answer here rejects
+/// correct code. One unresolvable element gives up on the whole literal
+/// (`?` on `resolve_concrete_class`), because an element this pass
+/// cannot resolve may well be of some other class; two elements that
+/// resolve to different classes give up too, since the honest element
+/// type is then their common ancestor and this pass does not compute
+/// one. An empty literal yields nothing to read.
+fn inferred_element_class(
+    value: Node,
+    src: &str,
+    program: &Program,
+    scope: &MethodScope,
+) -> Option<String> {
+    if value.kind() != "array_literal" {
+        return None;
+    }
+    let mut agreed: Option<String> = None;
+    for elem in literal_elements(value) {
+        let resolved = resolve_concrete_class(elem, src, program, scope)?;
+        match &agreed {
+            None => agreed = Some(resolved),
+            Some(seen) if *seen == resolved => {}
+            Some(_) => return None,
+        }
+    }
+    agreed
+}
+
+/// Checks a `for (<Class> *v in <collection>)` header against what the
+/// collection is known to hold (#505).
+///
+/// **Refuses only an *unrelated* class.** Equality is the ordinary case;
+/// a header naming an ancestor is widening and correct (`for (OZObject
+/// *o in arrayOfOwner)`); a header naming a descendant is a downcast
+/// loop whose only other spelling is `id` plus an explicit cast, so it
+/// stays accepted by decision rather than by omission. What is left --
+/// two classes on different branches, `Ghost` against `Owner` -- cannot
+/// be a cast of any kind, and is the shape that made the emitter call
+/// `Ghost_ghostOnly` on an `Owner`.
+///
+/// Silent on everything it cannot resolve: an `id` header, a collection
+/// that is not a bare local, a local whose element class was never
+/// established. That is this module's standing rule -- silence on the
+/// unresolvable, never a false positive -- and it is why this check
+/// refuses nothing that was accepted before.
+fn check_forin_header(
+    node: Node,
+    src: &str,
+    program: &Program,
+    scope: &MethodScope,
+    diags: &mut Vec<Diagnostic>,
+) {
+    let Some(binding) = crate::emit::forin_binding(node, src) else { return };
+    let header = binding.type_text.trim();
+    if !program.is_class(header) {
+        return;
+    }
+    let mut cursor = node.walk();
+    let children: Vec<Node> = node.children(&mut cursor).collect();
+    let Some(collection) = children.get(binding.in_pos + 1) else { return };
+    if collection.kind() != "identifier" {
+        return;
+    }
+    let Some(element) = scope.element.get(node_text(*collection, src)) else { return };
+    if header == element.class
+        || program.is_descendant_of(&element.class, header)
+        || program.is_descendant_of(header, &element.class)
+    {
+        return;
+    }
+    let evidence = match element.evidence {
+        Evidence::Declared => {
+            format!("'{}' is declared '{}'", node_text(*collection, src), element.spelling)
+        }
+        Evidence::Literal => format!(
+            "'{}' was built from '{}', every element of which is '{}'",
+            node_text(*collection, src),
+            element.spelling,
+            element.class
+        ),
+    };
+    diags.push(
+        Diagnostic::spanning(
+            format!(
+                "for-in header binds '{}' as '{}', but this collection holds '{}' -- and '{}' \
+                 is unrelated to '{}', neither the same class nor one of its ancestors or \
+                 descendants",
+                binding.var_name, header, element.class, header, element.class
+            ),
+            src,
+            node.start_byte()..collection.end_byte(),
+        )
+        .with_note(format!(
+            "{}, so every send to '{}' in the body would be dispatched statically to a \
+             '{}' function with an object of an unrelated class as `self`",
+            evidence, binding.var_name, header
+        ))
+        .with_help(format!("bind '{}' if the header was wrong", element.class))
+        .with_help(
+            "bind 'id' and cast at each send if the element class is not known here"
+                .to_string(),
+        ),
+    );
 }
 
 fn literal_elements(node: Node) -> Vec<Node> {
