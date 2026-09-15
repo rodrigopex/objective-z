@@ -540,31 +540,52 @@ backs '[{name} dynamicAllocWithHeap:h]' (not from source) */\n\
 ///     and host `free()` lets malloc do the same with its own bookkeeping.
 ///     Both write the *first* word, which is exactly where `_meta` sits --
 ///     `_meta` is the root struct's first member, so `class_id` is at
-///     offset 0. Everything past the root prefix is untouched, so `0xA5`
-///     there is legible for as long as the slot stays free, and a
-///     use-after-free that reads an ivar gets an obviously wrong value
-///     instead of a plausible stale one. On target that is the only such
-///     instrument there is; on the host AddressSanitizer is strictly
-///     better and the corpora already run under it.
+///     offset 0. On a slab target everything past the root prefix is
+///     untouched, so `0xA5` there is legible for as long as the slot stays
+///     free, and a use-after-free that reads an ivar gets an obviously
+///     wrong value instead of a plausible stale one. On the host it is not
+///     even that: measured on arm64 macOS, a 12-byte block came back
+///     `05 00 00 00 00 00 00 00 05 00 00 00` -- malloc's bookkeeping had
+///     taken the body too. AddressSanitizer is the host answer and the
+///     corpora already run under it.
+///   * **`oz_refcount = OZ_REFCOUNT_FREED` is the marker that survives**,
+///     and the reason `oz_retain` and `oz_release` can name a
+///     use-after-free on target at all (#490). It sits at exactly
+///     `sizeof(char *)` -- offset 4 on mps2/an385, offset 8 on
+///     qemu_cortex_a53 -- which is the first word the free-list link
+///     cannot reach, and structurally so rather than by luck: see the
+///     comment on `OZ_REFCOUNT_FREED` in the companion header.
+///
+///     It used to be `0`, on the reasoning that a zero refcount is what
+///     makes the over-release trap deterministic. Measured on target, that
+///     reasoning had the wrong subject. `0` is also what a live immortal
+///     object and a mid-teardown one hold, so the trap could not tell a
+///     freed slot from either -- and worse, it never ran: `oz_release`
+///     returned at `_meta.immortal` *above* the trap, and on mps2/an385
+///     bit 12 of the free-list link (`0x2000324c`) read back 1, so a
+///     release of a freed object was **silent**. On qemu_cortex_a53 the
+///     same bit of `0x40062978` read back 0, so there it would have
+///     reached the trap. The bits are the measurement; which board aborts
+///     follows from them. One fixture, two verdicts, decided by an
+///     address. The sentinel check now runs above the immortal check,
+///     where no clobbered bit can route around it.
 ///   * **The `class_id` stamp is legible only before the slot goes back.**
 ///     That is a narrow window -- the dealloc switch has already read the
 ///     id by then -- plus the slab path where a thread is waiting and gets
 ///     the block handed to it directly with no free-list write, and a
 ///     slab-less class, whose `_oz_free` returns the storage nowhere.
 ///     It is three cycles behind a debug flag, so it stays, and
-///     `oz_class_name` renders it as "freed". What it is *not* is a fix for
-///     the `?` in the over-release message: see
-///     `tools/oz2c/tests/refcount_traps.rs`, which measures that.
-///   * **`oz_refcount = 0` is what makes the over-release trap
-///     deterministic**, where it survives. It sits at offset 4, so a 4-byte
-///     free-list pointer on a 32-bit target leaves it alone; a 64-bit
-///     host's allocator reaches it. Unflagged, the trap fires only because
-///     freed memory happened to hold something <= 0.
+///     `oz_class_name` renders it as "freed" in those cases. What it is
+///     *not* is a fix for the `?` in the over-release message -- measured,
+///     it reads back as the low bits of the free-list link (588 on
+///     mps2/an385, 376 on qemu_cortex_a53) and `oz_class_name` answers
+///     `?`. The class of a freed object is not recoverable; its *address*
+///     is, which is what the freed trap prints instead.
 ///
-/// `immortal` is cleared for completeness rather than need: `oz_release`
-/// returns on that bit above the trap, so no immortal object reaches here
-/// today. It costs one store under a flag and removes a way for a future
-/// caller to make a poisoned slot invisible to the trap.
+/// `immortal` is cleared for completeness rather than need: no immortal
+/// object reaches here today, since `oz_release` returns on that bit before
+/// the decrement. It costs one store under a flag and removes a way for a
+/// future caller to make a poisoned slot invisible.
 ///
 /// A quarantine would make all of this legible, and #452 rejected it: a
 /// slot held back is a slot the next allocation cannot have, and
@@ -585,14 +606,16 @@ fn render_freed_poison(name: &str, root: &str) -> String {
     };
     format!(
         "#ifdef OZ_DEBUG_REFCOUNT\n\
-         \t/* Poison the slot on the way out (#452). Read the comment on\n\
-         \t * `render_freed_poison` before trusting any of this to be\n\
+         \t/* Poison the slot on the way out (#452, #490). Read the comment\n\
+         \t * on `render_freed_poison` before trusting any of this to be\n\
          \t * legible afterwards: both allocators write their free-list\n\
-         \t * link over `_meta`, so the body poison outlives the header\n\
-         \t * stamp. */\n\
+         \t * link over `_meta`, so the class_id stamp is gone the moment\n\
+         \t * the slot goes back. The refcount sentinel is the one that\n\
+         \t * survives -- it sits at sizeof(char *), just past the link --\n\
+         \t * and oz_retain/oz_release check for it first. */\n\
          \t((struct {root} *)obj)->_meta.class_id = OZ_CLASS_ID_FREED;\n\
          \t((struct {root} *)obj)->_meta.immortal = 0;\n\
-         \toz_atomic_init(&((struct {root} *)obj)->oz_refcount, 0);\n\
+         \toz_atomic_init(&((struct {root} *)obj)->oz_refcount, OZ_REFCOUNT_FREED);\n\
          {body_poison}\
          #endif\n",
         root = root,
@@ -1510,8 +1533,43 @@ pub fn render(
 * `oz_class_name` renders it as \"freed\" rather than \"?\", which is the\n \
 * difference between \"something was over-released\" and \"something\n \
 * already freed was released again\" -- when the stamp is still legible.\n \
-* It often is not: see the comment on the stamp itself. */\n\
-#define OZ_CLASS_ID_FREED 1023\n\n",
+* It never is on a slab target: measured on mps2/an385 the id read back\n \
+* 588 and on qemu_cortex_a53 376, both the low bits of the free-list\n \
+* link. See the comment on the stamp itself, and OZ_REFCOUNT_FREED\n \
+* below, which is the marker that does survive. */\n\
+#define OZ_CLASS_ID_FREED 1023\n\n\
+/* The refcount `_oz_free` stamps over a slot it is returning, and the one\n \
+* marker on this backend that outlives the free (#490).\n \
+*\n \
+* `class_id` cannot: `_meta` is the root struct's first member, so it\n \
+* occupies `[0, 4)`, and `k_mem_slab_free` writes its free-list link over\n \
+* `[0, sizeof(char *))`. `oz_refcount` begins exactly where that link\n \
+* ends, and not by luck: `oz_atomic_t` is Zephyr's `atomic_t`, which is a\n \
+* `long`, and `sizeof(long) == sizeof(char *)` on both ILP32 and LP64, so\n \
+* the alignment of that `long` rounds its offset up to precisely\n \
+* `sizeof(char *)`. Measured: offset 4 on mps2/an385 and offset 8 on\n \
+* qemu_cortex_a53, the stamped word intact on both.\n \
+*\n \
+* Reserved unconditionally, for the same reason as the id above: what a\n \
+* reserved value needs is that nothing else ever produces it, which is a\n \
+* fact about the numbering rather than about the instruments.\n \
+*\n \
+* The value is a count no live object can hold. A refcount is bounded by\n \
+* the number of live strong references, one pointer each, so reaching\n \
+* 0x0FEEDFEE would take 267 million of them -- about a gigabyte of\n \
+* pointers on a target whose whole SRAM is measured in kilobytes. Chosen\n \
+* positive and inside 31 bits so it converts without surprise to both\n \
+* `atomic_val_t` (a `long`) and the host backend's `_Atomic(int)`.\n \
+*\n \
+* One limit, stated rather than designed away: a live refcount of\n \
+* OZ_REFCOUNT_FREED + 1 *decrements into* the sentinel, so the next\n \
+* release of that object reports a use-after-free on live storage.\n \
+* Reaching it needs the same quarter of a billion references the value is\n \
+* chosen to be out of reach of, so the collision is recorded rather than\n \
+* avoided -- see `a_refcount_beside_the_sentinel_is_not_a_freed_slot` in\n \
+* tools/oz2c/tests/refcount_traps.rs, which is why its above-neighbour is\n \
+* two rather than one. */\n\
+#define OZ_REFCOUNT_FREED 0x0FEEDFEE\n\n",
     );
     // Replaced, once the whole header is built, by a forward declaration
     // for every struct tag it mentions but never declares -- see
@@ -1824,6 +1882,20 @@ not tied to one (not from source) */\n",
              \t * bound (#373). It also kept a boxed literal out of .rodata:\n\
              \t * anything that writes an object cannot be const. */\n\
              #ifdef OZ_DEBUG_REFCOUNT\n\
+             \t/* First, and above every read of `_meta`, because after a free\n\
+             \t * `_meta` is the allocator's free-list link and any bit of it\n\
+             \t * can send this function down the wrong path (#490). The\n\
+             \t * refcount word is the one the link does not reach. The class\n\
+             \t * is not recoverable here, so the address is what gets\n\
+             \t * printed -- it names the slot, which is what a slab debug\n\
+             \t * session needs. */\n\
+             \tif (self && oz_atomic_get(&self->oz_refcount) == OZ_REFCOUNT_FREED) {{\n\
+             \t\tOZ_PLATFORM_PRINT(\"oz: retain of a freed object at %p\\n\",\n\
+             \t\t\t\t  (void *)self);\n\
+             \t\toz_platform_flush();\n\
+             \t\toz_assert_msg(0, \"retain after free -- this slot was already \
+returned to its slab; the address is on the line above\");\n\
+             \t}}\n\
              \t/* Retaining an object whose teardown has begun resurrects a\n\
              \t * reference the dealloc switch has already passed, so the retain\n\
              \t * succeeds and the object is freed under its new owner (#452). */\n\
@@ -1864,6 +1936,49 @@ vtable\") -- never mutated at runtime. */\n",
         c.push_str(&format!(
             "void oz_release(struct {root} *self)\n{{\n\
              \tif (!self) {{\n\t\treturn;\n\t}}\n\
+             #ifdef OZ_DEBUG_REFCOUNT\n\
+             \t/* **Above the immortal check, and that position is the whole\n\
+             \t * point (#490).** After a free, `_meta` holds the allocator's\n\
+             \t * free-list link, and bit 12 of a link is `_meta.immortal`:\n\
+             \t * measured on mps2/an385 the link was `0x2000324c`, whose bit\n\
+             \t * 12 read back 1, so a release of a freed object returned at\n\
+             \t * the immortal check and no trap ran at all. On\n\
+             \t * qemu_cortex_a53 the link's bit 12 read back 0, so there it\n\
+             \t * would have reached the trap. The refcount\n\
+             \t * word is the one the link cannot reach -- it begins at\n\
+             \t * exactly sizeof(char *) -- so this check is decided by what\n\
+             \t * `_oz_free` wrote rather than by an address.\n\
+             \t *\n\
+             \t * A live immortal object cannot trip it: its refcount is 1 --\n\
+             \t * from `_oz_alloc`, or written straight into the initializer\n\
+             \t * for a boxed literal -- and nothing maintains it, so it is\n\
+             \t * never the sentinel.\n\
+             \t *\n\
+             \t * It is, however, the first time `oz_release` *reads* an\n\
+             \t * immortal object's refcount: the immortal return used to come\n\
+             \t * first. Safe, and checked rather than assumed. A boxed literal\n\
+             \t * is a `const struct` in .rodata, and both of Zephyr's\n\
+             \t * `atomic_get` implementations are pure loads taking a\n\
+             \t * `const atomic_t *` -- `__atomic_load_n` in\n\
+             \t * sys/atomic_builtin.h, `*target` in kernel/atomic_c.c -- so\n\
+             \t * nothing here writes read-only storage. A future backend\n\
+             \t * whose atomic read is a compare-and-swap would fault, which\n\
+             \t * is the thing to re-check before adding one.\n\
+             \t *\n\
+             \t * No gate *runs* that combination: `tests/zephyr` is the only\n\
+             \t * thing that compiles with this flag and it declares no boxed\n\
+             \t * literal, and the samples that do declare one leave the flag\n\
+             \t * off. So the two sentences above are a reading of Zephyr's\n\
+             \t * headers, not a measurement -- which is the honest label for\n\
+             \t * them. */\n\
+             \tif (oz_atomic_get(&self->oz_refcount) == OZ_REFCOUNT_FREED) {{\n\
+             \t\tOZ_PLATFORM_PRINT(\"oz: release of a freed object at %p\\n\",\n\
+             \t\t\t\t  (void *)self);\n\
+             \t\toz_platform_flush();\n\
+             \t\toz_assert_msg(0, \"release after free -- this slot was already \
+returned to its slab; the address is on the line above\");\n\
+             \t}}\n\
+             #endif\n\
              \t/* Immortal objects live in static storage and are never freed, so\n\
              \t * their refcount is not tracked either -- the check comes before\n\
              \t * the decrement, not after it. */\n\

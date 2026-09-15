@@ -29,14 +29,16 @@ struct OZObject *OZObject_oz_alloc(void)
 void OZObject_oz_free(struct OZObject *obj)
 {
 #ifdef OZ_DEBUG_REFCOUNT
-	/* Poison the slot on the way out (#452). Read the comment on
-	 * `render_freed_poison` before trusting any of this to be
+	/* Poison the slot on the way out (#452, #490). Read the comment
+	 * on `render_freed_poison` before trusting any of this to be
 	 * legible afterwards: both allocators write their free-list
-	 * link over `_meta`, so the body poison outlives the header
-	 * stamp. */
+	 * link over `_meta`, so the class_id stamp is gone the moment
+	 * the slot goes back. The refcount sentinel is the one that
+	 * survives -- it sits at sizeof(char *), just past the link --
+	 * and oz_retain/oz_release check for it first. */
 	((struct OZObject *)obj)->_meta.class_id = OZ_CLASS_ID_FREED;
 	((struct OZObject *)obj)->_meta.immortal = 0;
-	oz_atomic_init(&((struct OZObject *)obj)->oz_refcount, 0);
+	oz_atomic_init(&((struct OZObject *)obj)->oz_refcount, OZ_REFCOUNT_FREED);
 #endif
 	/* No slab, so no slot to return. With heap support on, the check
 	 * above has already given a heap-allocated instance back to its
@@ -82,6 +84,19 @@ struct OZObject *oz_retain(struct OZObject *self)
 	 * bound (#373). It also kept a boxed literal out of .rodata:
 	 * anything that writes an object cannot be const. */
 #ifdef OZ_DEBUG_REFCOUNT
+	/* First, and above every read of `_meta`, because after a free
+	 * `_meta` is the allocator's free-list link and any bit of it
+	 * can send this function down the wrong path (#490). The
+	 * refcount word is the one the link does not reach. The class
+	 * is not recoverable here, so the address is what gets
+	 * printed -- it names the slot, which is what a slab debug
+	 * session needs. */
+	if (self && oz_atomic_get(&self->oz_refcount) == OZ_REFCOUNT_FREED) {
+		OZ_PLATFORM_PRINT("oz: retain of a freed object at %p\n",
+				  (void *)self);
+		oz_platform_flush();
+		oz_assert_msg(0, "retain after free -- this slot was already returned to its slab; the address is on the line above");
+	}
 	/* Retaining an object whose teardown has begun resurrects a
 	 * reference the dealloc switch has already passed, so the retain
 	 * succeeds and the object is freed under its new owner (#452). */
@@ -125,6 +140,48 @@ void oz_release(struct OZObject *self)
 	if (!self) {
 		return;
 	}
+#ifdef OZ_DEBUG_REFCOUNT
+	/* **Above the immortal check, and that position is the whole
+	 * point (#490).** After a free, `_meta` holds the allocator's
+	 * free-list link, and bit 12 of a link is `_meta.immortal`:
+	 * measured on mps2/an385 the link was `0x2000324c`, whose bit
+	 * 12 read back 1, so a release of a freed object returned at
+	 * the immortal check and no trap ran at all. On
+	 * qemu_cortex_a53 the link's bit 12 read back 0, so there it
+	 * would have reached the trap. The refcount
+	 * word is the one the link cannot reach -- it begins at
+	 * exactly sizeof(char *) -- so this check is decided by what
+	 * `_oz_free` wrote rather than by an address.
+	 *
+	 * A live immortal object cannot trip it: its refcount is 1 --
+	 * from `_oz_alloc`, or written straight into the initializer
+	 * for a boxed literal -- and nothing maintains it, so it is
+	 * never the sentinel.
+	 *
+	 * It is, however, the first time `oz_release` *reads* an
+	 * immortal object's refcount: the immortal return used to come
+	 * first. Safe, and checked rather than assumed. A boxed literal
+	 * is a `const struct` in .rodata, and both of Zephyr's
+	 * `atomic_get` implementations are pure loads taking a
+	 * `const atomic_t *` -- `__atomic_load_n` in
+	 * sys/atomic_builtin.h, `*target` in kernel/atomic_c.c -- so
+	 * nothing here writes read-only storage. A future backend
+	 * whose atomic read is a compare-and-swap would fault, which
+	 * is the thing to re-check before adding one.
+	 *
+	 * No gate *runs* that combination: `tests/zephyr` is the only
+	 * thing that compiles with this flag and it declares no boxed
+	 * literal, and the samples that do declare one leave the flag
+	 * off. So the two sentences above are a reading of Zephyr's
+	 * headers, not a measurement -- which is the honest label for
+	 * them. */
+	if (oz_atomic_get(&self->oz_refcount) == OZ_REFCOUNT_FREED) {
+		OZ_PLATFORM_PRINT("oz: release of a freed object at %p\n",
+				  (void *)self);
+		oz_platform_flush();
+		oz_assert_msg(0, "release after free -- this slot was already returned to its slab; the address is on the line above");
+	}
+#endif
 	/* Immortal objects live in static storage and are never freed, so
 	 * their refcount is not tracked either -- the check comes before
 	 * the decrement, not after it. */

@@ -31,14 +31,16 @@ struct LightSwitch *LightSwitch_oz_alloc(void)
 void LightSwitch_oz_free(struct LightSwitch *obj)
 {
 #ifdef OZ_DEBUG_REFCOUNT
-	/* Poison the slot on the way out (#452). Read the comment on
-	 * `render_freed_poison` before trusting any of this to be
+	/* Poison the slot on the way out (#452, #490). Read the comment
+	 * on `render_freed_poison` before trusting any of this to be
 	 * legible afterwards: both allocators write their free-list
-	 * link over `_meta`, so the body poison outlives the header
-	 * stamp. */
+	 * link over `_meta`, so the class_id stamp is gone the moment
+	 * the slot goes back. The refcount sentinel is the one that
+	 * survives -- it sits at sizeof(char *), just past the link --
+	 * and oz_retain/oz_release check for it first. */
 	((struct OZObject *)obj)->_meta.class_id = OZ_CLASS_ID_FREED;
 	((struct OZObject *)obj)->_meta.immortal = 0;
-	oz_atomic_init(&((struct OZObject *)obj)->oz_refcount, 0);
+	oz_atomic_init(&((struct OZObject *)obj)->oz_refcount, OZ_REFCOUNT_FREED);
 	memset((char *)obj + sizeof(struct OZObject), 0xA5,
 	       sizeof(struct LightSwitch) - sizeof(struct OZObject));
 #endif
@@ -87,14 +89,16 @@ struct Fan *Fan_oz_alloc(void)
 void Fan_oz_free(struct Fan *obj)
 {
 #ifdef OZ_DEBUG_REFCOUNT
-	/* Poison the slot on the way out (#452). Read the comment on
-	 * `render_freed_poison` before trusting any of this to be
+	/* Poison the slot on the way out (#452, #490). Read the comment
+	 * on `render_freed_poison` before trusting any of this to be
 	 * legible afterwards: both allocators write their free-list
-	 * link over `_meta`, so the body poison outlives the header
-	 * stamp. */
+	 * link over `_meta`, so the class_id stamp is gone the moment
+	 * the slot goes back. The refcount sentinel is the one that
+	 * survives -- it sits at sizeof(char *), just past the link --
+	 * and oz_retain/oz_release check for it first. */
 	((struct OZObject *)obj)->_meta.class_id = OZ_CLASS_ID_FREED;
 	((struct OZObject *)obj)->_meta.immortal = 0;
-	oz_atomic_init(&((struct OZObject *)obj)->oz_refcount, 0);
+	oz_atomic_init(&((struct OZObject *)obj)->oz_refcount, OZ_REFCOUNT_FREED);
 	memset((char *)obj + sizeof(struct OZObject), 0xA5,
 	       sizeof(struct Fan) - sizeof(struct OZObject));
 #endif

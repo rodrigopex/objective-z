@@ -88,6 +88,7 @@ fn program(extra: &str) -> String {
  * conflicting redeclaration in the generated C. */
 struct OZObject;
 void oz_release(struct OZObject *self);
+struct OZObject *oz_retain(struct OZObject *self);
 
 int main(void)
 {
@@ -238,4 +239,188 @@ fn the_flagged_c_is_pedantic_iso_c17() {
         "the instrumented program must still behave, not merely compile; got:\n{}",
         out
     );
+}
+
+/* ------------------------------------------------------------------------
+ * The freed-slot sentinel (#490)
+ *
+ * `_oz_free` stamps `OZ_REFCOUNT_FREED` into `oz_refcount`, and these four
+ * cases pin the trap that reads it back. They are staged on a **live**
+ * object, for the same reason the over-release above is: a genuinely freed
+ * object is storage the allocator owns, and what a read finds there is its
+ * business. The claim these make is about the *trap* -- its condition, its
+ * message and its position -- which is fully defined on every platform.
+ *
+ * The other half of the claim, that the sentinel is still there to be read
+ * after a real `k_mem_slab_free`, is a fact about the allocator rather than
+ * about oz2c, and no host harness can establish it -- on arm64 macOS malloc
+ * wipes the whole block. It is measured on target by
+ * `tests/zephyr/src/test_freed_slot.c`, which asserts the survival and the
+ * layout that guarantees it. Neither test is sufficient alone: this one
+ * would pass on a target where the marker never survives, and that one
+ * would pass if the trap read the marker and did nothing with it.
+ * ---------------------------------------------------------------------- */
+
+/// Releasing a slot carrying the freed sentinel aborts, and names the slot
+/// by address.
+///
+/// **By address rather than by class, and that is not a shortcut.** After a
+/// real free the class is genuinely unrecoverable: `class_id` is at offset 0
+/// and the allocator's free-list link is written over it -- measured, it
+/// reads back as the link's low bits (588 on mps2/an385, 376 on
+/// qemu_cortex_a53) and `oz_class_name` answers `?`. The address is the one
+/// thing still true of the object, and it identifies the slot, which is
+/// what a slab debug session works from.
+#[test]
+fn releasing_a_slot_carrying_the_freed_sentinel_aborts() {
+    let src = program(
+        "\
+	oz_atomic_init(&w->base.oz_refcount, OZ_REFCOUNT_FREED);
+	oz_release((struct OZObject *)w);
+",
+    );
+    let out = expect_trap(&src, "trap_release_after_free", &["-DOZ_DEBUG_REFCOUNT"]);
+    assert!(
+        out.contains("release of a freed object"),
+        "the trap must distinguish a use-after-free from an over-release -- they are \
+         different faults with different fixes; got:\n{}",
+        out
+    );
+    assert!(
+        out.contains("release after free"),
+        "the assertion text is the half that survives on stderr when the print's stream \
+         is discarded, so it must carry the fault too; got:\n{}",
+        out
+    );
+    assert!(
+        !out.contains("over-release"),
+        "a freed slot must not be reported as an over-release; the sentinel exists \
+         precisely so the two are told apart; got:\n{}",
+        out
+    );
+    assert!(
+        !out.contains("survived"),
+        "it must abort at the release, not carry on to the end of main; got:\n{}",
+        out
+    );
+}
+
+/// **The check runs above the immortal check**, which is the whole of #490's
+/// fix and the one property a later edit is most likely to undo.
+///
+/// `_meta` is the free-list link after a free, and bit 12 of that link *is*
+/// `_meta.immortal`. Measured on mps2/an385 the link was `0x2000324c` and
+/// that bit read back **1** -- so with the freed check below the immortal
+/// check, `oz_release` returns before reaching it and a release of a freed
+/// object is **silent on the primary target**. On qemu_cortex_a53 the link
+/// was `0x40062978` and the same bit read back **0**, so there the release
+/// would have gone on to the trap. The bits are what was measured; which
+/// board aborts follows from them and from `oz_release`'s shape. One
+/// fixture, two verdicts, decided by an address.
+///
+/// This stages that deterministically: a live object with the sentinel *and*
+/// `immortal` set. Move the check back below the immortal test and this case
+/// prints "survived" and exits 0 -- which is how it was falsified.
+#[test]
+fn the_freed_check_outranks_the_immortal_bit() {
+    let src = program(
+        "\
+	w->base._meta.immortal = 1;
+	oz_atomic_init(&w->base.oz_refcount, OZ_REFCOUNT_FREED);
+	oz_release((struct OZObject *)w);
+",
+    );
+    let out = expect_trap(&src, "trap_freed_outranks_immortal", &["-DOZ_DEBUG_REFCOUNT"]);
+    assert!(
+        out.contains("release of a freed object"),
+        "an `immortal` bit read out of a free-list link must not route around the trap; \
+         got:\n{}",
+        out
+    );
+    assert!(
+        !out.contains("survived"),
+        "the release must abort; reaching the end of main is exactly the silence measured \
+         on mps2/an385 before this check moved; got:\n{}",
+        out
+    );
+}
+
+/// Retaining a slot carrying the sentinel aborts too, and above the
+/// `deallocating` check for the same reason.
+///
+/// A use-after-free that *retains* is the worse of the two: the slot is
+/// already on a free list, so the retain hands out a reference to storage
+/// the next allocation will get.
+#[test]
+fn retaining_a_slot_carrying_the_freed_sentinel_aborts() {
+    let src = program(
+        "\
+	oz_atomic_init(&w->base.oz_refcount, OZ_REFCOUNT_FREED);
+	(void)oz_retain((struct OZObject *)w);
+",
+    );
+    let out = expect_trap(&src, "trap_retain_after_free", &["-DOZ_DEBUG_REFCOUNT"]);
+    assert!(
+        out.contains("retain of a freed object"),
+        "the retain path needs its own message: the fault is a reference handed out of a \
+         free list, not a resurrection during dealloc; got:\n{}",
+        out
+    );
+    assert!(
+        !out.contains("during its own dealloc"),
+        "a freed slot must not be reported as a retain-during-dealloc -- `deallocating` is \
+         bit 11 of the same clobbered word, so that message would be an accident of the \
+         address; got:\n{}",
+        out
+    );
+    assert!(
+        !out.contains("survived"),
+        "it must abort at the retain; got:\n{}",
+        out
+    );
+}
+
+/// The paired negative: the check is an **equality on the sentinel**, not a
+/// threshold.
+///
+/// Without this row, a check written as an inequality would satisfy every
+/// assertion above while trapping on a refcount that is merely large.
+///
+/// **Both sides, and the second one is why this test was rewritten.** The
+/// first version tested only `OZ_REFCOUNT_FREED - 1`, and then survived the
+/// falsification it was written for: substituting `>=` for `==` left it
+/// green, because the below-neighbour does not satisfy `>=` either. One
+/// neighbour catches an inequality in one direction only. `- 1` catches
+/// `<=`, an above-value catches `>=`; it takes both to mean "equality".
+///
+/// **The above-value is `+ 2`, not `+ 1`, and the reason is a real property
+/// of the scheme rather than a convenience.** A live refcount one *above*
+/// the sentinel decrements *into* it, so `+ 1` traps -- correctly, at the
+/// scope-end release rather than the explicit one, having passed the check
+/// and then become the sentinel. Two above is the closest value this
+/// fixture's two releases cannot walk onto. The collision is noted on
+/// `OZ_REFCOUNT_FREED` in the companion header and is not worth designing
+/// away: reaching it needs a quarter of a billion live references.
+#[test]
+fn a_refcount_beside_the_sentinel_is_not_a_freed_slot() {
+    for (offset, label) in [("- 1", "below"), ("+ 2", "above")] {
+        let src = program(&format!(
+            "\
+	oz_atomic_init(&w->base.oz_refcount, OZ_REFCOUNT_FREED {});
+	oz_release((struct OZObject *)w);
+",
+            offset
+        ));
+        let out = common::compile_and_run_with_cc_flags(
+            &src,
+            &format!("trap_beside_sentinel_{}", label),
+            &["-DOZ_DEBUG_REFCOUNT"],
+        );
+        assert_eq!(
+            out, "alive\nsurvived\n",
+            "the freed check must fire on exactly the sentinel; {} it, the value is an \
+             ordinary live refcount; got:\n{}",
+            label, out
+        );
+    }
 }

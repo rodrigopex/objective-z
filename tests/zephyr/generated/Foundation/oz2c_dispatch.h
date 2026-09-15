@@ -24,8 +24,44 @@ typedef bool BOOL;
  * `oz_class_name` renders it as "freed" rather than "?", which is the
  * difference between "something was over-released" and "something
  * already freed was released again" -- when the stamp is still legible.
- * It often is not: see the comment on the stamp itself. */
+ * It never is on a slab target: measured on mps2/an385 the id read back
+ * 588 and on qemu_cortex_a53 376, both the low bits of the free-list
+ * link. See the comment on the stamp itself, and OZ_REFCOUNT_FREED
+ * below, which is the marker that does survive. */
 #define OZ_CLASS_ID_FREED 1023
+
+/* The refcount `_oz_free` stamps over a slot it is returning, and the one
+ * marker on this backend that outlives the free (#490).
+ *
+ * `class_id` cannot: `_meta` is the root struct's first member, so it
+ * occupies `[0, 4)`, and `k_mem_slab_free` writes its free-list link over
+ * `[0, sizeof(char *))`. `oz_refcount` begins exactly where that link
+ * ends, and not by luck: `oz_atomic_t` is Zephyr's `atomic_t`, which is a
+ * `long`, and `sizeof(long) == sizeof(char *)` on both ILP32 and LP64, so
+ * the alignment of that `long` rounds its offset up to precisely
+ * `sizeof(char *)`. Measured: offset 4 on mps2/an385 and offset 8 on
+ * qemu_cortex_a53, the stamped word intact on both.
+ *
+ * Reserved unconditionally, for the same reason as the id above: what a
+ * reserved value needs is that nothing else ever produces it, which is a
+ * fact about the numbering rather than about the instruments.
+ *
+ * The value is a count no live object can hold. A refcount is bounded by
+ * the number of live strong references, one pointer each, so reaching
+ * 0x0FEEDFEE would take 267 million of them -- about a gigabyte of
+ * pointers on a target whose whole SRAM is measured in kilobytes. Chosen
+ * positive and inside 31 bits so it converts without surprise to both
+ * `atomic_val_t` (a `long`) and the host backend's `_Atomic(int)`.
+ *
+ * One limit, stated rather than designed away: a live refcount of
+ * OZ_REFCOUNT_FREED + 1 *decrements into* the sentinel, so the next
+ * release of that object reports a use-after-free on live storage.
+ * Reaching it needs the same quarter of a billion references the value is
+ * chosen to be out of reach of, so the collision is recorded rather than
+ * avoided -- see `a_refcount_beside_the_sentinel_is_not_a_freed_slot` in
+ * tools/oz2c/tests/refcount_traps.rs, which is why its above-neighbour is
+ * two rather than one. */
+#define OZ_REFCOUNT_FREED 0x0FEEDFEE
 
 /* struct tags named by a prototype below but declared in no header this
  * one includes -- forward-declared so the tag is file-scoped rather than

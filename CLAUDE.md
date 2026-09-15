@@ -352,11 +352,23 @@ Retained as reference for transpiler development. Not compiled — the runtime c
   for the 81 behaviour cases alone, and calls it "both corpora" (#400's PR did exactly
   that). Glob `tests/adapted/**/*.m`, and assert the count is 40 before trusting the
   result
-- **`tests/zephyr/`** — 21 Zephyr integration cases in 6 ztest suites (`native_sim` +
+- **`tests/zephyr/`** — 24 Zephyr integration cases in 7 ztest suites (`native_sim` +
   `ztest` + `twister`), over C committed under `tests/zephyr/generated/`. That C is
   **oz2c's output** since the port, so a green run says something about the
   default backend; `scripts/regen_zephyr_tests.py` regenerates it and the
-  `generated-freshness` CI job fails if the tree is stale
+  `generated-freshness` CI job fails if the tree is stale.
+  **It compiles with `OZ_DEBUG_REFCOUNT` as of #490, and it is the only thing that
+  does** — so this is where the refcount instruments (#452, #490) actually run on a
+  board. Before that nothing in the tree defined the macro, and every line of
+  #452's C had never executed anywhere: `poison_emission.rs` asserted the stores
+  were *emitted* and passed, which is the shape of a working-looking instrument.
+  The flag is set app-wide in `tests/zephyr/CMakeLists.txt` rather than per-file,
+  because the poison lives in `_oz_free` in the generated sources; scoping it to
+  one test would compile that test against a `_oz_free` that stamps nothing.
+  `src/test_freed_slot.c` is the case that reads a freed slot back, and its
+  counterpart `tools/oz2c/tests/refcount_traps.rs` cannot: what survives a real
+  `k_mem_slab_free` is a fact about the allocator, and on arm64 macOS malloc wipes
+  the whole block
 - **`tests/objc-reference/`** — Legacy runtime tests (reference only, not compiled)
 
 ## Working alongside other changes

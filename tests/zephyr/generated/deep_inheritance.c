@@ -29,14 +29,16 @@ struct Level1 *Level1_oz_alloc(void)
 void Level1_oz_free(struct Level1 *obj)
 {
 #ifdef OZ_DEBUG_REFCOUNT
-	/* Poison the slot on the way out (#452). Read the comment on
-	 * `render_freed_poison` before trusting any of this to be
+	/* Poison the slot on the way out (#452, #490). Read the comment
+	 * on `render_freed_poison` before trusting any of this to be
 	 * legible afterwards: both allocators write their free-list
-	 * link over `_meta`, so the body poison outlives the header
-	 * stamp. */
+	 * link over `_meta`, so the class_id stamp is gone the moment
+	 * the slot goes back. The refcount sentinel is the one that
+	 * survives -- it sits at sizeof(char *), just past the link --
+	 * and oz_retain/oz_release check for it first. */
 	((struct OZObject *)obj)->_meta.class_id = OZ_CLASS_ID_FREED;
 	((struct OZObject *)obj)->_meta.immortal = 0;
-	oz_atomic_init(&((struct OZObject *)obj)->oz_refcount, 0);
+	oz_atomic_init(&((struct OZObject *)obj)->oz_refcount, OZ_REFCOUNT_FREED);
 	memset((char *)obj + sizeof(struct OZObject), 0xA5,
 	       sizeof(struct Level1) - sizeof(struct OZObject));
 #endif
@@ -82,14 +84,16 @@ struct Level2 *Level2_oz_alloc(void)
 void Level2_oz_free(struct Level2 *obj)
 {
 #ifdef OZ_DEBUG_REFCOUNT
-	/* Poison the slot on the way out (#452). Read the comment on
-	 * `render_freed_poison` before trusting any of this to be
+	/* Poison the slot on the way out (#452, #490). Read the comment
+	 * on `render_freed_poison` before trusting any of this to be
 	 * legible afterwards: both allocators write their free-list
-	 * link over `_meta`, so the body poison outlives the header
-	 * stamp. */
+	 * link over `_meta`, so the class_id stamp is gone the moment
+	 * the slot goes back. The refcount sentinel is the one that
+	 * survives -- it sits at sizeof(char *), just past the link --
+	 * and oz_retain/oz_release check for it first. */
 	((struct OZObject *)obj)->_meta.class_id = OZ_CLASS_ID_FREED;
 	((struct OZObject *)obj)->_meta.immortal = 0;
-	oz_atomic_init(&((struct OZObject *)obj)->oz_refcount, 0);
+	oz_atomic_init(&((struct OZObject *)obj)->oz_refcount, OZ_REFCOUNT_FREED);
 	memset((char *)obj + sizeof(struct OZObject), 0xA5,
 	       sizeof(struct Level2) - sizeof(struct OZObject));
 #endif
@@ -135,14 +139,16 @@ struct Level3 *Level3_oz_alloc(void)
 void Level3_oz_free(struct Level3 *obj)
 {
 #ifdef OZ_DEBUG_REFCOUNT
-	/* Poison the slot on the way out (#452). Read the comment on
-	 * `render_freed_poison` before trusting any of this to be
+	/* Poison the slot on the way out (#452, #490). Read the comment
+	 * on `render_freed_poison` before trusting any of this to be
 	 * legible afterwards: both allocators write their free-list
-	 * link over `_meta`, so the body poison outlives the header
-	 * stamp. */
+	 * link over `_meta`, so the class_id stamp is gone the moment
+	 * the slot goes back. The refcount sentinel is the one that
+	 * survives -- it sits at sizeof(char *), just past the link --
+	 * and oz_retain/oz_release check for it first. */
 	((struct OZObject *)obj)->_meta.class_id = OZ_CLASS_ID_FREED;
 	((struct OZObject *)obj)->_meta.immortal = 0;
-	oz_atomic_init(&((struct OZObject *)obj)->oz_refcount, 0);
+	oz_atomic_init(&((struct OZObject *)obj)->oz_refcount, OZ_REFCOUNT_FREED);
 	memset((char *)obj + sizeof(struct OZObject), 0xA5,
 	       sizeof(struct Level3) - sizeof(struct OZObject));
 #endif
@@ -188,14 +194,16 @@ struct Level4 *Level4_oz_alloc(void)
 void Level4_oz_free(struct Level4 *obj)
 {
 #ifdef OZ_DEBUG_REFCOUNT
-	/* Poison the slot on the way out (#452). Read the comment on
-	 * `render_freed_poison` before trusting any of this to be
+	/* Poison the slot on the way out (#452, #490). Read the comment
+	 * on `render_freed_poison` before trusting any of this to be
 	 * legible afterwards: both allocators write their free-list
-	 * link over `_meta`, so the body poison outlives the header
-	 * stamp. */
+	 * link over `_meta`, so the class_id stamp is gone the moment
+	 * the slot goes back. The refcount sentinel is the one that
+	 * survives -- it sits at sizeof(char *), just past the link --
+	 * and oz_retain/oz_release check for it first. */
 	((struct OZObject *)obj)->_meta.class_id = OZ_CLASS_ID_FREED;
 	((struct OZObject *)obj)->_meta.immortal = 0;
-	oz_atomic_init(&((struct OZObject *)obj)->oz_refcount, 0);
+	oz_atomic_init(&((struct OZObject *)obj)->oz_refcount, OZ_REFCOUNT_FREED);
 	memset((char *)obj + sizeof(struct OZObject), 0xA5,
 	       sizeof(struct Level4) - sizeof(struct OZObject));
 #endif
