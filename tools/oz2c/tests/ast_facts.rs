@@ -285,7 +285,7 @@ fn unrelated_clang_fields_are_ignored() {
             "class Noisy".to_string(),
             "impl Noisy".to_string(),
             "ivar Noisy _held owned".to_string(),
-            "qual ObjCIvarDecl _held __strong x.m:4+41".to_string(),
+            "qual ObjCIvarDecl _held __strong decl x.m:4+41".to_string(),
         ],
         "the ignored fields must not change the facts -- note `qualType` is \
          read and the `desugaredQualType` beside it is not, and that the \

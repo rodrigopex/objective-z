@@ -802,10 +802,14 @@ a collision.
 
 And the claim the tool shipped in its first version was **#453's own**,
 repeated without checking: that at a call site a `+1` class send, a `+0`
-send and a protocol send are marked identically. They are not -- see
-"Where tree-sitter and the Clang AST each sit" above, which had already
-corrected it. Measured a second time during the implementation, one send
-per row:
+send and a protocol send are marked identically. They are not, and **#478
+had already corrected it** in "Where tree-sitter and the Clang AST each
+sit" above -- along with the implementor half, which #478 reached with
+sharper counterexamples than the ones found here. Nothing below is new
+knowledge; it is an independent confirmation from a second direction, kept
+because the per-send table is what the audit prints and a table is easier
+to re-check than a sentence. Measured with the pinned clang
+(`clang-19`, `$ZEPHYR_SDK_INSTALL_DIR/llvm/bin`), one send per row:
 
 | send | mark |
 |------|------|
@@ -820,6 +824,11 @@ What collapses together is a non-family factory and a `+0` send, which is
 the issue gives. The difference is not pedantic: "the marks say nothing at
 a call site" would have made that whole section of the audit look pointless
 when the marks are in fact a redundancy check on the family rule.
+
+**The issue body still asserts both of the corrected claims**, and an issue
+is the spec a reader arbitrates against. #453 is commented with the two
+corrections and the measurements rather than rewritten, so the original
+text stays legible next to what replaced it.
 
 ### Every host gate green over C that is not C (#428)
 
@@ -1497,9 +1506,36 @@ Two things measured about it, so the next reader does not have to guess:
 
   Census over repo-owned source (155 `.m` files, deduped by `file:line:col`):
   489 transfer marks -- 202 `ARCReclaimReturnedObject`, 194
-  `ARCConsumeObject`, 93 `ARCProduceObject` -- of which `astinfo.rs` reads
-  **none**; and 411 ownership-qualified declarations of which it reads **35**
+  `ARCConsumeObject`, 93 `ARCProduceObject` -- of which `astinfo.rs` read
+  **none**; and 411 ownership-qualified declarations of which it read **35**
   (8.5%), all of them `ObjCIvarDecl`.
+
+  **That census is the *before* picture: #453 reads all of it**, every
+  transfer mark and every ownership qualifier on a `VarDecl`,
+  `ParmVarDecl`, `FieldDecl` or `ObjCIvarDecl`. Two notes for whoever
+  re-runs the count, because neither is visible in the figures:
+
+  - **The dedup keys differ, so the two censuses are not comparable even at
+    equal scope.** This one keys on `file:line:col`; `astinfo.rs` keys on
+    Clang's node `id`, because the thing being deduplicated is a node
+    *printed twice* (a `VarDecl` appears in its method's decl list and again
+    under its `DeclStmt`). Two genuinely distinct marks can share a
+    `file:line:col` -- `Slot *s = [Slot alloc];` carries the produce and the
+    consume that takes it -- so the `file:line:col` key can undercount where
+    the `id` key does not.
+  - **Not every qualifier in that 411 was written by an author.** ARC infers
+    `__autoreleasing` on an indirect parameter, so
+    `+ (id)arrayWithObjects:(const id *)objects` -- which writes no
+    qualifier -- dumps as `const __autoreleasing id *`. All 18
+    `__autoreleasing` occurrences in this repo's dumps are that one shape,
+    and `git grep __autoreleasing -- '*.h' '*.m' '*.c'` matches **nothing**.
+    Clang does not *override* a written qualifier: five lines below,
+    `OZArray.h:28`'s `objects:(__unsafe_unretained id *)stackbuf` dumps as
+    `__unsafe_unretained`. So the inference fills a gap rather than
+    contradicting source, and `astinfo::QualifierScope` records which of the
+    two a qualifier is -- the declaration's or its pointee's. An audit that
+    conflates them tells an author they wrote a qualifier #448 refuses when
+    their file contains none.
 
 **Since #385 the dump is required, not optional.** `oz2c` refuses a source
 that declares a class with no `--ast` behind it -- a hard, located error at

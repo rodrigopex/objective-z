@@ -167,6 +167,45 @@ pub struct ArcMark {
     pub at: AstPos,
 }
 
+/// What an ownership qualifier in a `qualType` is actually qualifying.
+///
+/// **The distinction is the difference between a finding and a false
+/// accusation.** `+ (id)arrayWithObjects:(const id *)objects` writes no
+/// qualifier at all, and Clang reports its parameter as
+/// `const __autoreleasing id *` -- ARC infers `__autoreleasing` on an
+/// indirect parameter. Read as the declaration's own qualifier, that says
+/// the SDK's own header writes `__autoreleasing`, which #448 refuses; and
+/// `git grep __autoreleasing -- '*.h' '*.m' '*.c'` matches **nothing** in
+/// this repo. Three such parameters exist in a real build's dumps
+/// (`OZArray.h:22`, `OZDictionary.h:23` and `:24`).
+///
+/// Stated precisely, because the reach is narrower than it first looks and
+/// overstating it would be the same error in the other direction:
+/// `--check-arc` filters to the file under audit, so those three SDK rows
+/// do not appear in its report for a case that merely imports `OZArray`.
+/// What *is* reachable is (a) `--dump-ast-facts`, which is unfiltered and
+/// is the provable baseline, and (b) any audited file that declares an
+/// `id *` parameter of its own -- the shape the SDK's collection factories
+/// use, so anyone writing a similar factory was accused of writing a
+/// qualifier their file does not contain. Verified both ways:
+/// `check_arc_audit::arcs_inferred_indirect_qualifier_is_attributed_to_the_pointee`.
+///
+/// The discriminator is position, and it is the rule `is_owned_object`
+/// already applies to ivars: a qualifier *after* the last `*` describes
+/// the declaration, one before it describes what is pointed at.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum QualifierScope {
+    /// The qualifier describes this declaration's own ownership -- either
+    /// written by the author, or defaulted by ARC for a direct object
+    /// declaration. This is the one #448's rules are about.
+    Declaration,
+    /// The qualifier describes the *pointee* of a pointer-to-object, which
+    /// is where ARC's inference for indirect parameters lands. Recorded
+    /// rather than dropped: silently discarding it would make a real
+    /// `__weak id *` buffer invisible.
+    Pointee,
+}
+
 /// An ownership qualifier Clang wrote into a declaration's type.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OwnershipQual {
@@ -175,6 +214,8 @@ pub struct OwnershipQual {
     pub name: String,
     /// `__strong`, `__weak`, `__unsafe_unretained` or `__autoreleasing`.
     pub qualifier: String,
+    /// Whether the qualifier is this declaration's or its pointee's.
+    pub scope: QualifierScope,
     pub at: AstPos,
 }
 
@@ -442,7 +483,7 @@ impl AstFacts {
         }
         if matches!(kind, "VarDecl" | "ParmVarDecl" | "FieldDecl" | "ObjCIvarDecl") {
             let qual = node.ty.as_ref().and_then(|t| t.qual_type.as_deref()).unwrap_or("");
-            if let Some(found) = OWNERSHIP_QUALIFIERS.iter().find(|q| qual.contains(**q)) {
+            if let Some((found, scope)) = qualifier_of(qual) {
                 let id = node.id.as_deref().unwrap_or("");
                 /* Deduplicated for exactly the reason a mark is: a local's
                  * `VarDecl` is printed twice, so an audit that did not
@@ -454,7 +495,8 @@ impl AstFacts {
                     self.ownership_quals.push(OwnershipQual {
                         decl_kind: kind.to_string(),
                         name: name.to_string(),
-                        qualifier: (*found).to_string(),
+                        qualifier: found.to_string(),
+                        scope,
                         at,
                     });
                 }
@@ -639,9 +681,13 @@ impl AstFacts {
             ));
         }
         for qual in &self.ownership_quals {
+            let scope = match qual.scope {
+                QualifierScope::Declaration => "decl",
+                QualifierScope::Pointee => "pointee",
+            };
             lines.push(format!(
-                "qual {} {} {} {}+{}",
-                qual.decl_kind, qual.name, qual.qualifier, qual.at, qual.at.offset
+                "qual {} {} {} {} {}+{}",
+                qual.decl_kind, qual.name, qual.qualifier, scope, qual.at, qual.at.offset
             ));
         }
         lines.sort();
@@ -674,6 +720,39 @@ impl AstFacts {
 /// a block to a plain C function pointer (`emit::lower_ivar_decl`), so there
 /// is no object to release and passing one to a release call would treat
 /// code as a heap object.
+/// Which ownership qualifier a `qualType` carries, and what it qualifies.
+///
+/// The positional rule is `is_owned_object`'s, generalised to all four
+/// qualifiers rather than restated: a qualifier after the last `*`
+/// describes the declaration, one before it describes the pointee. That is
+/// what keeps ARC's *inferred* `__autoreleasing` on an indirect parameter
+/// (`const __autoreleasing id *`) from being reported as a qualifier the
+/// author wrote -- see `QualifierScope`.
+///
+/// A block type is excluded for the same reason `is_owned_object` excludes
+/// it: oz2c lowers a block to a plain C function pointer, so there is no
+/// ownership to describe.
+pub fn qualifier_of(qual_type: &str) -> Option<(&'static str, QualifierScope)> {
+    let qual = qual_type.trim();
+    if qual.contains("(^") {
+        return None;
+    }
+    let found = OWNERSHIP_QUALIFIERS.iter().find(|q| qual.contains(**q))?;
+    let scope = match qual.rfind('*') {
+        /* No pointer: the qualifier is a prefix on a bare object type, so
+         * it is this declaration's. */
+        None => QualifierScope::Declaration,
+        Some(star) => {
+            if qual[star + 1..].contains(*found) {
+                QualifierScope::Declaration
+            } else {
+                QualifierScope::Pointee
+            }
+        }
+    };
+    Some((*found, scope))
+}
+
 pub fn is_owned_object(qual_type: &str) -> bool {
     let qual = qual_type.trim();
     if qual.contains("(^") {
@@ -969,7 +1048,7 @@ mod tests {
         let lines = facts.dump_lines();
         assert!(lines.iter().any(|l| l == "impl ArcReassignTest"), "{:#?}", lines);
         assert!(lines.iter().any(|l| l.starts_with("mark ARCConsumeObject VarDecl ")));
-        assert!(lines.iter().any(|l| l.starts_with("qual VarDecl s __strong ")));
+        assert!(lines.iter().any(|l| l.starts_with("qual VarDecl s __strong decl ")));
         /* Two marks and two qualifier rows, neither collapsed: equal lines
          * would mean two sites, and hiding one is the silent direction. */
         assert_eq!(lines.iter().filter(|l| l.starts_with("mark ")).count(), 2);
@@ -1062,6 +1141,118 @@ mod tests {
         assert_eq!(marks.len(), 1, "the mark is kept: {:#?}", marks);
         assert_eq!((marks[0].at.line, marks[0].at.offset), (4, 44), "the VarDecl's");
         assert_eq!(marks[0].position, "VarDecl");
+    }
+
+    /// A qualifier on the *pointee* of a pointer-to-object is recorded as
+    /// such, never as the declaration's own.
+    ///
+    /// This is the distinction between a finding and a false accusation,
+    /// and it is live in this repo rather than hypothetical. The SDK writes
+    /// `+ (id)arrayWithObjects:(const id *)objects` -- **no qualifier at
+    /// all** -- and Clang reports the parameter as
+    /// `const __autoreleasing id *`, because ARC infers `__autoreleasing`
+    /// on an indirect parameter. Read as the declaration's, that accuses
+    /// `OZArray.h:22` and `OZDictionary.h:23`/`:24` of writing a qualifier
+    /// that `git grep` finds in **no** `.h`, `.m` or `.c` in the tree, and
+    /// `--check-arc` would have opened with three confident false findings
+    /// against the SDK's own collection factories.
+    ///
+    /// Clang does **not** override a qualifier the author did write: five
+    /// lines below, `objects:(__unsafe_unretained id *)stackbuf` dumps as
+    /// `__unsafe_unretained`, faithfully. So the inference fills a gap
+    /// rather than contradicting the source -- which is why position, not
+    /// a guess about which qualifiers Clang invents, is the right test.
+    #[test]
+    fn an_inferred_pointee_qualifier_is_not_the_declarations_own() {
+        let dump = r#"{
+          "kind": "TranslationUnitDecl",
+          "loc": { "file": "include/oz_sdk/Foundation/OZArray.h", "line": 22, "offset": 500 },
+          "inner": [
+            {
+              "id": "0x1",
+              "kind": "ObjCMethodDecl",
+              "name": "arrayWithObjects:count:",
+              "loc": { "offset": 520 },
+              "inner": [
+                {
+                  "id": "0x2",
+                  "kind": "ParmVarDecl",
+                  "name": "objects",
+                  "loc": { "offset": 544 },
+                  "type": { "qualType": "const __autoreleasing id *" }
+                },
+                {
+                  "id": "0x3",
+                  "kind": "ParmVarDecl",
+                  "name": "stackbuf",
+                  "loc": { "line": 28, "offset": 882 },
+                  "type": { "qualType": "__unsafe_unretained id *" }
+                },
+                {
+                  "id": "0x4",
+                  "kind": "ParmVarDecl",
+                  "name": "key",
+                  "loc": { "line": 27, "offset": 733 },
+                  "type": { "qualType": "__strong id" }
+                }
+              ]
+            }
+          ]
+        }"#;
+        let facts = AstFacts::from_json(dump).expect("parses");
+        let quals = facts.ownership_quals();
+        assert_eq!(quals.len(), 3, "{:#?}", quals);
+
+        let objects = quals.iter().find(|q| q.name == "objects").expect("objects");
+        assert_eq!(objects.qualifier, "__autoreleasing");
+        assert_eq!(
+            objects.scope,
+            QualifierScope::Pointee,
+            "ARC inferred this on an indirect parameter; the author wrote `const id *`"
+        );
+
+        /* A written qualifier, also on a pointee: still the pointee's. */
+        let stackbuf = quals.iter().find(|q| q.name == "stackbuf").expect("stackbuf");
+        assert_eq!(stackbuf.qualifier, "__unsafe_unretained");
+        assert_eq!(stackbuf.scope, QualifierScope::Pointee);
+
+        /* A bare object type's prefix qualifier is the declaration's. */
+        let key = quals.iter().find(|q| q.name == "key").expect("key");
+        assert_eq!(key.qualifier, "__strong");
+        assert_eq!(key.scope, QualifierScope::Declaration);
+    }
+
+    /// `qualifier_of` agrees with `is_owned_object` on every row of that
+    /// function's own table.
+    ///
+    /// The two implement one positional rule and must not drift: an ivar is
+    /// owned exactly when it carries a declaration-scoped `__strong`. This
+    /// is what makes generalising the rule safe rather than a second copy
+    /// of it.
+    #[test]
+    fn the_positional_rule_is_shared_with_is_owned_object() {
+        for qual in [
+            "__strong id",
+            "OZObject *__strong",
+            "__unsafe_unretained id",
+            "__strong id *",
+            "const char *",
+            "int",
+            "void (^__strong)(__strong id)",
+            "const __autoreleasing id *",
+            "__unsafe_unretained id *",
+        ] {
+            let owned_by_rule = matches!(
+                qualifier_of(qual),
+                Some(("__strong", QualifierScope::Declaration))
+            );
+            assert_eq!(
+                owned_by_rule,
+                is_owned_object(qual),
+                "the two disagree about {:?}",
+                qual
+            );
+        }
     }
 
     #[test]
