@@ -393,9 +393,37 @@ fn declares_bare_managed_local(decl: Node, ctx: &EmitCtx) -> bool {
 ///
 /// `oz_release` is null-safe, so a first overwrite releasing this is a
 /// no-op either way.
+///
+/// # Why the cast is peeled by the CST rather than by spelling (#515)
+///
+/// This read `matches!(text, "0" | "nil" | "NULL" | "((id)0)" | "(id)0")`,
+/// which *does* peel a cast -- by enumerating two of its spellings. Every
+/// other one was a live initializer, so `Foo *v = (Foo *)0;` reached the
+/// `else` branch, `arc::binds_ownership` said no to a literal `0`, and the
+/// local was never managed: **neither** release was emitted, where
+/// `Foo *v = nil;` got both. Whatever was stored into the slot afterwards
+/// leaked, with no diagnostic.
+///
+/// A closed list of null spellings cannot be completed, which is the
+/// argument against having one: `(Foo*)0`, `(struct Foo *)0`,
+/// `(Foo *)NULL`, `(id)NULL` and `((Foo *)0)` are all the same value, and
+/// the two that were listed were there because someone hit them. So the
+/// cast is peeled structurally instead, through `arc::value_behind_casts`
+/// -- the one function that already answers "what is really being
+/// referred to here" for `arc.rs` (#332), so the two cannot disagree about
+/// what a cast means. Only the *leaf* is matched by text, and the three
+/// leaves are exactly the three null spellings C and Objective-C have:
+/// `nil` and `NULL` reach tree-sitter unexpanded as identifiers, and `0`
+/// is a `number_literal`.
+///
+/// `value_behind_casts` deliberately does **not** peel `__bridge`,
+/// `__bridge_transfer` or `__bridge_retained`, so a bridged null stays a
+/// live initializer. That is the conservative answer and the same one
+/// `arc.rs` gives: a bridging cast is the one kind that says something
+/// about ownership rather than only about static type.
 fn is_null_initializer(node: Node, src: &str) -> bool {
-    let text = node_text(node, src).trim();
-    matches!(text, "0" | "nil" | "NULL" | "((id)0)" | "(id)0")
+    let leaf = crate::arc::value_behind_casts(node, src);
+    matches!(node_text(leaf, src).trim(), "0" | "nil" | "NULL")
 }
 
 /// `(void)name;` acknowledgements for every parameter a translated method body

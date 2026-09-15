@@ -2517,3 +2517,592 @@ int main(void) { return 0; }
         body
     );
 }
+
+/* ---- a cast to *null* in the initialiser (#515) ---------------------- */
+//
+// #491's neighbour, and the other half of one question: what does a cast in
+// an initialiser mean? #491 was about a cast over a `+1` send and lost one
+// release; this is about a cast over a null constant and lost **both**.
+//
+// `emit::is_null_initializer` decided by exact text --
+// `matches!(text, "0" | "nil" | "NULL" | "((id)0)" | "(id)0")` -- so it did
+// peel a cast, by enumerating two of its spellings. `Foo *v = (Foo *)0;`
+// was outside the list, so it was read as a live initialiser;
+// `arc::binds_ownership` then said no to a literal `0`, and
+// `managed_object_locals` never admitted the local. With the local out of
+// the managed set, `owned_locals_of` had nothing to find either -- its
+// first branch is a lookup in that same set, which is exactly how the
+// `nil` spelling gets its scope-exit release. So no `oz_release` was
+// emitted at all, and whatever the slot was later given leaked with no
+// diagnostic.
+//
+// This was #491's **eliminated candidate 2**, recorded there as not
+// reached, and it was right: `collect::extract_type_and_stars` counted the
+// initialiser's own `*` as the declaration's, so `Foo *v = (Foo *)0;`
+// reported `stars == 2` and the local was rejected as a non-object before
+// the null check ran. #491 removed the thing that was hiding it. Verified
+// pre-existing by byte-comparing the pre-fix binary's output for the same
+// source.
+//
+// The fix reads the value through `arc::value_behind_casts` -- the same
+// CST peel `arc.rs` uses for #332 -- so the two cannot disagree about what
+// a cast means, and the accepted set of null spellings stops being a list
+// that has to be completed.
+
+/// A cast to null in a local's initialiser must not cost **either**
+/// release (#515).
+///
+/// Two classes, and the assertion is per class rather than a total: a
+/// total of 8 would also be produced by tearing one class's object down
+/// twice and the other's never, which is the failure this shape is closest
+/// to.
+///
+/// The pool directive is what makes the numbers mean something. With
+/// `Foo=1,Bar=1` a *second* allocation can only succeed if the first was
+/// released **before** it was attempted, so `first=2 second=2` is the
+/// release-on-overwrite assertion and it cannot be satisfied by C that
+/// releases after allocating. Calling `-run` twice asserts the other half:
+/// the second call's first allocation needs the slot the first call's
+/// scope exit owed.
+#[test]
+fn a_cast_to_null_initialiser_gets_both_releases() {
+    let src = format!(
+        "/* oz-pool: Foo=1,Bar=1,Runner=1 */\n{}{}",
+        PREAMBLE(),
+        "\
+static int g_foo_deallocs = 0;
+static int g_bar_deallocs = 0;
+
+@interface Foo : OZObject
++ (Foo *)make;
+@end
+@implementation Foo
++ (Foo *)make {
+	return [Foo alloc];
+}
+- (void)dealloc {
+	g_foo_deallocs = g_foo_deallocs + 1;
+}
+@end
+
+@interface Bar : OZObject
++ (Bar *)make;
+@end
+@implementation Bar
++ (Bar *)make {
+	return [Bar alloc];
+}
+- (void)dealloc {
+	g_bar_deallocs = g_bar_deallocs + 1;
+}
+@end
+
+@interface Runner : OZObject
+- (int)run;
+@end
+@implementation Runner
+- (int)run {
+	Foo *a = (Foo *)0;
+	Bar *b = (Bar *)0;
+
+	a = [Foo make];
+	b = [Bar make];
+	/* One slot each: these two can only allocate if the overwrite
+	 * released first. */
+	a = [Foo make];
+	b = [Bar make];
+	return (a != nil) + (b != nil);
+}
+@end
+
+#include <stdio.h>
+int main(void) {
+	Runner *r = [Runner alloc];
+	int first = [r run];
+	/* And this call can only allocate if the scope exit released. */
+	int second = [r run];
+	printf(\"first=%d second=%d foo=%d bar=%d\\n\",
+	       first, second, g_foo_deallocs, g_bar_deallocs);
+	return 0;
+}
+"
+    );
+    let out = compile_and_run(&src, "cast_null_init_both_releases");
+    assert_eq!(
+        out, "first=2 second=2 foo=4 bar=4\n",
+        "a cast to null starts the slot empty exactly as `nil` does, so each \
+         class must see two allocations per call and free every one: {}",
+        out
+    );
+}
+
+/// The same shape in a plain C function rather than a method (#515).
+///
+/// A free function's body is reached through `emit`'s top-level walk
+/// rather than the method path, and #491 kept both for that reason: a fix
+/// that reached only one of the two entry points cannot pass both rows.
+#[test]
+fn a_cast_to_null_initialiser_in_a_free_function_gets_both_releases() {
+    let src = format!(
+        "/* oz-pool: Foo=1 */\n{}{}",
+        PREAMBLE(),
+        "\
+static int g_deallocs = 0;
+
+@interface Foo : OZObject
++ (Foo *)make;
+@end
+@implementation Foo
++ (Foo *)make {
+	return [Foo alloc];
+}
+- (void)dealloc {
+	g_deallocs = g_deallocs + 1;
+}
+@end
+
+static int churn(void)
+{
+	Foo *v = (Foo *)0;
+
+	v = [Foo make];
+	v = [Foo make];
+	return (v != nil);
+}
+
+#include <stdio.h>
+int main(void) {
+	int first = churn();
+	int second = churn();
+	printf(\"first=%d second=%d deallocs=%d\\n\", first, second, g_deallocs);
+	return 0;
+}
+"
+    );
+    let out = compile_and_run(&src, "cast_null_init_free_function");
+    assert_eq!(
+        out, "first=1 second=1 deallocs=4\n",
+        "a free function's local must be managed exactly as a method's is: {}",
+        out
+    );
+}
+
+/// **Every** spelling of a cast to null is one null, and this is the row
+/// that a closed list cannot pass (#515).
+///
+/// The predicate listed `(id)0` and `((id)0)` and nothing else, so adding
+/// `(Foo *)0` to that list would fix the two rows above and leave this one
+/// red in five places. Each function here is a different spelling of the
+/// same value -- a tight cast, a `struct` tag, the `NULL` macro behind the
+/// cast, an extra paren, `void *`, and `(id)NULL` -- and each is asserted
+/// separately, so a partial fix says which spellings it missed rather than
+/// only that something is wrong.
+///
+/// Both an emitted-C assertion and a run. The text says *how many*
+/// releases each function got -- three: one per overwrite (the first of
+/// which releases the null and is a no-op) and one at scope exit -- which
+/// a dealloc total cannot distinguish from one release running twice. The
+/// run says the C is real and that 12 allocations came out of one slot,
+/// which they can only do if all 12 releases landed.
+#[test]
+fn every_cast_to_null_spelling_is_one_null() {
+    let body = "\
+static int g_deallocs = 0;
+
+@interface Foo : OZObject
++ (Foo *)make;
+@end
+@implementation Foo
++ (Foo *)make {
+	return [Foo alloc];
+}
+- (void)dealloc {
+	g_deallocs = g_deallocs + 1;
+}
+@end
+
+static int tight(void)
+{
+	Foo *v = (Foo*)0;
+
+	v = [Foo make];
+	v = [Foo make];
+	return (v != nil);
+}
+
+static int structTag(void)
+{
+	Foo *v = (struct Foo *)0;
+
+	v = [Foo make];
+	v = [Foo make];
+	return (v != nil);
+}
+
+static int castMacro(void)
+{
+	Foo *v = (Foo *)NULL;
+
+	v = [Foo make];
+	v = [Foo make];
+	return (v != nil);
+}
+
+static int parenWrapped(void)
+{
+	Foo *v = ((Foo *)0);
+
+	v = [Foo make];
+	v = [Foo make];
+	return (v != nil);
+}
+
+static int voidStar(void)
+{
+	Foo *v = (void *)0;
+
+	v = [Foo make];
+	v = [Foo make];
+	return (v != nil);
+}
+
+static int idMacro(void)
+{
+	Foo *v = (id)NULL;
+
+	v = [Foo make];
+	v = [Foo make];
+	return (v != nil);
+}
+
+#include <stdio.h>
+int main(void) {
+	int ok = tight() + structTag() + castMacro()
+	       + parenWrapped() + voidStar() + idMacro();
+	printf(\"ok=%d deallocs=%d\\n\", ok, g_deallocs);
+	return 0;
+}
+";
+    let src = format!("/* oz-pool: Foo=1 */\n{}{}", PREAMBLE(), body);
+
+    /* The text half. Every spelling is counted before anything is
+     * asserted, and the whole table is the assertion, so a partial fix
+     * names *which* spellings it still misses rather than stopping at the
+     * first -- six reasons in one message instead of one. */
+    let out = oz2c::transpile(&src).expect("should transpile");
+    let counted: Vec<(&str, usize)> =
+        ["tight", "structTag", "castMacro", "parenWrapped", "voidStar", "idMacro"]
+            .into_iter()
+            .map(|func| {
+                let marker = format!("static int {}(void)\n{{", func);
+                let rendered = out
+                    .source_c
+                    .split(&marker)
+                    .nth(1)
+                    .unwrap_or_else(|| {
+                        panic!("no `{}` definition in:\n{}", func, out.source_c)
+                    })
+                    .split("\n}\n")
+                    .next()
+                    .unwrap_or("");
+                (func, rendered.matches("oz_release(").count())
+            })
+            .collect();
+    assert_eq!(
+        counted,
+        vec![
+            ("tight", 3),
+            ("structTag", 3),
+            ("castMacro", 3),
+            ("parenWrapped", 3),
+            ("voidStar", 3),
+            ("idMacro", 3),
+        ],
+        "each of these spells the same null initialiser, so each owes \
+         exactly three releases -- one per overwrite and one at scope exit"
+    );
+
+    /* And the run half. */
+    let observed = compile_and_run(&src, "cast_null_spellings");
+    assert_eq!(
+        observed, "ok=6 deallocs=12\n",
+        "twelve allocations out of a one-slot slab, so every release had to \
+         land before the next allocation: {}",
+        observed
+    );
+}
+
+/// **Control.** A cast to null that never receives an owned value must
+/// stay unmanaged, and this row's numbers must not move (#515).
+///
+/// Starting empty is only half of `managed_object_locals`' rule: the local
+/// is admitted only when something *owned* is also stored into it
+/// (`stores.contains(&LocalStore::Owning)`). Widening which initialisers
+/// count as empty must not widen that. If it did, the overwrite here would
+/// release a reference nothing ever took -- the double free the borrowed
+/// exclusion exists to prevent, and the same mistake from the other side
+/// as #477's M1.
+///
+/// So this does not fail when the fix is removed, and is not supposed to.
+/// It fails if the fix ever reaches the owned-store half.
+///
+/// The presence pairing is `nilOwning` in the same source, deliberately
+/// spelled `nil` rather than `(Foo *)0`: `nil` gets both releases with or
+/// without this fix, so the needle is live on either side of it and this
+/// row stays a true never-changes control. A zero in `borrowing` therefore
+/// cannot be explained by `oz_release` having been renamed or by nothing
+/// being emitted at all.
+#[test]
+fn a_cast_to_null_with_only_borrowed_stores_stays_unmanaged() {
+    let src = format!(
+        "/* oz-pool: Foo=4,Holder=2 */\n{}{}",
+        PREAMBLE(),
+        "\
+static int g_deallocs = 0;
+
+@interface Foo : OZObject
++ (Foo *)make;
+@end
+@implementation Foo
++ (Foo *)make {
+	return [Foo alloc];
+}
+- (void)dealloc {
+	g_deallocs = g_deallocs + 1;
+}
+@end
+
+@interface Holder : OZObject {
+	Foo *_kept;
+}
+- (void)fill;
+- (Foo *)peek;
+@end
+@implementation Holder
+- (void)fill {
+	_kept = [Foo make];
+}
+- (Foo *)peek {
+	return _kept;
+}
+@end
+
+static void borrowing(Holder *h)
+{
+	Foo *v = (Foo *)0;
+	Foo *borrowed = [h peek];
+
+	v = borrowed;
+	(void)v;
+}
+
+/* The presence needle, and `nil` on purpose -- see the doc comment. */
+static void nilOwning(void)
+{
+	Foo *v = nil;
+
+	v = [Foo make];
+}
+
+#include <stdio.h>
+int main(void) {
+	Holder *h = [Holder alloc];
+	[h fill];
+	borrowing(h);
+	printf(\"deallocs=%d\\n\", g_deallocs);
+	return 0;
+}
+"
+    );
+    let out = compile_and_run(&src, "cast_null_borrowed_control");
+    assert_eq!(
+        out, "deallocs=0\n",
+        "`borrowing` never owns anything, so nothing it touches may be torn \
+         down: {}",
+        out
+    );
+
+    let transpiled = oz2c::transpile(&src).expect("should transpile");
+    let extract = |func: &str| -> String {
+        let marker = format!("static void {}(", func);
+        transpiled
+            .source_c
+            .split(&marker)
+            .nth(1)
+            .unwrap_or_else(|| {
+                panic!("no `{}` definition in:\n{}", func, transpiled.source_c)
+            })
+            .split("\n}\n")
+            .next()
+            .unwrap_or("")
+            .to_string()
+    };
+    assert_eq!(
+        extract("borrowing").matches("oz_release(").count(),
+        0,
+        "a local that only ever holds a borrow may emit no release at all; \
+         got:\n{}",
+        extract("borrowing")
+    );
+    assert_eq!(
+        extract("nilOwning").matches("oz_release(").count(),
+        2,
+        "the presence half: an empty initialiser with an owning store does \
+         get both releases, so the zero above is about ownership and not \
+         about nothing being emitted; got:\n{}",
+        extract("nilOwning")
+    );
+}
+
+/// **Control.** A cast over a constant that is *not* null must stay a live
+/// initialiser (#515).
+///
+/// The peel is structural, so the only thing standing between `(Foo *)0`
+/// and `(Foo *)1` is the leaf text -- and the two must not be confused:
+/// treating `1` as empty would make the local managed and the first
+/// overwrite would then `oz_release` the address `1`.
+///
+/// Asserted on the emitted C rather than by running, deliberately. A
+/// release through a garbage pointer is undefined behaviour, so a run
+/// would be asserting that a particular host happens to fault, which is
+/// not the property.
+///
+/// The pairing is `isNull` in the same source -- the identical cast over
+/// the identical constant but for the leaf digit, which is the whole
+/// contrast. Unlike the borrowed control above, that half *is* the fix, so
+/// this row does go red when the fix is removed, and it goes red on the
+/// presence side: `isNull` emits nothing. Both halves being one character
+/// apart is what makes the zero in `nonNull` mean "not a null pointer
+/// constant" rather than "this function emits nothing either way".
+#[test]
+fn a_cast_over_a_non_null_constant_is_not_a_null_initialiser() {
+    let src = format!(
+        "/* oz-pool: Foo=4 */\n{}{}",
+        PREAMBLE(),
+        "\
+@interface Foo : OZObject
++ (Foo *)make;
+@end
+@implementation Foo
++ (Foo *)make {
+	return [Foo alloc];
+}
+@end
+
+static void nonNull(void)
+{
+	Foo *v = (Foo *)1;
+
+	v = [Foo make];
+}
+
+static void isNull(void)
+{
+	Foo *v = (Foo *)0;
+
+	v = [Foo make];
+}
+
+int main(void) { return 0; }
+"
+    );
+    let transpiled = oz2c::transpile(&src).expect("should transpile");
+    let extract = |func: &str| -> String {
+        let marker = format!("static void {}(void)\n{{", func);
+        transpiled
+            .source_c
+            .split(&marker)
+            .nth(1)
+            .unwrap_or_else(|| {
+                panic!("no `{}` definition in:\n{}", func, transpiled.source_c)
+            })
+            .split("\n}\n")
+            .next()
+            .unwrap_or("")
+            .to_string()
+    };
+    assert_eq!(
+        extract("nonNull").matches("oz_release(").count(),
+        0,
+        "`(Foo *)1` is not a null pointer constant, so the slot does not \
+         start empty and nothing may be released through it; got:\n{}",
+        extract("nonNull")
+    );
+    assert_eq!(
+        extract("isNull").matches("oz_release(").count(),
+        2,
+        "the presence half: the null spelling in the same source does get \
+         both releases; got:\n{}",
+        extract("isNull")
+    );
+}
+
+/// The predicate's **second caller**: a cast to null stored into an owned
+/// array element (#515).
+///
+/// `is_null_initializer` is asked in two places, and the other one is the
+/// owned-array-element store. There a cast to null was not silently lost
+/// but *refused*: falling past the null branch reached `classify_store`,
+/// which called it neither a `+1` nor a plain variable, and the transpile
+/// failed with "stores into an owned array element from an expression this
+/// backend cannot balance". So no caller relied on the closed list -- one
+/// leaked and one rejected the program -- and widening the predicate turns
+/// the refusal into the same release-and-clear the `nil` spelling has
+/// always got.
+///
+/// The transpile succeeding is the negative half, and it is the sharp one:
+/// the refusal was a hard located error, so a regression cannot be quiet.
+/// `Foo=1` over two iterations is the positive half.
+#[test]
+fn a_cast_to_null_clears_an_owned_array_element() {
+    let src = format!(
+        "/* oz-pool: Foo=1,Holder=1 */\n{}{}",
+        PREAMBLE(),
+        "\
+static int g_deallocs = 0;
+
+@interface Foo : OZObject
++ (Foo *)make;
+@end
+@implementation Foo
++ (Foo *)make {
+	return [Foo alloc];
+}
+- (void)dealloc {
+	g_deallocs = g_deallocs + 1;
+}
+@end
+
+@interface Holder : OZObject {
+	Foo *_slots[2];
+}
+- (int)cycle;
+@end
+@implementation Holder
+- (int)cycle {
+	_slots[0] = [Foo make];
+	_slots[0] = (Foo *)0;
+	return (_slots[0] == nil);
+}
+@end
+
+#include <stdio.h>
+int main(void) {
+	Holder *h = [Holder alloc];
+	int first = [h cycle];
+	/* One slot: the second cycle can only allocate if the cast-to-null
+	 * store released the first object. */
+	int second = [h cycle];
+	printf(\"first=%d second=%d deallocs=%d\\n\", first, second, g_deallocs);
+	return 0;
+}
+"
+    );
+    let out = compile_and_run(&src, "cast_null_array_element");
+    assert_eq!(
+        out, "first=1 second=1 deallocs=2\n",
+        "a cast to null must clear an owned element and release what it \
+         held, exactly as `nil` does: {}",
+        out
+    );
+}
