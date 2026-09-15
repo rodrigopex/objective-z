@@ -1,0 +1,40 @@
+# pip constraints for CI (#517). Applied to every `pip install` in every
+# job through PIP_CONSTRAINT in .github/workflows/ci.yml.
+#
+# Constraints, not requirements: nothing here is installed because it is
+# listed. A line only bounds a package some *other* requirement pulls in.
+# So this file is for transitive packages nothing in this repo names --
+# which is exactly the set nobody can pin at the call site.
+
+# pykwalify: floor at the one release that does not `import imp`.
+#
+# The board jobs run Python 3.12, which removed `imp`. `west` declares
+# `pykwalify` with no version bound -- every release from 1.3.0a2 to
+# 1.5.0 does -- and `west/manifest.py` imports `pykwalify.core` at
+# module scope, so *any* west command depends on whichever pykwalify the
+# resolver picked. pykwalify 1.7.0's `core.py` line 7 is `import imp`;
+# 1.8.0 replaced it with `importlib.machinery.SourceFileLoader` and
+# imports `imp` nowhere. That line number is a version fingerprint, and
+# it is how #517's traceback was finally attributed: the failing run
+# cannot have been on 1.8.0, whatever a later `pip list` in the same job
+# reported.
+#
+# Why it was intermittent, rather than a rollout anyone could date:
+# 1.8.0 requires `ruamel.yaml>=0.16.0`, where 1.7.0 requires ruamel only
+# as an *extra* and so has no ruamel dependency at all. Whenever the
+# resolver cannot place ruamel it backtracks one pykwalify release and
+# lands on the `import imp` one. Same interpreter, same west, different
+# pykwalify -- which is why byte-identical content failed and then
+# passed on a re-run. A floor removes the backtrack, so the version can
+# no longer differ run to run, and an unplaceable ruamel now fails in
+# `pip install` naming ruamel instead of in `west init` naming a YAML
+# library.
+#
+# `>=` and not `==`: 1.8.0 is the newest release (2020-12-30) and
+# pykwalify is unmaintained -- upstream west #807 is about dropping the
+# dependency entirely -- so the floor is forward-compatible with a fix
+# that does not exist yet, and today resolves to 1.8.0 either way.
+# Zephyr's own scripts/requirements-base.txt leaves pykwalify unbounded
+# on `main` as well, so this is not objective-z-specific; upstream CI
+# just does not resolve live, it runs a pre-baked container image.
+pykwalify>=1.8.0

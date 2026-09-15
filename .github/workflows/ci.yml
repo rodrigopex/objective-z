@@ -40,6 +40,18 @@ env:
   # the SDK's cross clang through ZEPHYR_SDK_INSTALL_DIR, and passes it a
   # target triple, which is the whole reason there are two.
   OZ_CLANG: /usr/bin/clang-19
+  # Floors for packages nothing in this repo asks for by name, applied to
+  # every `pip install` in every job (#517). See
+  # .github/pip-constraints.txt for what is in it and why.
+  #
+  # A constraint file rather than an extra argument on each `pip install`
+  # line: there are ten of them across the five Zephyr jobs, half
+  # installing west and half re-installing the same transitive packages
+  # from Zephyr's `requirements-base.txt` afterwards, so a per-line pin
+  # is a pin the next added line silently misses. pip reads
+  # PIP_CONSTRAINT itself, so a line added later is covered without
+  # anyone remembering.
+  PIP_CONSTRAINT: ${{ github.workspace }}/.github/pip-constraints.txt
 
 jobs:
   # Whether the five ARM/Zephyr jobs below need to run at all. See
@@ -428,7 +440,16 @@ jobs:
           sudo apt-get install -y ninja-build gperf device-tree-compiler gcc-multilib g++-multilib
 
       - name: Install west
-        run: pip install west
+        run: |
+          pip install west
+          # A positive check, not just a successful install: this is the
+          # exact import chain #517 broke, so a recurrence fails here
+          # rather than in `west init` with a traceback naming a YAML
+          # library, and it records which pykwalify the resolver chose --
+          # the fact #517 had to infer from a line number. Why that
+          # matters: .github/pip-constraints.txt.
+          west --version
+          python -c "import importlib.metadata as m, pykwalify.core; print('pykwalify', m.version('pykwalify'))"
 
       - name: Cache Zephyr SDK
         uses: actions/cache@v4
@@ -544,7 +565,16 @@ jobs:
           sudo apt-get install -y ninja-build gperf device-tree-compiler gcc-multilib g++-multilib
 
       - name: Install west
-        run: pip install west
+        run: |
+          pip install west
+          # A positive check, not just a successful install: this is the
+          # exact import chain #517 broke, so a recurrence fails here
+          # rather than in `west init` with a traceback naming a YAML
+          # library, and it records which pykwalify the resolver chose --
+          # the fact #517 had to infer from a line number. Why that
+          # matters: .github/pip-constraints.txt.
+          west --version
+          python -c "import importlib.metadata as m, pykwalify.core; print('pykwalify', m.version('pykwalify'))"
 
       - name: Cache Zephyr SDK
         uses: actions/cache@v4
@@ -611,7 +641,16 @@ jobs:
           sudo apt-get install -y ninja-build gperf device-tree-compiler gcc-multilib g++-multilib
 
       - name: Install west
-        run: pip install west
+        run: |
+          pip install west
+          # A positive check, not just a successful install: this is the
+          # exact import chain #517 broke, so a recurrence fails here
+          # rather than in `west init` with a traceback naming a YAML
+          # library, and it records which pykwalify the resolver chose --
+          # the fact #517 had to infer from a line number. Why that
+          # matters: .github/pip-constraints.txt.
+          west --version
+          python -c "import importlib.metadata as m, pykwalify.core; print('pykwalify', m.version('pykwalify'))"
 
       - name: Cache Zephyr SDK
         uses: actions/cache@v4
@@ -671,7 +710,16 @@ jobs:
           sudo apt-get install -y ninja-build gperf device-tree-compiler gcc-multilib g++-multilib
 
       - name: Install west
-        run: pip install west
+        run: |
+          pip install west
+          # A positive check, not just a successful install: this is the
+          # exact import chain #517 broke, so a recurrence fails here
+          # rather than in `west init` with a traceback naming a YAML
+          # library, and it records which pykwalify the resolver chose --
+          # the fact #517 had to infer from a line number. Why that
+          # matters: .github/pip-constraints.txt.
+          west --version
+          python -c "import importlib.metadata as m, pykwalify.core; print('pykwalify', m.version('pykwalify'))"
 
       - name: Cache Zephyr SDK
         uses: actions/cache@v4
@@ -727,7 +775,16 @@ jobs:
           sudo apt-get install -y ninja-build gperf device-tree-compiler gcc-multilib g++-multilib
 
       - name: Install west
-        run: pip install west
+        run: |
+          pip install west
+          # A positive check, not just a successful install: this is the
+          # exact import chain #517 broke, so a recurrence fails here
+          # rather than in `west init` with a traceback naming a YAML
+          # library, and it records which pykwalify the resolver chose --
+          # the fact #517 had to infer from a line number. Why that
+          # matters: .github/pip-constraints.txt.
+          west --version
+          python -c "import importlib.metadata as m, pykwalify.core; print('pykwalify', m.version('pykwalify'))"
 
       - name: Cache Zephyr SDK
         uses: actions/cache@v4
