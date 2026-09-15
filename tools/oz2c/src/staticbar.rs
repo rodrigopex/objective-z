@@ -1175,6 +1175,73 @@ fn walk_for_reject(
         // performs; both are refused with a located message in
         // `emit::render_selector_literal`, which is where the whole-
         // program facts needed to tell are available.
+        /* A `+1` inside a brace initialiser (#477 M3).
+         *
+         * `emit::reject_owning_store_into_c_struct` already refuses
+         * `p.a = [[Thing alloc] init];` -- "the field's ownership cannot be
+         * tracked, so the value would be released when its scope ends and
+         * the field left dangling". An *initialiser* reaches the same
+         * destination through different syntax and was not refused:
+         *
+         *     struct Pair p = { [[Thing alloc] init], [[Thing alloc] init] };
+         *     struct Pair p = { .a = [[Thing alloc] init] };
+         *     id arr[2] = { [[Thing alloc] init], nil };
+         *
+         * Measured: 2, 1 and 1 allocations respectively, **zero** releases
+         * in all three, no diagnostic, and the C compiles. The same
+         * asymmetry as #326, #336 and #367 -- one question, two walks, and
+         * only one of them written.
+         *
+         * Refused rather than managed for the reason the field refusal
+         * gives: a struct field and a C array element are not strong slots,
+         * so there is no scope-exit release to pair the store with.
+         * `__unsafe_unretained` on the field remains the way to say the
+         * aggregate does not own it, exactly as the assignment form
+         * already tells the author. */
+        "initializer_list" => {
+            let mut cursor = node.walk();
+            let elements: Vec<Node> = node
+                .children(&mut cursor)
+                .filter(|c| c.is_named())
+                .collect();
+            for element in elements {
+                /* A designated initialiser wraps the value; look through it
+                 * so `.a = [[Thing alloc] init]` answers as the bare form
+                 * does. */
+                let value = if element.kind() == "initializer_pair" {
+                    let mut c2 = element.walk();
+                    element
+                        .children(&mut c2)
+                        .filter(|c| c.is_named())
+                        .last()
+                        .unwrap_or(element)
+                } else {
+                    element
+                };
+                if crate::arc::binds_ownership(value, src, program, &program.owning_methods) {
+                    diags.push(
+                        Diagnostic::spanning(
+                            "storing a '+1' in a brace initialiser is not supported"
+                                .to_string(),
+                            src,
+                            value.start_byte()..value.end_byte(),
+                        )
+                        .with_note(
+                            "a struct field and a C array element are not strong slots, so                              nothing releases what the initialiser stores -- the same reason                              an assignment into a plain C struct field is refused"
+                                .to_string(),
+                        )
+                        .with_help(
+                            "initialise the aggregate with nil and store through an ivar,                              or hold each object in its own local"
+                                .to_string(),
+                        )
+                        .with_help(
+                            "or declare the field '__unsafe_unretained' to say the aggregate                              does not own it"
+                                .to_string(),
+                        ),
+                    );
+                }
+            }
+        }
         "selector_expression" => {
             return;
         }

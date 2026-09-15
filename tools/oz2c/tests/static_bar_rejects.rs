@@ -1025,3 +1025,84 @@ void intoIdArray(void)
 		"the help must name the supported spelling (#430's rule), got:\n{diags}"
 	);
 }
+
+/// A `+1` in a brace initialiser is refused, in all three spellings (#477 M3).
+///
+/// `emit::reject_owning_store_into_c_struct` already refuses
+/// `p.a = [[Thing alloc] init];`. An *initialiser* reaches the same
+/// destination through different syntax and was not refused. Measured before:
+///
+/// | shape | allocations | releases |
+/// |---|---|---|
+/// | `struct Pair p = { [[Thing alloc] init], [[Thing alloc] init] };` | 2 | **0** |
+/// | `struct Pair p = { .a = [[Thing alloc] init] };` | 1 | **0** |
+/// | `id arr[2] = { [[Thing alloc] init], nil };` | 1 | **0** |
+///
+/// No diagnostic, and the C compiled — the silent-and-compiles severity that
+/// is worse than a panic, because nothing surfaces it. The same asymmetry as
+/// #326, #336 and #367: one question, two walks, and only one of them written.
+///
+/// **Three rows because the three spellings parse differently.** The
+/// designated form wraps its value in an `initializer_pair`, so a refusal
+/// written against the bare form alone would let `.a = [[Thing alloc] init]`
+/// through while reading as covering it. The array form shares the node kind
+/// with the struct form but not the destination.
+///
+/// The fourth row is the control: an initialiser holding no `+1` must still be
+/// accepted. A refusal keyed on the node kind rather than on ownership would
+/// reject every `int x[3] = {1, 2, 3}` in the tree and pass this file's other
+/// tests while doing it.
+#[test]
+fn a_plus_one_in_a_brace_initialiser_is_refused_in_all_three_spellings() {
+	let preamble = "\
+@interface Thing : OZObject
+@end
+@implementation Thing
+@end
+struct Pair { id a; id b; };
+";
+	for (what, body) in [
+		("positional", "void f(void) { struct Pair p = { [[Thing alloc] init], nil }; (void)p; }\n"),
+		("designated", "void f(void) { struct Pair p = { .a = [[Thing alloc] init] }; (void)p; }\n"),
+		("array", "void f(void) { id arr[2] = { [[Thing alloc] init], nil }; (void)arr; }\n"),
+	] {
+		let src = format!("{}{}{}", PREAMBLE(), preamble, body);
+		let diags = expect_reject(&src);
+		assert!(
+			diags.contains("brace initialiser"),
+			"{what}: must be refused, got:\n{diags}"
+		);
+		assert!(
+			diags.contains("not strong slots"),
+			"{what}: the note must say why nothing releases it, got:\n{diags}"
+		);
+		assert!(
+			diags.contains("__unsafe_unretained"),
+			"{what}: the help must offer the same opt-out the assignment form does, got:\n{diags}"
+		);
+	}
+
+	/* The control: no `+1`, so nothing to refuse. Run rather than merely
+	 * transpiled, so "accepted" means the C also builds. */
+	let benign = format!(
+		"{}{}{}",
+		PREAMBLE(),
+		preamble,
+		"\
+#include <stdio.h>
+
+int main(void)
+{
+\tint x[3] = { 1, 2, 3 };
+\tstruct Pair p = { nil, nil };
+\tprintf(\"ok=%d\\n\", x[2] == 3 && p.a == nil);
+\treturn 0;
+}
+"
+	);
+	let out = compile_and_run(&benign, "brace_initialiser_control");
+	assert!(
+		out.contains("ok=1"),
+		"an initialiser with no '+1' must still be accepted and run, got:\n{out}"
+	);
+}
