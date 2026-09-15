@@ -4820,6 +4820,12 @@ fn render_message(node: Node, ctx: &mut EmitCtx) -> (String, String) {
             }
             }
             Some(defining) => {
+                /* The static route. The emitter has resolved this
+                 * receiver; if `arc` did not, its ownership answer came
+                 * from a poll over classes the send can never reach, and
+                 * that is a contradiction rather than an ambiguity
+                 * (#483). */
+                reject_static_dispatch_contradiction(node, ctx, &parts.selector);
                 let (ret_ty, returns_instancetype) =
                     method_return_type(ctx.program, &defining, &parts.selector, false)
                         .unwrap_or_else(|| ("void".to_string(), false));
@@ -4934,6 +4940,75 @@ fn reject_ambiguous_dispatch(
             ),
         );
     }
+}
+
+/// Refuse a **statically** dispatched send whose ownership `arc` answered
+/// from the implementor poll and found ambiguous.
+///
+/// For a dynamically dispatched send an ambiguous poll is a real
+/// ambiguity, and `reject_ambiguous_dispatch` above is its refusal. Here
+/// it is a **contradiction**, and the difference is what #483 records: the
+/// emitter has just resolved this receiver to one class and is about to
+/// emit a direct call to that class's function, so the send can only ever
+/// reach that one implementation. An `Ambiguous` answer therefore came
+/// from polling classes the receiver can never be — `arc::message_target`
+/// failed to resolve the same receiver the emitter did, fell through to
+/// `dispatch_ownership(.., None, ..)`, and the disagreement it found is
+/// between implementors that are unreachable from here.
+///
+/// That answer reads as borrowed, which emits no release, so the whole
+/// class of defect presents as a leak nobody attributes: #481 (a method
+/// parameter) and #502 (a for-in loop variable) were two instances, each
+/// closed by teaching `arc` one more binding form. This closes the class
+/// instead. Three more instances were live when it was written and are
+/// now build errors rather than leaks — an ivar receiver, a file-scope
+/// object receiver and a cast receiver — and **none of them is a node
+/// kind** `arc::collect_declared_types` could be taught: an ivar and a
+/// file-scope variable are declared *outside* the method scope that walk
+/// starts from, and a cast receiver is not an identifier at all.
+///
+/// Refusing rather than guessing is the decision, per #483's option 4.
+/// The alternative directions were considered and are recorded there: one
+/// shared resolver is a pass-structure change (`arc::analyze` runs in
+/// `front_end`, before `ctx.scope` exists), and a gate asserting the two
+/// enumerations agree cannot see a shape that is not a node kind.
+fn reject_static_dispatch_contradiction(node: Node, ctx: &mut EmitCtx, selector: &str) {
+    let Some(crate::arc::DispatchOwnership::Ambiguous { owning, borrowed }) =
+        crate::arc::polled_dispatch_ownership(
+            node,
+            ctx.src,
+            ctx.program,
+            &ctx.program.owning_methods,
+        )
+    else {
+        return;
+    };
+    ctx.err_detailed(
+        node,
+        format!(
+            "'{selector}' is dispatched directly here, but its ownership could only be \
+             read from a poll over every class implementing it -- and those disagree: \
+             '{owning}' hands back a reference the caller must release, '{borrowed}' \
+             hands back one it keeps owning"
+        ),
+        Some(
+            "this receiver's class is resolved for dispatch but not for ownership, so the \
+             poll ran over classes this send can never reach. A `+1` result must be \
+             released exactly once and a `+0` one never, and reading the disagreement \
+             as borrowed would leak"
+                .to_string(),
+        ),
+        vec![
+            format!(
+                "bind the receiver to a local of its class -- `{owning} *r = ...;` -- and \
+                 send '{selector}' to that"
+            ),
+            format!(
+                "or make every implementation of '{selector}' agree about ownership, which \
+                 removes the ambiguity for every caller"
+            ),
+        ],
+    );
 }
 
 fn dynamic_dispatch_call(
