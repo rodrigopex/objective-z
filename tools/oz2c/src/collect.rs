@@ -431,6 +431,45 @@ fn extract_type_and_stars_inner(
                     };
                 }
             }
+            // An `init_declarator` is `<declarator> = <value>`, and the
+            // *value* is an expression -- never part of the declared type.
+            // The generic walk below descended into it anyway and counted
+            // every `*` token it found there, so the initialiser's own
+            // stars were attributed to the declaration's type:
+            //
+            //     Foo *v = (Foo *)[Foo make];   ->  ("Foo", 2)
+            //     __block int acc = 2 * 3;      ->  ("int", 1)
+            //
+            // The first is #491. `emit::managed_object_locals` admits an
+            // object local on `stars == 1`, so a cast in the initialiser
+            // made `is_object` false and the variable was never a
+            // candidate -- which is why instrumenting that function's
+            // decision showed it never firing on either path: the
+            // exclusion is here, one frame below it. The local kept its
+            // scope-exit release because `emit::owned_locals_of` reaches
+            // it by a second, independent path that asks
+            // `arc::declares_pointer` per *declarator* and never consults
+            // this count, so only release-on-overwrite was lost -- one
+            // leaked object per overwritten binding. The second line is
+            // the same overcount reached through a multiply: it hoisted
+            // as `static int* acc;`.
+            //
+            // Only the declarator half is walked, which is why
+            // `extract_type_and_stars_to_declarator`'s blunt prune of the
+            // whole `init_declarator` is not the answer here -- `Foo *v`'s
+            // own `*` lives *inside* this node, and pruning it would give
+            // `("Foo", 0)` and lose every object local instead.
+            //
+            // The `=` is the boundary rather than a `declarator` field
+            // lookup, matching how `emit::owned_locals_of` and
+            // `managed_object_locals` already split this node.
+            "init_declarator" => {
+                let mut c = n.walk();
+                let parts: Vec<Node> = n.children(&mut c).collect();
+                for child in parts.iter().take_while(|p| p.kind() != "=") {
+                    walk(*child, src, type_text, stars, qualifiers, prune_declarators);
+                }
+            }
             "*" => *stars += 1,
             _ => {
                 let mut c = n.walk();

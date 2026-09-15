@@ -583,6 +583,32 @@ void reassigned(void)
 }
 ",
         ),
+        /* The same sink through a cast in the *initialiser* (#491). #332
+         * covered the cast on the overwrite side and this file has had a
+         * row for the uncast pair since #359, so the one spelling with no
+         * row was the one that leaked: two allocations and a single
+         * release, because the declaration's star count picked up the
+         * cast's `*` and `managed_object_locals` never saw an object
+         * local at all. The scope-exit release is the one that survived,
+         * which is why the row differs from the uncast one only in the
+         * release count. */
+        (
+            Shape {
+                what: "reassigned local whose initialiser carries a cast",
+                func: "reassignedCastInit",
+                expect: (2, 0, 2),
+                known_defect: None,
+            },
+            "\
+void reassignedCastInit(void)
+{
+	Thing *a = (Thing *)[[Thing alloc] init];
+
+	a = [[Thing alloc] init];
+	[a tag];
+}
+",
+        ),
     ];
     for (shape, body) in &shapes {
         check(shape, body);
