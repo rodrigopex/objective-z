@@ -78,20 +78,25 @@
  */
 
 #import <Foundation/Foundation.h>
+#include <zephyr/kernel.h>
 
-/* Declared here so the Clang AST dump resolves without Zephyr's headers.
- * The signature matches Zephyr's own (void, not int) -- declaring
- * `int printk(...)` is what broke samples/pool_demo and
- * samples/transpiled_led on the first ARM cross-build. */
-void printk(const char *fmt, ...);
-
-/* The generated companion header declares these two, but it does not exist
- * yet when the Clang AST dump is taken -- so they are declared here for the
- * same reason `printk` is, with exactly the companion's signatures (a
- * differing one would be a conflicting redeclaration in the generated C).
- * `hammer` calls them directly because there is no ARC-legal Objective-C
- * spelling that drives one shared object's refcount up and down without
- * also serializing on a slot; see the loop. */
+/* `printk` used to be hand-declared here, on the belief that the Clang AST
+ * dump had to resolve "without Zephyr's headers". It never did: the dump is
+ * given `zephyr_interface`'s include dirs, the target triple and
+ * `-imacros autoconf.h` (`_objz_build_ast_flags`, cmake/ObjcClang.cmake), so
+ * `<zephyr/kernel.h>` was always reachable and simply never included. The
+ * include above supersedes the declaration, and with it the hazard the old
+ * comment recorded -- that spelling it `int printk(...)` broke
+ * samples/pool_demo and samples/transpiled_led on the first ARM cross-build.
+ * Zephyr's own prototype cannot disagree with itself.
+ *
+ * These two are a genuinely different case and stay. They come from the
+ * *generated companion* header, not from Zephyr, and that header does not
+ * exist yet when the dump is taken -- so they are declared here with exactly
+ * the companion's signatures (a differing one would be a conflicting
+ * redeclaration in the generated C). `hammer` calls them directly because
+ * there is no ARC-legal Objective-C spelling that drives one shared object's
+ * refcount up and down without also serializing on a slot; see the loop. */
 struct OZObject;
 struct OZObject *oz_retain(struct OZObject *self);
 void oz_release(struct OZObject *self);
@@ -233,19 +238,33 @@ void smp_shared_worker_entry(void *p1, void *p2, void *p3)
 	printk("worker done\n");
 }
 
-/* `OZM` rather than the bare macro: `K_THREAD_DEFINE` expands to file-scope
- * declarations that do not parse as Objective-C, so Clang's AST dump failed
- * on it with `expected identifier` and `type specifier missing` -- two of the
- * four diagnostics that made this sample unbuildable (#434). `OZM` hides the
- * whole invocation from the dump and emits it verbatim into the generated C.
+/* The bare macro, with no wrapper of any kind -- the callback here is a plain
+ * function name, so there is no block for `OZFN` to hide either.
  *
- * `OZM` and not `OZFN`: `OZFN` hides an *expression*, and here the entire
- * definition has to go. The usual cost -- Clang not seeing what the macro
- * declares, so a reference needs an `#ifdef __OBJC__` twin -- is nil here,
- * because nothing in this file names `smp_shared_worker`. `samples/arc_demo`
- * carries the same shape for the same reason. */
-OZM(K_THREAD_DEFINE, smp_shared_worker, 2048, smp_shared_worker_entry,
-    NULL, NULL, NULL, 5, 0, 0);
+ * This used to be `OZM(K_THREAD_DEFINE, ...)`, justified by the claim that
+ * `K_THREAD_DEFINE` "expands to file-scope declarations that do not parse as
+ * Objective-C", citing `expected identifier` and `type specifier missing` as
+ * two of the four diagnostics that made this sample unbuildable (#434). That
+ * diagnosis was wrong, and both halves of it: the macro was **undefined**
+ * here, because this file included no Zephyr header, so nothing expanded at
+ * all. `K_THREAD_DEFINE(smp_shared_worker, 2048, ...)` was being parsed as an
+ * implicit-int *function declaration*, and those two diagnostics are what
+ * Clang says about that -- `2048` is not an identifier, and the declaration
+ * has no type specifier. Measured on this file, one dump each: 2 errors with
+ * the bare macro and no include, 0 with the bare macro and the include, 0
+ * with the `OZM` wrapper. The wrapper worked by hiding a line that was only
+ * broken because the header was missing.
+ *
+ * The header was always reachable -- `_objz_build_ast_flags`
+ * (cmake/ObjcClang.cmake) gives the dump Zephyr's include dirs, the target
+ * triple and `-imacros autoconf.h`. With `<zephyr/kernel.h>` included the
+ * macro is real, Clang expands and checks it, and `smp_shared_worker` is a
+ * symbol the dump can see -- so the `#ifdef __OBJC__` twin that `OZM` would
+ * otherwise have forced is not merely unnecessary, it is unnecessary for a
+ * reason that now holds generally. `samples/arc_demo` carried the identical
+ * shape and misdiagnosis, and lost it the same way. */
+K_THREAD_DEFINE(smp_shared_worker, 2048, smp_shared_worker_entry,
+		NULL, NULL, NULL, 5, 0, 0);
 
 int main(void)
 {

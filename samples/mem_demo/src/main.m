@@ -6,6 +6,7 @@
  */
 
 #import <Foundation/Foundation.h>
+#include <zephyr/kernel.h>
 
 @interface Sensor : OZObject {
 	int _value;
