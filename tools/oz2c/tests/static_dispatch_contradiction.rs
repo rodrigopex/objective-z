@@ -236,6 +236,88 @@ int main(void) {
     assert_refusal(&expect_reject(&src), "build");
 }
 
+/// A **`super`** receiver -- a fourth instance, found by reading
+/// `is_super_receiver` and then measured. Pinned deliberately, and it is
+/// the one case here where the refusal is **stricter than it needs to
+/// be**.
+///
+/// `super` is an `identifier` node, so `message_target` calls
+/// `declared_class_of("super", ..)`, which finds no declaration of that
+/// name and answers `None`. The emitter meanwhile keeps the send a direct
+/// call by definition -- routing it through the `class_id` switch would
+/// re-enter the override that issued it -- so the asymmetry holds and the
+/// send was leaking before this.
+///
+/// **Unlike the three above, a correct answer is trivially available
+/// here**: `super` is exactly the superclass of the enclosing
+/// `@implementation`, with no cast and no collection element type to lie
+/// about, so resolving it in `message_target` (via `enclosing_impl_class`
+/// plus `ClassInfo::superclass`) would be sound in a way #502 measured
+/// that the for-in binding is not. That is a widening of `arc`'s
+/// resolution, which is precisely the direction #483 decided *not* to take
+/// as the fix, so it is recorded here rather than done -- and note the
+/// first `help` line the diagnostic offers does not apply to a `super`
+/// send, only the second one does.
+///
+/// Nothing in the tree is affected: all 59 `[super ...]` sends in
+/// `samples/`, `src/` and `tests/` are `init` (39), `dealloc` (12) or
+/// `initWithDTSpec:` (5), and `is_initialiser` answers `Borrowed` for an
+/// initialiser before the poll is ever reached.
+///
+/// **If a later change resolves a `super` receiver, this test fails.**
+/// Delete it then, and say so -- do not relax the assertion.
+#[test]
+fn a_super_receiver_is_refused_although_it_is_resolvable() {
+    let src = format!(
+        "/* oz-pool: Thing=4,Base=2,Sub=2,Lender=2 */\n{}{}{}",
+        PREAMBLE(),
+        THING,
+        "\
+@interface Base : OZObject
+- (Thing *)build;
+@end
+@implementation Base
+- (Thing *)build {
+	return [[Thing alloc] init];
+}
+@end
+
+@interface Lender : OZObject
+{
+	Thing *_held;
+}
+- (Thing *)build;
+@end
+@implementation Lender
+- (Thing *)build {
+	return _held;
+}
+@end
+
+@interface Sub : Base
+- (int)viaSuper;
+@end
+@implementation Sub
+- (int)viaSuper {
+	Thing *t = [super build];
+	return [t tag];
+}
+@end
+
+int main(void) {
+	return 0;
+}
+"
+    );
+    let diags = expect_reject(&src);
+    assert!(
+        diags.contains("is dispatched directly here")
+            && diags.contains("'Base' hands back a reference the caller must release"),
+        "a `super` receiver is unresolved in `arc`, so the poll runs and disagrees:\n{}",
+        diags
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Controls: what the refusal must NOT reach
 // ---------------------------------------------------------------------------
