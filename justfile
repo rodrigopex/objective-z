@@ -33,6 +33,24 @@ tty := "/dev/tty.usbmodem0006850372581"
 # `just outdir=/tmp/twister-out-before test`.
 outdir := "/tmp/twister-out-" + file_name(justfile_directory())
 
+# Every `-O` suffix the twister recipes below hang off `outdir`, and the list
+# `clean-twister` walks to remove this checkout's output by name.
+#
+# Enumerated rather than globbed, because `{{ outdir }}*` over-reaches as soon
+# as one name is a prefix of another. No two *lane* names collide today (all 16
+# checked), but the hazard is live in two ways: this very checkout is `oz-477b`,
+# so an `oz-477` lane would sweep it, and `spinvalidate` is already a prefix of
+# `spinvalidate-smp` right here in this list.
+#
+# A new twister recipe with a new suffix needs a word here, or its output is
+# never reclaimed by name.
+outdir_suffixes := "riscv smp hw zephyr bench spinvalidate spinvalidate-smp"
+
+# Confirmation for the one recipe that reaches outside this checkout. A
+# variable rather than just's `[confirm]`, because these recipes run in
+# non-interactive sessions where a prompt with no tty is a hang, not a prompt.
+yes := "0"
+
 rebuild:
     west build -p -b {{ board }} {{ project_dir }} -- {{ flags }}
 
@@ -42,29 +60,168 @@ build:
 flash:
     west flash
 
-clean:
-    rip build
-
-# Every twister output directory for every checkout, at roughly a gigabyte
-# each. `outdir` is keyed on the checkout, so a worktree that has been deleted
-# leaves its sweep output behind with nothing left to name it -- this is the
-# only thing that reaches those.
-#
 # `rm -rf`, not `rip`: `rip` moves the bytes to /tmp/graveyard-$USER, which
-# frees no space at all and is the opposite of the point. Confirm with `df -h`
-# rather than assuming.
+# frees no space at all and is the opposite of the point. That argument was
+# already written twenty lines below for the twister output and simply never
+# applied here, so `clean` reclaimed nothing for as long as it has existed
+# (#521). `px-keyboard/justfile` makes the same choice for the same reason.
 #
-# Deliberately not part of `clean`, which is scoped to the build directory:
-# this destroys sweep output someone may still be reading.
+# A CMake build directory is regenerable by definition, so `rip`'s undo buys
+# nothing that a rebuild does not.
+#
+# This checkout's Zephyr build directory; the undo is `just build`.
+clean:
+    rm -rf build
+
+# The Rust build artifacts, and the largest thing this repo accumulates by a
+# wide margin: 1.9 GB in the primary checkout, and 2-9 GB in each worktree
+# under `.claude/worktrees`. Nothing reached it before (#521) -- there was no
+# `cargo clean` anywhere in the justfiles, the docs or CI.
+#
+# Kept out of `clean` because a cold Rust rebuild costs minutes where a Zephyr
+# build directory costs seconds. `clean-all` is the one-command form.
+#
+# Deliberately ungated, unlike `clean-twister`: this reaches only this
+# checkout's target directory, and cargo serialises access to it through
+# `target/.cargo-lock`, so a concurrent build in the same checkout contends
+# rather than corrupts -- worst case a repeated build, not a damaged tree. A
+# machine-wide `cargo`/`rustc` check would be worse than nothing, because the
+# lock is per target directory and any of the other worktrees building cannot
+# affect this one.
+#
+# The transpiler's Cargo target directory -- the largest regenerable object here.
+clean-rust:
+    cargo clean --manifest-path tools/oz2c/Cargo.toml
+
+# Every sample's build directory. The configure-time AST dumps land inside
+# them (`cmake/oz2c.cmake:286`), so removing the directory reclaims those with
+# it rather than leaving anything to chase separately -- `pool_demo` alone is
+# 74 MB, 56 MB of that AST JSON.
+#
+# Every sample's own build directory, its AST dumps and generated C included.
+clean-samples:
+    rm -rf samples/*/build
+
+# This checkout's twister output, and only this checkout's -- roughly a
+# gigabyte per directory.
+#
+# `outdir` is keyed on the checkout, so these names are computable and there is
+# no reason to reach anything else. What used to be here was
+# `rm -rf /tmp/twister-out*`, which destroyed every lane's output, so
+# `docs/WORKING.md` had to carry "Never `just clean-twister`" -- a recipe whose
+# documentation was an instruction not to run it. This is that instruction
+# implemented instead, and `clean-twister-all` is the old behaviour under a
+# name that says what it does (#521).
+#
+# Every behaviour change here is in the safe direction: someone who typed
+# `clean-twister` meaning the global sweep now reclaims less, and someone who
+# typed it not knowing no longer destroys fifteen other lanes' output.
+#
+# The suffixes come from `outdir_suffixes` and are enumerated, not globbed --
+# see the reasoning there; `spinvalidate` being a prefix of `spinvalidate-smp`
+# is enough on its own to rule a glob out.
+#
+# Honours an override, so `just outdir=/tmp/twister-out-before clean-twister`
+# removes exactly the directory a run was set aside in.
+#
+# `rm -rf`, not `rip`, for the reason given on `clean`.
+#
+# This checkout's twister output only, by name; roughly 1 GB per directory.
+clean-twister:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for s in "" {{ outdir_suffixes }}; do
+        d="{{ outdir }}${s:+-$s}"
+        if [ -e "$d" ]; then
+            echo "removing $d ($(du -sh "$d" | cut -f1))"
+        fi
+        # `.[0-9]*` catches any `.1`/`.2` rotation from a twister run made
+        # without `-c` (#312). Unmatched, it reaches `rm` as a literal, which
+        # `-f` makes a no-op. The `if` is load-bearing: `[ -e "$d" ] && echo`
+        # as the loop's last command would exit non-zero under `set -e` on the
+        # first directory that does not exist.
+        rm -rf -- "$d" "$d".[0-9]*
+    done
+
+# Every checkout's twister output, including orphans -- a worktree that has
+# been deleted leaves its sweep output behind with nothing left to name it, and
+# this is the only thing that reaches those. That is why the broad form is kept
+# rather than dropped.
 #
 # The glob is `twister-out*`, not `twister-out-*`, so it also reaches the
-# single shared directory the recipes used before this scheme and any `.1`,
-# `.2` rotation left over from before `-c` (#312) -- the same reason
-# .gitignore spells it that way.
+# single shared directory the recipes used before `outdir` existed, and any
+# `.1`/`.2` rotation predating `-c` (#312) -- the same reason .gitignore spells
+# it that way.
 #
-# Every checkout's twister output, ~1 GB each; not part of `clean` (#315).
-clean-twister:
-    rm -rf /tmp/twister-out*
+# Opt-in twice over: by name, and by `yes=1`. These directories belong to other
+# sessions and one of them may be mid-sweep. It lists each match with its size
+# and mtime first, because `docs/WORKING.md` says to read the matches rather
+# than count them, and an mtime from a minute ago is a live sweep.
+#
+# Every checkout's twister output, orphans included; needs `yes=1`.
+clean-twister-all:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    shopt -s nullglob
+    dirs=(/tmp/twister-out*)
+    if [ ${#dirs[@]} -eq 0 ]; then
+        echo "no /tmp/twister-out* directories"
+        exit 0
+    fi
+    for d in "${dirs[@]}"; do
+        printf '%8s  %s  %s\n' \
+            "$(du -sh "$d" | cut -f1)" "$(date -r "$d" '+%Y-%m-%d %H:%M')" "$d"
+    done
+    if [ "{{ yes }}" != "1" ]; then
+        echo "Those belong to every checkout, not just this one." >&2
+        echo "Read the mtimes above, then re-run with yes=1." >&2
+        exit 1
+    fi
+    rm -rf -- "${dirs[@]}"
+
+# Everything regenerable that this checkout owns: the Zephyr build directory,
+# the Cargo target, every sample's build directory, and this checkout's own
+# twister output. About 2.0 GB in a checkout that has built and swept.
+#
+# Reaches no other lane and nothing tracked. `tests/zephyr/generated/` is
+# committed C gated by the `generated-freshness` job and lives under none of
+# these paths; `deps/` is west-managed source and is not touched either.
+#
+# This is the one to run **before leaving a worktree**, which is where the disk
+# actually goes: many lanes under `.claude/worktrees`, each able to grow its
+# own multi-gigabyte Cargo target, and nothing ever re-enters a finished lane
+# to clean it up (#521). `clean` stays cheap enough to type between builds.
+#
+# Prints `df` either side, because this justfile's standing advice about
+# reclaiming space is to confirm with `df` rather than assume, and a recipe can
+# do that itself instead of asking.
+#
+# Everything regenerable this checkout owns; run it before leaving a worktree.
+clean-all:
+    @df -h . | tail -1
+    just clean
+    just clean-rust
+    just clean-samples
+    just clean-twister
+    @df -h . | tail -1
+
+# What this workspace is holding, before deciding what to remove. Read-only --
+# it deletes nothing.
+#
+# The last line is the recurrence driver and the reason this exists: each
+# worktree can hold its own multi-gigabyte Cargo target, and a finished lane's
+# is reclaimed by nobody. Free space here went 16 GB to 7.5 GB in an hour that
+# way, and back only because each lane was asked by hand (#521).
+#
+# The `-` prefixes let a line fail silently: `du` on a path that does not exist
+# is the normal case, not an error.
+#
+# What this checkout and its worktrees are holding on disk. Read-only.
+disk-report:
+    @df -h . | tail -1
+    -@du -sh tools/oz2c/target build samples/*/build 2>/dev/null
+    -@du -sh {{ outdir }}* 2>/dev/null
+    -@du -sh .claude/worktrees/*/tools/oz2c/target 2>/dev/null
 
 run:
     west build -t run

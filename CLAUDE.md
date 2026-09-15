@@ -98,8 +98,13 @@ Versions CI pins, and so the ones to match locally: **Zephyr v4.4.2**
 | `just run` / `just r`     | Run in QEMU                        |
 | `just flash` / `just f`   | Flash to hardware                  |
 | `just monitor` / `just m` | Serial monitor via tio             |
-| `just clean` / `just c`   | Remove build dir                   |
-| `just clean-twister`       | Remove every checkout's twister output (~1 GB each); not part of `clean` |
+| `just clean` / `just c`   | Remove this checkout's build dir (`rm -rf`; the undo is `just build`) |
+| `just clean-rust`          | Remove `tools/oz2c/target` — the largest regenerable object here (1.9 GB) |
+| `just clean-samples`       | Remove every `samples/*/build`, their AST dumps and generated C included |
+| `just clean-twister`       | Remove **this checkout's** twister output, by name (~1 GB per directory) |
+| `just clean-twister-all`   | Every checkout's, orphans included; needs `yes=1`, and prints sizes and mtimes first |
+| `just clean-all`           | Everything regenerable this checkout owns; run it before leaving a worktree |
+| `just disk-report`         | What this checkout and its worktrees are holding. Read-only |
 | `just test` / `just t`    | Run twister on all samples (ARM)   |
 | `just test-riscv`          | Same samples on RISC-V (13 configurations against ARM's 15; `gpio_demo` and the `CONFIG_DEBUG` scenario are ARM-only) |
 | `just test-smp`            | Two cores, `qemu_cortex_a53/smp` — the only board that exercises real lock contention |
@@ -128,8 +133,19 @@ Their output directories derive from `outdir`, which is keyed on the checkout �
 `/tmp/twister-out-<checkout>` and suffixed siblings — so two worktrees can sweep
 at once without one deleting the other's output mid-run (#315). Override it per
 invocation to keep a run aside: `just outdir=/tmp/twister-out-before test`.
-Those directories accumulate one per checkout; `just clean-twister` removes them
-all, and `just clean` deliberately leaves them alone.
+Those directories accumulate one per checkout. `just clean-twister` removes
+**this checkout's** — the `outdir` name and each suffix in `outdir_suffixes`,
+enumerated rather than globbed, because `{{ outdir }}*` over-reaches the moment
+one name is a prefix of another (`spinvalidate` already prefixes
+`spinvalidate-smp`, and a lane named `oz-477` would sweep `oz-477b`'s output).
+`just clean-twister-all` is the every-checkout form: it is the only thing that
+reaches output orphaned by a deleted worktree, so it still exists, but it lists
+each directory with its size and mtime and refuses without `yes=1`. `just clean`
+deliberately leaves both alone.
+
+That `clean-twister` used to be the all-lanes sweep is why `docs/WORKING.md`
+carried "Never `just clean-twister`" — a recipe whose documentation was an
+instruction not to run it (#521). The instruction is now the implementation.
 
 Build a specific sample: `just project_dir=samples/arc_demo rebuild`
 Build for RISC-V: `just board=qemu_riscv32 rebuild`
