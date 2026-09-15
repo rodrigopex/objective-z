@@ -1619,6 +1619,44 @@ pub enum DispatchOwnership {
     Ambiguous { owning: String, borrowed: String },
 }
 
+/// What **this module's own** receiver resolution makes of `node`'s
+/// ownership, and `None` when it never reaches the implementor poll at
+/// all.
+///
+/// Exists so the emitter can ask what `arc` decided rather than re-deriving
+/// it, which is the whole point: the defect this answers is *two* resolvers
+/// disagreeing about one receiver, so a third reading of the receiver here
+/// would reproduce the bug it exists to catch. `message_target` is the
+/// reader, and the `is_none() || is_dynamically_dispatched` condition is
+/// copied from `is_owning_expr` and `created_by` — the two callers that
+/// actually poll — rather than restated, so a change there is a change here.
+///
+/// The asymmetry that matters is one-directional: the *emitter* resolving a
+/// receiver that this module does not. Both failing together is safe,
+/// because the send then goes through the `class_id` switch and
+/// `emit::reject_ambiguous_dispatch` already refuses it. The other way
+/// round is the silent one — a statically dispatched send taking its
+/// ownership answer from a poll over classes the receiver can never be
+/// (#481, #502, #483).
+pub fn polled_dispatch_ownership(
+    node: Node,
+    src: &str,
+    program: &Program,
+    owning: &OwningMethods,
+) -> Option<DispatchOwnership> {
+    let (receiver_class, selector) = message_target(node, src, program);
+    if receiver_class.is_some() && !program.is_dynamically_dispatched(&selector, false) {
+        return None;
+    }
+    Some(dispatch_ownership(
+        program,
+        owning,
+        receiver_class.as_deref(),
+        &selector,
+        false,
+    ))
+}
+
 pub fn dispatch_ownership(
     program: &Program,
     owning: &OwningMethods,
@@ -1910,7 +1948,20 @@ fn collect_declared_types(
      * *statically* dispatched send takes its ownership answer from a poll
      * over classes it can never be, and `emit::dynamic_dispatch_call`'s
      * `Ambiguous` refusal cannot save it because that guards a *dynamic*
-     * send. Measured on the leak this closes: 0 deallocs against 1. */
+     * send. Measured on the leak this closes: 0 deallocs against 1.
+     *
+     * **Teaching this walk one more form is no longer how the next
+     * instance gets closed** (#483). Three more were live after #502 --
+     * an ivar receiver, a file-scope object receiver and a cast receiver
+     * -- and none of them is reachable from here either: the first two
+     * are declared *outside* the scope `declared_class_of` starts its
+     * walk from, and the third is not an `identifier`, so
+     * `message_target` never asks. So the asymmetry is refused at the
+     * send instead, by `emit::reject_static_dispatch_contradiction`, and
+     * `polled_dispatch_ownership` below is what it asks. Widening
+     * resolution is still welcome where it is honest -- it turns a
+     * refusal back into working code -- but it is no longer the thing
+     * standing between a disagreeing poll and a leak. */
     if let Some(binding) = crate::emit::forin_binding(node, src) {
         if binding.var_name == name {
             let bare = binding.type_text.trim().trim_start_matches("struct ").trim();

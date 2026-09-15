@@ -42,7 +42,7 @@
 // call carrying a polled answer.
 
 mod common;
-use common::{compile_and_run, iterator_protocol_src, ozarray_src, ozobject_src};
+use common::{compile_and_run, expect_reject, iterator_protocol_src, ozarray_src, ozobject_src};
 
 /// `Thing` counts its own deallocations, which is the oracle throughout.
 const THING: &str = "\
@@ -220,12 +220,19 @@ fn two_loops_binding_the_same_name_still_resolve() {
     );
 }
 
-/// **A known defect, asserted to still be defective.** Two loops binding
-/// one name to *different* classes still leak both sends.
+/// **No longer a leak: refused, as of #483.** Two loops binding one name
+/// to *different* classes are now a located build error rather than two
+/// silent leaks.
 ///
-/// The `KNOWN_DEFECTS` convention `ownership_matrix.rs` uses: fixing this
-/// fails this test, which forces the entry out in the same change, so the
-/// record cannot rot into a silently-skipped shape.
+/// This was written as a `KNOWN_DEFECTS` entry asserting `deallocs=0`, on
+/// the convention `ownership_matrix.rs` uses -- fixing the defect fails
+/// the test, which forces the record out in the same change. That is what
+/// happened, and by the route the entry itself named as the remedy: #483
+/// chose to refuse the contradiction rather than resolve it. Both sends
+/// are refused, and the reasoning below is why refusing is the *only*
+/// safe answer here rather than merely a strict one -- teaching `arc` the
+/// nearest-enclosing binding was measured to convert these leaks into a
+/// segfault.
 ///
 /// **Why #502 does not fix it, and the mechanism is not the obvious one.**
 /// The count in `declared_class_of` is over the *whole method*, so two
@@ -260,10 +267,13 @@ fn two_loops_binding_the_same_name_still_resolve() {
 /// Reverted rather than shipped. The honest fix needs the *collection's*
 /// element type, which nothing in the tree tracks.
 ///
-/// That is #483's territory -- whole-scope versus per-send resolution --
-/// and it is recorded there rather than widened into this fix.
+/// So #483 refuses instead, and this program is where that reads best:
+/// the leak was load-bearing, resolution would have been a free of a
+/// garbage pointer, and the third option -- a located error at the send --
+/// is the only one that is neither. Two diagnostics, one per send, each
+/// naming the line.
 #[test]
-fn known_defect_two_loops_binding_different_classes_leak() {
+fn two_loops_binding_different_classes_are_refused() {
     let src = program(
         LENDER,
         "\
@@ -279,11 +289,16 @@ fn known_defect_two_loops_binding_different_classes_leak() {
 	}
 ",
     );
+    let diags = expect_reject(&src);
     assert_eq!(
-        compile_and_run(&src, "forin_recv_known_defect"),
-        "v=14 deallocs=0\n",
-        "KNOWN DEFECT (#483): both sends leak, because two bindings of one name make the \
-         whole-method count decline. If this now reads deallocs=2, the defect is fixed -- \
-         delete this test and say so in #483"
+        diags.matches("is dispatched directly here").count(),
+        2,
+        "one refusal per send, since each takes its ownership from the same poll:\n{}",
+        diags
+    );
+    assert!(
+        diags.contains("resolved for dispatch but not for ownership"),
+        "the refusal must say which resolver failed:\n{}",
+        diags
     );
 }
