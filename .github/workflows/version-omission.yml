@@ -65,7 +65,7 @@ name: Version omission
 # sees it can tell it is not their commit.
 on:
   push:
-    branches: [main]
+    branches: [main, oz-512-version-omission]
   # So `main` can be checked, or re-checked after the number lands,
   # without waiting for the next push.
   workflow_dispatch:
