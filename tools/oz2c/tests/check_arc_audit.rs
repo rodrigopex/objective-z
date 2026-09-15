@@ -17,6 +17,8 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+static SEQ: AtomicUsize = AtomicUsize::new(0);
+
 fn oz2c_binary() -> PathBuf {
     let mut path = std::env::current_exe().expect("test binary path");
     path.pop();
@@ -40,7 +42,6 @@ fn audit(case: &str) -> String {
      * mid-run and the failure looked like the audit reporting nothing.
      * `cargo test` runs these in parallel by default, so it surfaced
      * immediately -- and a flaky gate is worse than no gate. */
-    static SEQ: AtomicUsize = AtomicUsize::new(0);
     let dir = std::env::temp_dir().join(format!(
         "oz_check_arc_{}_{}_{}",
         src.file_stem().unwrap().to_string_lossy(),
@@ -210,6 +211,96 @@ fn states_its_own_limits() {
         "that claim is measurably false:\n{}",
         report
     );
+}
+
+/// ARC's *inferred* qualifier on an indirect parameter is not reported as
+/// one the author wrote.
+///
+/// Measured against the real SDK header rather than a fixture, because the
+/// shape is already in the tree and a hand-written copy would prove only
+/// that the copy parses. `include/oz_sdk/Foundation/OZArray.h:22` declares
+///
+/// ```objc
+/// + (id)arrayWithObjects:(const id *)objects count:(size_t)count;
+/// ```
+///
+/// with **no ownership qualifier**, and Clang dumps that parameter as
+/// `const __autoreleasing id *` -- ARC infers `__autoreleasing` on an
+/// indirect parameter. `git grep __autoreleasing -- '*.h' '*.m' '*.c'`
+/// matches nothing in this repo, so every occurrence in every dump is
+/// inferred.
+///
+/// The first version of the audit read those as the declaration's own and
+/// labelled them "oz2c refuses this (#448)". That is reachable, not
+/// hypothetical: any file declaring an `id *` parameter -- the shape the
+/// SDK's own collection factories use -- was accused of writing a
+/// qualifier it does not contain.
+///
+/// Clang does not *override* a written qualifier, which is the other half
+/// of why position is the right test: five lines below, `OZArray.h:28`
+/// writes `objects:(__unsafe_unretained id *)stackbuf` and dumps as
+/// `__unsafe_unretained`, faithfully.
+#[test]
+fn arcs_inferred_indirect_qualifier_is_attributed_to_the_pointee() {
+    use oz2c::astinfo::{AstFacts, QualifierScope};
+
+    let root = repo_root();
+    let src = root.join("tests/behavior/cases/foundation/array_basic.m");
+    let dir = std::env::temp_dir().join(format!(
+        "oz_check_arc_inferred_{}_{}",
+        std::process::id(),
+        SEQ.fetch_add(1, Ordering::Relaxed)
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let ast = dir.join("case.ast.json");
+    common::ast_dump_file(&src, &ast);
+    let facts = AstFacts::from_path(&ast).expect("a dump of a corpus case");
+    let _ = std::fs::remove_dir_all(&dir);
+
+    let quals = facts.quals_in("Foundation/OZArray.h");
+    assert!(!quals.is_empty(), "the dump must cover the SDK header it imports");
+
+    let objects: Vec<_> = quals
+        .iter()
+        .filter(|q| q.name == "objects" && q.qualifier == "__autoreleasing")
+        .collect();
+    assert!(
+        !objects.is_empty(),
+        "Clang should infer __autoreleasing on `(const id *)objects`; got {:#?}",
+        quals
+    );
+    for q in &objects {
+        assert_eq!(
+            q.scope,
+            QualifierScope::Pointee,
+            "inferred on the pointee, not written on the declaration: {:#?}",
+            q
+        );
+    }
+
+    /* The written qualifier five lines below is reported faithfully, which
+     * is what rules out "Clang invents qualifiers" as the explanation. */
+    let stackbuf: Vec<_> = quals.iter().filter(|q| q.name == "stackbuf").collect();
+    assert!(!stackbuf.is_empty(), "fast enumeration's buffer: {:#?}", quals);
+    for q in &stackbuf {
+        assert_eq!(q.qualifier, "__unsafe_unretained", "as written: {:#?}", q);
+    }
+
+    /* Nothing in the SDK's headers may be reported as a refused
+     * declaration qualifier, because nothing in them writes one. */
+    for header in ["Foundation/OZArray.h", "Foundation/OZDictionary.h"] {
+        for q in facts.quals_in(header) {
+            if matches!(q.qualifier.as_str(), "__weak" | "__autoreleasing") {
+                assert_eq!(
+                    q.scope,
+                    QualifierScope::Pointee,
+                    "#448 would fire on a qualifier no source writes: {:#?}",
+                    q
+                );
+            }
+        }
+    }
 }
 
 /// Without a dump there is nothing to audit against, and that is an error

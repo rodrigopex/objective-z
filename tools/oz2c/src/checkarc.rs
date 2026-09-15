@@ -21,7 +21,7 @@
 // And it states what it cannot answer, because a reader who over-trusts it
 // will conclude #361 is answerable when it is not.
 
-use crate::astinfo::{ArcMark, AstFacts};
+use crate::astinfo::{ArcMark, AstFacts, QualifierScope};
 use crate::model::Program;
 use std::collections::BTreeMap;
 
@@ -267,14 +267,38 @@ fn position_table(facts: &AstFacts, suffix: &str) -> Vec<String> {
 /// `__weak` and `__autoreleasing` wherever they are written), so seeing one
 /// here means the audit is reading a dump of source oz2c would not accept
 /// -- worth saying out loud rather than listing quietly.
+///
+/// **But only when the qualifier is the declaration's own.** ARC infers
+/// `__autoreleasing` on an indirect parameter, so
+/// `+ (id)arrayWithObjects:(const id *)objects` -- which writes no
+/// qualifier at all -- is dumped as `const __autoreleasing id *`. The first
+/// version of this table read that as the declaration's own and labelled it
+/// "oz2c refuses this (#448)", accusing the author of writing a qualifier
+/// that `git grep` finds in no `.h`, `.m` or `.c` in this repo.
+///
+/// The per-file filter means the SDK's own three rows never reached this
+/// report; what did was any audited file declaring an `id *` parameter
+/// itself, which is exactly the shape those factories use. Pointee-scoped
+/// qualifiers are listed under their own heading rather than dropped,
+/// because a real `__weak id *` buffer is worth seeing -- and because an
+/// inferred `__autoreleasing` is precisely where #448's refusal must *not*
+/// fire, so listing it makes this a check on the refusal instead of a
+/// duplicate of it.
 fn qualifier_table(facts: &AstFacts, suffix: &str) -> Vec<String> {
     let quals = facts.quals_in(suffix);
-    let mut out = vec![format!("  ownership qualifiers -- {} in this file", quals.len())];
+    let (own, pointee): (Vec<&crate::astinfo::OwnershipQual>, Vec<&crate::astinfo::OwnershipQual>) =
+        quals.iter().copied().partition(|q| q.scope == QualifierScope::Declaration);
+
+    let mut out = vec![format!(
+        "  ownership qualifiers -- {} on a declaration, {} on a pointee",
+        own.len(),
+        pointee.len()
+    )];
     if quals.is_empty() {
         out.push("    (Clang wrote none in this file)".to_string());
         return out;
     }
-    for qual in &quals {
+    for qual in &own {
         let note = match qual.qualifier.as_str() {
             "__weak" | "__autoreleasing" => "  <-- oz2c refuses this (#448)",
             _ => "",
@@ -284,7 +308,7 @@ fn qualifier_table(facts: &AstFacts, suffix: &str) -> Vec<String> {
             qual.qualifier, qual.name, qual.decl_kind, qual.at, note
         ));
     }
-    let refused = quals
+    let refused = own
         .iter()
         .filter(|q| matches!(q.qualifier.as_str(), "__weak" | "__autoreleasing"))
         .count();
@@ -292,6 +316,25 @@ fn qualifier_table(facts: &AstFacts, suffix: &str) -> Vec<String> {
         "    {} that oz2c refuses outright (`__weak`, `__autoreleasing`: #448)",
         refused
     ));
+    if !pointee.is_empty() {
+        out.push(
+            "    on the pointee of a pointer-to-object, NOT written by the author --".to_string(),
+        );
+        out.push(
+            "    ARC infers `__autoreleasing` on an indirect parameter, so `(const id *)x`"
+                .to_string(),
+        );
+        out.push(
+            "    dumps as `const __autoreleasing id *`. #448 does not apply to these."
+                .to_string(),
+        );
+        for qual in &pointee {
+            out.push(format!(
+                "      {:<14} {:<20} {:<14} {}",
+                qual.qualifier, qual.name, qual.decl_kind, qual.at
+            ));
+        }
+    }
     out
 }
 
