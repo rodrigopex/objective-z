@@ -279,6 +279,120 @@ fn undefined_superclass_rejected() {
     assert!(diags.contains("no class 'OZObject' is defined"), "diagnostics: {}", diags);
 }
 
+// ---------------------------------------------------------------------------
+// A category on a class this translation unit never declares (#501).
+//
+// Three rows, because the *observed* behaviour differed between them and
+// #501 reported only the last. A category with any member -- a definition
+// or a declaration -- reached `emit`'s `program.classes[name]` and panicked
+// with "no entry found for key": no location, no class name, no file. A
+// category with an empty body reached no indexing site, so it transpiled
+// successfully and emitted a banner comment where the category had been.
+// Neither is a diagnostic, and which one an author got turned on whether
+// the category happened to declare something.
+//
+// All three are one hard, located error now, for the reason
+// `undefined_superclass_rejected` above is: a category's members merge into
+// the extended class's `ClassInfo`, so with no `ClassInfo` there is nothing
+// to merge into and nothing the generated C could name. Clang warns here
+// instead, but Clang has a runtime that can carry an unattached category;
+// warn-and-continue would emit nothing either way, leaving the author a
+// warning *plus* a missing method.
+//
+// `category_on_declared_class_still_accepted` is the control: it proves the
+// message is conditional, and asserts the category's method is *present* in
+// the output rather than merely that no diagnostic fired.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn category_implementation_on_undeclared_class_rejected() {
+    // The shape #501 was filed against, beside a class that does resolve --
+    // so a green result cannot come from the program being empty.
+    let src = "@interface Real\n- (int)base;\n@end\n\
+               @implementation Real\n- (int)base {\n\treturn 1;\n}\n@end\n\
+               @implementation Ghost (Extras)\n- (int)answer {\n\treturn 42;\n}\n@end\n";
+    let diags = expect_reject(src);
+    assert!(diags.contains("category 'Ghost(Extras)'"), "diagnostics: {}", diags);
+    assert!(
+        diags.contains("no class 'Ghost' is declared in this source"),
+        "diagnostics: {}",
+        diags
+    );
+    // The remedy, which is the whole point of saying anything: an author
+    // who reads only the first line learns the class is missing but not
+    // that importing its header is the fix.
+    assert!(diags.contains("#import"), "diagnostics: {}", diags);
+    // And it is located in the file, not at the (1, 1) an unlocatable
+    // whole-program check reports -- the ghost category is on line 9.
+    assert!(diags.contains("9:1:"), "diagnostics: {}", diags);
+}
+
+#[test]
+fn category_interface_on_undeclared_class_rejected() {
+    // The declaration half, which panicked in a *different* place
+    // (`render_category_interface` rather than `render_method_definition`),
+    // so it needs its own row.
+    let src = "@interface Real\n- (int)base;\n@end\n\
+               @implementation Real\n- (int)base {\n\treturn 1;\n}\n@end\n\
+               @interface Ghost (Extras)\n- (int)answer;\n@end\n";
+    let diags = expect_reject(src);
+    assert!(diags.contains("category 'Ghost(Extras)'"), "diagnostics: {}", diags);
+}
+
+#[test]
+fn empty_category_on_undeclared_class_rejected() {
+    // The one shape that really was silent: no member, so nothing inside
+    // reached an indexing site, and the transpile succeeded while emitting
+    // a banner comment and no code.
+    let src = "@interface Real\n- (int)base;\n@end\n\
+               @implementation Real\n- (int)base {\n\treturn 1;\n}\n@end\n\
+               @implementation Ghost (Extras)\n@end\n";
+    let diags = expect_reject(src);
+    assert!(diags.contains("category 'Ghost(Extras)'"), "diagnostics: {}", diags);
+}
+
+#[test]
+fn category_on_declared_class_still_accepted() {
+    // The control. Without it the three refusals above are satisfied by a
+    // message that fires on every category, which would read as evidence
+    // while testing nothing.
+    let src = "@interface Real\n- (int)base;\n@end\n\
+               @interface Real (Extras)\n- (int)answer;\n@end\n\
+               @implementation Real\n- (int)base {\n\treturn 1;\n}\n@end\n\
+               @implementation Real (Extras)\n- (int)answer {\n\treturn 42;\n}\n@end\n";
+    let out = oz2c::transpile(src).expect("a category on a declared class must still transpile");
+    // Positive, not `!contains`: the emitted function is the thing that
+    // would go missing if the category were dropped, and an absence
+    // assertion alone goes true when the name changes or nothing is
+    // emitted at all.
+    assert!(
+        out.source_c.contains("int Real_answer(struct Real *self)"),
+        "source_c:\n{}",
+        out.source_c
+    );
+    assert!(
+        out.companion_h.contains("int Real_answer(struct Real *self)"),
+        "companion_h:\n{}",
+        out.companion_h
+    );
+}
+
+#[test]
+fn implementation_with_no_interface_still_accepted() {
+    // The neighbouring shape the new check must *not* catch. Pass 1 inserts
+    // an `@implementation` with no `@interface` as a class in its own right,
+    // so it has a `ClassInfo`, its methods are emitted, and Clang only warns
+    // -- there is no divergence to correct. #501's guard is about the
+    // category, which pass 1 skips.
+    let src = "@implementation Lonely\n- (int)answer {\n\treturn 42;\n}\n@end\n";
+    let out = oz2c::transpile(src).expect("an @implementation with no @interface still transpiles");
+    assert!(
+        out.source_c.contains("int Lonely_answer(struct Lonely *self)"),
+        "source_c:\n{}",
+        out.source_c
+    );
+}
+
 #[test]
 fn protocol_literal_expression_rejected() {
     // '@protocol(Name)' has no dedicated `protocol_expression` node kind

@@ -845,6 +845,10 @@ pub fn collect(source: &str) -> (Program, Vec<crate::model::Diagnostic>) {
     // superclass-resolution diagnostic below -- not part of `ClassInfo`
     // itself, since nothing downstream needs it.
     let mut first_seen: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    /* Every `@interface`/`@implementation Class (Category)` seen, as
+     * (extended class, category name, span) -- checked against
+     * `known_classes` once pass 1 has seen every declaration (#501). */
+    let mut category_sites: Vec<(String, String, std::ops::Range<usize>)> = Vec::new();
     let mut cursor = root.walk();
     for node in root.children(&mut cursor) {
         if node.kind() == "protocol_declaration" {
@@ -869,8 +873,14 @@ pub fn collect(source: &str) -> (Program, Vec<crate::model::Diagnostic>) {
             continue;
         }
         let (name, superclass, category) = class_header(node, source);
-        if category.is_some() {
-            continue; // category: doesn't declare a new class
+        if let Some(cat) = category {
+            /* A category doesn't declare a new class, so it contributes
+             * nothing here -- but it is also the one construct whose
+             * extended class may never be declared at all, and the
+             * `classes` map is not complete until this loop ends. Recorded
+             * and checked below (#501). */
+            category_sites.push((name, cat, node.start_byte()..node.end_byte()));
+            continue;
         }
         if !classes.contains_key(&name) {
             first_seen.insert(name.clone(), node.start_byte());
@@ -994,6 +1004,63 @@ pub fn collect(source: &str) -> (Program, Vec<crate::model::Diagnostic>) {
                 offset,
             ));
         }
+    }
+
+    /* A category on a class this translation unit never declares, for the
+     * same reason and with the same consequence as the superclass check
+     * above: `emit::render_category_interface` and
+     * `emit::render_method_definition` both index `program.classes[name]`
+     * directly, so a category whose class was never collected panics with
+     * `no entry found for key` -- unlocated, naming neither the class nor
+     * the file (#501).
+     *
+     * Only an *empty* category body escapes that, because nothing inside it
+     * reaches an indexing site; that one transpiles successfully, emits a
+     * banner comment where the category had been, and drops it in silence.
+     * Neither outcome is a diagnostic, and the two differ only in whether
+     * the category happens to declare a member. The empty shape is also
+     * why this carries a `!`: it is a program that builds today and will
+     * not after this.
+     *
+     * Hard rather than warning-level: there is no non-fatal diagnostic
+     * channel (`Diagnostic` carries no severity and `lib::transpile`
+     * returns `Err` on any diagnostic at all), and there is nothing for
+     * oz2c to attach the methods to even if it warned -- a category's
+     * members merge into the extended class's `ClassInfo`, and there is no
+     * `ClassInfo`. Clang only warns here, but Clang has a runtime that can
+     * carry an unattached category; the generated C has a struct or it has
+     * nothing. */
+    for (class_name, category, span) in &category_sites {
+        if known_classes.contains(class_name) {
+            continue;
+        }
+        diagnostics.push(
+            crate::model::Diagnostic::spanning(
+                format!(
+                    "category '{}({})' extends '{}', but no class '{}' is declared in this \
+source",
+                    class_name, category, class_name, class_name
+                ),
+                source,
+                span.clone(),
+            )
+            .with_note(
+                "a category's methods and properties merge into the class it extends, so \
+                 without an '@interface' for that class there is no struct to add them to \
+                 and nothing would be emitted for the category at all"
+                    .to_string(),
+            )
+            .with_help(format!(
+                "declare '@interface {}' in this translation unit, or '#import' the header \
+                 that does",
+                class_name
+            ))
+            .with_help(format!(
+                "if '{}' was meant to be a new class rather than a category on an existing \
+                 one, drop the '({})'",
+                class_name, category
+            )),
+        );
     }
 
     // Every `@synthesize` seen in pass 2, as (class name, node), resolved
