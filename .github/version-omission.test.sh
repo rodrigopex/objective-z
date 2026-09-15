@@ -235,6 +235,21 @@ else
 	echo "skip  shallow case: this git did not produce a shallow clone"
 fi
 
+# The workflow runs the gate as `.github/version-omission.sh`, not as
+# `bash .github/version-omission.sh`, so the exec bit is load-bearing --
+# and every case above is blind to it, because they all invoke it
+# through `bash "$script"`, which does not need one. It was first
+# committed 100644: all 29 cases passed locally and the job died with
+# "Permission denied", exit 126, having never run the check at all.
+cases=$((cases + 1))
+if [ -x "$script" ]; then
+	echo "ok    the gate is executable, which is how the workflow invokes it"
+else
+	echo "FAIL  $script is not executable -- the workflow runs it directly"
+	echo "      fix with: git update-index --chmod=+x .github/version-omission.sh"
+	failures=$((failures + 1))
+fi
+
 echo
 if [ "$failures" -eq 0 ]; then
 	echo "$cases case(s), all passed"
