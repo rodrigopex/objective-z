@@ -973,6 +973,360 @@ int main(void) {
     );
 }
 
+/* ---- a cast in the *initialiser* position (#491) --------------------- */
+//
+// The position #332 left, and the last of the three spellings of one pair:
+// the cast on the overwrite is above, the uncast pair is in
+// `ownership_matrix.rs`, and a cast in the initialiser leaked exactly one
+// object per overwritten binding.
+//
+// The cause was not in `arc.rs` at all, which is why four candidates were
+// eliminated before it was found (#491's own list). It was in
+// `collect::extract_type_and_stars`: that walks the whole `declaration`
+// subtree and counts every `*` token, so the cast's star was attributed to
+// the declared type and `Foo *v = (Foo *)[Foo make];` reported `("Foo", 2)`.
+// `emit::managed_object_locals` admits an object local on `stars == 1`, so
+// the shape was never a candidate and its decision point never executed on
+// either path.
+//
+// The variable still got its scope-exit release, because
+// `emit::owned_locals_of` reaches the same declarator by a second,
+// independent path -- `arc::declares_pointer`, which is per *declarator*
+// and never consults the star count. Two readers of one declaration
+// disagreeing, again (gap R, #251, #400, #429), and the disagreement was
+// the whole defect: release-on-overwrite was the only half that was lost.
+
+/// A cast in a local's initialiser must not cost release-on-overwrite
+/// (#491).
+///
+/// The pool directive is the assertion that matters. With `Foo=1` the
+/// overwrite can only allocate if the initialiser's object was released
+/// *first* -- `LocalStore::Owning`'s contract, that a `+1` right-hand side
+/// not mentioning the variable lets the old value go before the new one is
+/// evaluated. A dealloc count alone would pass on C that released after
+/// allocating, which on a one-slot slab is a different program.
+#[test]
+fn cast_in_a_locals_initialiser_releases_on_overwrite() {
+    let src = format!(
+        "/* oz-pool: Foo=1,Runner=1 */\n{}{}",
+        PREAMBLE(),
+        "\
+static int g_deallocs = 0;
+
+@interface Foo : OZObject
++ (Foo *)make;
+@end
+@implementation Foo
++ (Foo *)make {
+	return [Foo alloc];
+}
+- (void)dealloc {
+	g_deallocs = g_deallocs + 1;
+}
+@end
+
+@interface Runner : OZObject
+- (int)run;
+@end
+@implementation Runner
+- (int)run {
+	Foo *v = (Foo *)[Foo make];
+	int first = (v != nil);
+	v = [Foo make];
+	return first + 2 * (v != nil);
+}
+@end
+
+#include <stdio.h>
+int main(void) {
+	Runner *r = [Runner alloc];
+	int made = [r run];
+	printf(\"made=%d deallocs=%d\\n\", made, g_deallocs);
+	return 0;
+}
+"
+    );
+    let out = compile_and_run(&src, "cast_init_releases_on_overwrite");
+    assert_eq!(
+        out, "made=3 deallocs=2\n",
+        "one slot must serve both allocations, and both objects must be freed: {}",
+        out
+    );
+}
+
+/// The same shape in a plain C function rather than a method (#491).
+///
+/// A free function's body is reached through `collect_function_params` and
+/// `emit`'s top-level walk rather than through the method path, and #491
+/// measured the leak in both. Keeping both means a fix that only reached
+/// one of the two entry points cannot pass.
+#[test]
+fn cast_in_a_free_functions_local_initialiser_releases_on_overwrite() {
+    let src = format!(
+        "/* oz-pool: Foo=1 */\n{}{}",
+        PREAMBLE(),
+        "\
+static int g_deallocs = 0;
+
+@interface Foo : OZObject
++ (Foo *)make;
+@end
+@implementation Foo
++ (Foo *)make {
+	return [Foo alloc];
+}
+- (void)dealloc {
+	g_deallocs = g_deallocs + 1;
+}
+@end
+
+static int churn(void)
+{
+	Foo *v = (Foo *)[Foo make];
+	int first = (v != nil);
+
+	v = [Foo make];
+	return first + 2 * (v != nil);
+}
+
+#include <stdio.h>
+int main(void) {
+	int made = churn();
+	printf(\"made=%d deallocs=%d\\n\", made, g_deallocs);
+	return 0;
+}
+"
+    );
+    let out = compile_and_run(&src, "cast_init_free_function");
+    assert_eq!(
+        out, "made=3 deallocs=2\n",
+        "a free function's local must be managed exactly as a method's is: {}",
+        out
+    );
+}
+
+/// An `id` local initialised through a cast (#491).
+///
+/// `id` is the one object spelling that carries no `*` in source, so it is
+/// admitted on `stars == 0` -- and a cast in the initialiser pushed the
+/// count to 1, which is the *other* side of the same star-count defect and
+/// fails for a different reason than the `Foo *` rows above. #400 and #429
+/// are the two earlier times an `id` slot was lost to a `stars` test; this
+/// is the first time one was lost to a count that was too *high*.
+#[test]
+fn an_id_local_initialised_through_a_cast_releases_on_overwrite() {
+    let src = format!(
+        "/* oz-pool: Foo=1 */\n{}{}",
+        PREAMBLE(),
+        "\
+static int g_deallocs = 0;
+
+@interface Foo : OZObject
++ (Foo *)make;
+@end
+@implementation Foo
++ (Foo *)make {
+	return [Foo alloc];
+}
+- (void)dealloc {
+	g_deallocs = g_deallocs + 1;
+}
+@end
+
+static int churn(void)
+{
+	id v = (Foo *)[Foo make];
+	int first = (v != nil);
+
+	v = [Foo make];
+	return first + 2 * (v != nil);
+}
+
+#include <stdio.h>
+int main(void) {
+	int made = churn();
+	printf(\"made=%d deallocs=%d\\n\", made, g_deallocs);
+	return 0;
+}
+"
+    );
+    let out = compile_and_run(&src, "cast_init_id_slot");
+    assert_eq!(
+        out, "made=3 deallocs=2\n",
+        "an `id` slot behind a cast must be managed too: {}",
+        out
+    );
+}
+
+/// A cast that **lies about the class** must still release the object it
+/// really holds (#491, and the trap #502 measured).
+///
+/// This is the check granting management owed: #502 turned a garbage read
+/// into a garbage *free* by teaching ARC about a binding whose type was
+/// wrong, because the missing release had been the only thing between a bad
+/// value and `oz_release`. Here the slot is declared `Bar *` and holds a
+/// real `Foo`, so release-on-overwrite now fires through a pointer whose
+/// static type names the wrong class.
+///
+/// It is safe, and the reason is structural rather than lucky: `oz_release`
+/// takes the object's own class pointer and runs *its* dealloc chain, so
+/// the declared type of the slot reaches no free-side decision. The
+/// assertion is per class, not a total -- a total of 2 would also be
+/// produced by freeing the Foo twice and the Bar never, which is the
+/// failure this row exists to exclude.
+#[test]
+fn a_lying_cast_in_an_initialiser_releases_the_real_class() {
+    let src = format!(
+        "/* oz-pool: Foo=4,Bar=4 */\n{}{}",
+        PREAMBLE(),
+        "\
+static int g_foo_deallocs = 0;
+static int g_bar_deallocs = 0;
+
+@interface Foo : OZObject
++ (Foo *)make;
+@end
+@implementation Foo
++ (Foo *)make {
+	return [Foo alloc];
+}
+- (void)dealloc {
+	g_foo_deallocs = g_foo_deallocs + 1;
+}
+@end
+
+@interface Bar : OZObject
++ (Bar *)make;
+@end
+@implementation Bar
++ (Bar *)make {
+	return [Bar alloc];
+}
+- (void)dealloc {
+	g_bar_deallocs = g_bar_deallocs + 1;
+}
+@end
+
+static void churn(void)
+{
+	Bar *v = (Bar *)[Foo make];
+
+	v = [Bar make];
+}
+
+#include <stdio.h>
+int main(void) {
+	churn();
+	printf(\"foo=%d bar=%d\\n\", g_foo_deallocs, g_bar_deallocs);
+	return 0;
+}
+"
+    );
+    let out = compile_and_run(&src, "cast_init_lying_class");
+    assert_eq!(
+        out, "foo=1 bar=1\n",
+        "each object must be torn down by its own class exactly once: {}",
+        out
+    );
+}
+
+/// **Control.** A *borrowed* initialiser behind a cast must stay unmanaged,
+/// and this row's numbers must not move (#491).
+///
+/// Making the cast visible to the star count widens what
+/// `managed_object_locals` is *asked about*, not what it admits: the answer
+/// still comes from `arc::binds_ownership`, which says no to a `+0` send
+/// however many casts wrap it. That distinction is the one #477's M1 got
+/// wrong from the other side -- calling a borrowed value owning made the
+/// destination managed, and the scope-exit release then freed a reference
+/// nothing had taken.
+///
+/// So this test does not fail when the fix is removed, and it is not
+/// supposed to. It fails if the fix ever grows into `binds_ownership`.
+/// Both halves are asserted: no `-dealloc` runs (the borrowed object is
+/// still alive, and the overwriting `+1` still leaks exactly as it did
+/// before), and the generated function contains no `oz_release` at all --
+/// the release the defect would introduce.
+#[test]
+fn a_borrowed_initialiser_behind_a_cast_stays_unmanaged() {
+    let src = format!(
+        "/* oz-pool: Foo=4,Holder=2 */\n{}{}",
+        PREAMBLE(),
+        "\
+static int g_deallocs = 0;
+
+@interface Foo : OZObject
++ (Foo *)make;
+@end
+@implementation Foo
++ (Foo *)make {
+	return [Foo alloc];
+}
+- (void)dealloc {
+	g_deallocs = g_deallocs + 1;
+}
+@end
+
+@interface Holder : OZObject {
+	Foo *_kept;
+}
+- (void)fill;
+- (Foo *)peek;
+@end
+@implementation Holder
+- (void)fill {
+	_kept = [Foo make];
+}
+- (Foo *)peek {
+	return _kept;
+}
+@end
+
+static void churn(Holder *h)
+{
+	Foo *v = (Foo *)[h peek];
+
+	v = [Foo make];
+	(void)v;
+}
+
+#include <stdio.h>
+int main(void) {
+	Holder *h = [Holder alloc];
+	[h fill];
+	churn(h);
+	printf(\"deallocs=%d\\n\", g_deallocs);
+	return 0;
+}
+"
+    );
+    let out = compile_and_run(&src, "cast_init_borrowed_control");
+    assert_eq!(
+        out, "deallocs=0\n",
+        "a borrowed initialiser must not become owned, however it is cast: {}",
+        out
+    );
+    /* The presence half. A count of zero `oz_release(` in `churn` is the
+     * property, and it is asserted on the *extracted* function rather
+     * than the whole file so the needle cannot be satisfied by some
+     * other function's releases -- the emitted C is full of them. */
+    let transpiled = oz2c::transpile(&src).expect("should transpile");
+    let body = transpiled
+        .source_c
+        .split("static void churn(struct Holder *h)")
+        .nth(1)
+        .unwrap_or_else(|| panic!("no churn definition in:\n{}", transpiled.source_c))
+        .split("\n}\n")
+        .next()
+        .unwrap_or("");
+    assert_eq!(
+        body.matches("oz_release(").count(),
+        0,
+        "nothing in `churn` owns anything, so it may emit no release at all; got:\n{}",
+        body
+    );
+}
+
 /// A `return` is a binding site too, and both its halves have to agree
 /// about a cast (#332).
 ///
