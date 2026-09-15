@@ -97,6 +97,31 @@ const DISAGREEING: &str = "\
 @end
 ";
 
+/// `-copy` on `Thing`, as a category so `THING` stays the shared fixture
+/// every other case here reads.
+///
+/// It exists for exactly one case -- the nested shape in
+/// `both_refusals_fire_on_one_nested_store`, whose outer send has to be a
+/// create-rule selector -- and **it is not optional decoration.**
+/// `is_create_rule_selector` answers from the *spelling*, so
+/// `[[_owner build] copy]` is `+1` whether or not `-copy` is declared; but
+/// the emitter separately refuses a send to a selector no class in the
+/// program implements, and without this category that third diagnostic
+/// rides along. Measured: three diagnostics without it, two with
+/// (`class 'Thing' has no method matching 'copy'` is the extra). #511's
+/// own description of the shape omits it, which is how a "both fire"
+/// reading of a three-diagnostic result happens.
+const COPYABLE: &str = "\
+@interface Thing (Copying)
+- (Thing *)copy;
+@end
+@implementation Thing (Copying)
+- (Thing *)copy {
+	return [[Thing alloc] init];
+}
+@end
+";
+
 /// Only `Owner` declares `-build`, so the poll is unanimous and the
 /// receiver's class is never needed.
 const AGREEING: &str = "\
@@ -127,6 +152,116 @@ fn program(classes: &str, tail: &str) -> String {
 /// passing while the absence half went vacuous, which is the whole failure
 /// this pairing exists to prevent.
 const STORE_REFUSAL: &str = "storing a '+1' into an element of";
+
+/// This file's own refusal (#483), by a fragment that identifies **only**
+/// it (`emit.rs:4989`).
+///
+/// Measured the same way `STORE_REFUSAL` was, and for the same reason --
+/// a needle that matches more than one refusal turns an identity
+/// assertion back into a count:
+///
+/// | needle | `git grep -c -F <needle> -- 'tools/oz2c/src/*.rs'` |
+/// |---|---|
+/// | `is not supported` | **11** (collect.rs 2, emit.rs 3, staticbar.rs 6) |
+/// | `storing a '+1' into` | **2** (emit.rs: #477's and #495's) |
+/// | `storing a '+1' into an element of` | **1** (emit.rs:3777) |
+/// | `dispatched directly here` | **1** (emit.rs:4989) |
+///
+/// The full sentence would be more obviously #483's to a reader, but it
+/// is wrapped across two source lines by a `\` continuation, so no
+/// line-oriented grep can measure its cardinality -- and an unmeasured
+/// needle is the thing this table exists to refuse.
+const CONTRADICTION_REFUSAL: &str = "dispatched directly here";
+
+/// Transpile, expecting refusal, and hand back the diagnostics
+/// **unjoined**.
+///
+/// `common::expect_reject` concatenates them into one string, which is
+/// enough to ask "does this text appear" and not enough to ask "how
+/// many diagnostics, and which one is at which column" -- the two
+/// questions `both_refusals_fire_on_one_nested_store` is made of.
+fn reject_diagnostics(source: &str) -> Vec<oz2c::Diagnostic> {
+    match oz2c::transpile(source) {
+        Ok(_) => panic!("expected transpile to be rejected, but it succeeded"),
+        Err(diags) => diags,
+    }
+}
+
+/// One line per diagnostic, with its position -- the failure context for
+/// every assertion below.
+fn render(diags: &[oz2c::Diagnostic]) -> String {
+    diags
+        .iter()
+        .enumerate()
+        .map(|(i, d)| format!("  [{}] {}:{} {}", i, d.line, d.col, d.message))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Both refusals, each identified by its own cardinality-1 needle, each
+/// at its own column, and **nothing else**.
+///
+/// The order is deliberate: the two identity assertions come before the
+/// count, so removing either arm fails saying *which refusal is missing*
+/// rather than "expected 2, got 1". A test that reports only the number
+/// sends the next reader to count diagnostics instead of to the arm that
+/// stopped firing.
+///
+/// And the count alone would not be enough even with both identities
+/// right: `_a[0] = [[_owner build] copy];` into an *ivar* array with
+/// `-copy` undeclared also yields exactly two diagnostics -- #483's plus
+/// the method-existence refusal -- so a `len() == 2` assertion passes on
+/// a program where #477's refusal never ran. That is measured, and it is
+/// why the identities are asserted rather than the total.
+fn assert_both_refusals(diags: &[oz2c::Diagnostic]) {
+    let ctx = render(diags);
+    let store: Vec<&oz2c::Diagnostic> =
+        diags.iter().filter(|d| d.message.contains(STORE_REFUSAL)).collect();
+    let contra: Vec<&oz2c::Diagnostic> =
+        diags.iter().filter(|d| d.message.contains(CONTRADICTION_REFUSAL)).collect();
+    assert_eq!(
+        store.len(),
+        1,
+        "#477's store refusal is missing (or duplicated): expected exactly one \
+         diagnostic containing {:?}, found {}. If the count below is 1, that arm \
+         stopped firing -- it is not a wording change, or the needle's own \
+         presence check in `..._is_this_refusal_not_507s` would be red too.\n{}",
+        STORE_REFUSAL,
+        store.len(),
+        ctx
+    );
+    assert_eq!(
+        contra.len(),
+        1,
+        "#483's contradiction refusal is missing (or duplicated): expected exactly \
+         one diagnostic containing {:?}, found {}. If the count below is 1, this \
+         file's own refusal stopped firing on a nested receiver -- every other test \
+         here sends to an *unnested* one, so this is the only place that would \
+         notice.\n{}",
+        CONTRADICTION_REFUSAL,
+        contra.len(),
+        ctx
+    );
+    assert_eq!(
+        diags.len(),
+        2,
+        "exactly two diagnostics, so no third refusal rides along unremarked -- \
+         drop `COPYABLE` and `class 'Thing' has no method matching 'copy'` makes it \
+         three:\n{}",
+        ctx
+    );
+    /* The columns are the point: one program, one statement, two nodes.
+     * The store's span starts at the statement, the send's inside it, so
+     * the outer column is strictly the smaller -- which is what "their
+     * own columns" means, and what a single diagnostic covering both
+     * would not have. */
+    assert!(
+        store[0].line == contra[0].line && store[0].col < contra[0].col,
+        "the two refusals must land on the same statement at their own columns, \
+         the outer store's before the nested send's:\n{}",
+        ctx
+    );
+}
 
 /// Every refusal has to name the selector, both sides of the
 /// disagreement, and why a poll ran at all.
@@ -448,6 +583,87 @@ int main(void) {
         "an unambiguous `+1` gives no contradiction, so this refusal must stay quiet:\n{}",
         store_diags
     );
+}
+
+/// **Row 3: the one shape where both refusals fire** (#511 item 1).
+///
+/// The sibling test above pins that neither refusal *masks* the other on
+/// a single node, where their preconditions are disjoint by
+/// construction. This pins the complement, and it is the claim that was
+/// unassertable until both refusals were on one tree (#507 and #508
+/// landed separately, each branch carrying only its own):
+///
+/// ```objc
+/// id a[2];
+/// a[0] = [[_owner build] copy];
+/// ```
+///
+/// Two nodes, one statement. The **inner** send's implementor poll is
+/// ambiguous, so this file's refusal fires on it; the **outer** store is
+/// a `+1` into a non-ivar array element, because `copy` is a create-rule
+/// selector, so #477's fires on that. So the general statement is
+/// **disjoint per node, co-existing across nested nodes** -- not "they
+/// cannot both fire".
+///
+/// **Nothing short-circuits, and that is `main`'s property rather than
+/// either PR's.** Verified on this tree rather than taken on trust,
+/// because it is the whole premise:
+///
+/// * `EmitCtx::err` (`emit.rs:1478`) and `err_detailed` (`emit.rs:1496`)
+///   both end in `self.diags.push(..)` (`emit.rs:1479`, `emit.rs:1511`).
+///   Append only -- no replace, no first-wins guard, and `push` is the
+///   sole way either writes.
+/// * `lib.rs` gates **after** the pass returns:
+///   `let result = emit::emit(..); if !result.diagnostics.is_empty() {
+///   return Err(result.diagnostics) }` (`lib.rs:277-286`). The emit pass
+///   has already finished walking by the time anything looks at the
+///   vector.
+/// * `emit.rs` contains **no** early return on a non-empty accumulated
+///   vector: its only `is_empty` tests are on the locally-scoped
+///   `reject_diags` from `staticbar::check_method_body` /
+///   `check_function_body` (`emit.rs:7997`, `emit.rs:8763`), and each
+///   extends `ctx.diags` and falls through to keep the body as raw text.
+///   Neither returns, and neither reads `ctx.diags`.
+///
+/// If any of those three changes, this test is where it shows up -- and
+/// it shows up as one refusal named missing, not as a count.
+#[test]
+fn both_refusals_fire_on_one_nested_store() {
+    let src = program(
+        &format!("{}{}", COPYABLE, DISAGREEING),
+        "\
+@interface P : OZObject
+{
+	Owner *_owner;
+}
+- (void)setup;
+- (void)run;
+@end
+@implementation P
+- (void)setup {
+	_owner = [Owner alloc];
+}
+- (void)run {
+	id a[2];
+	a[0] = [[_owner build] copy];
+}
+@end
+
+int main(void) {
+	return 0;
+}
+",
+    );
+    let diags = reject_diagnostics(&src);
+    assert_both_refusals(&diags);
+    /* And #483's refusal is the *whole* refusal, not just its first
+     * clause: the disagreement it names has to be the real one, or this
+     * would pass on a refusal that merely reused the phrase. Rendered
+     * through `Display` here, not through `render` above, because the
+     * `note` tier this checks is only in the formatted form. */
+    let formatted =
+        diags.iter().map(|d| d.to_string()).collect::<Vec<_>>().join("\n");
+    assert_refusal(&formatted, "build");
 }
 
 // ---------------------------------------------------------------------------
