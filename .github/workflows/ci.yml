@@ -159,6 +159,16 @@ jobs:
       - name: Test the CI paths filter
         run: .github/ci-affects-target.test.sh
 
+      # Here for the same two reasons, and one more: the version
+      # omission gate itself runs only on `push` to `main` (see
+      # .github/workflows/version-omission.yml for why it cannot run on
+      # a pull request), so this is the only place a change to it is
+      # checked *before* it reaches the branch it polices. Its 30 cases
+      # build their own throwaway repositories and drive its regex
+      # against the six omissions #512 recorded.
+      - name: Test the version omission gate
+        run: .github/version-omission.test.sh
+
   behavior-tests:
     runs-on: ubuntu-latest
     strategy:
