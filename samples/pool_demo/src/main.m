@@ -9,11 +9,7 @@
  */
 
 #import <Foundation/OZObject.h>
-
-/* printk declared here so Clang AST dump works without Zephyr generated
- * headers.  The transpiler emits the real #include <zephyr/sys/printk.h>
- * in the generated C output. */
-void printk(const char *fmt, ...);
+#include <zephyr/kernel.h>
 
 /* ── Sensor class ─────────────────────────────────────────────────── */
 

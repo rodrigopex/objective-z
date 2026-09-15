@@ -7,6 +7,7 @@
  */
 
 #import <Foundation/Foundation.h>
+#include <zephyr/kernel.h>
 
 int main(void)
 {

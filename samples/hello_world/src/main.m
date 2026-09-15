@@ -6,6 +6,7 @@
 
 #import <Foundation/OZObject.h>
 #import <Foundation/OZLog.h>
+#include <zephyr/kernel.h>
 
 @interface MyFirstObject: OZObject
 

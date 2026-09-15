@@ -1,8 +1,7 @@
 /* OZLed - ObjC source for transpiler demo */
 
 #import "OZLed.h"
-
-void printk(const char *fmt, ...);
+#include <zephyr/kernel.h>
 
 @implementation OZHelper
 - (instancetype)initWithValue:(int)value andHelper:(OZHelper *)helper

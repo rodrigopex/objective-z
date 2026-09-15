@@ -17,6 +17,7 @@
  */
 
 #import <Foundation/Foundation.h>
+#include <zephyr/kernel.h>
 
 /* `<OZObjectProtocol>` is what lets a receiver *typed as this protocol* be
  * introspected at all (#307). Clang resolves a message to an `id<P>`
