@@ -318,6 +318,74 @@ int main(void) {
     );
 }
 
+/// The shape where this refusal and **#507's** could collide, pinned so
+/// neither lane can shadow the other unnoticed.
+///
+/// #507 refuses a `+1` stored into an array element that is not an ivar.
+/// Its precondition is `arc::binds_ownership(right, ..)` being **true**;
+/// this refusal fires only when the poll came back `Ambiguous`, which
+/// `is_owning_expr` reads as *borrowed* — the leaking direction, per the
+/// standing rule. So on **one** expression the two preconditions are
+/// disjoint by construction: the definiteness #507 needs is exactly what
+/// this refusal exists because it was missing.
+///
+/// Measured rather than argued, by cherry-picking #507's two code commits
+/// onto this branch and transpiling this program: **only this refusal is
+/// emitted**, and the array-element context suppresses nothing. The
+/// converse is also measured — `a[0] = [[Thing alloc] init];` gives only
+/// #507's — and so is the one case where **both** fire, which the
+/// same-node argument does not cover and which is worth stating plainly:
+/// `a[0] = [[_owner build] copy];` nests them (this refusal on the inner
+/// ambiguous send, #507's on the outer store, whose `copy` is a
+/// create-rule selector) and produces **both** diagnostics at their own
+/// columns, because `ctx.err` accumulates and `front_end` returns every
+/// diagnostic rather than stopping at the first.
+///
+/// So "they cannot both fire" is true per node and false across nested
+/// nodes. Either way neither is masked, and neither refusal is made
+/// untestable by the other.
+///
+/// On this branch alone the assertion is that the store context does not
+/// suppress this refusal. Once #507 lands it additionally asserts #507
+/// does not shadow it — strictly stronger, never weaker, so this is not a
+/// guard that can quietly stop testing anything.
+#[test]
+fn an_ambiguous_send_into_an_array_element_is_this_refusal_not_507s() {
+    let src = program(
+        DISAGREEING,
+        "\
+@interface P : OZObject
+{
+	Owner *_owner;
+}
+- (void)setup;
+- (void)run;
+@end
+@implementation P
+- (void)setup {
+	_owner = [Owner alloc];
+}
+- (void)run {
+	id a[2];
+	a[0] = [_owner build];
+}
+@end
+
+int main(void) {
+	return 0;
+}
+",
+    );
+    let diags = expect_reject(&src);
+    assert_refusal(&diags, "build");
+    assert!(
+        !diags.contains("is not supported"),
+        "#507's store refusal must not fire here -- its precondition is \
+         `binds_ownership(right)`, and an ambiguous poll reads as borrowed:\n{}",
+        diags
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Controls: what the refusal must NOT reach
 // ---------------------------------------------------------------------------
