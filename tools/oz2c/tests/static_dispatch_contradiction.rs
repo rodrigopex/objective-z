@@ -120,6 +120,14 @@ fn program(classes: &str, tail: &str) -> String {
     )
 }
 
+/// #507's store refusal, by the **shortest unique** fragment of its text
+/// (`emit.rs:3777`). One constant so the absence and presence halves of
+/// `an_ambiguous_send_into_an_array_element_is_this_refusal_not_507s`
+/// cannot drift apart -- two literals would let the presence half keep
+/// passing while the absence half went vacuous, which is the whole failure
+/// this pairing exists to prevent.
+const STORE_REFUSAL: &str = "storing a '+1' into an element of";
+
 /// Every refusal has to name the selector, both sides of the
 /// disagreement, and why a poll ran at all.
 fn assert_refusal(diags: &str, selector: &str) {
@@ -345,10 +353,27 @@ int main(void) {
 /// nodes. Either way neither is masked, and neither refusal is made
 /// untestable by the other.
 ///
-/// On this branch alone the assertion is that the store context does not
-/// suppress this refusal. Once #507 lands it additionally asserts #507
-/// does not shadow it — strictly stronger, never weaker, so this is not a
-/// guard that can quietly stop testing anything.
+/// **Two programs, because half of this is an absence assertion.** An
+/// absence check passes for two different reasons — the thing really did
+/// not happen, or the needle no longer matches anything — and this repo
+/// has a green-guard-asserting-nothing incident from exactly that. So the
+/// second program is the **presence** half: a store that *is* an
+/// unambiguous `+1`, which must produce #507's diagnostic. If the needle
+/// ever stops matching #507's text, the presence half fails and names
+/// that, instead of the absence half silently going vacuous.
+///
+/// **The needle is `storing a '+1' into an element of`, and its
+/// cardinality is the reason.** Measured on the merged tree:
+/// `is not supported` matches **11** places across `collect.rs`,
+/// `emit.rs` and `staticbar.rs`, so asserting its absence under a message
+/// naming #507 would fail for ten other reasons while blaming #507 — a
+/// test that fails for a reason other than the one it states costs the
+/// next reader more than one that fails silently. The shorter prefix
+/// `storing a '+1' into` matches **2**: the other is #495's parameter
+/// destination at `emit.rs:3433`, a *sibling* refusal differing by three
+/// words in the middle, which is the version a reviewer's eye skips. Only
+/// the full phrase is unique (`emit.rs:3777`). Narrowing halfway would
+/// have felt like the fix.
 #[test]
 fn an_ambiguous_send_into_an_array_element_is_this_refusal_not_507s() {
     let src = program(
@@ -379,10 +404,49 @@ int main(void) {
     let diags = expect_reject(&src);
     assert_refusal(&diags, "build");
     assert!(
-        !diags.contains("is not supported"),
+        !diags.contains(STORE_REFUSAL),
         "#507's store refusal must not fire here -- its precondition is \
          `binds_ownership(right)`, and an ambiguous poll reads as borrowed:\n{}",
         diags
+    );
+
+    /* The presence half. Same store, same non-ivar array, but the value
+     * is an unambiguous `+1` -- so `binds_ownership` is true, #507's
+     * precondition holds, and its diagnostic must appear. This is what
+     * keeps the absence assertion above honest: it fails if the needle
+     * stops matching #507's text, rather than letting the absence check
+     * pass because it matches nothing. */
+    let unambiguous = program(
+        DISAGREEING,
+        "\
+@interface P : OZObject
+- (void)run;
+@end
+@implementation P
+- (void)run {
+	id a[2];
+	a[0] = [[Thing alloc] init];
+}
+@end
+
+int main(void) {
+	return 0;
+}
+",
+    );
+    let store_diags = expect_reject(&unambiguous);
+    assert!(
+        store_diags.contains(STORE_REFUSAL),
+        "the needle {:?} must still match #507's own diagnostic -- if it does not, the \
+         absence assertion above is vacuous rather than passing:\n{}",
+        STORE_REFUSAL,
+        store_diags
+    );
+    /* And this program is #507's alone: no ambiguous send in it. */
+    assert!(
+        !store_diags.contains("dispatched directly here"),
+        "an unambiguous `+1` gives no contradiction, so this refusal must stay quiet:\n{}",
+        store_diags
     );
 }
 
