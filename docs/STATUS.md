@@ -3737,3 +3737,84 @@ catches it" would have credited a backstop that never sees the file.
   because the same harness, given an upcast return, *does* report a
   difference -- a sweep that cannot see the change it is measuring reports
   agreement about nothing (#424, #433).
+## A mutator's first question is its receiver's state (#542)
+
+`_oz_alloc` memsets a fresh slab slot, and **nothing in this tree requires an
+initialiser before a mutator** -- no `staticbar` refusal, no generated guard, no
+gate. So for every Foundation class, `[Klass alloc]` followed directly by a
+mutating send is a *reachable* shape, and the mutator runs against ivars that
+are all zero. That is a standing rule about how SDK methods must be written,
+not a note about one class: **a mutator that reads its own ivars has to be
+correct for the all-zero receiver, because it can be given one.**
+
+`src/OZMutableString.m` was not, in three ways at once, which is why they were
+filed and fixed together:
+
+- **A capacity-doubling loop seeded at `_capacity`.** Both mutators wrote
+  `size_t newCap = _capacity; while (newCap < needed) { newCap = newCap * 2; }`.
+  At `_capacity == 0` the body is `0 * 2 == 0`, so the condition can never go
+  false. Worth naming the failure mode precisely: **an unbounded hang, not a
+  crash.** On target there is no allocator to fail and no fault to trap, so the
+  thread simply stops making progress -- which is strictly worse than a crash,
+  because a crash names its cause. Both sites now floor the seed at 16, the
+  minimum every initialiser in the file allocates, so a floored grow lands on
+  the capacity an initialised instance would have had.
+- **`memcpy(dst, NULL, 0)`.** `-appendCString:`'s grow path copied the old
+  contents with `memcpy(newBuf, _data, _length)`, and on the zero-capacity path
+  `_data` is NULL and `_length` is 0. ISO C requires the pointer arguments to
+  every `<string.h>` function to be valid *even at a length of zero*, so this
+  is undefined however reliably real implementations tolerate it. Guarded.
+  `free(NULL)` on the next line is defined and needs no guard -- the asymmetry
+  is real and worth not "tidying" into consistency.
+- **A guard that checked the argument and not the receiver.** `-setString:`'s
+  nil branch did `((char *)_data)[0] = '\0'`, a write through NULL. The obvious
+  reading of that defect -- "no nil check" -- is wrong and sends a reader to
+  the wrong line: the argument check was present and correct, and is the reason
+  control is in that branch at all. **State which operand a missing check is
+  missing on.** The fix records `_length = 0` and returns rather than
+  allocating, because allocating in a `void` method reintroduces exactly the
+  silent-degrade this file is already criticised for (below).
+
+### The test has to construct the un-initialised receiver
+
+A case that starts from `[[OZMutableString alloc] initWithCString:...]` cannot
+reach any of the three, which is why eleven existing assertions over this class
+covered none of them. The regression coverage is `[OZMutableString alloc]` with
+no `-init`, and that shape does survive ARC: assigned to a local or to a strong
+ivar it lives to the end of its scope, so the mutating send really does run
+against the zeroed slot. (Reported here because the question -- whether
+scope-based ARC releases a bare `+alloc` at end of full-expression -- is asked
+every time someone tries to write this kind of test. It does not.)
+
+**The pre-fix behaviour is a hang, so "the test fails without the fix" needed
+arranging rather than assuming.** Two halves, and the difference between them
+is the runner:
+
+- `tests/behavior/cases/foundation/mutable_string_basic.m` needs nothing
+  special: `tests/behavior/conftest.py` bounds the outer process at 60s and
+  `tests/tools/compile_and_run.py` bounds the binary at 30s, so a regression
+  is reported as a `TimeoutExpired` failure.
+- `tools/oz2c/tests/behavior_foundation_mutable_string.rs` calls `alarm(3)` in
+  the generated program before the risky sends, and that call is load-bearing.
+  `common::compile_and_run` runs the built binary through `Command::output()`
+  with **no timeout**, so a regression in either loop would wedge `cargo test`
+  -- and with it the `rust-tests` gate -- instead of failing it. Under SIGALRM
+  the process dies, `output()` returns, and the harness's `status.success()`
+  assertion fires. Any future test in the Rust suite whose failure mode is
+  non-termination needs the same treatment.
+
+Each of the three fixes was reverted on its own, with the other two in place,
+to check that no one of them carries the others: dropping the `-setString:`
+floor times out at 30s in the corpus run, dropping the nil guard exits 245.
+
+### Two things deliberately left alone
+
+- **Both mutators still `return` silently when `malloc` fails**
+  (`-appendCString:` and `-setString:`). That is a real violation of "this
+  project never silently degrades", and it is #107's design guidance for a
+  revived `OZMutableData` rather than part of this fix -- a `void` mutator has
+  nowhere to report to, so fixing it is an API decision, not a patch.
+- **The raw `malloc`/`free` in this file.** Allocation is supposed to route
+  through the PAL, but that is policy: no document in this tree states it, no
+  gate checks it, and live sites exist, this file among them. Converting it is
+  a separate decision with its own blast radius.
