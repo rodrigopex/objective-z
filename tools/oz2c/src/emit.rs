@@ -4241,6 +4241,52 @@ fn render_synchronized_statement(node: Node, ctx: &mut EmitCtx) -> (String, Stri
     )
 }
 
+/// The declared return type spelled as a cast, when returning a value of
+/// static type `value_ty` needs one to be valid C -- `None` otherwise.
+///
+/// Inheritance here is struct embedding, so a subclass struct pointer is
+/// not implicitly convertible to its base the way an Objective-C object
+/// pointer is. The plain upcast
+///
+/// ```objc
+/// - (OZString *)labelWith:(OZString *)prefix
+/// {
+///         OZMutableString *built = ...;
+///         return built;
+/// }
+/// ```
+///
+/// is legal Objective-C and accepted by Clang, but the uncast C `return`
+/// oz2c emitted for it is `returning 'struct OZMutableString *' from a
+/// function with incompatible return type 'struct OZString *'` on GCC
+/// (#532, px-app CHALLENGES.md F9). Any factory typed as the abstract
+/// class and returning a concrete subclass is this shape, so it is easy
+/// to reach without meaning to.
+///
+/// **Strict descent only, in that direction only.** A value already of
+/// the declared type needs no cast, and `Program::is_descendant_of`
+/// excludes the class itself, so asking it *is* the whole test. The
+/// other direction -- a base pointer returned where a subclass is
+/// declared -- is a narrowing the programmer has to write themselves;
+/// casting it silently would suppress a diagnostic rather than emit one,
+/// and there is nothing here that knows it is safe.
+///
+/// Not the same cast as the one `send_to_resolved_class` (and
+/// `render_message`) insert, despite the identical text. That one is at
+/// the *call* site and keyed on `MethodSig::returns_instancetype` --
+/// covariance on `instancetype`, not a subclass relation -- so neither
+/// can answer the other's question.
+fn upcast_to_declared_return(value_ty: &str, ctx: &EmitCtx) -> Option<String> {
+    let declared = ctx.method_return_type.trim();
+    let declared_class = class_name_from_type(declared)?;
+    let value_class = class_name_from_type(value_ty)?;
+    if ctx.program.is_descendant_of(&value_class, &declared_class) {
+        Some(declared.to_string())
+    } else {
+        None
+    }
+}
+
 /// A `return` inside one or more `@synchronized` blocks has to run each
 /// pending unlock (innermost first) before leaving. A returned value is
 /// evaluated into a temporary first, so the expression still sees the
@@ -4338,17 +4384,45 @@ fn render_return_statement(node: Node, ctx: &mut EmitCtx) -> (String, String) {
 
     // Outside any @synchronized, behave exactly as the catch-all in
     // `render_expr` would: byte-identical when nothing needs translating.
+    //
+    // `needs_translation` names `return_statement` itself, though, so this
+    // first arm is unreachable from here -- every return that gets this
+    // far is rebuilt. It is kept because this function is also the
+    // catch-all's shape and the condition is the one that shape states;
+    // nothing depends on it firing.
     if ctx.sync_cleanups.is_empty() && arc_releases.is_empty() && !needs_retain {
         if !needs_translation(node, ctx.src) {
             return (node_text(node, ctx.src).to_string(), "id".to_string());
         }
+        /* The returned expression's rendered text *and* its static type,
+         * from the one `render_expr` call that produces both. Rendering it
+         * a second time to ask only for the type is not an option here:
+         * `render_expr` appends -- hoisted blocks, boxed string literals,
+         * `__block` statics, diagnostics -- so a second call would emit a
+         * boxed literal twice and the generated C would not link.
+         * `render_expr_type_only` restores two of those and would not be
+         * enough. */
+        let returned = returned_children
+            .iter()
+            .copied()
+            .find(|c| c.kind() != "return" && c.kind() != ";");
+        let mut rendered: Option<(String, String)> = None;
         let rebuilt = rebuild(node, ctx, &mut |child, ctx| {
             if needs_translation(child, ctx.src) {
-                Some(render_expr(child, ctx).0)
+                let (text, ty) = render_expr(child, ctx);
+                if returned.is_some_and(|r| r.id() == child.id()) {
+                    rendered = Some((text.clone(), ty));
+                }
+                Some(text)
             } else {
                 None
             }
         });
+        if let Some((text, ty)) = rendered {
+            if let Some(cast) = upcast_to_declared_return(&ty, ctx) {
+                return (format!("return ({})({});", cast, text), "id".to_string());
+            }
+        }
         return (rebuilt, "id".to_string());
     }
 
@@ -4363,7 +4437,7 @@ fn render_return_statement(node: Node, ctx: &mut EmitCtx) -> (String, String) {
         None if cleanups.is_empty() => ("return;".to_string(), "id".to_string()),
         None => (format!("{}\n\treturn;", cleanups), "id".to_string()),
         Some(value) => {
-            let (value_text, _) = render_expr(value, ctx);
+            let (value_text, value_ty) = render_expr(value, ctx);
             ctx.block_counter += 1;
             let (line, col) = line_col(ctx.src, node.start_byte());
             let tmp = format!("_oz_sync_ret_L{}_C{}_{}", line, col, ctx.block_counter);
@@ -4388,6 +4462,17 @@ fn render_return_statement(node: Node, ctx: &mut EmitCtx) -> (String, String) {
                     ),
                     None => value_text,
                 }
+            } else if let Some(cast) = upcast_to_declared_return(&value_ty, ctx) {
+                /* #532 one construct over. This path does not emit a
+                 * `return <value>` at all -- it declares a temporary of
+                 * the method's return type and *assigns* the value to it,
+                 * so an uncast subclass pointer is the identical
+                 * incompatible-pointer diagnostic on an initialiser
+                 * instead of on a return. Below the retain branch and not
+                 * beside it because the retain already casts to the
+                 * return type on its way back from `oz_retain`, which
+                 * covers the upcast too. */
+                format!("({})({})", cast, value_text)
             } else {
                 value_text
             };
