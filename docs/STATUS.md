@@ -3695,3 +3695,45 @@ catches it" would have credited a backstop that never sees the file.
   made to fail.**
 - **The version is `tools/oz2c/Cargo.toml`**, bumped in the same commit
   as the change it describes. The repo-level `VERSION` file is retired.
+
+- **Two casts with identical text, answering different questions -- do not
+  merge them (#532).** `render_return_statement` now casts a returned value to
+  the method's declared return type when the value's static class is a strict
+  descendant of it, because inheritance here is struct embedding and C has no
+  implicit subclass-to-base pointer conversion. The emitted text is
+  `return (struct OZString *)(built);`.
+
+  `send_to_resolved_class` and `render_message` emit a cast that reads
+  *exactly the same* and is not the same rule: theirs is keyed on
+  `MethodSig::returns_instancetype` and is covariance on `instancetype` at the
+  **call** site (OZ-003). Neither can answer the other's question -- one asks
+  "is this class a descendant of the declared return type", the other "did the
+  callee declare `instancetype`, and which class did the send resolve to". A
+  reader who notices the duplicated spelling and factors them together will
+  produce something that is wrong for one caller in a way no test names,
+  which is why this is written down rather than left to be rediscovered.
+
+  Two things about the shape that are easy to get backwards:
+
+  - **Strict descent, in one direction only.** A value already of the declared
+    type needs no cast, and `Program::is_descendant_of` excludes the class
+    itself, so asking it *is* the whole test. The opposite direction -- a base
+    pointer returned where a subclass is declared -- is a narrowing the author
+    has to write, and casting it silently would suppress a diagnostic instead
+    of emitting one.
+  - **There are two exits and both emitted it uncast.** The plain `return` is
+    rebuilt in place; a `return` with an ARC release owed in the same scope
+    goes out through the cleanup path, which declares `{ret_ty} {tmp} =
+    {value};` and so produced the *same* defect as an initialiser rather than
+    as a return. Disabling the fix makes the two tests fail with two different
+    Clang diagnostics -- `returning ... from a function with result type` and
+    `incompatible pointer types initializing` -- and that difference is the
+    evidence they are genuinely separate paths rather than one path reached
+    twice.
+
+  The blast radius is nil on code that was already correct: 121 of 121 corpus
+  cases transpile byte-identically before and after, and
+  `tests/zephyr/generated/` does not move. That number means something only
+  because the same harness, given an upcast return, *does* report a
+  difference -- a sweep that cannot see the change it is measuring reports
+  agreement about nothing (#424, #433).
