@@ -142,6 +142,39 @@ Stated precisely rather than as "everything works":
   the repair is length-preserving because every offset in the file is a span
   into that text, so there is nowhere to put the semicolon, and the
   absorption stands. No sample or test writes that shape.
+- **`NS_ENUM` and `NS_OPTIONS` are not provided, and defining them would not
+  help.** Write a bare `enum X`, which is the spelling
+  `tests/behavior/cases/enum/{enum_as_ivar,enum_from_header,enum_in_switch}.m`
+  cover as an ivar, a method parameter, a return type and a `switch` subject
+  (#526). Neither macro is declared by `include/oz_sdk/`, so a `.m` writing one
+  dies at the Clang AST dump -- and not with an undefined identifier:
+  `typedef NS_ENUM(int, Dir) {` lexes as an implicit-`int` function definition,
+  so clang 19 reports eleven errors led by `function definition declared
+  'typedef'` and never once names the macro. That the refusal is not a located
+  oz2c error is the open half of #526.
+
+  **Defining them is not the fix, and that is measured rather than argued.**
+  Clang accepts the canonical `enum _name : _type _name; enum _name : _type`
+  expansion and dumps a complete AST for it, but oz2c does not expand macros --
+  the source text is substituted in place -- so tree-sitter's CST is
+  *unchanged* by the definition: the same `ERROR` node, absorbing the
+  `@interface` and `@implementation` into a `compound_statement` that `collect`
+  never sees, exactly as the bullet above describes. On `--allow-missing-ast`
+  that is a silent degrade today -- oz2c exits 0 and copies the Objective-C
+  into the generated `.c`, where GCC answers `stray '@' in program`. Supporting
+  the macros needs macro expansion in the frontend, not a header; the day the
+  frontend expands macros is the day this paragraph expires.
+
+  **Two near-misses, and neither is the alternative.** `typedef enum { ... } X;`
+  transpiles and then does not compile: enum definitions are hoisted into
+  `oz2c_dispatch.h` so a prototype can take one by value, and a `typedef` is
+  not, so that header declares `X`-typed prototypes over a type it never
+  defines and GCC answers `unknown type name 'X'`. And `enum X : int`
+  transpiles, compiles and runs -- but the fixed-underlying-type spelling
+  survives verbatim into the hoisted block, where real GCC 14.3 warns `ISO C
+  does not support specifying 'enum' underlying types before C23`, so it lands
+  in `just test-pedantic`. Bare `enum X` is the one spelling carrying none of
+  the three.
 
 ## Introspection and reflection (#226)
 
