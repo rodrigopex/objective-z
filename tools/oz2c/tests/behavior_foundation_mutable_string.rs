@@ -317,3 +317,95 @@ fn the_description_dispatcher_routes_a_mutable_string_to_its_superclass() {
         out.source_c
     );
 }
+
+// ---------------------------------------------------------------------------
+// Mutators on a receiver that never ran an initialiser (#542)
+// ---------------------------------------------------------------------------
+//
+// `_oz_alloc` memsets a fresh slab slot, and nothing in `OZMutableString`
+// requires an initialiser before a mutator, so `[OZMutableString alloc]`
+// followed by a send arrives in `-appendCString:` and `-setString:` with
+// `_capacity == 0` and `_data == NULL`. Three defects followed, all fixed in
+// `src/OZMutableString.m` -- which `ozmutablestring_src` splices in verbatim
+// via `include_str!`, so this test reads the shipped source:
+//
+//   - both capacity-doubling loops seeded `newCap` at `_capacity` and doubled,
+//     and `0 * 2 == 0` never reaches `newLen + 1`. Not a crash: an unbounded
+//     hang, with no allocator to fail and no fault to trap.
+//   - `-appendCString:`'s grow path did `memcpy(newBuf, _data, _length)` with
+//     `_data == NULL`, which ISO C leaves undefined even at length zero.
+//   - `-setString:`'s nil branch wrote `((char *)_data)[0] = '\0'` through
+//     that NULL. Its *argument* check was present and correct; the receiver's
+//     state was what went unchecked.
+//
+// `alarm(3)` rather than a bare run, and it is load-bearing: `compile_and_run`
+// executes the built binary through `Command::output()` with no timeout of its
+// own, so a regression in either loop would wedge `cargo test` -- and CI --
+// rather than fail it. Under SIGALRM the process dies, `output()` returns, the
+// harness's `status.success()` assertion fires, and the failure names itself.
+// The behavior corpus half of this coverage
+// (`tests/behavior/cases/foundation/mutable_string_basic.m`) needs no such
+// trick: its runner already bounds the binary at 30s.
+//
+// Counterfactuals, each with the other two fixes left in place: dropping the
+// `-setString:` floor times out at 30s in the corpus run; dropping the nil
+// guard exits 245. Both floors and the guard were reverted one at a time, so
+// no one of the three is carrying the other two.
+#[test]
+fn mutators_survive_a_receiver_that_never_ran_an_initialiser() {
+    let src = format!(
+        "/* oz-pool: OZMutableString=4,Uninit=1 */\n{}{}{}\n\
+@interface Uninit : OZObject
+- (void)run;
+@end
+
+@implementation Uninit
+- (void)run {{
+	/* Appending to a zero-capacity receiver: the floored grow has to
+	 * terminate *and* allocate a usable buffer, so the contents are
+	 * asserted rather than just the survival. */
+	OZMutableString *appended = [OZMutableString alloc];
+	OZMutableString *assigned = [OZMutableString alloc];
+	OZMutableString *emptied = [OZMutableString alloc];
+	OZString *replacement = @\"assigned from nothing\";
+
+	[appended appendCString:\"grown from nothing\"];
+	printf(\"appended=%s len=%u\\n\", [appended cString], (unsigned)[appended length]);
+
+	[assigned setString:replacement];
+	printf(\"assigned=%s len=%u\\n\", [assigned cString], (unsigned)[assigned length]);
+
+	/* No contents to assert: `-cString` returns `_data` verbatim and
+	 * this receiver has no buffer. Reaching the print is the claim. */
+	[emptied setString:nil];
+	printf(\"emptied len=%u\\n\", (unsigned)[emptied length]);
+}}
+@end
+
+#include <stdio.h>
+#include <unistd.h>
+int main(void) {{
+	Uninit *u = [[Uninit alloc] init];
+	/* See the comment above: the pre-#542 failure is a hang, and the
+	 * Rust harness runs the binary unbounded. */
+	alarm(3);
+	[u run];
+	alarm(0);
+	return 0;
+}}
+",
+        PREAMBLE(),
+        ozstring_src(),
+        ozmutablestring_src()
+    );
+
+    let stdout = compile_and_run(&src, "mutable_string_uninitialised_receiver");
+    assert_eq!(
+        stdout,
+        "appended=grown from nothing len=18\n\
+         assigned=assigned from nothing len=21\n\
+         emptied len=0\n",
+        "a mutator on a receiver straight off `+alloc` must terminate and \
+         must not write through a NULL `_data` (#542)"
+    );
+}
