@@ -108,6 +108,20 @@
 	size_t newLen = _length + addLen;
 	if (newLen + 1 > _capacity) {
 		size_t newCap = _capacity;
+		/* `+alloc` memsets the slot, and nothing in this class
+		 * requires an initialiser before a mutator, so a receiver
+		 * messaged straight off `+alloc` arrives here with
+		 * `_capacity == 0`. Doubling from zero never grows, so the
+		 * condition below could never go false and the thread hung
+		 * -- no allocator to fail and no fault to trap, just no
+		 * further progress (#542). 16 rather than 1 because it is the
+		 * minimum every initialiser in this file allocates, so a
+		 * floored grow lands on the capacity an initialised instance
+		 * would have had.
+		 */
+		if (newCap == 0) {
+			newCap = 16;
+		}
 		while (newCap < newLen + 1) {
 			newCap = newCap * 2;
 		}
@@ -115,7 +129,16 @@
 		if (newBuf == NULL) {
 			return;
 		}
-		memcpy(newBuf, _data, _length);
+		/* `_data` is NULL on that same zero-capacity path, and
+		 * `memcpy` requires valid pointers even for a length of zero
+		 * -- the string-handling clause of ISO C says so of every
+		 * function in `<string.h>` -- so `memcpy(newBuf, NULL, 0)`
+		 * is undefined however reliably real implementations tolerate
+		 * it. `free(NULL)` below *is* defined, and needs no guard.
+		 */
+		if (_data != NULL) {
+			memcpy(newBuf, _data, _length);
+		}
 		free((void *)_data);
 		_data = newBuf;
 		_capacity = newCap;
@@ -135,7 +158,18 @@
 - (void)setString:(OZString *)aString
 {
 	if (aString == nil) {
-		((char *)_data)[0] = '\0';
+		/* The argument check was never the missing one -- this branch
+		 * is reached precisely because `aString` *is* nil. What was
+		 * unchecked is the *receiver*: straight off `+alloc` there is
+		 * no buffer to terminate, and this wrote through a NULL
+		 * `_data` (#542). Emptying an instance that holds nothing is
+		 * already done, so record the length and leave; allocating
+		 * here would put a `malloc` failure into a `void` method,
+		 * which is the shape this file is already criticised for.
+		 */
+		if (_data != NULL) {
+			((char *)_data)[0] = '\0';
+		}
 		_length = 0;
 		return;
 	}
@@ -143,6 +177,11 @@
 	size_t len = [aString length];
 	if (len + 1 > _capacity) {
 		size_t newCap = _capacity;
+		/* Zero capacity off `+alloc` again, same non-terminating
+		 * doubling and same floor as `-appendCString:` (#542). */
+		if (newCap == 0) {
+			newCap = 16;
+		}
 		while (newCap < len + 1) {
 			newCap = newCap * 2;
 		}
