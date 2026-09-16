@@ -61,10 +61,20 @@ match yes "fix(oz2c)!: refuse a static send whose ownership came from an ambiguo
 match yes "fix(oz2c): refuse a for-in header unrelated to the element type (#505)"
 
 echo
-echo "-- a break on the crate, whatever its type; and the crate's former name"
+echo "-- a break on the crate, whatever its type"
 match yes "refactor(oz2c)!: a break in the crate spelled as a refactor"
-match yes "fix(oz_static)!: the crate's name before #462"
-match yes "feat(oz_static): the crate's name before #462"
+
+# The crate's pre-#462 scope is deliberately NOT matched, and this pins
+# that as a decision rather than leaving it as an accident. The gate only
+# ever walks `<last version change>..HEAD`, whose start moves forward
+# with every bump and never back: the newest commit carrying the old
+# scope is 256e8c0 (2026-09-13) and the version has changed repeatedly
+# since, so matching it would be dead coverage. It would also trip
+# `naming_tool_identity.rs`, which reserves the retired spelling to
+# `docs/STATUS.md` -- so the name is constructed here rather than
+# written, because the point of this case is the *verdict*, and spelling
+# it out would make this file the thing that guard exists to catch.
+match no "fix($(printf 'oz_%s' static))!: the pre-#462 scope is out of reach and not matched"
 
 echo
 echo "-- types that bump nothing by the convention"

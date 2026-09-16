@@ -44,11 +44,7 @@ set -uo pipefail
 
 manifest="tools/oz2c/Cargo.toml"
 
-# Scopes that mean "the crate this version belongs to". `oz_static` is
-# the crate's own former name (renamed by #462) and its commits are
-# still reachable; `transpiler` is deliberately absent -- it scoped the
-# retired Python pipeline, not this crate, and its last use was
-# 2026-08-29.
+# The scope that means "the crate this version belongs to".
 #
 # The scope is load-bearing, not decoration. A scope-agnostic
 # `^(feat|fix)` -- the shape the issue sketched -- also matches
@@ -56,7 +52,20 @@ manifest="tools/oz2c/Cargo.toml"
 # `feat(runtime):` (23), none of which bump this crate by the
 # convention. That is the "fails on correct history" failure mode
 # restated, and it would fire on the very next CI fix.
-crate_scopes="oz2c|oz_static"
+#
+# The crate's former name (#462 renamed it) is deliberately absent, and
+# the reason is measured rather than stylistic: this gate only ever
+# walks `<last version change>..HEAD`, and that window's start moves
+# forward with every bump and never backwards. The newest commit
+# carrying the old scope is 256e8c0, 2026-09-13; the version has changed
+# many times since, most recently d37a0b7 on 2026-09-15. So the old
+# scope is unreachable here -- 0 occurrences in the current window
+# against 186 across all of `main` -- and matching it would be dead
+# coverage that also trips `naming_tool_identity.rs`, which reserves the
+# retired spelling to `docs/STATUS.md`. `transpiler` is absent for a
+# different reason: it scoped the retired Python pipeline, not this
+# crate, and its last use was 2026-08-29.
+crate_scopes="oz2c"
 
 # Bumpworthy: `feat` or `fix` on the crate (patch or minor -- the gate
 # does not care which), or any type on the crate marked `!` (a break).
