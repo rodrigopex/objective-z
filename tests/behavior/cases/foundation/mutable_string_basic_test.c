@@ -86,3 +86,31 @@ void test_reinitialise_replaces_content_without_leaking(void)
 	TEST_ASSERT_EQUAL_STRING("second", MutableStringTest_result(t));
 	TEST_ASSERT_EQUAL_UINT(6, MutableStringTest_resultLength(t));
 }
+
+/*
+ * #542: a receiver that never ran an initialiser has `_capacity == 0` and
+ * `_data == NULL` from `+alloc`'s memset. Both grow loops doubled from
+ * `_capacity`, so they never terminated, and `-setString:nil` wrote
+ * through the NULL. Reaching these assertions at all is most of the
+ * claim; the contents pin that the floored grow allocates a usable
+ * buffer rather than merely terminating.
+ */
+void test_append_cstring_to_uninitialised_receiver(void)
+{
+	MutableStringTest_appendCStringToUninitialised(t);
+	TEST_ASSERT_EQUAL_STRING("grown from nothing", MutableStringTest_result(t));
+	TEST_ASSERT_EQUAL_UINT(18, MutableStringTest_resultLength(t));
+}
+
+void test_set_string_on_uninitialised_receiver(void)
+{
+	MutableStringTest_setStringOnUninitialised(t);
+	TEST_ASSERT_EQUAL_STRING("assigned from nothing", MutableStringTest_result(t));
+	TEST_ASSERT_EQUAL_UINT(21, MutableStringTest_resultLength(t));
+}
+
+void test_set_string_nil_on_uninitialised_receiver(void)
+{
+	MutableStringTest_setStringNilOnUninitialised(t);
+	TEST_ASSERT_EQUAL_UINT(0, MutableStringTest_resultLength(t));
+}
