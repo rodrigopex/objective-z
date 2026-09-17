@@ -388,7 +388,7 @@ fn walk_sites(
      * attributed to it rather than to whatever enclosed the class. */
     match node.kind() {
         "class_implementation" => {
-            let (name, _, _) = crate::collect::class_header(node, src);
+            let (name, _, _kind) = crate::collect::class_header(node, src);
             if !name.is_empty() {
                 let mut cursor = node.walk();
                 let children: Vec<Node> = node.children(&mut cursor).collect();

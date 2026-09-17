@@ -8,7 +8,10 @@ use std::collections::{HashMap, HashSet};
 
 use tree_sitter::Node;
 
-use crate::model::{ClassInfo, MethodSig, Ownership, Program, PropertyInfo, ProtocolInfo};
+use crate::model::{
+    ClassInfo, InterfaceKind, MethodSig, Ownership, Program, PropertyInfo, PropertyOrigin,
+    ProtocolInfo,
+};
 
 fn node_text<'a>(node: Node, src: &'a str) -> &'a str {
     &src[node.start_byte()..node.end_byte()]
@@ -21,8 +24,27 @@ fn child_by_kind<'a>(node: Node<'a>, kind: &str) -> Option<Node<'a>> {
 }
 
 /// class_interface / class_implementation share the shape:
-/// [@interface|@implementation] identifier [: identifier]? [( identifier )]?
-pub(crate) fn class_header(node: Node, src: &str) -> (String, Option<String>, Option<String>) {
+/// [@interface|@implementation] identifier [: identifier]? [( identifier? )]?
+///
+/// The trailing parenthesised group has **three** meaningful states, not two,
+/// and the returned `InterfaceKind` is the whole point of this function:
+///
+/// | source                    | kind                   |
+/// |---------------------------|------------------------|
+/// | `@interface Foo : Bar`    | `Primary`              |
+/// | `@interface Foo ()`       | `Extension`            |
+/// | `@interface Foo (Name)`   | `Category("Name")`     |
+///
+/// In tree-sitter-objc 3.0.2 the `category` field of
+/// `_class_interface_inheritance` is `CHOICE[identifier, BLANK]`, so
+/// `@interface Foo ()` is an ordinary `class_interface` whose only direct-child
+/// `identifier` is `Foo`. The parenthesis tokens are therefore the *only*
+/// evidence that an extension is one, and this function used to compute
+/// exactly that fact -- as a local `saw_paren` -- and then throw it away,
+/// returning `None` for the category name and leaving an extension
+/// indistinguishable from a primary `@interface`. That single discarded bit is
+/// the root cause of #529 and #530 both.
+pub(crate) fn class_header(node: Node, src: &str) -> (String, Option<String>, InterfaceKind) {
     let mut cursor = node.walk();
     let mut idents = Vec::new();
     let mut saw_colon = false;
@@ -45,7 +67,15 @@ pub(crate) fn class_header(node: Node, src: &str) -> (String, Option<String>, Op
         }
     }
     let name = idents.first().cloned().unwrap_or_default();
-    (name, superclass, category)
+    /* Order matters: a named category sets both `saw_paren` and `category`,
+     * so the name is tested first and `saw_paren` alone is what remains to
+     * mean "parenthesised, but unnamed" -- an extension. */
+    let kind = match category {
+        Some(cat) => InterfaceKind::Category(cat),
+        None if saw_paren => InterfaceKind::Extension,
+        None => InterfaceKind::Primary,
+    };
+    (name, superclass, kind)
 }
 
 /// The protocol names in a `<Protocol, ...>` conformance/reference list --
@@ -777,6 +807,10 @@ fn extract_property(
         setter_sel,
         ivar_name: None,
         decl_offset,
+        /* Corrected by the caller when the declaring block is a category;
+         * `Class` is right for an `@interface`, a class extension and a
+         * protocol, which is every other way of reaching here. */
+        origin: PropertyOrigin::Class,
     })
 }
 
@@ -920,7 +954,10 @@ pub fn collect(source: &str) -> (Program, Vec<crate::model::Diagnostic>) {
     /* Every `@interface`/`@implementation Class (Category)` seen, as
      * (extended class, category name, span) -- checked against
      * `known_classes` once pass 1 has seen every declaration (#501). */
-    let mut category_sites: Vec<(String, String, std::ops::Range<usize>)> = Vec::new();
+    /* Every block that extends a class rather than declaring one: named
+     * categories and class extensions alike, each with the `InterfaceKind`
+     * needed to word its diagnostic. */
+    let mut category_sites: Vec<(String, InterfaceKind, std::ops::Range<usize>)> = Vec::new();
     let mut cursor = root.walk();
     for node in root.children(&mut cursor) {
         if node.kind() == "protocol_declaration" {
@@ -944,14 +981,16 @@ pub fn collect(source: &str) -> (Program, Vec<crate::model::Diagnostic>) {
         if node.kind() != "class_interface" && node.kind() != "class_implementation" {
             continue;
         }
-        let (name, superclass, category) = class_header(node, source);
-        if let Some(cat) = category {
-            /* A category doesn't declare a new class, so it contributes
-             * nothing here -- but it is also the one construct whose
-             * extended class may never be declared at all, and the
-             * `classes` map is not complete until this loop ends. Recorded
-             * and checked below (#501). */
-            category_sites.push((name, cat, node.start_byte()..node.end_byte()));
+        let (name, superclass, kind) = class_header(node, source);
+        if !kind.declares_class() {
+            /* Neither a category nor a class extension declares a new
+             * class, so neither contributes anything here -- but both are
+             * constructs whose extended class may never be declared at all,
+             * and the `classes` map is not complete until this loop ends.
+             * Recorded and checked below (#501 for the category, #529 for
+             * the extension, which reached that check as a *primary*
+             * interface and so silently fabricated the class instead). */
+            category_sites.push((name, kind, node.start_byte()..node.end_byte()));
             continue;
         }
         if !classes.contains_key(&name) {
@@ -1101,37 +1140,62 @@ pub fn collect(source: &str) -> (Program, Vec<crate::model::Diagnostic>) {
      * members merge into the extended class's `ClassInfo`, and there is no
      * `ClassInfo`. Clang only warns here, but Clang has a runtime that can
      * carry an unattached category; the generated C has a struct or it has
-     * nothing. */
-    for (class_name, category, span) in &category_sites {
+     * nothing.
+     *
+     * A **class extension** on an undeclared class is the same defect and is
+     * checked here too, which it could not be before #529: an extension came
+     * back from `class_header` as a primary `@interface`, so it never reached
+     * this list at all and instead *fabricated* the class in pass 1 -- a
+     * `struct Ghost` with no superclass, hence a second root class, from
+     * source that declares no such thing. The check could not see it because
+     * by the time it ran the class it was looking for existed, having been
+     * invented three hundred lines earlier. */
+    for (class_name, kind, span) in &category_sites {
         if known_classes.contains(class_name) {
             continue;
         }
+        let (what, spelled, drop_hint) = match kind.category_name() {
+            Some(cat) => (
+                "category",
+                format!("{}({})", class_name, cat),
+                format!(
+                    "if '{}' was meant to be a new class rather than a category on an \
+                     existing one, drop the '({})'",
+                    class_name, cat
+                ),
+            ),
+            None => (
+                "class extension",
+                format!("{}()", class_name),
+                format!(
+                    "if '{}' was meant to be a new class rather than an extension of an \
+                     existing one, drop the '()' and give it a superclass",
+                    class_name
+                ),
+            ),
+        };
         diagnostics.push(
             crate::model::Diagnostic::spanning(
                 format!(
-                    "category '{}({})' extends '{}', but no class '{}' is declared in this \
+                    "{} '{}' extends '{}', but no class '{}' is declared in this \
 source",
-                    class_name, category, class_name, class_name
+                    what, spelled, class_name, class_name
                 ),
                 source,
                 span.clone(),
             )
-            .with_note(
-                "a category's methods and properties merge into the class it extends, so \
+            .with_note(format!(
+                "a {}'s methods and properties merge into the class it extends, so \
                  without an '@interface' for that class there is no struct to add them to \
-                 and nothing would be emitted for the category at all"
-                    .to_string(),
-            )
+                 and nothing would be emitted for the {} at all",
+                what, what
+            ))
             .with_help(format!(
                 "declare '@interface {}' in this translation unit, or '#import' the header \
                  that does",
                 class_name
             ))
-            .with_help(format!(
-                "if '{}' was meant to be a new class rather than a category on an existing \
-                 one, drop the '({})'",
-                class_name, category
-            )),
+            .with_help(drop_hint),
         );
     }
 
@@ -1146,23 +1210,63 @@ source",
     for node in root.children(&mut cursor) {
         match node.kind() {
             "class_interface" => {
-                let (name, _, category) = class_header(node, source);
+                let (name, _, kind) = class_header(node, source);
                 // A category's methods and properties merge into the
                 // class it extends (mirroring the oracle's
                 // `collect.py::_merge_category`); its ivars do not,
-                // because ObjC categories cannot declare any. A category
-                // may restate a selector the main @interface already
-                // declared, so pushes from here are deduplicated -- the
-                // main interface has no such risk, nothing else declares
-                // its selectors before it.
-                let is_category = category.is_some();
-                if !is_category {
+                // because ObjC categories cannot declare any. A class
+                // extension merges *everything*, ivars included -- it is
+                // part of the class, not an addition to it (#529).
+                //
+                // Either way this block is not the class's only one, so a
+                // selector or property it restates may already be present:
+                // pushes from anything but the primary interface are
+                // deduplicated.
+                let is_primary = kind.is_primary();
+                if kind.may_declare_ivars() {
                     let (ivars, unretained, extents) =
                         extract_ivars_with_ownership(node, source, &known_classes);
                     if let Some(info) = classes.get_mut(&name) {
-                        info.own_ivars = ivars;
-                        info.unretained_ivars = unretained;
-                        info.array_extents = extents;
+                        /* Append-if-absent, not assignment. This used to
+                         * read `info.own_ivars = ivars;`, which was
+                         * invisible while an `@interface` was a class's
+                         * only ivar-declaring interface block and became a
+                         * silent catastrophe once a class extension also
+                         * reached here: the extension *replaced* the
+                         * primary's ivar list. An extension declaring one
+                         * ivar left the class owning only that one; an
+                         * extension declaring none -- the common shape,
+                         * adding only private methods -- left the class
+                         * owning *nothing*, which loses every ARC release
+                         * on dealloc and drops every ivar out of method
+                         * scope (#529). The `@implementation` arm below
+                         * always appended; the two arms simply disagreed.
+                         *
+                         * Idempotent, so the primary interface is
+                         * unaffected: its own names are absent the first
+                         * time and skipped on any later pass. */
+                        for (ivar, c_type) in ivars {
+                            if !info.own_ivars.iter().any(|(n, _)| *n == ivar) {
+                                info.own_ivars.push((ivar, c_type));
+                            }
+                        }
+                        info.unretained_ivars.extend(unretained);
+                        info.array_extents.extend(extents);
+                    }
+                }
+                /* `@interface Foo () <Proto>` -- a class extension is where
+                 * a privately adopted protocol is conventionally declared,
+                 * and pass 1 no longer visits an extension at all, so the
+                 * conformance is merged here. Appended rather than assigned
+                 * for the same reason as the ivars above. */
+                if kind.is_extension() {
+                    let conforms = extract_conformance(node, source);
+                    if let Some(info) = classes.get_mut(&name) {
+                        for protocol in conforms {
+                            if !info.conforms.contains(&protocol) {
+                                info.conforms.push(protocol);
+                            }
+                        }
                     }
                 }
                 let mut c = node.walk();
@@ -1170,7 +1274,7 @@ source",
                     if decl.kind() == "method_declaration" {
                         let sig = extract_method_sig(decl, source, &name, &known_classes);
                         if let Some(info) = classes.get_mut(&name) {
-                            let dup = is_category
+                            let dup = !is_primary
                                 && info.methods.iter().any(|m| {
                                     m.selector == sig.selector
                                         && m.is_class_method == sig.is_class_method
@@ -1180,11 +1284,23 @@ source",
                             }
                         }
                     } else if decl.kind() == "property_declaration" {
-                        if let Some(prop) =
+                        if let Some(mut prop) =
                             extract_property(decl, source, &known_classes, &mut diagnostics)
                         {
+                            /* The one place the declaring block's kind and
+                             * the property are both in hand. Recorded on
+                             * the property because it is unrecoverable
+                             * afterwards: a category's properties merge
+                             * into the extended class's list, and by emit
+                             * time nothing distinguishes them from the
+                             * class's own (#530). */
+                            prop.origin = if kind.is_category() {
+                                PropertyOrigin::Category
+                            } else {
+                                PropertyOrigin::Class
+                            };
                             if let Some(info) = classes.get_mut(&name) {
-                                let dup = is_category
+                                let dup = !is_primary
                                     && info.properties.iter().any(|p| p.name == prop.name);
                                 if !dup {
                                     info.properties.push(prop);
@@ -1195,7 +1311,7 @@ source",
                 }
             }
             "class_implementation" => {
-                let (name, _, category) = class_header(node, source);
+                let (name, _, kind) = class_header(node, source);
                 if !classes.contains_key(&name) {
                     continue;
                 }
@@ -1206,8 +1322,11 @@ source",
                 // were never collected, so the generated struct simply
                 // lacked them and every use became "use of undeclared
                 // identifier '_throttleLevel'". A category cannot declare
-                // ivars, so only the primary implementation contributes.
-                if category.is_none() {
+                // ivars, so only a block that may contributes -- which for
+                // an `@implementation` means anything that is not a
+                // category, since there is no such thing as an
+                // `@implementation Foo ()`.
+                if kind.may_declare_ivars() {
                     let (impl_ivars, impl_unretained, impl_extents) =
                         extract_ivars_with_ownership(node, source, &known_classes);
                     if let Some(info) = classes.get_mut(&name) {
@@ -1270,7 +1389,7 @@ source",
              * consumes opens with
              *
              *     "class_implementation" => {
-             *         let (name, _, category) = class_header(...);
+             *         let (name, _, kind) = class_header(...);
              *         if !classes.contains_key(&name) { continue; }
              *
              * so every `name` that reaches `synthesizes` has already been
@@ -1284,7 +1403,9 @@ source",
              * skips. The guard above is what actually holds. Worth the
              * distinction: an unreachability claim is only as good as the
              * invariant it names, and the wrong invariant reads as
-             * confirmation.
+             * confirmation. (#529 widened what pass 1 skips from categories
+             * to class extensions as well, so the superseded reason is now
+             * wrong in two ways rather than one.)
              *
              * Two shapes were tried against it, both silently accepted and
              * neither reaching here: a category on a class declared
@@ -1342,6 +1463,8 @@ source",
     }
 
     resolve_properties(&mut classes, &class_order);
+
+    reject_undefined_category_accessors(&classes, &class_order, source, &mut diagnostics);
 
     reject_inline_anonymous_aggregates(root, source, &mut diagnostics);
 
@@ -1781,6 +1904,97 @@ fn reject_inline_anonymous_aggregates(
 /// when any class in the program has an atomic property -- reusing
 /// `Program::ivar_access_path`'s existing generic base-chain machinery
 /// for every class's lock expression, rather than a bespoke helper.
+/// A category `@property` whose accessors are defined nowhere (#530).
+///
+/// A category cannot add storage to the class it extends, so oz2c cannot
+/// synthesize an accessor body for one: there is no field to read. The
+/// category's own `@implementation` is the definition, and if it does not
+/// provide one then the selector is declared, dispatched to, and defined by
+/// nothing.
+///
+/// This is the diagnostic #530 asks for by name, and it exists because the
+/// alternative was not "nothing happens" -- it was a **link** error naming
+/// generated C (`undefined reference to 'Sensor_diagnosticCode'`), which is
+/// the same complaint both #529 and #530 file under "diagnostic quality:
+/// none from oz2c". Without it, fixing #530's double *definition* would have
+/// traded one link error for another at the far end of the pipeline.
+///
+/// Clang warns here rather than erroring ("property 'x' requires method 'x'
+/// to be defined -- use @dynamic or provide a method implementation in this
+/// category"), and a warning is the right severity for a runtime that can
+/// carry a selector nothing implements: the send fails at runtime, on that
+/// object, if it is ever made. The generated C has a symbol or it does not,
+/// so there is no such deferral available here -- and no non-fatal
+/// diagnostic channel to use even if there were.
+///
+/// `@dynamic` is the half of Clang's advice that does not apply: it promises
+/// the accessor arrives at runtime, and nothing here has a runtime.
+fn reject_undefined_category_accessors(
+    classes: &std::collections::HashMap<String, ClassInfo>,
+    class_order: &[String],
+    source: &str,
+    diagnostics: &mut Vec<crate::model::Diagnostic>,
+) {
+    for name in class_order {
+        let Some(info) = classes.get(name) else {
+            continue;
+        };
+        for prop in &info.properties {
+            if prop.origin.may_add_storage() {
+                continue;
+            }
+            let getter_sel = prop.getter_sel.clone().unwrap_or_else(|| prop.name.clone());
+            let mut missing: Vec<String> = Vec::new();
+            if !info.defined_selectors.contains(&(getter_sel.clone(), false)) {
+                missing.push(getter_sel);
+            }
+            if !prop.is_readonly {
+                let setter_sel = prop
+                    .setter_sel
+                    .clone()
+                    .unwrap_or_else(|| default_setter_sel(&prop.name));
+                if !info.defined_selectors.contains(&(setter_sel.clone(), false)) {
+                    missing.push(setter_sel);
+                }
+            }
+            if missing.is_empty() {
+                continue;
+            }
+            let plural = if missing.len() == 1 { "" } else { "s" };
+            diagnostics.push(
+                crate::model::Diagnostic::at(
+                    format!(
+                        "category property '{}' on '{}' declares accessor{} '{}' that no \
+                         '@implementation' defines",
+                        prop.name,
+                        name,
+                        plural,
+                        missing.join("', '")
+                    ),
+                    source,
+                    prop.decl_offset,
+                )
+                .with_note(
+                    "a category cannot add an instance variable to the class it extends, so \
+                     there is no backing storage for an accessor to read and none can be \
+                     synthesized -- the category's own '@implementation' has to define it"
+                        .to_string(),
+                )
+                .with_help(format!(
+                    "define '{}' in the '@implementation' block for this category",
+                    missing.join("' and '")
+                ))
+                .with_help(format!(
+                    "or, if '{}' is meant to have storage, declare the '@property' in the \
+                     class's own '@interface' or in a class extension '@interface {} ()', \
+                     either of which does get a backing ivar",
+                    prop.name, name
+                )),
+            );
+        }
+    }
+}
+
 fn resolve_properties(classes: &mut std::collections::HashMap<String, ClassInfo>, class_order: &[String]) {
     let mut any_atomic_property = false;
 
@@ -1821,7 +2035,26 @@ fn resolve_properties(classes: &mut std::collections::HashMap<String, ClassInfo>
                 }
             }
             let ivar_name = prop.ivar_name.clone().unwrap();
-            if !existing_ivar_names.contains(&ivar_name)
+            /* A category cannot add an ivar to the class it extends, so a
+             * category property gets no backing storage -- this is the line
+             * that used to put `int _diagnosticCode;` into `struct
+             * PXSensorBase` from a declaration in
+             * `PXSensorBase+Diagnostics.h`, changing the class's layout from
+             * another translation unit (#530).
+             *
+             * The accessor `MethodSig`s below are synthesized regardless: a
+             * category property still *declares* its accessors, and dispatch
+             * needs those signatures to route a send or a `.` access to the
+             * definition the category's own `@implementation` provides.
+             * Only the storage, and the body that would read it, go away.
+             *
+             * `ivar_name` stays populated rather than being cleared, so
+             * nothing downstream has to handle a second kind of `None` --
+             * `PropertyOrigin::may_add_storage` is the authority, and the
+             * two emit-side sites that would otherwise materialise a field
+             * or a body ask it. */
+            if prop.origin.may_add_storage()
+                && !existing_ivar_names.contains(&ivar_name)
                 && !new_ivars.iter().any(|(n, _): &(String, String)| n == &ivar_name)
             {
                 new_ivars.push((ivar_name, prop.c_type.clone()));
@@ -1857,7 +2090,12 @@ fn resolve_properties(classes: &mut std::collections::HashMap<String, ClassInfo>
         // the ivar joins the do-not-release set alongside the ones declared
         // `__unsafe_unretained` directly.
         for prop in &resolved_props {
-            if prop.ownership != Ownership::Strong {
+            /* Only where the ivar exists: a category property's
+             * `ivar_name` names no field of the struct, so recording it
+             * here would put a phantom name in the do-not-release set --
+             * harmless today, and exactly the sort of entry a later reader
+             * would take as evidence that the field is real. */
+            if prop.ownership != Ownership::Strong && prop.origin.may_add_storage() {
                 if let Some(ivar) = &prop.ivar_name {
                     info.unretained_ivars.insert(ivar.clone());
                 }

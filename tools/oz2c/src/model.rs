@@ -27,6 +27,129 @@ pub enum Ownership {
     UnsafeUnretained,
 }
 
+/// Which of Objective-C's three `@interface`/`@implementation` block shapes a
+/// declaration is.
+///
+/// `collect::class_header` used to answer this with `Option<String>` -- the
+/// category's name, or `None` -- and that cannot tell a **class extension**
+/// (`@interface Foo ()`, an unnamed category) apart from the class's own
+/// primary `@interface Foo`. In tree-sitter-objc's grammar the category name
+/// is an optional field of one shared `class_interface` node, so both shapes
+/// came back `None`, and an extension was therefore treated as a second,
+/// complete declaration of the class: a second `struct Foo` with a *different
+/// layout*, a second set of prototypes, and a second `Foo_oz_alloc` body
+/// (#529).
+///
+/// The three-way distinction is not cosmetic, because the two parenthesised
+/// shapes disagree on the one question the emitter has to answer. A class
+/// extension is part of the class: it **may** declare ivars, and its
+/// properties **do** get a backing ivar and a synthesized accessor. A
+/// category may declare neither -- it has no storage of its own to add one to,
+/// and adding one to the extended class changes that class's layout behind the
+/// back of every other translation unit (#530).
+///
+/// So ask `may_declare_ivars`, never "did the header have parentheses":
+/// parentheses are true of *both* parenthesised shapes, and keying on them
+/// strips the storage from exactly the one case that needs it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InterfaceKind {
+    /// `@interface Foo : Bar` / `@implementation Foo` -- the declaration that
+    /// brings the class into existence.
+    Primary,
+    /// `@interface Foo ()` -- an unnamed category, i.e. a class extension. It
+    /// declares no new class; everything in it merges into the primary
+    /// declaration.
+    Extension,
+    /// `@interface Foo (Name)` / `@implementation Foo (Name)` -- a named
+    /// category, carrying its name for the diagnostics that spell it back.
+    Category(String),
+}
+
+impl InterfaceKind {
+    pub fn is_primary(&self) -> bool {
+        matches!(self, InterfaceKind::Primary)
+    }
+
+    pub fn is_extension(&self) -> bool {
+        matches!(self, InterfaceKind::Extension)
+    }
+
+    pub fn is_category(&self) -> bool {
+        matches!(self, InterfaceKind::Category(_))
+    }
+
+    /// The name of a named category, for a diagnostic that has to spell
+    /// `Foo(Name)` back to the reader. `None` for both unnamed shapes.
+    pub fn category_name(&self) -> Option<&str> {
+        match self {
+            InterfaceKind::Category(name) => Some(name.as_str()),
+            _ => None,
+        }
+    }
+
+    /// Whether this block is what brings the class into existence.
+    ///
+    /// Only the primary declaration does. This is why pass 1 records a bare
+    /// `@interface Foo ()` as a *use* of `Foo` rather than a declaration of
+    /// it: before #529 an extension on an undeclared class silently
+    /// fabricated the class, which is the same hole `category_sites` was
+    /// added to close for a named category (#501).
+    pub fn declares_class(&self) -> bool {
+        self.is_primary()
+    }
+
+    /// Whether ivars named in this block -- declared directly in an
+    /// `instance_variables` list, or implied as a `@property`'s backing
+    /// storage -- belong to the class.
+    ///
+    /// True for the primary declaration and for a class extension, false for
+    /// a category. **This is the predicate to reach for**, and the reason it
+    /// exists as a named method rather than an inline `matches!`: the obvious
+    /// spellings are both wrong. Testing for parentheses strips storage from
+    /// an extension, which does own its ivars; testing `category.is_some()`
+    /// happens to be right only because an extension used to come back as
+    /// `None`, so it would have gone quietly wrong the moment this enum
+    /// replaced that `Option`.
+    pub fn may_declare_ivars(&self) -> bool {
+        !self.is_category()
+    }
+}
+
+/// Where a `@property` was declared, which is what decides whether it owns
+/// storage.
+///
+/// Carried per-property rather than derived at emit time from whichever
+/// `@implementation` block is being rendered, because the two do not line up.
+/// A category's properties **merge into the extended class's `ClassInfo`**, so
+/// by the time the primary `@implementation` is rendered its `properties` list
+/// holds the category's alongside its own with nothing left to tell them
+/// apart -- which is how a category property came to add a backing ivar to
+/// the extended class's struct and have its getter synthesized there, on top
+/// of the real one the category's own translation unit defines (#530).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PropertyOrigin {
+    /// The class's own `@interface`, a class extension, or an adopted
+    /// protocol -- all of which the class itself provides storage for, so the
+    /// property gets a backing ivar and, absent a hand-written one, a
+    /// synthesized accessor body.
+    #[default]
+    Class,
+    /// A category. A category cannot add an ivar to the class it extends, so
+    /// the property declares its accessors and nothing else: no field in the
+    /// struct, and no synthesized body -- the category's own
+    /// `@implementation` is the definition.
+    Category,
+}
+
+impl PropertyOrigin {
+    /// Whether the declaring block can give this property a backing ivar in
+    /// the class's struct, and therefore whether an accessor body can be
+    /// synthesized against one.
+    pub fn may_add_storage(self) -> bool {
+        matches!(self, PropertyOrigin::Class)
+    }
+}
+
 /// A `@property` declaration, resolved against its `@synthesize` (explicit,
 /// implicit-bare, or absent entirely) by the end of `collect::collect` --
 /// `ivar_name` is only `None` transiently, between parsing the
@@ -55,6 +178,12 @@ pub struct PropertyInfo {
     /// diagnostic built from it can be resolved back to a real file like
     /// every other located one (#456).
     pub decl_offset: usize,
+    /// The kind of block this `@property` was declared in, which decides
+    /// whether it owns storage -- see `PropertyOrigin`. Set by
+    /// `collect::collect`'s pass 2 where the property is pushed onto its
+    /// class, which is the only place the enclosing `InterfaceKind` is in
+    /// hand; `extract_property` sees the declaration alone and cannot tell.
+    pub origin: PropertyOrigin,
 }
 
 #[derive(Debug, Clone, Default)]

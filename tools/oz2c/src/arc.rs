@@ -363,7 +363,7 @@ fn scan_once(root: Node, src: &str, program: &Program, owning: &mut OwningMethod
         }
         let class = if node.kind() == "class_implementation" {
             // Only an @implementation has bodies to analyse.
-            let (name, _, _) = crate::collect::class_header(node, src);
+            let (name, _, _kind) = crate::collect::class_header(node, src);
             if name.is_empty() {
                 class
             } else {
@@ -1851,7 +1851,7 @@ fn enclosing_impl_class(node: Node, src: &str) -> Option<String> {
     let mut cur = node.parent();
     while let Some(n) = cur {
         if n.kind() == "class_implementation" {
-            let (name, _, _) = crate::collect::class_header(n, src);
+            let (name, _, _kind) = crate::collect::class_header(n, src);
             if !name.is_empty() {
                 return Some(name);
             }
