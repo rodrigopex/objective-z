@@ -31,10 +31,31 @@
 // shape. `compile_and_run` is the assertion, not a text match.
 
 mod common;
-use common::{compile_and_run, compile_and_run_strict, ozobject_src as PREAMBLE};
+use common::{
+    compile_and_run, compile_and_run_strict, iterator_protocol_src, ozarray_src,
+    oznumber_src, ozobject_src as PREAMBLE, ozstring_src,
+};
 
 fn program(body: &str) -> String {
     format!("/* oz-pool: Thing=4,Holder=2 */\n{}{}\n{}", PREAMBLE(), THING, body)
+}
+
+/// The generated C with its echoed-source comments dropped.
+///
+/// Emission substitutes in place and keeps the author's own line beside
+/// the lowered one as a comment, so the *unlowered* spelling is expected
+/// to appear in the output -- inside `/* ... */`. An absence assertion
+/// that does not strip those can never pass, which cost one round of #531:
+/// the loop was already correct and the needle was matching the comment
+/// above it.
+fn emitted_code(text: &str) -> String {
+    text.lines()
+        .filter(|l| {
+            let t = l.trim_start();
+            !(t.starts_with("/*") || t.starts_with('*') || t.starts_with("//"))
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 const THING: &str = "\
@@ -426,4 +447,249 @@ int main(void)
     );
     let stdout = compile_and_run(&src, "an_unsafe_unretained_local_in_main_compiles");
     assert_eq!(stdout, "rc=1\nfreed_ok\n");
+}
+
+/* --- #531: the two declaration positions a protocol qualifier survived --- */
+
+/// A protocol-qualified **ivar**, which is the bare-`id` ivar's spelling
+/// with a constraint written on it.
+///
+/// `lower_ivar_decl` is a verbatim text copy with targeted edits, and
+/// neither of them matched: `id<Marker>` is a `typedefed_specifier` and not
+/// a direct `type_identifier` child, and it is not in a parameter list. So
+/// the angle brackets reached the emitted struct and GCC answered `expected
+/// identifier or '(' before '<' token`, against a line nobody wrote (#531).
+///
+/// Normalized to plain `id` -- the preamble typedef the bare form already
+/// relies on -- rather than to the root class pointer, so the field's C
+/// type is byte-identical to what `id _held;` produces.
+#[test]
+fn a_protocol_qualified_ivar_is_lowered() {
+    let src = format!(
+        "/* oz-pool: Thing=4,Holder=2 */\n{}{}{}",
+        PREAMBLE(),
+        THING,
+        "\
+#include <stdio.h>
+
+@interface Holder : OZObject {
+	id<Marker> _held;
+	id _plain;
+}
+- (void)hold:(Thing *)t;
+- (int)sum;
+@end
+@implementation Holder
+- (void)hold:(Thing *)t
+{
+	_held = t;
+	_plain = t;
+}
+- (int)sum
+{
+	return [_held tag] + [_plain tag];
+}
+@end
+
+int main(void)
+{
+	Thing *t = [[Thing alloc] initWithTag:6];
+	Holder *h = [[Holder alloc] init];
+
+	[h hold:t];
+	printf(\"sum=%d\\n\", [h sum]);
+	return 0;
+}
+"
+    );
+
+    let out = oz2c::transpile(&src).expect("should transpile");
+    let code = emitted_code(&out.source_c);
+    assert!(
+        !code.contains("id<Marker>"),
+        "the qualifier reached the emitted struct:\n{}",
+        code.lines().filter(|l| l.contains("_held")).collect::<Vec<_>>().join("\n")
+    );
+    /* Presence beside absence: a field that vanished would also pass the
+     * check above (`docs/WORKING.md`, the four green guards). The bare
+     * `id _plain;` beside it is what fixes the expected spelling: the
+     * qualified field must come out byte-identical to it. */
+    for needle in ["id _held;", "id _plain;"] {
+        assert!(
+            code.contains(needle),
+            "expected `{}` on the plain `id` typedef, got:\n{}",
+            needle,
+            code.lines().filter(|l| l.contains("_held") || l.contains("_plain"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+    }
+
+    /* And the only assertion that could have caught this: it compiles. */
+    let stdout = compile_and_run(&src, "a_protocol_qualified_ivar_is_lowered");
+    assert_eq!(stdout, "sum=12\n");
+}
+
+/// A protocol-qualified **for-in loop variable**, the second position.
+///
+/// `forin_binding` has no CST arm at all: it joins the header's type nodes
+/// into a string, so `render_type` received the literal text
+/// `"id<Marker>"`, fell through to its verbatim return and emitted
+/// `for (id<Marker> device = (id<Marker>)OZ_PROTOCOL_SEND_nextObject(...))`
+/// -- not C. Fixed in `render_type` itself rather than here, so every
+/// text-driven caller is covered at once.
+#[test]
+fn a_protocol_qualified_forin_variable_is_lowered() {
+    let src = format!(
+        "/* oz-pool: Thing=4,OZArray=2,OZNumber=2,OZString=2 */\n{}{}{}{}{}{}",
+        PREAMBLE(),
+        iterator_protocol_src(),
+        oznumber_src(),
+        ozstring_src(),
+        ozarray_src(),
+        THING,
+    ) + "\
+#include <stdio.h>
+
+int main(void)
+{
+	Thing *a = [[Thing alloc] initWithTag:4];
+	Thing *b = [[Thing alloc] initWithTag:5];
+	OZArray *devices = @[ a, b ];
+	int sum = 0;
+
+	for (id<Marker> device in devices) {
+		sum = sum + [device tag];
+	}
+	printf(\"sum=%d\\n\", sum);
+	return 0;
+}
+";
+
+    let out = oz2c::transpile(&src).expect("should transpile");
+    let code = emitted_code(&out.source_c);
+    assert!(
+        !code.contains("id<Marker>"),
+        "the qualifier reached the generated loop:\n{}",
+        code.lines().filter(|l| l.contains("device")).collect::<Vec<_>>().join("\n")
+    );
+    assert!(
+        code.contains("for (void * device ="),
+        "expected the loop variable lowered to `void *`, got:\n{}",
+        out.source_c
+            .lines()
+            .filter(|l| l.contains("device ="))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+
+    let stdout = compile_and_run(&src, "a_protocol_qualified_forin_variable_is_lowered");
+    assert_eq!(stdout, "sum=9\n");
+}
+
+/// The bare `id` for-in variable, unchanged -- `render_type`'s new arm must
+/// widen the `"id"` case rather than replace it.
+#[test]
+fn a_bare_id_forin_variable_is_unchanged() {
+    let src = format!(
+        "/* oz-pool: Thing=4,OZArray=2,OZNumber=2,OZString=2 */\n{}{}{}{}{}{}",
+        PREAMBLE(),
+        iterator_protocol_src(),
+        oznumber_src(),
+        ozstring_src(),
+        ozarray_src(),
+        THING,
+    ) + "\
+#include <stdio.h>
+
+int main(void)
+{
+	Thing *a = [[Thing alloc] initWithTag:7];
+	OZArray *devices = @[ a ];
+	int sum = 0;
+
+	for (id device in devices) {
+		sum = sum + [device tag];
+	}
+	printf(\"sum=%d\\n\", sum);
+	return 0;
+}
+";
+
+    let out = oz2c::transpile(&src).expect("should transpile");
+    assert!(
+        out.source_c.contains("for (void * device ="),
+        "expected the bare-`id` loop unchanged, got:\n{}",
+        out.source_c
+            .lines()
+            .filter(|l| l.contains("device ="))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+
+    let stdout = compile_and_run(&src, "a_bare_id_forin_variable_is_unchanged");
+    assert_eq!(stdout, "sum=7\n");
+}
+
+/// A generic whose *argument* is a protocol-qualified `id`
+/// (`OZArray<id<Marker> *>`), which must still render as its base class.
+///
+/// The guard is against `render_type`'s new arm overreaching: a
+/// `contains('<')` test would have matched the *argument* and lowered the
+/// whole declaration to `void *`. It is a prefix test instead, so a
+/// generic, and a class merely named with an `id` prefix, are both left
+/// alone.
+///
+/// Stated honestly about what it reaches: this declaration arrives through
+/// `extract_type_and_stars_inner`'s `generic_specifier` arm, which hands
+/// `render_type` the base name `OZArray` and not the bracketed text -- so
+/// this pins the *outcome*, not the new predicate directly. Nothing in the
+/// tree hands the full generic text to `render_type` today; the position
+/// that could (`forin_binding`, over a generic-typed loop variable) does
+/// not lower a generic at all, before this change or after.
+#[test]
+fn a_generic_over_a_protocol_qualified_id_is_untouched() {
+    let src = format!(
+        "/* oz-pool: Badge=4,OZArray=2,OZNumber=2,OZString=2 */\n{}{}{}{}{}{}",
+        PREAMBLE(),
+        iterator_protocol_src(),
+        oznumber_src(),
+        ozstring_src(),
+        ozarray_src(),
+        "\
+@interface Badge : OZObject <Marker> {
+\tint _tag;
+}
+- (int)tag;
+@end
+@implementation Badge
+- (int)tag
+{
+\treturn _tag;
+}
+@end
+",
+    ) + "\
+#include <stdio.h>
+
+int main(void)
+{
+\tBadge *a = [Badge alloc];
+\tOZArray<id<Marker> *> *devices = @[ a ];
+
+\tprintf(\"count=%u\\n\", (unsigned)[devices count]);
+\treturn 0;
+}
+";
+
+    let out = oz2c::transpile(&src).expect("should transpile");
+    let code = emitted_code(&out.source_c);
+    assert!(
+        code.contains("struct OZArray *devices"),
+        "the generic's declared type must still render as its base class, got:\n{}",
+        code.lines().filter(|l| l.contains("devices")).collect::<Vec<_>>().join("\n")
+    );
+
+    let stdout = compile_and_run(&src, "a_generic_over_a_protocol_qualified_id_is_untouched");
+    assert_eq!(stdout, "count=1\n");
 }
