@@ -1117,6 +1117,76 @@ pub fn collect(source: &str) -> (Program, Vec<crate::model::Diagnostic>) {
         }
     }
 
+    /* A superclass **cycle**, for the same reason as the unresolved
+     * reference above and with a worse consequence. Every ancestry walk in
+     * the tree climbs `superclass` with `while let Some(name) = cur`, and
+     * exactly one of the fifteen -- `companion.rs`'s `visit` -- carries a
+     * visited set. The other fourteen run forever on a cycle, and the first
+     * one reached is `Program::owned_object_ivar_names`: it pushes a
+     * `String` per step into a `Vec` that is never read, so the process
+     * grows at ~500 MB/s and is killed by the supervisor with an **empty
+     * stderr** -- no file, no line, no construct named. `@interface A : A`
+     * is a one-character typo that turns `west build` into a
+     * memory-exhaustion event (#547).
+     *
+     * Checked **here**, once, rather than by guarding fourteen walks.
+     * `lib.rs` gates the pipeline on this function's diagnostics before
+     * arc, generics, pools or emit run, so rejecting the cycle at this
+     * point makes every later walk acyclic *by invariant* -- which is a
+     * stronger guarantee than fourteen independent visited sets, and one
+     * that a fifteenth walk added later inherits for free.
+     *
+     * The protocol equivalents need no such check: Clang refuses them
+     * first ("protocol has circular dependency"), and a class cycle
+     * reaches oz2c before Clang runs. */
+    /* One diagnostic per *cycle*, not per class in it. A two-class cycle
+     * reported from both ends is one defect twice: fixing either class's
+     * superclass fixes both, and the second message sends the reader
+     * looking for a second problem. Every class on a reported cycle is
+     * recorded here so the walk starting from it stays silent. */
+    let mut in_reported_cycle: HashSet<String> = HashSet::new();
+    for name in &class_order {
+        if in_reported_cycle.contains(name) {
+            continue;
+        }
+        let mut seen: HashSet<String> = HashSet::new();
+        seen.insert(name.clone());
+        let mut path = vec![name.clone()];
+        let mut cur = classes[name].superclass.clone();
+        while let Some(sup) = cur {
+            if !classes.contains_key(&sup) {
+                /* The unresolved-reference check above owns this case and
+                 * has already reported it; walking further would index a
+                 * missing key. */
+                break;
+            }
+            path.push(sup.clone());
+            if !seen.insert(sup.clone()) {
+                in_reported_cycle.extend(path.iter().cloned());
+                let offset = first_seen[name];
+                let chain = path.join(" -> ");
+                let message = if path.len() == 2 && path[0] == path[1] {
+                    format!("class '{}' cannot be its own superclass", name)
+                } else {
+                    format!("superclass cycle: {}", chain)
+                };
+                diagnostics.push(
+                    crate::model::Diagnostic::at(message, source, offset)
+                        .with_note(
+                            "every pass that resolves an inherited ivar, method or                              protocol climbs the superclass chain, so a cycle has no                              root to stop at and the walk does not terminate"
+                                .to_string(),
+                        )
+                        .with_help(format!(
+                            "give '{}' a superclass that does not lead back to it, or                              make it a root class",
+                            name
+                        )),
+                );
+                break;
+            }
+            cur = classes[&sup].superclass.clone();
+        }
+    }
+
     /* A category on a class this translation unit never declares, for the
      * same reason and with the same consequence as the superclass check
      * above: `emit::render_category_interface` and
