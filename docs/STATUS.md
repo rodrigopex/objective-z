@@ -3753,8 +3753,28 @@ catches it" would have credited a backstop that never sees the file.
   above the `#define` it was written to catch. It reported clean on the exact
   input it was built against. **A text guard is not evidence until it has been
   made to fail.**
-- **The version is `tools/oz2c/Cargo.toml`**, bumped in the same commit
-  as the change it describes. The repo-level `VERSION` file is retired.
+- **The version is `tools/oz2c/Cargo.toml`**, and a PR **declares the kind of
+  bump without carrying the number** -- `fix(oz2c):` a patch, `feat(oz2c):` or
+  a `!` break a minor while pre-1.0. The number is applied just before merge,
+  as the final commit of whichever PR is next to land (#499, and
+  `docs/WORKING.md` is authoritative). The repo-level `VERSION` file is
+  retired.
+
+  This line said "bumped in the same commit as the change it describes" until
+  #539, which is what #499 *reversed* -- and the reasoning is worth keeping
+  rather than just the rule. Carrying the number is asserting a value the
+  branch cannot know: the repo rebase-merges, so the number is a function of
+  the kind **and the merge order**, and 8 of the 9 recorded version incidents
+  were *created* by a branch carrying one. 12 of 50 commits in a single day
+  touched this file, one per PR, so every merge forced a rebase on every other
+  open PR.
+
+  The new rule opened one failure of its own, and `.github/version-omission.sh`
+  is the gate for exactly it: the number became a separate, final, skippable
+  commit, and it was skipped six times in about a day. It was skipped twice
+  more during the #527-#542 batch -- #544 and #546 both merged without theirs,
+  and the next PR's bump absorbed the debt each time, which is the convention
+  working rather than failing.
 
 - **Two casts with identical text, answering different questions -- do not
   merge them (#532).** `render_return_statement` now casts a returned value to
