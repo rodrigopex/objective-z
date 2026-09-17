@@ -106,6 +106,7 @@ struct OZObject {
 	oz_atomic_t oz_refcount; /* synthesized: retain count */
 };
 struct OZObject * OZObject_alloc_cls(void);
+struct OZObject * OZObject_new_cls(void);
 struct OZObject * OZObject_dynamicAlloc_cls(void);
 struct OZObject * OZObject_dynamicAllocWithHeap__cls(void * heap);
 struct OZObject * OZObject_init(struct OZObject *self);
