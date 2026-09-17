@@ -1,6 +1,6 @@
 [package]
 name = "oz2c"
-version = "0.101.0"
+version = "0.102.0"
 edition = "2021"
 description = "OZ-091 Track B spike: static-subset Objective-C to C transpiler using in-place textual substitution"
 publish = false
