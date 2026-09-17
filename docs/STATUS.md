@@ -4176,3 +4176,72 @@ header as well as the transpiler, and the arms have to differ in both or the
 number means nothing (#400, #424, #433 are the same lesson three times over).
 With both varied, every one of the 1201 differing lines is either the `+new`
 declaration or a line-number rename, and *that* is the reviewable claim.
+
+## Fourteen walks, one invariant, and the hang that had no stderr (#547)
+
+`@interface A : A` is a one-character typo. Before this it turned `west build`
+into a memory-exhaustion event: oz2c grew at roughly 500 MB/s and was killed by
+the supervisor with an **empty stderr** -- no file, no line, no construct
+named. Measured on `main`: 1.2 GB for the self-reference and 4.0 GB for the
+mutual pair, both still climbing when an 8-second timeout cut them off.
+
+**The count is the finding.** `grep -c 'superclass.clone()'` over `src/` gives
+**fifteen** ancestry walks, every one shaped `while let Some(name) = cur { ...
+cur = info.superclass.clone(); }`, and exactly **one** carries a visited set:
+`companion.rs`'s `visit`. The other fourteen run forever on a cycle. Note
+`class_conforms_to` looks guarded and is not -- its `seen` set guards the
+*protocol* walk nested inside it, not the superclass walk below; a heuristic
+that matched "a visited set somewhere in this function" scored it as safe and
+was wrong. Read the loop, not the function.
+
+Which of the fourteen you land in is an accident of program shape. A sampling
+profiler named it: `Program::owned_object_ivar_names`, pushing a `String` per
+step into a `Vec` that is never read, which is why the symptom is RSS rather
+than a spin.
+
+### The fix is one check, not fourteen guards
+
+`lib.rs` gates the pipeline on `collect`'s diagnostics *before* arc, generics,
+pools or emit run. So rejecting the cycle in `collect` makes every later walk
+acyclic **by invariant**, which is strictly stronger than fourteen independent
+visited sets: a fifteenth walk added next year inherits it, and no author has
+to remember. It sits beside the check that already stops an *unresolved*
+superclass reaching those same walks -- the two are the same guarantee about
+the same field, one for a missing key and one for a cyclic one.
+
+One diagnostic per *cycle*, not per class in it. A two-class cycle reported
+from both ends is one defect twice: fixing either class's superclass fixes
+both, and the second message sends the reader looking for a second problem.
+
+### What this does not fix, against the issue that assumed it would
+
+#554 predicted that "whoever fixes #547's cycle (a visited-set in this same
+walk) can linearize it in the same pass, since a cycle-safe walk that still
+re-walks from the root keeps the quadratic behaviour." That reasoning is sound
+and its premise does not hold here: **this fix never enters the walks.** It
+rejects at `collect`, so the walks are byte-for-byte unchanged and still
+O(depth squared). Measured after the fix, `emit`/depth² is flat at ~8.7e-7
+across depths 200, 800 and 1500 -- the same trend #554 reported. So #554 is now
+*more* independent than when it was filed, not less, and the two should not be
+bundled on the strength of that sentence.
+
+### A regression test whose failure mode is a hang
+
+The three cycle cases do not fail without the fix, they **hang**: confirmed by
+disabling the check, at which point `mutual_superclass_cycle_rejected_once` ran
+past 60 seconds and was SIGKILLed rather than returning a failure. That makes
+them the same class as #542's grow loops, and the same caution applies -- a
+timeout in `static_bar_rejects` means this check, not a slow machine.
+
+The accepting control is the one that earns its place: a deep *acyclic* chain
+must still transpile. A visited set that rejected a revisited **name** rather
+than a name revisited **on the current path** would pass all three cycle tests
+and break every real program with a shared ancestor.
+
+**And a note on how the counterfactual was run, because it went wrong.** The
+save, the sabotage, the test and the restore were one unguarded shell command.
+The restore did not take, and the next two commands ran against sabotaged
+source while being reported as a clean tree. Nothing was lost, and the result
+happened to be the right one, but the lesson is the same as every other entry
+here: a restore is a claim, and it needs an explicit absence check --
+`grep -c 'if true ||'` returning 0 -- before anything downstream is believed.
