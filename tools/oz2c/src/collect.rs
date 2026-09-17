@@ -205,8 +205,41 @@ fn protocol_property(
     None
 }
 
+/// Is `type_text` a protocol-qualified `id` -- `id<Proto>`, `id <A, B>`?
+///
+/// A protocol qualification constrains what may be *assigned* to a
+/// declaration and says nothing about its representation, so it lowers
+/// exactly as a bare `id` does. `emit::is_bare_id_type` answers the same
+/// question of a CST node; this answers it of already-flattened *text*,
+/// which is what the text-driven callers of `render_type` have.
+///
+/// A prefix test rather than a `contains('<')` one, so a class merely
+/// *named* with an `id` prefix (`identity<T>`) and a generic whose argument
+/// happens to be an `id` (`OZArray<id<Proto> *>`) are both left alone.
+fn is_protocol_qualified_id(type_text: &str) -> bool {
+    let Some(rest) = type_text.trim().strip_prefix("id") else {
+        return false;
+    };
+    let rest = rest.trim_start();
+    rest.starts_with('<') && rest.ends_with('>')
+}
+
 pub(crate) fn render_type(type_text: &str, stars: usize, known_classes: &HashSet<String>) -> String {
-    if type_text == "id" {
+    // `id<Proto>` is normalized here, and not only in the CST reader that
+    // feeds this (`extract_type_and_stars_inner`'s `typedefed_specifier`
+    // arm), because not every caller has a CST to read. A *text*-driven
+    // one hands over whatever the author wrote: `emit::forin_binding`
+    // joins the header's type nodes into a string, so
+    // `for (id<PXCalibratable> d in c)` arrived as the literal text
+    // `"id<PXCalibratable>"`, fell through to the verbatim return below
+    // and emitted `for (id<PXCalibratable> d = ...)` -- not C at all, and
+    // reported by GCC against a line the author never wrote (#531).
+    //
+    // Answering it in the one renderer covers every such caller at once,
+    // and cannot change any *reader*'s verdict: `forin_binding`'s own
+    // `type_text` is untouched, so `generics::check_forin_header` still
+    // sees the author's spelling to judge against `is_class`.
+    if type_text == "id" || is_protocol_qualified_id(type_text) {
         // "id" names no real C type, so left as-is this would emit
         // invalid C (as opposed to "instancetype", which callers resolve
         // to the concrete self/root class before ever reaching here).
