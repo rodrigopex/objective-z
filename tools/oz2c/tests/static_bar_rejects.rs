@@ -280,6 +280,93 @@ fn undefined_superclass_rejected() {
 }
 
 // ---------------------------------------------------------------------------
+// A superclass **cycle** (#547).
+//
+// The sibling of `undefined_superclass_rejected` above, and the worse half.
+// An unresolved superclass panicked; a cyclic one does not terminate. Every
+// ancestry walk in the tree climbs `superclass` with
+// `while let Some(name) = cur`, and exactly one of the fifteen --
+// `companion.rs`'s `visit` -- carries a visited set. The first unguarded walk
+// reached is `Program::owned_object_ivar_names`, which pushes a `String` per
+// step into a `Vec`, so the process grows at ~500 MB/s and is killed with an
+// **empty stderr**: no file, no line, no construct named. Measured before the
+// fix: 1.2 GB for the self-reference and 4.0 GB for the mutual pair, both
+// still climbing at an 8s timeout.
+//
+// The check is in `collect`, once, rather than in fourteen walks. `lib.rs`
+// gates the pipeline on `collect`'s diagnostics before arc, generics, pools
+// or emit run, so rejecting here makes every later walk acyclic *by
+// invariant* -- and a fifteenth walk added later inherits that for free.
+//
+// These three cases cannot use `expect_reject`'s usual shape carelessly: if
+// the check ever regresses, the test does not fail, it **hangs**. They are
+// cheap enough that `cargo test`'s own behaviour is the signal, but a
+// reviewer should know that a timeout here means this check, not a slow
+// machine.
+// ---------------------------------------------------------------------------
+
+/// A class naming itself, which is the one-character typo (#547, M18).
+#[test]
+fn self_referential_superclass_rejected() {
+    let src = "@interface Probe : Probe\n@end\n@implementation Probe\n@end\n";
+    let diags = expect_reject(src);
+    assert!(
+        diags.contains("class 'Probe' cannot be its own superclass"),
+        "a self-reference is named as such rather than as a cycle: {}",
+        diags
+    );
+}
+
+/// Two classes naming each other -- the shape a copy-paste produces
+/// (#547, M52).
+///
+/// Reported **once**, not once per class in the cycle: fixing either
+/// class's superclass fixes both, and a second message sends the reader
+/// looking for a second problem.
+#[test]
+fn mutual_superclass_cycle_rejected_once() {
+    let src = "@interface A : B\n@end\n@interface B : A\n@end\n\
+               @implementation A\n@end\n@implementation B\n@end\n";
+    let diags = expect_reject(src);
+    assert!(diags.contains("superclass cycle: A -> B -> A"), "diagnostics: {}", diags);
+    assert_eq!(
+        diags.matches("superclass cycle").count(),
+        1,
+        "one diagnostic per cycle, not one per class in it: {}",
+        diags
+    );
+}
+
+/// A longer cycle names its whole path, so the reader can see which link
+/// to cut.
+#[test]
+fn three_class_superclass_cycle_names_the_path() {
+    let src = "@interface A : B\n@end\n@interface B : C\n@end\n@interface C : A\n@end\n\
+               @implementation A\n@end\n@implementation B\n@end\n@implementation C\n@end\n";
+    let diags = expect_reject(src);
+    assert!(diags.contains("superclass cycle: A -> B -> C -> A"), "diagnostics: {}", diags);
+}
+
+/// The accepting control, and it is the one that would catch an
+/// over-eager check: a deep *acyclic* chain must still transpile. A
+/// visited set that rejected a revisited *name* rather than a revisited
+/// name on the current path would fail here.
+#[test]
+fn a_deep_acyclic_chain_is_still_accepted() {
+    let mut src = String::from(PREAMBLE());
+    let mut prev = String::from("OZObject");
+    for i in 0..12 {
+        src.push_str(&format!(
+            "@interface C{i} : {prev}\n@end\n@implementation C{i}\n@end\n",
+            i = i,
+            prev = prev
+        ));
+        prev = format!("C{}", i);
+    }
+    oz2c::transpile(&src).expect("a deep acyclic chain must transpile");
+}
+
+// ---------------------------------------------------------------------------
 // A category on a class this translation unit never declares (#501).
 //
 // Three rows, because the *observed* behaviour differed between them and
