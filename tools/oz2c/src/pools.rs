@@ -428,7 +428,7 @@ fn walk_sites(
     }
 
     let allocated = match node.kind() {
-        "message_expression" => alloc_receiver_class(node, src, program),
+        "message_expression" => alloc_receiver_class(node, src, program, class),
         // The desugars these drive allocate through the same per-class
         // alloc path, so they consume slots exactly like an explicit
         // `[X alloc]` (see `emit::render_boxed_*`).
@@ -639,11 +639,37 @@ pub(crate) fn dictionary_pair_count(node: Node) -> usize {
     node.children(&mut cursor).filter(|c| c.kind() == "dictionary_pair").count()
 }
 
-/// `[ClassName alloc]` -- the receiver has to be a literal class name for
-/// this to size anything, which is the only form that can allocate: `alloc`
-/// is a class method, and a class-method receiver is always statically
-/// known (see `Program::is_dynamically_dispatched`).
-fn alloc_receiver_class(node: Node, src: &str, program: &Program) -> Option<String> {
+/// `[ClassName alloc]` -- the receiver has to name a class for this to
+/// size anything, which is the only form that can allocate: `alloc` is a
+/// class method, and a class-method receiver is always statically known
+/// (see `Program::is_dynamically_dispatched`).
+///
+/// **Two spellings besides a literal class name reach the same allocator,
+/// and both were invisible here.** `enclosing_class` is what resolves the
+/// first.
+///
+///   - `[self alloc]` inside a `+` method. Since #534 the emitter lowers
+///     it to `{enclosing}_oz_alloc()`, so it *is* a slab site -- but
+///     `self` is not a class name, so this function answered `None`,
+///     `slab_sites` never learned the class, and `ever_slab_allocated`
+///     concluded no `k_mem_slab` was needed. The canonical Cocoa factory
+///     would have transpiled, linked and returned **nil**, which is
+///     strictly worse than the hard error #534 filed. Nothing reading the
+///     generated C sees it; only a run does.
+///   - `[ClassName new]`, since #539. The inherited `+new` is synthesized
+///     at the send site as the receiver's own `alloc` plus `init`
+///     (`emit::render_message`), so it takes a slot exactly as `+alloc`
+///     does. A class declaring *its own* `+new` is an ordinary class
+///     method that allocates however its body says, and is deliberately
+///     not counted here -- `emit::new_is_synthesized` is the single
+///     predicate both sides read, because the two answering differently
+///     is what produces the nil above.
+fn alloc_receiver_class(
+    node: Node,
+    src: &str,
+    program: &Program,
+    enclosing_class: Option<&str>,
+) -> Option<String> {
     let mut cursor = node.walk();
     let children: Vec<Node> =
         node.children(&mut cursor).filter(|c| c.kind() != "[" && c.kind() != "]").collect();
@@ -652,6 +678,19 @@ fn alloc_receiver_class(node: Node, src: &str, program: &Program) -> Option<Stri
     }
     let receiver = &src[children[0].byte_range()];
     let selector = &src[children[1].byte_range()];
+    if selector == "new" {
+        /* `self` here too: `[self new]` in a `+` method is the same
+         * send-site synthesis with the same receiver resolution. */
+        let cls = match receiver {
+            "self" => enclosing_class?,
+            _ if program.is_class(receiver) => receiver,
+            _ => return None,
+        };
+        if !crate::emit::new_is_synthesized(program, cls) {
+            return None;
+        }
+        return Some(cls.to_string());
+    }
     /* Whole-string, and deliberately so. `+dynamicAlloc` (#413) is a
      * zero-argument class-method send on a literal class name, which is
      * *structurally identical* to `+alloc` here -- two children, a class
@@ -669,6 +708,16 @@ fn alloc_receiver_class(node: Node, src: &str, program: &Program) -> Option<Stri
      * for every heap-only class, not just one wasted slot. */
     if selector != "alloc" {
         return None;
+    }
+    /* `self` is resolved to the enclosing `@implementation`, which is
+     * exactly what `emit::render_expr`'s `self` arm resolves it to inside
+     * a `+` method -- the *lexical* class, since a generated class method
+     * carries no receiver to name a dynamic one. Not gated on the
+     * enclosing method being a class method: `[self alloc]` in a `-`
+     * method is a hard error from the emitter, and a build that is going
+     * to fail does not care what its slab was sized at. */
+    if receiver == "self" {
+        return enclosing_class.map(str::to_string);
     }
     if program.is_class(receiver) {
         Some(receiver.to_string())

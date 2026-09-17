@@ -40,7 +40,10 @@
 // shapes real source actually uses:
 //
 //   - a message send whose receiver is a literal class name (the
-//     alloc/factory idiom: `[ClassName alloc]`, `[ClassName foo]`), and
+//     alloc/factory idiom: `[ClassName alloc]`, `[ClassName foo]`) --
+//     and *only* a literal one, so the `self`-as-class receiver
+//     `emit.rs` resolves since #534 is left unchecked here, which the
+//     rule below is exactly what covers, and
 //   - a bare identifier already known, from an earlier plain-typed
 //     declaration in the same method body, to hold one of those.
 //

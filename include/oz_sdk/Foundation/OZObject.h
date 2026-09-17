@@ -107,6 +107,38 @@ __attribute__((objc_root_class))
 @interface OZObject <OZObjectProtocol>
 + (instancetype)alloc;
 /**
+ * @brief Allocate from the class's slab and initialise -- `[[self alloc]
+ *        init]`, in one send.
+ *
+ * **Declared here with no `src/OZObject.m` body, on purpose** -- exactly
+ * like `+dynamicAlloc`, `+dynamicAllocWithHeap:` and `+class`. The
+ * transpiler resolves it at the *send site* to the receiver's own
+ * allocator followed by the receiver's own `-init` (`emit.rs`'s
+ * `render_message`), and this declaration is what makes every class
+ * inherit it (#539).
+ *
+ * A body would not work, even now that `[[self alloc] init]` transpiles
+ * (#534). A generated class method takes no receiver parameter, so the
+ * body would render *once* with `self` nailed to this class, and a send
+ * to a subclass would hand back a subclass pointer into an
+ * `OZObject`-sized slab slot -- which `-init` then writes past the end
+ * of. That is the failure `samples/heap_alloc` hit under
+ * `+dynamicAllocWithHeap:`, and it is why `+alloc`, `+dynamicAlloc` and
+ * `+class` are all resolved at the send site too.
+ *
+ * No example class name here, deliberately. `emit`'s `body_includes` is
+ * built with `mentions_identifier` over each origin's *source text*,
+ * comments included, so a class name written in this comment makes the
+ * SDK's own `OZObject.c` `#include` the header of any program that
+ * happens to declare a class of that name. An earlier draft named a
+ * class here and added a spurious include to four corpus cases -- whose
+ * only crime was declaring a class of the same name.
+ *
+ * A class declaring its own `+new` keeps its own body, as an ordinary
+ * class method.
+ */
++ (instancetype)new;
+/**
  * @brief Allocate from the system heap (`k_malloc` on Zephyr).
  *
  * The dynamic counterpart to `+alloc`, which takes a slot from the

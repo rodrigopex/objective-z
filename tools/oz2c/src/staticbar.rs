@@ -766,9 +766,22 @@ fn stored_class(
     class_named_by(&ret, program)
 }
 
-/// The static class of a message-send receiver, by the same two rules
-/// `emit::render_message_expression` uses: a literal class name is itself,
-/// and anything else is looked up in the scope's type map.
+/// The static class of a message-send receiver: a literal class name is
+/// itself, and anything else is looked up in the scope's type map.
+///
+/// **The emitter resolves one shape more than this does, deliberately.**
+/// Since #534 `self` in a `+` method resolves there to the enclosing
+/// class; here it is in neither `program.is_class` nor `scope.types`, so
+/// it answers `None`. That is the strict direction rather than a hole:
+/// `stored_class`'s one caller reads `None` as
+/// `PoolAdvice::ClassUnresolved` and **keeps** the rejection, so a
+/// `[[self alloc] init]` escaping a loop is refused for want of a
+/// resolved class instead of being waved through on a capacity it was
+/// never checked against. The doc comment on `allocation_of` lists
+/// `[self make]` among the receivers that name no class for the same
+/// reason. Resolving it here would need the enclosing class *and* which
+/// side of it this body is on, neither of which `MethodScope` carries;
+/// worth doing when a real program is refused by it, not before.
 fn receiver_class(
     receiver: Node,
     src: &str,
