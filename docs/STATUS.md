@@ -3878,3 +3878,124 @@ floor times out at 30s in the corpus run, dropping the nil guard exits 245.
   through the PAL, but that is policy: no document in this tree states it, no
   gate checks it, and live sites exist, this file among them. Converting it is
   a separate decision with its own blast radius.
+
+## One discarded bit, two bugs, and a predicate that had to be named (#529, #530)
+
+`collect::class_header` answered "what kind of `@interface` is this?" with
+`Option<String>` -- the category's name, or `None`. Objective-C has **three**
+shapes, and in tree-sitter-objc's grammar the category name is an *optional
+field of one shared node*, so `@interface Foo ()` is an ordinary
+`class_interface` whose only direct-child identifier is `Foo`:
+
+| source | old answer | actual kind |
+|---|---|---|
+| `@interface Foo : Bar` | `None` | primary |
+| `@interface Foo ()` | **`None`** | class extension |
+| `@interface Foo (Name)` | `Some("Name")` | category |
+
+The parenthesis tokens are the only evidence an extension is one, and the
+function **computed exactly that** -- as a local `saw_paren` -- and then threw
+it away. That single discarded bit is the root cause of both issues, which is
+why they are one change: #529 is the *extension = primary* collision and #530
+is the *category = class* collision, two arms of one three-way decision.
+
+### The predicate is `may_declare_ivars`, and both obvious spellings are wrong
+
+An extension **is** part of the class: it may declare ivars, and its properties
+do get backing storage and a synthesized accessor. A category may declare
+neither -- it has no storage of its own, and adding a field to the extended
+class changes that class's layout behind the back of every translation unit
+that includes its header. So:
+
+- **Testing for parentheses strips storage from the extension**, which is the
+  one parenthesised shape that owns its ivars.
+- **Testing `category.is_some()` is right today and silently wrong tomorrow.**
+  It worked only because an extension came back `None`; it would have inverted
+  the moment the `Option` became a three-way enum, with no test to catch it.
+
+`InterfaceKind::may_declare_ivars` exists as a *named method* for that reason,
+rather than an inline `matches!` at each of the six call sites. `declares_class`
+is the second such predicate: only the primary declaration brings a class into
+existence, which is what lets pass 1 record a bare `@interface Foo ()` as a
+*use* of `Foo`. Before this, an extension on an undeclared class reached the
+#501 check as a primary interface and so **fabricated** the class -- a
+`struct Ghost` with no superclass, a second root class, from source declaring
+no such thing. The check could not see it because by the time it ran, the class
+it was looking for existed, having been invented three hundred lines earlier.
+
+### The clobber was worse than the duplicate, and the report had it backwards
+
+#529 reports a second `struct` with a different layout. The more dangerous half
+is one line in pass 2: `info.own_ivars = ivars;` -- an **assignment**, where the
+`@implementation` arm fifty lines below has always appended. Invisible while an
+`@interface` was a class's only ivar-declaring block, and a silent catastrophe
+once an extension also reached it, because the extension *replaced* the
+primary's ivar list. An extension declaring one ivar left the class owning only
+that one. **An extension declaring none -- the common shape, adding only
+private methods -- left the class owning nothing**, which loses every ARC
+release on dealloc and drops every ivar out of method scope. Restoring the
+clobber fails `extension_declaring_no_ivars_leaves_the_primary_ivars_intact`,
+and that is the test to read first.
+
+GCC caught the duplicate only because both structs landed in one header. Split
+across two translation units it would have compiled clean and the two would
+have disagreed about where each ivar lives.
+
+### Two independent sites would each have materialised the field
+
+`resolve_properties` records a property's backing ivar, and
+`render_interface` synthesizes a field for any property whose ivar is not in
+the node's own text. **Either one alone reintroduces #530**: disabling the guard
+in either fails
+`behavior_category::category_property_gets_no_backing_ivar_and_one_definition`.
+The accessor `MethodSig`s are still synthesized in both cases -- a category
+property genuinely *declares* its accessors, and dispatch needs those
+signatures to route a send or a `.` access to the category's own definition.
+Only the storage and the body that would read it go away, and `ivar_name` stays
+populated so nothing downstream has to handle a second kind of `None`.
+
+The block filter that was already there (`!is_category_impl`) is not enough,
+and the gap between the two is the whole of #530: **it asks which block is
+being rendered, and the question is which block the property came from.** A
+category's properties merge into the extended class's `ClassInfo`, so by the
+time the primary `@implementation` renders, its list holds the category's
+alongside its own with nothing left to tell them apart. Hence `PropertyOrigin`
+on the property itself.
+
+Replacing that block's per-node `defined_here` with the program-wide
+`ClassInfo::defined_selectors` fixed a third case in passing, in the other
+direction: a property declared by the primary `@interface` whose accessor is
+hand-written in a *category* block was getting a synthesized definition here as
+well -- the same duplicate-symbol shape, and the right answer had been sitting
+unused in the model all along.
+
+### A fix that traded one link error for another, until it didn't
+
+Removing the double *definition* leaves the case #530 says "deserves a
+diagnostic": a category property whose accessors nothing defines. Without a new
+check that is not "nothing happens" -- it is
+`undefined reference to 'Sensor_diagnosticCode'`, which is the same complaint
+both issues file under *diagnostic quality: none from oz2c*, at the far end of
+the pipeline. `reject_undefined_category_accessors` is that check, located at
+the `@property`.
+
+Clang only *warns* here, and a warning is right for a runtime that can carry a
+selector nothing implements: the send fails at runtime, on that object, if it is
+ever made. The generated C has a symbol or it does not, so no such deferral is
+available -- and there is no non-fatal diagnostic channel here to use even if
+there were. `@dynamic`, the other half of Clang's advice, promises the accessor
+arrives at runtime, and nothing here has a runtime.
+
+### A merged assertion reversed, and the shape that made it look right
+
+`behavior_category::category_property_synthesizes_accessors_once` asserted the
+#530 behaviour was **correct**, and passed. It was wrong on both counts, and
+the reason it looked right is worth keeping: **its category `@implementation`
+was empty**, so there was no second definition to collide with -- the single
+shape in which this defect presents as a feature. #530's own note is the one to
+hold onto: had the names not collided, reads would have returned the dead
+field. The linker error is what saved it.
+
+Real Objective-C rejects that source too. It is now a located refusal, and the
+one test is three: the supported shape runs, the structural claim is asserted
+on the emitted text, and the old shape is refused.
