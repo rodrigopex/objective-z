@@ -1,0 +1,21 @@
+sample:
+  description: Class-side self, super and +new on target (#534, #535, #539)
+  name: ObjZ Class Side
+common:
+  tags: objz
+  integration_platforms:
+    - mps2/an385
+    - qemu_riscv32
+  harness: console
+  harness_config:
+    type: multi_line
+    ordered: true
+    regex:
+      - "=== Class Side Demo ==="
+      - "factory id=7 ceiling=9000"
+      - "familyDepth=2"
+      - "new id=-1"
+      - "=== Demo complete ==="
+tests:
+  sample.objz.class_side:
+    tags: objz class_side
