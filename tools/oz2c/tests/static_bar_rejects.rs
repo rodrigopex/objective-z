@@ -377,6 +377,91 @@ fn category_on_declared_class_still_accepted() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// The same hole, through a class extension (#529).
+//
+// `@interface Ghost ()` **escaped the check above entirely** until
+// `class_header` could tell an extension from a primary `@interface`. It came
+// back with no category name, so it never reached `category_sites`; instead
+// pass 1 took it for a primary declaration and *fabricated* the class. The
+// check ran afterwards, looked for `Ghost`, and found it -- having been
+// invented three hundred lines earlier.
+//
+// What it fabricated is worth stating, because it is worse than a missing
+// diagnostic: a `ClassInfo` with no superclass, i.e. a **second root class**,
+// whose full `struct Ghost` was hoisted into the shared companion header
+// complete with `_meta`, `oz_refcount` and `oz_prop_lock` -- from source
+// declaring no such class at all. Measured on the unfixed binary, not
+// reasoned about.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn class_extension_on_undeclared_class_rejected() {
+    let src = "@interface Real\n- (int)base;\n@end\n\
+               @implementation Real\n- (int)base {\n\treturn 1;\n}\n@end\n\
+               @interface Ghost ()\n- (int)answer;\n@end\n";
+    let diags = expect_reject(src);
+    /* Spelled as the extension it is, not as a category with an empty name
+     * -- `category 'Ghost()'` would read as a naming bug in the source. */
+    assert!(diags.contains("class extension 'Ghost()'"), "diagnostics: {}", diags);
+    assert!(
+        diags.contains("no class 'Ghost' is declared in this source"),
+        "diagnostics: {}",
+        diags
+    );
+    assert!(diags.contains("#import"), "diagnostics: {}", diags);
+    /* The remedy differs from the category's: dropping `()` from an
+     * extension leaves a class with no superclass, so the help has to say
+     * to give it one. */
+    assert!(diags.contains("give it a superclass"), "diagnostics: {}", diags);
+    /* Located at the extension, on line 9. */
+    assert!(diags.contains("9:1:"), "diagnostics: {}", diags);
+}
+
+#[test]
+fn empty_class_extension_on_undeclared_class_rejected() {
+    // The silent shape, for the same reason its category sibling needs a
+    // row: with no member, nothing inside reaches an indexing site.
+    let src = "@interface Real\n- (int)base;\n@end\n\
+               @implementation Real\n- (int)base {\n\treturn 1;\n}\n@end\n\
+               @interface Ghost ()\n@end\n";
+    let diags = expect_reject(src);
+    assert!(diags.contains("class extension 'Ghost()'"), "diagnostics: {}", diags);
+}
+
+#[test]
+fn class_extension_on_declared_class_still_accepted() {
+    // The control, and it carries more weight than the category's: an
+    // extension is *merged*, so a refusal that fired on every extension
+    // would be satisfied by the three rows above while making the whole
+    // construct unusable. Asserts the merged members are present, which is
+    // what would go missing.
+    let src = "@interface Real\n- (int)base;\n@end\n\
+               @interface Real ()\n- (int)answer;\n@end\n\
+               @implementation Real\n- (int)base {\n\treturn 1;\n}\n\
+               - (int)answer {\n\treturn 42;\n}\n@end\n";
+    let out =
+        oz2c::transpile(src).expect("a class extension on a declared class must still transpile");
+    assert!(
+        out.source_c.contains("int Real_answer(struct Real *self)"),
+        "source_c:\n{}",
+        out.source_c
+    );
+    /* And exactly one struct, which is #529 proper. Both halves are
+     * counted because `Real` declares no superclass and so is the root
+     * class, whose struct `render_interface` hoists into the companion
+     * header rather than leaving in place -- counting `source_c` alone
+     * reports 0 here and would pass for the wrong reason if inverted. */
+    assert_eq!(
+        out.source_c.matches("struct Real {").count()
+            + out.companion_h.matches("struct Real {").count(),
+        1,
+        "source_c:\n{}\ncompanion_h:\n{}",
+        out.source_c,
+        out.companion_h
+    );
+}
+
 #[test]
 fn implementation_with_no_interface_still_accepted() {
     // The neighbouring shape the new check must *not* catch. Pass 1 inserts
