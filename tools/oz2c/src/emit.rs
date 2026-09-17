@@ -7865,6 +7865,16 @@ fn render_interface(node: Node, ctx: &mut EmitCtx, program: &Program) -> (String
         crate::collect::extract_ivars(node, ctx.src, &known).into_iter().map(|(n, _)| n).collect();
     let mut emitted: std::collections::HashSet<String> = raw_ivar_names.clone();
     for prop in &info.properties {
+        // A category's properties merged into this class's `ClassInfo`, and
+        // a category cannot add storage to the class it extends -- so the
+        // field this loop would synthesize for one is a field the class
+        // never declared, in a layout every other translation unit disagrees
+        // with. `resolve_properties` declines to record the ivar for the
+        // same reason; this is the second, independent site that would
+        // materialise it anyway, straight from the property (#530).
+        if !prop.origin.may_add_storage() {
+            continue;
+        }
         if let Some(ivar) = &prop.ivar_name {
             if !raw_ivar_names.contains(ivar) {
                 ivars_text.push_str(&format!(
@@ -7875,13 +7885,13 @@ fn render_interface(node: Node, ctx: &mut EmitCtx, program: &Program) -> (String
             }
         }
     }
-    // An ivar declared in the `@implementation` block rather than the
-    // `@interface` (valid modern Objective-C, and what
-    // `samples/hello_category`'s Car does) was collected onto the class but
-    // is not in *this* node's text, since that text is the interface. Add
-    // whatever the class owns that has not been emitted yet, or the struct
-    // silently lacks the field and every use is "use of undeclared
-    // identifier".
+    // An ivar the class owns but that is not in *this* node's text, since
+    // that text is only the primary `@interface`. Two shapes reach here,
+    // both valid modern Objective-C: one declared in the `@implementation`
+    // block (what `samples/hello_category`'s Car does) and one declared in a
+    // class extension, `@interface Foo () { ... }` (#529). Add whatever the
+    // class owns that has not been emitted yet, or the struct silently lacks
+    // the field and every use is "use of undeclared identifier".
     for (ivar, c_type) in &info.own_ivars {
         if emitted.contains(ivar) {
             continue;
@@ -7902,7 +7912,7 @@ fn render_interface(node: Node, ctx: &mut EmitCtx, program: &Program) -> (String
         // extent included, which is why only this path was ever wrong.
         let extent = info.array_extents.get(ivar).map(String::as_str).unwrap_or("");
         ivars_text.push_str(&format!(
-            "\t{} {}{}; /* from the @implementation block */\n",
+            "\t{} {}{}; /* declared outside the primary @interface */\n",
             c_type, ivar, extent
         ));
         emitted.insert(ivar.clone());
@@ -8655,8 +8665,15 @@ fn walk_top_level<'a>(
             if node.kind() != "class_interface" && node.kind() != "class_implementation" {
                 continue;
             }
-            let (name, _, category) = crate::collect::class_header(node, source);
-            if category.is_some() {
+            let (name, _, kind) = crate::collect::class_header(node, source);
+            /* Only the primary declaration decides which stem a class lives
+             * in. A class extension is emitted into no file of its own, and
+             * before #529 it could claim the stem outright by appearing
+             * first in source order -- `or_insert_with` keeps the first
+             * entry, and an extension in a different origin from the
+             * `@interface` would then send a subclass's `#include` at a file
+             * holding no struct. */
+            if !kind.declares_class() {
                 continue;
             }
             class_to_stem.entry(name).or_insert_with(|| origin_for(node.start_byte()));
@@ -8696,17 +8713,42 @@ fn walk_top_level<'a>(
                 ));
             }
             "protocol_declaration" => {
-                let (name, _, _) = crate::collect::class_header(node, source);
+                let (name, _, _kind) = crate::collect::class_header(node, source);
                 bodies.entry(stem.clone()).or_default().push(format!(
                     "/* @protocol {} -- compile-time only, see oz2c_dispatch.h/.c */",
                     name
                 ));
             }
             "class_interface" => {
-                let (name, _, category) = crate::collect::class_header(node, source);
-                if category.is_some() {
+                let (name, _, kind) = crate::collect::class_header(node, source);
+                if kind.is_category() {
                     let text = render_category_interface(node, source, &name, program);
                     headers.entry(stem.clone()).or_default().push(text);
+                    continue;
+                }
+                if kind.is_extension() {
+                    /* A class extension is part of the class, so there is
+                     * nothing of its own to render: its ivars were merged
+                     * into `own_ivars` and reach the one `struct {name}`
+                     * through `render_interface`'s own-ivar pass, and its
+                     * method declarations were merged into `info.methods`
+                     * and get their prototypes there too.
+                     *
+                     * It used to fall through to a second, full
+                     * `render_interface` against *its* node, which emitted
+                     * a second `struct {name}` assembled from that node's
+                     * text -- a different set of fields in a different
+                     * order -- plus a second copy of every prototype and a
+                     * second `{name}_oz_alloc`/`_oz_free` *definition*. GCC
+                     * caught it only because both structs landed in one
+                     * header; split across two translation units it would
+                     * have compiled clean and disagreed about where each
+                     * ivar lives (#529). */
+                    headers.entry(stem.clone()).or_default().push(format!(
+                        "/* @interface {} () -- class extension, merged into the primary \
+                         @interface above */\n",
+                        name
+                    ));
                     continue;
                 }
                 if let Some(sup) = &program.classes[&name].superclass {
@@ -8731,8 +8773,8 @@ fn walk_top_level<'a>(
                 }
             }
             "class_implementation" => {
-                let (name, _, category) = crate::collect::class_header(node, source);
-                let is_category_impl = category.is_some();
+                let (name, _, kind) = crate::collect::class_header(node, source);
+                let is_category_impl = kind.is_category();
                 let mut ivars_scope = base_scope(&name, program);
         // File-scope statics are visible inside every method too, and an
         // ivar of the same name shadows one, so these go in first.
@@ -8744,7 +8786,13 @@ fn walk_top_level<'a>(
                 let mut out = String::new();
                 out.push_str(&banner_box(&header_text(node, source, &["implementation_definition"]), '-'));
                 out.push('\n');
-                let mut defined_here: HashSet<(String, bool)> = HashSet::new();
+                /* This block's own defined selectors used to be collected
+                 * here, to decide which accessors still needed
+                 * synthesizing. `ClassInfo::defined_selectors` answers the
+                 * same question for the whole program, which is the
+                 * question that was meant -- see the synthesis loop below
+                 * -- so re-deriving the per-node subset would only be a
+                 * narrower answer sitting next to the right one. */
                 let mut c2 = node.walk();
                 for child in node.children(&mut c2) {
                     if child.kind() != "implementation_definition" {
@@ -8754,9 +8802,6 @@ fn walk_top_level<'a>(
                     let found_def = child.children(&mut c3).find(|c| c.kind() == "method_definition");
                     match found_def {
                         Some(method_def) => {
-                            let known: HashSet<String> = ctx.program.classes.keys().cloned().collect();
-                            let sig = crate::collect::extract_method_sig(method_def, source, &name, &known);
-                            defined_here.insert((sig.selector, sig.is_class_method));
                             out.push_str(&render_method_definition(method_def, &mut ctx, &name, &ivars_scope));
                             out.push('\n');
                         }
@@ -8776,15 +8821,40 @@ fn walk_top_level<'a>(
                         }
                     }
                 }
-                // A category's properties merge into the class it extends,
-                // so every @implementation block for that class sees them
-                // -- synthesize the accessors only from the primary one,
-                // or each block emits its own definition of the same
-                // function.
+                // A category's and a class extension's properties both merge
+                // into the class they extend, so every @implementation block
+                // for that class sees the whole merged list -- synthesize
+                // from the primary block only, or each block emits its own
+                // definition of the same function.
+                //
+                // Two filters, and the difference between them is the whole
+                // of #530. The *block* filter above is not enough, because
+                // it asks which block is being rendered and the question is
+                // which block the property came from.
                 if let Some(info) = program.classes.get(&name).filter(|_| !is_category_impl) {
                     for prop in &info.properties {
+                        // Per-property: a category property declares its
+                        // accessors and leaves the definition to the
+                        // category's own @implementation. It has no backing
+                        // ivar to read (`resolve_properties` declines to add
+                        // one), so a synthesized body here would return a
+                        // field that does not exist -- and where the name
+                        // did not collide with the real definition, reads
+                        // would silently have returned it.
+                        if !prop.origin.may_add_storage() {
+                            continue;
+                        }
+                        // Program-wide, not this block: `defined_selectors`
+                        // holds every selector any @implementation for this
+                        // class really defines, category blocks included.
+                        // The per-node set this used to read saw only this
+                        // block, so a property
+                        // declared by the primary @interface whose accessor
+                        // is hand-written in a *category* block got a
+                        // synthesized definition here as well -- the same
+                        // duplicate-symbol shape from the other direction.
                         let getter_sel = prop.getter_sel.clone().unwrap_or_else(|| prop.name.clone());
-                        if !defined_here.contains(&(getter_sel, false)) {
+                        if !info.defined_selectors.contains(&(getter_sel, false)) {
                             out.push_str(&render_synthesized_accessor(&name, prop, true, program));
                             out.push('\n');
                         }
@@ -8793,7 +8863,7 @@ fn walk_top_level<'a>(
                                 .setter_sel
                                 .clone()
                                 .unwrap_or_else(|| crate::collect::default_setter_sel(&prop.name));
-                            if !defined_here.contains(&(setter_sel, false)) {
+                            if !info.defined_selectors.contains(&(setter_sel, false)) {
                                 out.push_str(&render_synthesized_accessor(&name, prop, false, program));
                                 out.push('\n');
                             }

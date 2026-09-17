@@ -437,7 +437,7 @@ fn returns_are_incompatible(a: &str, b: &str) -> bool {
 fn locate_method(root: Node, src: &str, class: &str, selector: &str) -> Option<usize> {
     fn walk(node: Node, src: &str, class: &str, selector: &str) -> Option<usize> {
         if node.kind() == "class_interface" || node.kind() == "class_implementation" {
-            let (name, _, _category) = crate::collect::class_header(node, src);
+            let (name, _, _kind) = crate::collect::class_header(node, src);
             if name == class {
                 if let Some(byte) = find_selector_byte(node, src, selector) {
                     return Some(byte);
@@ -552,8 +552,13 @@ fn walk_for_owned_array_ivars(
     diags: &mut Vec<Diagnostic>,
 ) {
     if node.kind() == "class_interface" || node.kind() == "class_implementation" {
-        let (class_name, _, category) = crate::collect::class_header(node, src);
-        if category.is_none() {
+        let (class_name, _, kind) = crate::collect::class_header(node, src);
+        /* `may_declare_ivars`, not `!is_category()` spelled some other way:
+         * this scan reads declared array extents, and a class extension
+         * declares real ivars with real extents. Keying on "the header had
+         * parentheses" would skip exactly the block whose multi-dimensional
+         * owned array this check exists to refuse. */
+        if kind.may_declare_ivars() {
             let owned = program.owned_object_ivar_names(&class_name);
             for (ivar, extent) in collect_declared_extents(node, src) {
                 if extent.matches('[').count() < 2 {
