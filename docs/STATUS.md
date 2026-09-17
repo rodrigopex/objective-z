@@ -595,15 +595,21 @@ draws the boundary where there is scope structure to mark;
 cleared instead. Both restore on the way out, since the enclosing body
 still owes what it owed.
 
-### Every position that carries a type through (#326, #336, #367)
+### Every position that carries a type through (#326, #336, #367, #531, #537)
 
-The third family, and the one that has now produced four bugs with a
+The third family, and the one that has now produced seven bugs with a
 single sentence behind all of them: **a method's signature and a free
-function's, a block literal's, and a C struct's field list are four
-separate walks over the same question**, and lowering a type was
-implemented in one of them at a time.
+function's, a block literal's signature and its body's scope, a C struct's
+field list, an ivar list and a `for`-in header are separate walks over the
+same question**, and lowering a type was implemented in one of them at a
+time.
 
-There is nothing shared to fix. `render_method_definition` lowers a
+There was nothing shared to fix, for the first four. (#531 and #537
+partly overturn that, and say how below: the text-driven callers now share
+one normalization in `render_type`, and a block literal's parameters share
+one seeder with a free function's. The reasoning here was right about the
+positions it described and is left standing for them.)
+`render_method_definition` lowers a
 parameter and a return type; the `function_definition` arm builds a fresh
 `EmitCtx` and does its own; `render_block` computes the hoisted function's
 signature itself; and the `struct_specifier` arm pushed the author's bytes
@@ -616,6 +622,9 @@ one looks like an isolated oversight from the outside:
 | a free function's return type | the same, plus the return temporary's type | #336 |
 | a C struct's field | a class name -- `unknown type name 'Thing'` | #367 |
 | a free function's parameter | `id<Proto>` -- `expected ')'` | #367 |
+| an ivar in the emitted struct | `id<Proto>` -- `expected identifier or '('` | #531 |
+| a `for`-in loop variable | `id<Proto>` -- the same | #531 |
+| a block literal's parameter, *inside the body* | its declared type, lost to `id` | #537 |
 
 The rule worth keeping is the one that would have found the last two from
 the first two: **when a construct's type is lowered somewhere, ask which
@@ -649,6 +658,57 @@ the signature-wide pass now did too. `apply_edits` refuses overlapping
 edits, which is correct -- that is how a genuine conflict is caught -- so
 exact duplicates are dropped at the call site instead of by weakening the
 assertion.
+
+**#531 and #537 add a dimension the first four did not have, and it is the
+reason "check every position" kept missing these two: a position can hold its
+type as a CST node or as flattened text, and the two need different
+answers.** The `<Proto>` stripping was never in `render_type` at all -- it was
+in the CST reader that feeds it, `extract_type_and_stars_inner`'s
+`typedefed_specifier` arm. So every caller that hands `render_type` a *node*
+got the fix for free in #367, and every caller that hands it a *string* did
+not, silently:
+
+- `forin_binding` joins the loop header's type nodes with
+  `node_text(...).join(" ")`, so `for (id<PXCalibratable> d in c)` arrived as
+  the literal text `"id<PXCalibratable>"`, fell through the verbatim return
+  and emitted that as C.
+- `collect_ivar_lowering_edits` is a verbatim text copy with targeted edits,
+  and its edits only matched a *direct* `type_identifier` child and an `id`
+  inside a function-pointer parameter list. `id<Proto>` is neither, so the
+  angle brackets were copied into the emitted struct.
+
+Normalizing in `render_type` itself covers every text-driven caller at once,
+which is the version of "fix it in the shared predicate" that this half of the
+family admits. The test that it changed no *reader*'s verdict is worth keeping
+in mind for the next one: `forin_binding`'s own `type_text` is left alone, so
+`generics::check_forin_header` still sees the author's spelling when it asks
+`is_class`.
+
+**#537 is in this family by symptom and not by mechanism, and that is worth
+separating.** The other six are lowerings -- a type reaching the output
+unlowered. #537 is a *scope* omission: `render_block` used the parameter list
+only to render the hoisted signature's text, and never put the parameters in
+`ctx.scope`, so inside the body a parameter fell to `render_expr`'s
+`unwrap_or("id")` and a send to it was rejected as an unresolvable `id`
+receiver however carefully it had been typed. The transpile *fails* here rather
+than emitting bad C, so it is the one member of the family the "the C compiler
+is what refuses it" property above does not describe.
+
+It is the same omission `collect_function_params` fixed for a free function in
+#250, one position over -- and that function's own doc comment already said so
+about *its* predecessor ("the free-function path kept getting a reduced version
+of what a method body gets"). The seeding is now shared between the two, which
+is what makes a block parameter and a free-function parameter answer the same
+way by construction rather than by coincidence.
+
+A block parameter is also the first thing in this family that genuinely
+**shadows**: the hoisted function's `prefix` is not the enclosing body's
+`prefix`. So the seeding records what it displaced and puts it back, including
+*removing* a name that was unbound before -- without which a block's parameter
+stays visible to the enclosing body after the literal, under the block's type.
+Four of the eight tests in `block_parameter_scope.rs` exist for that half
+alone, and two of them are negative: a name must not leak out, and two
+literals must each see only their own parameter.
 
 ## What the Clang AST oracle costs (#299)
 
