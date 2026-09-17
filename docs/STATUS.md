@@ -3999,3 +3999,160 @@ field. The linker error is what saved it.
 Real Objective-C rejects that source too. It is now a located refusal, and the
 one test is three: the supported shape runs, the structural claim is asserted
 on the emitted text, and the old shape is refused.
+## One omission, two issues, and the fix that would have been worse (#534, #535, #539)
+
+`EmitCtx` carried no notion of **which side of the class** the body being
+rendered belonged to. `render_method_definition` computed
+`sig.is_class_method`, used it three times to build the signature, and threw
+it away; so `render_expr`'s `self` arm answered `struct C *` and its `super`
+arm answered `struct Super *` for every body in the program, class methods
+included. Every class-side send off either then entered `render_message`'s
+*instance* branch and asked `find_defining_class` for a `-` method.
+
+That is the whole of #534 and #535. They read as two bugs -- one about
+`[[self alloc] init]`, one about `[super familyDepth]` -- and they quote the
+**same message**, `class 'X' has no method matching 'sel'`, which is what says
+they are one. The tell was there in both reports and neither of us read it.
+
+### The diagnosis in the issue was wrong, and the wrong diagnosis was the expensive part
+
+#535 is titled *"a class-method super send is looked up only in the immediate
+superclass, while instance super walks the chain"*, and it explains itself with
+a 5-level chain and a note that a one-level chain "never reaches it". Both
+halves are false. `find_defining_class` walks the whole chain and always did;
+what it filters on is `is_class_method`, so a class-side `super` arriving as an
+instance lookup missed at **every** link. `class_side_resolution.rs`'s
+`class_method_super_reaches_the_immediate_parent` is that correction pinned
+down: `Base` declares and implements `+depth`, `Sub` overrides it with
+`[super depth] + 1`, and before this change it failed with
+`class 'Base' has no method matching 'depth'` -- the immediate parent, which
+the issue's own severity note says is the case that works.
+
+Believing the title would have bought a walk-the-chain patch in
+`find_defining_class`, which already walks the chain; the test proving it
+would have been the 5-level fixture, which fails for the real reason and
+would have gone green for the wrong one. **The issue said "stops at one
+level" because one level is where the reporter stopped testing.** A fixture
+at the boundary a report declares safe is cheap, and it was the whole
+diagnosis here.
+
+### The fix that transpiles, links, and returns nil
+
+`pools::alloc_receiver_class` requires the receiver **text** to be a literal
+class name. `self` is not one, so `[self alloc]` counted no site -- and since
+#419 that is not merely a slot count. `slab_sites` never learns the class,
+`ever_slab_allocated` answers no, `for_class` returns 0, and the emitters read
+0 as *emit no `k_mem_slab` at all*.
+
+So fixing `self`-as-class in `emit.rs` alone turns #534's **hard located
+error** into a factory that transpiles clean, links clean, and hands back
+**nil on its first call**. Strictly worse than the bug it fixes, and invisible
+to every gate that reads generated C rather than running it -- which is most
+of them, and was the whole set this change would otherwise have been reviewed
+against.
+
+Two resolvers, one receiver, disagreeing silently (#481) is the same shape and
+has its own section above. The lesson that section did not carry, and this one
+adds: **when the emitter learns to lower a new spelling, the passes that
+*size* what it lowers have to learn the same spelling in the same commit, or
+the new capability arrives with its allocation missing.** `emit.rs` and
+`pools.rs` now read one predicate, `emit::new_is_synthesized`, rather than two
+copies of the same comparison -- because the two answering differently is
+precisely the nil above.
+
+### Why `+new` could not be written in Objective-C
+
+#539 asks for `+new` on `OZObject`, and observes that its natural body is
+`[[self alloc] init]`, so #534 has to land first. It does -- and the natural
+body still does not work, for a reason unrelated to #534.
+
+**A generated class method takes no receiver parameter.** `[Sub inherited]`
+and `[Base inherited]` compile to the identical C call, with nothing passed
+that could tell them apart. So `+ (instancetype)new { return [[self alloc]
+init]; }` in `src/OZObject.m` renders **once**, with `self` fixed at
+`OZObject`: `[Gadget new]` becomes `(struct Gadget *)(OZObject_new_cls())`, a
+`Gadget *` pointing into an `OZObject`-sized slab slot, and `-init` writes
+past the end of it. That is `samples/heap_alloc`'s failure under
+`+dynamicAllocWithHeap:`, recorded in `render_message` since #413.
+
+`+new` is therefore declared in `include/oz_sdk/Foundation/OZObject.h` with
+**no body**, and resolved at the send site to the receiver's own allocator
+plus the receiver's own `-init` -- which is how `+alloc`, `+dynamicAlloc` and
+`+class` already work, and why all four are special cases in `render_message`
+rather than methods. `[Gadget new]` runs `Gadget`'s `-init` out of `Gadget`'s
+slab; a class declaring its own `+new` keeps its own body, which
+`tests/behavior/cases/arc/owning_argument.m` has depended on (a `+new`
+returning a bare `[Thing alloc]`, no `-init`) since long before `+new` was
+inheritable.
+
+### What `self` on the class side is, and is not
+
+It resolves to `ctx.class_name`: the class whose `@implementation` **lexically
+encloses** the send, not the dynamic receiver. There is no receiver to ask.
+So the inheritable factory #534 wants -- `[[self alloc] init]` on `Base`,
+called as `[Sub factory]`, yielding a `Sub` -- **still does not inherit**;
+it allocates a `Base`. What #534 buys is that the canonical spelling
+compiles, and that WA-009's hand-written class name is no longer required to
+say the same thing. The remaining gap is a property of the static subset, not
+of this fix, and it is the same gap `+new` had to be resolved at the send site
+to avoid.
+
+`self` is consequently only meaningful as a **receiver** in a `+` method. As a
+value it has no representation at all: `Class` is the `class_id` integer, no
+class object exists, and the identifier renders to a bare class name.
+`return self;` in a class method was already broken before this change --
+it emitted a reference to a `self` parameter that class methods do not have --
+and afterwards it would have emitted `return Sensor;`, which is not C. Either
+way the failure landed on the C compiler with no Objective-C line attached, so
+`reject_self_as_value_in_class_method` makes it a located refusal that says
+what `self` means on the class side.
+
+### A doc comment changed the generated output (#539)
+
+Found by measuring #539's blast radius, and it is the reason that
+measurement is not a formality. The `+new` declaration added to
+`include/oz_sdk/Foundation/OZObject.h` came with a doc comment explaining why
+it has no body, and the comment used a concrete example class -- `[Gadget
+new]`. Four of the 121 corpus cases then gained an `#include` that nothing in
+them needed:
+
+```c
+/* Foundation/OZObject.c, the SDK root class's own translation unit */
+#include "oz2c_dispatch.h"
+#include "OZObject.h"
+#include "init_sets_fields.h"   /* <- the *user program's* header */
+```
+
+`emit`'s `body_includes` is built with `mentions_identifier` over each
+origin's **source text**, and source text includes comments. All four
+affected cases declare a class called `Gadget`, so the SDK's `OZObject`
+origin "mentioned" a class owned by the program's origin and pulled in its
+header. Nothing in `OZObject.c`'s body changed -- the include was
+unnecessary as well as unintended.
+
+Three things worth taking from it:
+
+- **The effect is harmless and the direction is not.** The header is
+  `#pragma once`-guarded and nothing used it, so it compiled and ran
+  everywhere. But it is the SDK's translation unit including the
+  application's, which is the dependency arrow inverted, and it appears or
+  not depending on what the *consumer* happens to name a class.
+- **Any capitalised word in an SDK doc comment is a potential class name.**
+  The comment now describes the shape without naming a class, and says why
+  in the comment itself -- which is the only place a later editor will look
+  before adding an example back.
+- **The explanation caused the problem it explained.** The first attempt at
+  that note said "an earlier draft said `[Gadget new]`", which put the
+  identifier straight back into the text and left the includes exactly where
+  they were. When a check's subject is text you are also writing *about*,
+  your own prose is in the corpus.
+
+The measurement that caught it nearly did not. The first sweep built the old
+and new *binaries* and ran both against the current tree -- so both arms saw
+the new `OZObject.h`, the declaration was present in each, and the diff came
+back 121 of 121 identical. That is a clean bill of health from a sweep that
+had held one of the two variables fixed. This change moves a spliced SDK
+header as well as the transpiler, and the arms have to differ in both or the
+number means nothing (#400, #424, #433 are the same lesson three times over).
+With both varied, every one of the 1201 differing lines is either the `+new`
+declaration or a line-number rename, and *that* is the reviewable claim.
