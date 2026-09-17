@@ -1223,6 +1223,28 @@ pub(crate) fn find_defining_class(
     None
 }
 
+/// Is `[{class_name} new]` the SDK's inherited `+new` -- which
+/// `render_message` synthesizes at the send site as `[[self alloc]
+/// init]` -- rather than a class's own override?
+///
+/// Shared with `pools::alloc_receiver_class`, and deliberately not
+/// duplicated there: the two have to answer identically or a send the
+/// emitter lowers to `{cls}_oz_alloc()` reserves no slab slot and hands
+/// back nil at runtime, with nothing at build time to say so (#419's
+/// `ever_slab_allocated`, #539's send).
+///
+/// Keyed on the declaration landing on the **root** class, which is the
+/// one place `+new` is declared with no `src/OZObject.m` body. A class
+/// declaring its own is an ordinary class method and dispatches -- see
+/// `tests/behavior/cases/arc/owning_argument.m`, which has shipped one
+/// since before `+new` was inherited at all.
+pub(crate) fn new_is_synthesized(program: &Program, class_name: &str) -> bool {
+    match find_defining_class(program, class_name, "new", true) {
+        Some(defining) => Some(defining.as_str()) == program.root_class(),
+        None => false,
+    }
+}
+
 /// Returns the method's `(return_type, returns_instancetype)`. A caller
 /// dispatching this method through a receiver statically typed as a
 /// *subclass* of `class_name` must, when `returns_instancetype` is true,
@@ -1335,6 +1357,24 @@ struct EmitCtx<'a> {
     /// `return` written after the literal in the same body would take the
     /// block's type.
     method_return_type: String,
+    /// Is the body being rendered a `+` method's?
+    ///
+    /// The one thing that tells `render_expr` which side of the class
+    /// `self` and `super` name, and it was simply missing: both arms
+    /// produced an *instance* pointer type unconditionally, so every
+    /// class-side send off either entered `render_message`'s instance
+    /// branch and asked `find_defining_class` for a `-` method. #534 and
+    /// #535 are that one omission seen from two directions, which is why
+    /// both quote the same "class 'X' has no method matching 'sel'".
+    ///
+    /// Per *method*, not per `EmitCtx`: one context serves every method
+    /// of an `@implementation` (see `walk_top_level`), so
+    /// `render_method_definition` assigns it for each body the way it
+    /// already assigns `method_return_type`. A block literal needs no
+    /// save/restore around it -- unlike `method_return_type`, which the
+    /// literal really does change, a block cannot move its enclosing body
+    /// to the other side of the class.
+    in_class_method: bool,
     /// Slots to reserve in each class's slab -- see `pools`.
     pools: &'a crate::pools::PoolSizes,
     /// Object locals owned by each enclosing block, innermost last. Released
@@ -1494,6 +1534,12 @@ impl<'a> EmitCtx<'a> {
             // what leaked through was not this placeholder but the
             // *enclosing* body's type, equally plausible-looking.
             method_return_type: "int".to_string(),
+            /* The instance side is the safe default: it is what every
+             * position that renders something other than a method body
+             * -- an interface, a free function, a file-scope
+             * initializer -- means by `self`, and `render_expr`'s `self`
+             * arm already refuses it where no class encloses the use. */
+            in_class_method: false,
             pools,
             arc_scopes: Vec::new(),
             arc_managed_locals: HashSet::new(),
@@ -1777,6 +1823,26 @@ fn render_expr(node: Node, ctx: &mut EmitCtx) -> (String, String) {
             let name = node_text(node, ctx.src).to_string();
             if name == "self" {
                 return match ctx.program.classes.get(&ctx.class_name) {
+                    /* In a `+` method `self` *is* the class, and the type
+                     * language already has the spelling for that: the
+                     * `class:C` form a bare class name produces below
+                     * (#534). It has to be the same form, not a parallel
+                     * one, so `[self alloc]`, `[self new]`,
+                     * `[self class]` and an ordinary class-method send
+                     * all reach the branches a literal class name
+                     * reaches, rather than a second set that would have
+                     * to be kept in step.
+                     *
+                     * The class is `ctx.class_name`, i.e. the one whose
+                     * `@implementation` encloses the send -- not the
+                     * dynamic receiver. A generated class method takes no
+                     * receiver parameter to carry one; see
+                     * `render_method_definition`, and the note on
+                     * `+new`'s send-site resolution in `render_message`
+                     * for what that costs. */
+                    Some(_) if ctx.in_class_method => {
+                        (ctx.class_name.clone(), format!("class:{}", ctx.class_name))
+                    }
                     Some(_) => ("self".to_string(), format!("struct {} *", ctx.class_name)),
                     None => {
                         ctx.err(node, "'self' used outside a method body");
@@ -1788,6 +1854,17 @@ fn render_expr(node: Node, ctx: &mut EmitCtx) -> (String, String) {
                 // `super` is not a value -- the receiver is still `self`;
                 // only the *dispatch target* is the superclass.
                 return match ctx.program.classes.get(&ctx.class_name).and_then(|c| c.superclass.clone()) {
+                    /* Same two sides as `self` above. `find_defining_class`
+                     * walks the whole chain from here and always did --
+                     * what it filters on is `is_class_method`, so a
+                     * class-side `super` send arriving as an instance
+                     * lookup missed at *every* link, the immediate parent
+                     * included. #535 reads as "stops at the immediate
+                     * parent"; it was broken outright, and
+                     * `class_side_resolution.rs`'s
+                     * `class_method_super_reaches_the_immediate_parent`
+                     * is that correction held in place. */
+                    Some(sup) if ctx.in_class_method => (sup.clone(), format!("class:{}", sup)),
                     Some(sup) => ("self".to_string(), format!("struct {} *", sup)),
                     None => {
                         ctx.err(node, "'super' used outside a method body, or in a root class with no superclass");
@@ -4671,6 +4748,51 @@ fn render_message(node: Node, ctx: &mut EmitCtx) -> (String, String) {
             return (format!("{}_oz_alloc()", cls), format!("struct {} *", cls));
         }
     }
+    /* `+new`, synthesized at the send site as `[[self alloc] init]` --
+     * the receiver's allocator, then the receiver's own `-init` (#539).
+     *
+     * It could not be an ordinary SDK method with a body, even now that
+     * `[[self alloc] init]` transpiles. A generated class method takes no
+     * receiver parameter, so `+ (instancetype)new { return [[self alloc]
+     * init]; }` in `src/OZObject.m` would render *once*, with `self`
+     * nailed to the root class: `[Gadget new]` would emit
+     * `(struct Gadget *)(OZObject_new_cls())` and hand back a `Gadget *`
+     * pointing into an OZObject-sized slab slot, which `-init` then
+     * writes past the end of. That is the `samples/heap_alloc` failure
+     * recorded against `+dynamicAllocWithHeap:` below, and it is why
+     * `+alloc`, `+dynamicAlloc` and `+class` all resolve here instead of
+     * dispatching. `+new` joins them; `include/oz_sdk/Foundation/
+     * OZObject.h` declares it with no body for the same reason.
+     *
+     * `find_defining_class` first, so a class that declares its own
+     * `+new` keeps its own body: `tests/behavior/cases/arc/
+     * owning_argument.m` has shipped one returning a bare `[Thing alloc]`
+     * -- no `-init` at all -- since long before this existed, and an
+     * unconditional interception would have quietly started calling
+     * `-init` on it. */
+    if parts.selector == "new" && parts.args.is_empty() {
+        if let Some(cls) = recv_type.strip_prefix("class:") {
+            let cls = cls.to_string();
+            if new_is_synthesized(ctx.program, &cls) {
+                let alloc = format!("{}_oz_alloc()", cls);
+                /* Through `find_defining_class` so a subclass's own
+                 * `-init` override is honoured -- the point of resolving
+                 * at the send site rather than in a shared body. */
+                let init = find_defining_class(ctx.program, &cls, "init", false)
+                    .unwrap_or_else(|| root.clone());
+                return (
+                    format!(
+                        "(struct {cls} *)({init_fn}((struct {init} *)({alloc})))",
+                        cls = cls,
+                        init_fn = method_fn_name(&init, "init", false),
+                        init = init,
+                        alloc = alloc
+                    ),
+                    format!("struct {} *", cls),
+                );
+            }
+        }
+    }
     // `+class` on a literal class name is a compile-time constant, and
     // `-class` on a value is the `class_id` bitfield every object already
     // carries -- so neither needs a class object, and both are free.
@@ -4847,8 +4969,27 @@ fn render_message(node: Node, ctx: &mut EmitCtx) -> (String, String) {
                 // underlying C function still returns `defining`'s own
                 // pointer type (one function serves every subclass), so
                 // the call site casts it back up to `target`'s.
-                if returns_instancetype && defining != target {
-                    (format!("(struct {} *)({})", target, call), format!("struct {} *", target))
+                //
+                // For a `[super make]` in a `+` method, `target` *is* the
+                // superclass -- `render_expr`'s `super` arm reports it,
+                // which is what makes the lookup start there -- and the
+                // receiver is the class that issued the send. So the type
+                // this covaries with is `ctx.class_name`, exactly as on
+                // the instance side below (#535, and the class-side twin
+                // of `regression_instancetype_covariance.rs`'s case 2).
+                // With `target` it returned the superclass's pointer type
+                // out of a function declared to return the subclass's,
+                // which Apple clang only warns about.
+                let covariant_target = if is_super_receiver(&parts, ctx) {
+                    ctx.class_name.clone()
+                } else {
+                    target.clone()
+                };
+                if returns_instancetype && defining != covariant_target {
+                    (
+                        format!("(struct {} *)({})", covariant_target, call),
+                        format!("struct {} *", covariant_target),
+                    )
                 } else {
                     (call, ret_ty)
                 }
@@ -8170,6 +8311,69 @@ fn render_synthesized_accessor(
     )
 }
 
+/// Refuse `self` or `super` in a `+` method body anywhere but as the
+/// receiver of a message send.
+///
+/// On the class side `self` names a class, and a class is a compile-time
+/// name here rather than a value: `Class` is the `class_id` integer and
+/// no class object exists, so the only position `self` can be rendered
+/// into is the one `render_message` consumes before `render_expr`'s text
+/// ever reaches the output. Every other position emits the bare class
+/// name -- `return Sensor;` -- which is not C.
+///
+/// `return self;` in a class method was already broken before #534: it
+/// emitted a reference to a `self` parameter that
+/// `render_method_definition` does not give a class method. Either way
+/// the failure landed on the C compiler with no Objective-C line
+/// attached, and a located refusal is strictly better than both.
+fn reject_self_as_value_in_class_method(node: Node, ctx: &mut EmitCtx) {
+    let mut cursor = node.walk();
+    let children: Vec<Node> = node.children(&mut cursor).collect();
+    for child in children {
+        reject_self_as_value_in_class_method(child, ctx);
+    }
+    if node.kind() != "identifier" {
+        return;
+    }
+    let name = node_text(node, ctx.src);
+    if name != "self" && name != "super" {
+        return;
+    }
+    /* The receiver position, which is the one legal one. Read off the
+     * parent rather than from `parse_message`: an argument of a send is
+     * also a child of the `message_expression`, so identity against the
+     * receiver node is what separates `[self alloc]` from
+     * `[Registry add:self]`. */
+    let is_receiver = node
+        .parent()
+        .filter(|p| p.kind() == "message_expression")
+        .and_then(|p| parse_message(p, ctx.src))
+        .is_some_and(|parts| parts.receiver.id() == node.id());
+    if is_receiver {
+        return;
+    }
+    ctx.err_detailed(
+        node,
+        format!("'{}' is not a value in a class method", name),
+        Some(format!(
+            "'{}' in a class method names the class, not an object -- and a class has no \
+             value representation here: 'Class' is the class_id integer, no class object \
+             exists, and a generated class method takes no receiver parameter",
+            name
+        )),
+        vec![
+            format!(
+                "'{}' may only be the receiver of a message send on the class side -- \
+                 '[{} alloc]', '[{} new]', '[{} class]'",
+                name, name, name, name
+            ),
+            "to hand back a new instance, return '[[self alloc] init]' (or '[self new]') \
+             rather than the class"
+                .to_string(),
+        ],
+    );
+}
+
 fn render_method_definition(
     node: Node,
     ctx: &mut EmitCtx,
@@ -8222,6 +8426,20 @@ fn render_method_definition(
     // `walk_top_level` records the same thing for a free function --
     // separately, because nothing here is shared with that path (#336).
     ctx.method_return_type = ret_ty.clone();
+
+    /* Which side of the class this body is on, for `render_expr`'s `self`
+     * and `super` arms (#534, #535). Assigned per method rather than per
+     * `EmitCtx` -- one context serves every method of an
+     * `@implementation` -- exactly like `method_return_type` above, and
+     * for the same reason: leaving the previous method's value in place
+     * would make the *order* the methods happen to be written in decide
+     * what `self` means. */
+    ctx.in_class_method = sig.is_class_method;
+    if sig.is_class_method {
+        if let Some(body) = body {
+            reject_self_as_value_in_class_method(body, ctx);
+        }
+    }
 
     // Whether the body was really translated. A body the static bar rejected
     // is passed through as its original text and the whole transpile is going
@@ -8816,6 +9034,12 @@ fn walk_top_level<'a>(
                                 continue;
                             }
                             ctx.scope = ivars_scope.clone();
+                            /* Not a method body, so it is on neither
+                             * side of the class -- and the previous
+                             * method's answer must not leak into it, the
+                             * same hazard `render_method_definition`
+                             * assigns this for. */
+                            ctx.in_class_method = false;
                             out.push_str(&render_stmt_with_comment(child, &mut ctx, ""));
                             out.push('\n');
                         }

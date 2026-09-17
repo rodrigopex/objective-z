@@ -646,8 +646,16 @@ impl Program {
     /// receiver's *actual* class overrides -- an object's own
     /// `-isEqual:`/`-getDescription:maxLength:`), or when more than one
     /// class in the program implements it. Class methods never qualify --
-    /// a class-method receiver is always a literal class name, always
-    /// statically known.
+    /// a class-method receiver is always statically known.
+    ///
+    /// It is no longer always a *literal class name*, which is how this
+    /// used to be argued. Since #534, `self` and `super` in a `+` method
+    /// resolve to the `class:C` receiver form too (`emit::render_expr`).
+    /// The conclusion is unchanged, and for a stronger reason than the
+    /// old wording gave: both resolve to a class fixed at *transpile*
+    /// time -- the one whose `@implementation` encloses the send -- and a
+    /// generated class method takes no receiver parameter, so there is
+    /// nothing a dynamic dispatch could switch on even in principle.
     ///
     /// This answers "which selectors get an `OZ_PROTOCOL_SEND_*`
     /// function", which is a program-wide question. Whether a given
