@@ -262,3 +262,125 @@ int main(void)
 		slab_lines(&out.source_c)
 	);
 }
+
+/// `[self alloc]` in a `+` method is a slab site for the enclosing class
+/// (#534).
+///
+/// **The nil-at-runtime trap this whole file is about, in its worst
+/// form.** `alloc_receiver_class` required the receiver *text* to be a
+/// literal class name, so a `self` receiver counted nothing -- and since
+/// #419 that is not just a slot count: `slab_sites` never learned the
+/// class, `ever_slab_allocated` answered no, and `for_class` returned 0,
+/// which the emitters read as "emit no `k_mem_slab` at all". Fixing
+/// `self`-as-class in `emit.rs` alone would have turned #534's hard
+/// located error into a factory that transpiles, links, and hands back
+/// **nil** on the first call -- strictly worse, and invisible to every
+/// gate that reads the generated C instead of running it.
+///
+/// Three call sites, so a missing multiplicity fails here too rather
+/// than only the missing slab.
+#[test]
+fn self_alloc_in_a_class_method_is_a_slab_site() {
+	let src = format!(
+		"{}{}",
+		PREAMBLE(),
+		"\
+@interface Thing : OZObject {
+	int _n;
+}
++ (instancetype)make;
+@end
+@implementation Thing
++ (instancetype)make
+{
+	return [[self alloc] init];
+}
+@end
+
+#include <stdio.h>
+int main(void)
+{
+	Thing *a = [Thing make];
+	Thing *b = [Thing make];
+	Thing *c = [Thing make];
+	printf(\"live=%d\\n\", (a != 0) + (b != 0) + (c != 0));
+	return 0;
+}
+"
+	);
+	let out = oz2c::transpile(&src).expect("should transpile");
+	assert!(
+		out.source_c.contains("OZ_SLAB_DEFINE(oz_slab_Thing, sizeof(struct Thing), 3, 4)"),
+		"`[self alloc]` allocates from the enclosing class's slab, once per call site \
+		 of the factory; got:\n{}",
+		slab_lines(&out.source_c)
+	);
+	let stdout = compile_and_run(&src, "self_alloc_in_a_class_method_is_a_slab_site");
+	assert_eq!(
+		stdout, "live=3\n",
+		"a slab that was never emitted answers nil, and nothing at build time says so"
+	);
+}
+
+/// `[C new]` is a slab site for C, the same way `[C alloc]` is (#539).
+///
+/// The inherited `+new` is synthesized at the send site as the
+/// receiver's own `alloc` plus `init`, so it takes a slot -- but the
+/// selector comparison here is whole-string against `alloc`, so it
+/// counted nothing and the class lost its slab exactly as above.
+///
+/// A class declaring **its own** `+new` is the other half: that is an
+/// ordinary class method whose body allocates however it says, so
+/// counting the send as well as the `alloc` inside it would double-count.
+/// `emit::new_is_synthesized` is the one predicate both sides read.
+#[test]
+fn new_is_a_slab_site_only_where_it_is_synthesized() {
+	let src = format!(
+		"{}{}",
+		PREAMBLE(),
+		"\
+@interface Plain : OZObject {
+	int _n;
+}
+@end
+@implementation Plain
+@end
+
+@interface Own : OZObject {
+	int _n;
+}
++ (instancetype)new;
+@end
+@implementation Own
++ (instancetype)new
+{
+	return [[Own alloc] init];
+}
+@end
+
+#include <stdio.h>
+int main(void)
+{
+	Plain *p = [Plain new];
+	Plain *q = [Plain new];
+	Own *o = [Own new];
+	printf(\"live=%d\\n\", (p != 0) + (q != 0) + (o != 0));
+	return 0;
+}
+"
+	);
+	let out = oz2c::transpile(&src).expect("should transpile");
+	assert!(
+		out.source_c.contains("OZ_SLAB_DEFINE(oz_slab_Plain, sizeof(struct Plain), 2, 4)"),
+		"two synthesized `[Plain new]` sends are two slots; got:\n{}",
+		slab_lines(&out.source_c)
+	);
+	assert!(
+		out.source_c.contains("OZ_SLAB_DEFINE(oz_slab_Own, sizeof(struct Own), 1, 4)"),
+		"`+new`'s own body owns the `alloc`, counted once for its one call site -- not \
+		 twice; got:\n{}",
+		slab_lines(&out.source_c)
+	);
+	let stdout = compile_and_run(&src, "new_is_a_slab_site_only_where_it_is_synthesized");
+	assert_eq!(stdout, "live=3\n");
+}
