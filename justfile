@@ -275,10 +275,16 @@ test: oz2c
 
 # Same samples on RISC-V. gpio_demo is filtered out by its own sample.yaml:
 # qemu_riscv32 has no led0/sw0 device-tree aliases, and hello_category's
-# debug_lines scenario pins mps2/an385, so 13 configurations run here against
-# the 15 on ARM.
+# debug_lines scenario pins mps2/an385, so this board runs two fewer
+# configurations than ARM does -- 14 against 16 as of #539's
+# `samples/class_side`.
 #
-# The same samples on RISC-V (`qemu_riscv32`); 13 configurations select.
+# **Both numbers move when a sample is added**, and they are stated once
+# here rather than twice, because the duplicate is what goes stale: this
+# comment said 13-against-15 for as long as it took one new sample to land.
+# `west twister -T samples/ -p <board> --dry-run` counts them in seconds.
+#
+# The same samples on RISC-V (`qemu_riscv32`).
 test-riscv: oz2c
     west twister -T samples/ -p {{ riscv_board }} -c -O {{ outdir }}-riscv
 

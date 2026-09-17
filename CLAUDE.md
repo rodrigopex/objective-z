@@ -122,7 +122,7 @@ Versions CI pins, and so the ones to match locally: **Zephyr v4.4.2**
 | `just clean-all`           | Everything regenerable this checkout owns; run it before leaving a worktree |
 | `just disk-report`         | What this checkout and its worktrees are holding. Read-only |
 | `just test` / `just t`    | Run twister on all samples (ARM)   |
-| `just test-riscv`          | Same samples on RISC-V (13 configurations against ARM's 15; `gpio_demo` and the `CONFIG_DEBUG` scenario are ARM-only) |
+| `just test-riscv`          | Same samples on RISC-V (two fewer configurations than ARM: `gpio_demo` and the `CONFIG_DEBUG` scenario are ARM-only). 14 against 16 as of #539; a new sample moves both, so `--dry-run` rather than trust this |
 | `just test-smp`            | Two cores, `qemu_cortex_a53/smp` — the only board that exercises real lock contention |
 | `just test-boards`         | ARM + RISC-V, so neither hides an architecture-specific regression |
 | `just test-all-boards`     | All three, including SMP |
@@ -142,8 +142,8 @@ cargo test --manifest-path tools/oz2c/Cargo.toml
 
 Every twister recipe depends on `just oz2c`, so the transpiler is built before
 any sample configures. Driving `west twister` directly skips that: build oz2c
-first, or 15 configure steps each fork their own cargo and a slot can fail to
-start oz2c at all (#308).
+first, or every configure step forks its own cargo -- 16 of them on ARM
+today -- and a slot can fail to start oz2c at all (#308).
 
 Their output directories derive from `outdir`, which is keyed on the checkout —
 `/tmp/twister-out-<checkout>` and suffixed siblings — so two worktrees can sweep
