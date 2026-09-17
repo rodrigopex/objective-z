@@ -71,3 +71,4 @@
 #define OZObject_cls_alloc OZObject_alloc_cls
 #define OZObject_cls_dynamicAlloc OZObject_dynamicAlloc_cls
 #define OZObject_cls_dynamicAllocWithHeap_ OZObject_dynamicAllocWithHeap__cls
+#define OZObject_cls_new OZObject_new_cls

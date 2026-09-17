@@ -101,6 +101,8 @@ int oz_retain_count(id obj);
  * ========================================================================== */
 /* + (instancetype)alloc; */
 struct OZObject * OZObject_alloc_cls(void);
+/* + (instancetype)new; */
+struct OZObject * OZObject_new_cls(void);
 /* + (instancetype)dynamicAlloc; */
 struct OZObject * OZObject_dynamicAlloc_cls(void);
 /* + (instancetype)dynamicAllocWithHeap:(id)heap; */
