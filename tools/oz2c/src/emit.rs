@@ -5506,6 +5506,29 @@ fn render_block(node: Node, ctx: &mut EmitCtx) -> (String, String) {
      * so a `@synchronized` still open after the literal must keep owing
      * its unlock. */
     let enclosing_sync_cleanups = std::mem::take(&mut ctx.sync_cleanups);
+    /* The literal's own parameters, which nothing put in scope until #537.
+     * `collect_local_decls` below covers the body's *locals* and returns
+     * immediately on a `block_literal`, and `render_block` used the
+     * parameter list only to render the hoisted signature text -- so
+     * inside the body a parameter fell to `render_expr`'s
+     * `unwrap_or("id")` and a send to it was rejected as an unresolvable
+     * `id` receiver, however carefully it had been typed. Exactly the
+     * omission `collect_function_params` fixed for a free function (#250),
+     * one position over.
+     *
+     * Seeded *after* the enclosing body's pending state is saved and
+     * before the body renders, so the body sees its own parameters, and
+     * restored after: a parameter is the one thing here that genuinely
+     * shadows, since the hoisted function's `prefix` is not the enclosing
+     * body's `prefix`. `restore_shadowed_bindings` removes a name that was
+     * unbound before and puts the enclosing type back on one that was --
+     * the same save/restore discipline `method_return_type` and
+     * `sync_cleanups` use just above, and for the same reason: this runs
+     * on the *enclosing* body's `EmitCtx`. */
+    let shadowed_params = match found_plist {
+        Some(plist) => seed_parameter_list(plist, ctx),
+        None => Vec::new(),
+    };
     let body_text = match body {
         Some(body) => {
             // Block bodies use the same flat scope as their enclosing
@@ -5518,11 +5541,14 @@ fn render_block(node: Node, ctx: &mut EmitCtx) -> (String, String) {
             // `@synchronized` unlocks (#342, both above) each have a
             // boundary here, because the hoisted function is a different
             // function and the enclosing body's locals are not its own.
+            // Nor of its own parameter *types*, which shadow (#537, just
+            // above).
             collect_local_decls(body, ctx);
             render_body_with_comments(body, ctx)
         }
         None => "{\n}".to_string(),
     };
+    restore_shadowed_bindings(shadowed_params, ctx);
     ctx.method_return_type = enclosing_return_type;
     ctx.sync_cleanups = enclosing_sync_cleanups;
 
@@ -7402,15 +7428,10 @@ fn lower_ivar_decl(instance_variable: Node, ctx: &mut EmitCtx) -> String {
 /// scan a free function at all: the free-function path kept getting a reduced
 /// version of what a method body gets.
 ///
-/// Every parameter is inserted, not only the object-typed ones, because that
-/// is what a method does and the two paths drifting is what produces this
-/// shape of bug (#246, gap R).
-///
-/// Adding them to `ctx.locals` cannot make ARC release a borrowed parameter:
-/// `managed_object_locals` looks for `declaration` nodes *inside the body*,
-/// and a parameter is a `parameter_declaration` outside it.
+/// The seeding itself is `seed_parameter_list`, shared with a block
+/// literal's parameter list (#537) -- the same omission one position over
+/// again.
 fn collect_function_params(func_node: Node, ctx: &mut EmitCtx) {
-    let known: std::collections::HashSet<String> = ctx.program.classes.keys().cloned().collect();
     let mut lists = Vec::new();
     find_parameter_lists(func_node, &mut lists);
     // The first list is the function's own: `find_parameter_lists` stops
@@ -7419,6 +7440,40 @@ fn collect_function_params(func_node: Node, ctx: &mut EmitCtx) {
     let Some(plist) = lists.first() else {
         return;
     };
+    /* A plain C function owns a whole `EmitCtx`, so nothing it shadows has
+     * to come back -- the record is dropped. */
+    let _ = seed_parameter_list(*plist, ctx);
+}
+
+/// One name a parameter list bound, together with whatever the enclosing
+/// scope held under it -- enough to put the enclosing binding back.
+///
+/// `None` in `scope` and `false` in the two sets mean the name was not
+/// bound at all before, so restoring it is a *removal*: without that, a
+/// block's parameter would stay visible to the enclosing body after the
+/// literal, under the block's type.
+struct ShadowedBinding {
+    name: String,
+    scope: Option<String>,
+    was_param: bool,
+    was_local: bool,
+}
+
+/// Seed every parameter `plist` declares into `ctx`'s scope, the way
+/// `render_method_definition` seeds a method's (#250), and report what was
+/// displaced so a caller with a scope *boundary* can undo it.
+///
+/// Every parameter is inserted, not only the object-typed ones, because
+/// that is what a method does and the two paths drifting is what produces
+/// this shape of bug (#246, gap R).
+///
+/// Adding them to `ctx.locals` cannot make ARC release a borrowed
+/// parameter: `managed_object_locals` looks for `declaration` nodes
+/// *inside the body*, and a parameter is a `parameter_declaration` outside
+/// it.
+fn seed_parameter_list(plist: Node, ctx: &mut EmitCtx) -> Vec<ShadowedBinding> {
+    let known: std::collections::HashSet<String> = ctx.program.classes.keys().cloned().collect();
+    let mut shadowed = Vec::new();
     let mut cursor = plist.walk();
     for child in plist.children(&mut cursor) {
         if child.kind() != "parameter_declaration" {
@@ -7427,10 +7482,42 @@ fn collect_function_params(func_node: Node, ctx: &mut EmitCtx) {
         let (type_text, stars) = crate::collect::extract_type_and_stars(child, ctx.src);
         let c_type = crate::collect::render_type(&type_text, stars, &known);
         let name = crate::collect::find_declared_name(child, ctx.src);
-        if !name.is_empty() {
-            ctx.scope.insert(name.clone(), c_type);
-            ctx.params.insert(name.clone());
-            ctx.locals.insert(name);
+        if name.is_empty() {
+            continue;
+        }
+        shadowed.push(ShadowedBinding {
+            name: name.clone(),
+            scope: ctx.scope.get(&name).cloned(),
+            was_param: ctx.params.contains(&name),
+            was_local: ctx.locals.contains(&name),
+        });
+        ctx.scope.insert(name.clone(), c_type);
+        ctx.params.insert(name.clone());
+        ctx.locals.insert(name);
+    }
+    shadowed
+}
+
+/// Undo `seed_parameter_list`, putting the enclosing bindings back.
+fn restore_shadowed_bindings(shadowed: Vec<ShadowedBinding>, ctx: &mut EmitCtx) {
+    for binding in shadowed {
+        match binding.scope {
+            Some(ty) => {
+                ctx.scope.insert(binding.name.clone(), ty);
+            }
+            None => {
+                ctx.scope.remove(&binding.name);
+            }
+        }
+        if binding.was_param {
+            ctx.params.insert(binding.name.clone());
+        } else {
+            ctx.params.remove(&binding.name);
+        }
+        if binding.was_local {
+            ctx.locals.insert(binding.name);
+        } else {
+            ctx.locals.remove(&binding.name);
         }
     }
 }
@@ -7464,9 +7551,13 @@ fn is_bare_id_type(node: Node, src: &str) -> bool {
      * qualification constrains what may be assigned to it and says nothing
      * about its representation, so it lowers to the root class pointer
      * exactly as a bare `id` does. The grammar files it as a
-     * `generic_specifier` with `id` as the base, so the strict text test
-     * above missed it and `void f(id<Marker> m)` reached GCC verbatim:
-     * `expected ')'` (#367).
+     * `typedefed_specifier` wrapping an `id` node and a
+     * `protocol_reference_list` (the arm below), so the strict text test
+     * above sees `id<Marker>` and missed it, and `void f(id<Marker> m)`
+     * reached GCC verbatim: `expected ')'` (#367). This said
+     * `generic_specifier` until #531, which is the node kind
+     * `Container<Arg>` gets and not this one -- read the arm, not the
+     * prose.
      *
      * Answered here rather than at the one call site that reported it,
      * because every position that lowers an `id` should lower both
@@ -7537,6 +7628,37 @@ fn collect_ivar_lowering_edits(
                     format!("struct {}", name),
                 ));
             }
+        }
+
+        /* `id<Proto> _x;` -- the protocol-qualified spelling of an ivar
+         * whose bare form works. `id` itself is deliberately left on the
+         * preamble typedef here (the long comment below says why), but
+         * `id<Proto>` is not a typedef reference: the grammar files it as
+         * a `typedefed_specifier` wrapping an `id` node *plus* a
+         * `protocol_reference_list`, so its own text is `id<Proto>` and
+         * this function -- a verbatim text copy with targeted edits --
+         * copied the angle brackets straight into the emitted struct:
+         * `error: expected identifier or '(' before '<' token`, against a
+         * generated line the author never wrote (#531).
+         *
+         * Normalized to plain `id`, not to the root class pointer, so the
+         * ivar keeps the exact field type its bare-`id` form already has
+         * -- the protocol qualification constrains what may be assigned to
+         * it and says nothing about its representation.
+         *
+         * Only a *direct* child, on the same reasoning as the
+         * `type_identifier` above: one inside a function-pointer ivar's
+         * parameter list belongs to `rewrite_id_types` below, which
+         * already understands both spellings, and two edits over one range
+         * would collide. */
+        let mut cursor = node.walk();
+        let qualified = node
+            .children(&mut cursor)
+            .find(|c| c.kind() == "typedefed_specifier" && is_bare_id_type(*c, ctx.src))
+            .filter(|c| node_text(*c, ctx.src).trim() != "id")
+            .map(|c| c.byte_range());
+        if let Some(range) = qualified {
+            edits.push((range.start - origin..range.end - origin, "id".to_string()));
         }
 
         // A function-pointer ivar's own parameter list: an `id` there is
