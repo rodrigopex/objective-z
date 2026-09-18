@@ -4431,3 +4431,68 @@ implicit: `a_collect_refusal_still_ends_the_sequence` pins the sequence
 stopping at `Collect`. The reversal is only safe because that one holds, so the
 two belong together -- and if a later change widens the hard gate, that test is
 the one that fails first.
+
+## Two declaration defects, and a node type that was not where the grammar said (#538, #549)
+
+Both were silent in oz2c and surfaced from GCC on generated C -- the failure
+shape #501, #205 and OZ-001/002/004 all share.
+
+- **A duplicate parameter name** (`- (int)addA:(int)amount andB:(int)amount`)
+  reached `oz2c_generated/Foundation/oz2c_dispatch.h` and GCC reported
+  `redefinition of parameter 'amount'` against a file the author never opened,
+  at a line that does not exist in their source (#549).
+- **A variadic ellipsis was dropped, not refused** (#538). That is worse than a
+  missing diagnostic, because the *declaration was altered*:
+  `extract_method_sig` rebuilds the C signature from its `params` alone, so
+  `, ...` could not reappear -- while the comment the emitter writes above the
+  function preserved it verbatim. A body that never reaches for `va_start`
+  compiles silently as a fixed-arg function; the one that does failed on
+  `'va_start' used in function with fixed arguments`, a cause that is a
+  *symptom* of the drop.
+
+### The ellipsis is not `variadic_parameter`
+
+`tree-sitter-objc`'s own `node-types.json` has a `variadic_parameter` type, and
+matching it here found **nothing**: that type belongs to a plain C parameter
+list. An Objective-C method's ellipsis is a bare anonymous `"..."` token child
+of the `method_declaration`.
+
+Settled by parsing the fragment and dumping the tree, which is the third time
+that has been the only way: `id<Marker>` is a `typedefed_specifier` and not the
+obvious `generic_specifier` (#367), a file-scope `struct box { };` is a bare
+`struct_specifier` and not a `declaration` (#367 again), and now this. **The
+grammar's type list is a catalogue of what the grammar can produce, not a map
+of where.**
+
+The token match needs its own control, and this one is not hypothetical: the
+same `"..."` appears in a C `parameter_list`, so a walk that did not require a
+`method_declaration` parent would refuse `OZLog` and every other variadic C
+function in the SDK. `a_plain_c_variadic_function_is_untouched` is that
+control.
+
+### Where they are checked is #540's rule, applied
+
+Neither belongs in `collect`'s root scans, and the reason is the one #540 had
+just established: a `collect` diagnostic gates the pipeline because the
+`Program` may be unwalkable afterwards, and neither of these makes it so. The
+class table is fine; one signature is merely wrong.
+
+So they sit with `check_out_parameter_stores`, where diagnostics accumulate
+rather than return -- which means an author who writes both a duplicate
+parameter and a `@try` sees both. In `collect` they would have become the
+earliest masker in the pipeline, which is the thing #540 fixed. Two issues
+apart, the second inherited the first's rule without a second argument, which
+is what a rule stated once is for.
+
+### A negative assertion that matched its own explanation
+
+`a_duplicate_parameter_name_is_refused` first asserted
+`!diags.contains("oz2c_dispatch.h")`, meaning "the diagnostic points at the
+author's file, not a generated one". It failed -- because the diagnostic's own
+**note** names that file, explaining where the error used to surface.
+
+The needle matched the prose written *about* the defect rather than the defect.
+That is the same shape as a guard whose subject is text you also wrote, and the
+fix is the same: assert the property positively. The note's presence is now the
+assertion, since a reader who saw the old GCC error needs exactly that sentence
+to connect the two.

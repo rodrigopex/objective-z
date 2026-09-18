@@ -285,8 +285,17 @@ Three standing design rules, easy to violate with good intentions:
   drain -- write a plain braced scope, which is what it compiled to. See
   [docs/STATUS.md](docs/STATUS.md), "Standing design rules".
 - **The Python pipeline is a reference, not an authority.** It has real defects (a
-  double-release in synthesized dealloc, no variadic support, item-slot sizing that ignores
-  loops); matching them would be a regression dressed as parity.
+  double-release in synthesized dealloc, item-slot sizing that ignores
+  loops); matching them would be a regression dressed as parity. Its lack of variadic
+  support used to head that list and no longer belongs there -- see the contract below,
+  which oz2c shares with it deliberately.
+- **A variadic Objective-C method is refused, with a located error (#538).** Not a gap:
+  a dispatch shim declares one concrete signature per selector and
+  `-performSelector:`'s wrapper has a fixed shape, so an ellipsis has nowhere to go.
+  Until #538 it was *dropped* rather than refused -- the declaration silently became a
+  fixed-arg function and a `va_start` in the body failed on GCC. A variadic plain **C**
+  function is unaffected and `OZLog` is one (`src/OZLog.c`), which is the counter-example
+  a reader reaches for first.
 
 ### The retired Python transpiler (`tools/oz_transpile/`)
 
@@ -313,7 +322,9 @@ Why it went, measured rather than assumed:
 - it implemented no construct oz2c lacks — `@try` was in its own
   `_UNSUPPORTED_AST_KINDS`, `@selector`/`@protocol()` appeared only in kind lists with
   no emission rule, reflection selectors were absent entirely, and there was no
-  variadic support anywhere, so `OZLog` could never have gone through it —
+  variadic support anywhere, so `OZLog` could never have gone through it (oz2c refuses a
+  variadic *method* too, by the contract above; `OZLog` works because it is a C
+  function) —
   oz2c has since implemented reflection outright (#226), which it never did;
 - Objective-C in a `#define` body crashed it with a `RecursionError`, where oz2c
   rejects it with a located error (#238);
