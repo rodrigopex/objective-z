@@ -1966,6 +1966,28 @@ fn walk_weak_qualifier(node: Node, src: &str, diags: &mut Vec<Diagnostic>) {
 /// column, so this is a rule oz2c owes rather than one it delegates -- and
 /// on the paths that dump an AST, Clang's refusal is not a backstop we can
 /// rely on: the panic reproduced with a dump present.
+/// The single term of a `[receiver]` send -- one where the selector is a
+/// MISSING node rather than text.
+///
+/// `[ value]` and `[obj]` are the whole of this shape: tree-sitter
+/// recovers both as the receiver plus a missing identifier. `[]` and
+/// `[self :1]` are *not* -- those come back as `ERROR` nodes and never
+/// reach here at all, which is why `MUTATIONS.md` grades M06 and M10 as
+/// caught by Clang rather than by oz2c.
+///
+/// Returns the term's text, because the two remedies have to quote it:
+/// the author meant it as a selector or as a receiver, and nothing in the
+/// source says which.
+fn lone_term_send(node: Node, src: &str) -> Option<String> {
+    let mut cursor = node.walk();
+    let children: Vec<Node> =
+        node.children(&mut cursor).filter(|c| c.kind() != "[" && c.kind() != "]").collect();
+    if children.len() != 2 || !children[1].is_missing() {
+        return None;
+    }
+    Some(node_text(children[0], src).to_string())
+}
+
 pub fn check_malformed_sends(root: Node, src: &str) -> Vec<Diagnostic> {
     let mut diags = Vec::new();
     walk_malformed_sends(root, src, &mut diags);
@@ -1974,16 +1996,54 @@ pub fn check_malformed_sends(root: Node, src: &str) -> Vec<Diagnostic> {
 
 fn walk_malformed_sends(node: Node, src: &str, diags: &mut Vec<Diagnostic>) {
     if node.kind() == "message_expression" && crate::emit::parse_message(node, src).is_none() {
-        err(
-            diags,
-            src,
-            node,
-            format!(
-                "'{}' is not a well-formed message send: each keyword needs a ':' before its \
-                 argument. Clang reports the same source as `expected ':'`",
-                crate::emit::one_line(node_text(node, src))
-            ),
-        );
+        if let Some(term) = lone_term_send(node, src) {
+            /* A different malformation, and it used to borrow the other
+             * one's message. `[ value]` has no missing colon -- it has
+             * one term where a send needs two, and the ':' advice cannot
+             * be acted on (#551). */
+            err_detailed(
+                diags,
+                src,
+                node,
+                Rejection {
+                    message: format!(
+                        "'{}' names one term where a message send needs two -- \
+                         '[receiver selector]'",
+                        crate::emit::one_line(node_text(node, src))
+                    ),
+                    note: Some(format!(
+                        "the parse binds the single term as the *receiver*, so it is the \
+                         selector that is absent. Clang reads it the same way and reports \
+                         `use of undeclared identifier '{}'` rather than a missing selector, \
+                         which is why neither tool can tell you which half you meant to write",
+                        term
+                    )),
+                    help: vec![
+                        format!(
+                            "if '{}' is the selector, name the receiver it belongs to: \
+                             '[self {}]'",
+                            term, term
+                        ),
+                        format!(
+                            "if '{}' is the receiver, add the selector to send it: \
+                             '[{} someSelector]'",
+                            term, term
+                        ),
+                    ],
+                },
+            );
+        } else {
+            err(
+                diags,
+                src,
+                node,
+                format!(
+                    "'{}' is not a well-formed message send: each keyword needs a ':' before \
+                     its argument. Clang reports the same source as `expected ':'`",
+                    crate::emit::one_line(node_text(node, src))
+                ),
+            );
+        }
         /* One diagnostic per send. A malformed send's children are not a
          * reliable shape, so descending to look for a nested one inside it
          * would report positions the author cannot act on until the outer

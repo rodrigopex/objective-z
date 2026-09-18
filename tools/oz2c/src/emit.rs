@@ -1383,6 +1383,44 @@ fn class_name_from_type(t: &str) -> Option<String> {
     }
 }
 
+/// The forward-declared class name this send's receiver names, when that
+/// is *why* the receiver could not be resolved.
+///
+/// Two spellings reach the unresolvable-receiver arm with one cause, and
+/// keying on either alone fixes half the defect:
+///
+///   * `[Ghost alloc]` -- the receiver *is* the class name. It never
+///     became a `class:Ghost` receiver, because that lookup only answers
+///     for a class in the graph, so it arrives as `id`.
+///   * `[g tick]`, where `g` is a `Ghost *` -- the declared type names
+///     the class, so the type arrives spelled `Ghost*` and
+///     `class_name_from_type` refuses it for want of a `struct` tag.
+///
+/// #557 filed the first. The second is the same defect under a different
+/// spelling, and was found by looking rather than reported -- so this
+/// asks the question once, of the *reference*, never of the form it was
+/// written in. That is the rule the ARC defects of 2026-09 earned, and it
+/// applies to a diagnostic for the same reason it applies to ownership: a
+/// second spelling is not a second bug to wait for.
+fn forward_declared_receiver(recv_node: Node, recv_type: &str, ctx: &EmitCtx) -> Option<String> {
+    /* The receiver written as the class name itself. */
+    if recv_node.kind() == "identifier" {
+        let text = node_text(recv_node, ctx.src);
+        if ctx.program.is_forward_declared_only(text) {
+            return Some(text.to_string());
+        }
+    }
+    /* The receiver typed as a pointer to one. An unresolved class name
+     * keeps its own spelling in `recv_type` -- it is only a resolved one
+     * that gains the `struct` tag -- so the bare name is what is left
+     * after the stars. */
+    let bare = recv_type.trim().trim_end_matches('*').trim();
+    if ctx.program.is_forward_declared_only(bare) {
+        return Some(bare.to_string());
+    }
+    None
+}
+
 pub(crate) fn find_defining_class(
     program: &Program,
     start: &str,
@@ -2601,6 +2639,25 @@ pub(crate) fn parse_message<'a>(node: Node<'a>, src: &str) -> Option<MessagePart
     let mut selector = String::new();
     let mut args = Vec::new();
     if children.len() == 2 {
+        /* A MISSING node is tree-sitter's error recovery, not a
+         * selector. `[ value]` -- and equally `[obj]` -- parses as the
+         * receiver plus a *missing* identifier whose text is the empty
+         * string, so accepting it produced "cannot statically resolve
+         * the receiver type for selector ''": a diagnostic naming an
+         * empty selector, and blaming a receiver type that was never the
+         * problem (#551).
+         *
+         * `is_missing()` rather than a test for empty text, because the
+         * parse's own answer is what this is asking for -- an empty
+         * selector has no other way to arise, and a future grammar that
+         * spelled one differently would still be recovery.
+         *
+         * `staticbar::check_malformed_sends` refuses the shape with its
+         * own message before `emit` ever runs, so this `None` is a
+         * defence and not the diagnostic. */
+        if children[1].is_missing() {
+            return None;
+        }
         selector = node_text(children[1], src).to_string();
     } else {
         if children.len() < 4 || (children.len() - 1) % 3 != 0 {
@@ -5241,6 +5298,41 @@ fn render_message(node: Node, ctx: &mut EmitCtx) -> (String, String) {
             }
         }
         None => {
+            /* A name known only from a `@class` is a *different* cause
+             * reaching the same arm, and it has its own diagnostic: the
+             * receiver's type degraded because the class graph has no
+             * shape for the name, so reporting the degraded type names
+             * the consequence and hides the reason (#557). */
+            if let Some(name) = forward_declared_receiver(parts.receiver, &recv_type, ctx) {
+                ctx.err_detailed(
+                    node,
+                    format!(
+                        "'{}' is only forward-declared, so '{}' cannot be sent to it",
+                        name, parts.selector
+                    ),
+                    Some(format!(
+                        "a '@class {}' says the name exists -- it does not say what shape it \
+                         has, so there is no '@interface' in the class graph to resolve the \
+                         send against. The receiver's type arriving as '{}' is the \
+                         consequence of that, not the cause",
+                        name, recv_type
+                    )),
+                    vec![
+                        format!(
+                            "'#import' the header that declares '@interface {}', or move the \
+                             send where that declaration is visible",
+                            name
+                        ),
+                        format!(
+                            "a forward declaration is enough to *hold* a '{} *' and not enough \
+                             to message one, which is why declaring the variable is accepted \
+                             and only the send is refused",
+                            name
+                        ),
+                    ],
+                );
+                return ("0".to_string(), "int".to_string());
+            }
             /* The remedy split out of the message (#457). This is the
              * rejection a px-keyboard author lost hours to: a `dim`
              * defined on another class, sent to a receiver that reached

@@ -4,7 +4,7 @@
 // signatures). Two sub-passes: class names/hierarchy first, then
 // ivars/methods (which need the class-name set to render object types).
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use tree_sitter::Node;
 
@@ -1558,9 +1558,47 @@ source",
             uses_perform_selector: reflection.performs,
             uses_responds_to_selector: reflection.responds,
             uses_synchronized: contains_kind(root, "synchronized_statement"),
+            forward_declared: forward_declared_classes(root, source),
         },
         diagnostics,
     )
+}
+
+/// Every class name a `@class` forward declaration names.
+///
+/// `@class A, B;` is a *single* `class_declaration` carrying one
+/// `identifier` per name, so this takes every identifier child rather
+/// than the first -- confirmed against the parse, which builds
+/// `class_declaration` as `@`, `class`, `identifier`..., `;`. Reading
+/// only the first would collect `A` and silently lose `B`, and the loss
+/// would show up as the generic unresolvable-receiver error for `B`
+/// alone: the failure mode the caller of this exists to remove.
+///
+/// Walks the whole tree rather than the top level. `@class` belongs at
+/// file scope and every real one sits there, but a walk that assumed so
+/// would silently collect nothing from a file that nests one, and not
+/// assuming costs one recursion.
+fn forward_declared_classes(root: Node, source: &str) -> BTreeSet<String> {
+    let mut names = BTreeSet::new();
+    walk_forward_declared(root, source, &mut names);
+    names
+}
+
+fn walk_forward_declared(node: Node, source: &str, names: &mut BTreeSet<String>) {
+    if node.kind() == "class_declaration" {
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            if child.kind() == "identifier" {
+                names.insert(node_text(child, source).to_string());
+            }
+        }
+        /* Nothing under a `@class` but its own names. */
+        return;
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        walk_forward_declared(child, source, names);
+    }
 }
 
 /// A top-level `function_definition`'s C return type, rendered the way

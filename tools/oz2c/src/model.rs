@@ -351,6 +351,21 @@ pub struct Program {
     /// but kept here for the same reason: the root-struct emitter already has
     /// `Program` in hand and nothing else would carry it.
     pub uses_synchronized: bool,
+    /// Every class name a `@class` forward declaration names.
+    ///
+    /// The raw fact, deliberately -- *not* "only forward-declared". A
+    /// name here may also have a real `@interface` in the same
+    /// translation unit, in which case it is an ordinary class and the
+    /// forward declaration adds nothing. Whether a name is only
+    /// forward-declared is `is_forward_declared_only`, which is the
+    /// question a caller actually has.
+    ///
+    /// Collected so a send through such a name can name *that* as the
+    /// cause. Without it the receiver's type had already degraded by the
+    /// time the send was refused, and the error reported the fallback --
+    /// "receiver type is 'id'" -- for a receiver the author had spelled
+    /// with a class name (#557).
+    pub forward_declared: std::collections::BTreeSet<String>,
 }
 
 impl Program {
@@ -375,6 +390,18 @@ impl Program {
 
     pub fn is_class(&self, name: &str) -> bool {
         self.classes.contains_key(name)
+    }
+
+    /// Is `name` declared *only* by an `@class` forward declaration --
+    /// the name exists, but no `@interface` ever gave it a shape?
+    ///
+    /// `forward_declared` is the raw set and says nothing about whether a
+    /// real declaration followed, so every caller wants this and not the
+    /// field. Both halves matter: a name with an `@interface` is an
+    /// ordinary class, and a name in neither was never declared at all --
+    /// which is #501's diagnostic, not this one.
+    pub fn is_forward_declared_only(&self, name: &str) -> bool {
+        self.forward_declared.contains(name) && !self.is_class(name)
     }
 
     /// The C access path from a `self` typed as `struct {from_class} *` to
