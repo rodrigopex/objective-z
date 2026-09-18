@@ -710,6 +710,56 @@ Four of the eight tests in `block_parameter_scope.rs` exist for that half
 alone, and two of them are negative: a name must not leak out, and two
 literals must each see only their own parameter.
 
+### A diagnostic that named its fallback, and the sibling it hid (#551, #557)
+
+Two issues, one `match` arm. `emit`'s unresolvable-receiver rejection answered
+every receiver it could not resolve with one sentence -- "cannot statically
+resolve the receiver type for selector 'X' (receiver type is 'id')" -- and for
+two different causes that sentence named the *consequence* rather than the
+reason:
+
+  - `[ value]` (#551). tree-sitter recovers a lone-term send as the receiver
+    plus a **MISSING** identifier, so the selector was the empty string: the
+    message read `selector ''` and the remedy read "declare the receiver as the
+    class that implements `''`". There is nothing in that an author can act on.
+  - `[Ghost alloc]`, where `Ghost` came from a `@class` (#557). A forward
+    declaration is invisible to the class graph, so the receiver's type degraded
+    to `id`. The author had spelled a class name and was told the receiver is
+    `id`.
+
+In both, `id` is what the type *became*. And oz2c fires before Clang ever sees
+the file -- the resolve pass runs first -- so the generic answer was the only
+one either author was ever going to get, where Clang would have named the cause
+("is a forward declaration").
+
+**The sibling is the part worth keeping.** #557 was filed on `[Ghost alloc]`,
+where the receiver *is* the class name and the type arrives as `id`. A send
+through a *variable* of that type -- `Ghost *g; [g tick];` -- reaches the same
+arm with `receiver type is 'Ghost*'`: one cause, a second spelling, and no
+issue filed on it. It was found by asking the question the ARC defects of
+2026-09 earned -- key on the reference, never on the form it was written in --
+and a fix keyed on the `id` spelling would have passed #557's own reproduction
+while leaving the second live.
+
+What generalises: **a diagnostic can be located, specific, and still name the
+wrong thing**, when what it reports is the state the failure left behind rather
+than the state that caused it. Two independent sweeps make the point together.
+The px-app torture suite graded these diagnostics highly on exactly the
+property that was fine -- *"every refusal was located. Not one produced an
+unlocated message, and not one silently generated bad C"*, across 26 probes
+(#540). The front-end mutation sweep, asking a different question of the same
+diagnostics, filed four cause-naming defects: #549, #550, #551 and #557.
+Location is a property of the renderer; cause is a property of the branch that
+picked the message, and a suite that measures one says nothing about the other.
+
+One bound on the coverage, since it is easy to read the fix as wider than it
+is. `staticbar::check_malformed_sends` only sees nodes tree-sitter *built* as a
+`message_expression`. `[]` and `[self :1]` are not those -- both come back as
+`ERROR` nodes and reach no send walk at all, which is why `MUTATIONS.md` grades
+M06 and M10 as caught by Clang downstream rather than by oz2c. "Every malformed
+send is refused by oz2c's own diagnostic" is true of the shapes that parse as
+sends, and that is a smaller set than the shapes an author can write.
+
 ## What the Clang AST oracle costs (#299)
 
 Measured on px-keyboard (8 app sources plus the 10 SDK `src/*.m`), because the
