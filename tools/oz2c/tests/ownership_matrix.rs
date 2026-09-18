@@ -637,6 +637,37 @@ Thing *returnOwner(void)
 ",
         ),
         (
+            /* A reference **moved out of a strong slot** and handed to the
+             * caller (#527). A new sink: the slot gives the reference up
+             * and the caller receives it, with no allocation in the
+             * function at all.
+             *
+             * One retain and one release, and neither is optional. The
+             * retain is the load -- without it the store's release is the
+             * last one on the reference and the caller gets a freed block.
+             * The release is the store's own, giving up what the slot
+             * held. A second release would mean the escaping local was
+             * also released, which is the double free a retain-only fix
+             * produces. */
+            Shape {
+                what: "move a reference out of a strong slot (#527)",
+                func: "moveOutOfSlot",
+                expect: (0, 1, 1),
+                known_defect: None,
+            },
+            "\
+static Thing *g_moved;
+
+Thing *moveOutOfSlot(void)
+{
+	Thing *taken = g_moved;
+
+	g_moved = nil;
+	return taken;
+}
+",
+        ),
+        (
             Shape {
                 what: "return an alias of the owner (#351)",
                 func: "returnAlias",
