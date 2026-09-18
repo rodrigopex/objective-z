@@ -269,9 +269,9 @@ fn front_end(
      * Here they accumulate with `arc`'s and `generics`' and are reported
      * together; in `collect` they would return before those ran and be
      * the earliest masker in the pipeline, which is the shape #540
-     * describes. Once #540's deferral lands they will co-report with
-     * emit's per-site refusals too, and this placement is what makes that
-     * follow without another change. */
+     * describes. #540's deferral is in place, so they co-report with
+     * emit's per-site refusals too, and this placement is why that needed
+     * no further change. */
     diagnostics.extend(staticbar::check_method_declarations(text));
     obs.enter(progress::Phase::Generics);
     diagnostics.extend(generics::check_program(text, &program));
