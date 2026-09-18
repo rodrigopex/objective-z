@@ -91,6 +91,12 @@ int main(void) {{ return 0; }}
 /// The location is the point. Two of these used to panic with no output at
 /// all, and two used to produce C -- in one case C that compiles. What the
 /// author could not get from any of them was a line to look at.
+/// Every case here is a *colon* malformation, and that is the whole of
+/// this list deliberately. The one other shape a `message_expression` can
+/// be malformed into -- `[receiver]`, one term with the selector
+/// recovered as a MISSING node -- carries its own diagnosis and lives in
+/// `lone_term_send.rs` (#551). It cannot join the loop below, which
+/// asserts `needs a ':'` of every case: nothing is missing a colon there.
 #[test]
 fn every_malformed_send_is_refused_with_a_location() {
     let cases: &[(&str, &str)] = &[
