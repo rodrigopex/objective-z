@@ -69,12 +69,62 @@ fn pulls_in_sibling_impl() {
     assert!(!out.origins.iter().any(|(s, _)| s == "main"), "origins: {:?}", out.origins);
 }
 
+/// An unresolvable `#import` is an error, and **located** (#550).
+///
+/// The assertion on the message is the original; the position is what #550
+/// added. It used to be the one unlocated diagnostic the front end could
+/// produce -- clear about the path and the search dirs, silent about the
+/// file and line that asked -- so the error carries a `Diagnostic` now
+/// rather than a bare `String`.
 #[test]
 fn unresolvable_import_errors() {
     let dir = scratch_dir("unresolvable");
-    let src = "#import \"DoesNotExist.h\"\n";
+    /* A line before it, so a position of 1 cannot pass by accident. */
+    let src = "#import \"Present.h\"\n#import \"DoesNotExist.h\"\n";
+    std::fs::write(dir.join("Present.h"), "/* empty */\n").unwrap();
     let err = resolve_imports(src, &dir, &[], &[], "main").unwrap_err();
-    assert!(err.contains("DoesNotExist.h"), "error: {}", err);
+    assert!(
+        err.diagnostic.message.contains("DoesNotExist.h"),
+        "error: {}",
+        err
+    );
+    assert_eq!(err.diagnostic.line, 2, "the line that wrote it: {}", err);
+    assert_eq!(err.diagnostic.col, 1, "the directive starts the line: {}", err);
+    assert!(
+        err.diagnostic.file.is_some(),
+        "a file, or `render` cannot draw the frame and falls back to a bare line: {}",
+        err
+    );
+    /* The span has to index the buffer the error carries, or the snippet
+     * `render` draws comes from the wrong text. */
+    let span = err.diagnostic.span.clone().expect("a span");
+    assert_eq!(
+        &err.source[span],
+        "#import \"DoesNotExist.h\"",
+        "the span must cover the directive in the carried source"
+    );
+}
+
+/// An I/O failure has **no** position, and that is correct rather than a
+/// gap: "cannot read 'X': permission denied" is about the filesystem, and a
+/// caret would point at a directive that is right.
+///
+/// Asserted so the two cases cannot be collapsed again -- treating them the
+/// same is what #550 was.
+#[test]
+fn an_unreadable_file_is_reported_without_a_position() {
+    let err = oz2c::imports::resolve_entry_files(
+        &[std::path::PathBuf::from("/nonexistent/nowhere/absent.m")],
+        &[],
+        &[],
+    )
+    .unwrap_err();
+    assert!(err.diagnostic.message.contains("cannot read"), "error: {}", err);
+    assert!(
+        err.diagnostic.span.is_none() && err.diagnostic.file.is_none(),
+        "an I/O error has no source position: {}",
+        err
+    );
 }
 
 #[test]
