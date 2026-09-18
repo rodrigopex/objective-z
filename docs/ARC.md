@@ -87,7 +87,7 @@ transpile-compile-run under ASan for the oz2c half.
 | 2.5.2 | …including a collection taking ownership of a boxed literal's elements | `IMPLEMENTED` | Each element of `@[…]` / `@{…}` is passed through when it is already `+1` and retained when borrowed (`emit::is_fresh_alloc`), and `OZArray_oz_free` / `OZDictionary_oz_free` release them. Until #449 that question was answered by a node-kind whitelist, so `@[[Thing alloc]]` was retained *and* already owned — one reference leaked per element, keys and values alike. It now asks `arc::binds_ownership` like every other binding site; the four literal kinds stay local because a nested literal's `+1` is created by this emitter and is invisible to `arc.rs`. Pinned by `literal_element_ownership.rs` |
 | 2.5.3 | Initialization is a null store followed by an assignment | `IMPLEMENTED` | `+alloc` memsets the whole instance (`companion.rs:576`), so every slot starts null |
 | 2.5.4 | Destruction is equivalent to assigning null | `IMPLEMENTED` | Scope-exit release (`arc_exit`); ivars via `_oz_release_ivars` (`companion.rs:391`). Since #459 the strong-local set is **body-scoped**: it holds names, and a name left behind by an earlier body used to answer for a later body's local of the same name — releasing a borrowed reference. `managed_locals_are_body_scoped.rs` pins both orderings |
-| 2.5.5 | **Moving** a `__strong` lvalue: load, write null, release at end of full-expression | `UNEXAMINED` | Untested and unimplemented; no construct in the accepted subset moves a slot. Recorded so it is not mistaken for covered |
+| 2.5.5 | **Moving** a `__strong` lvalue: load, write null, release at end of full-expression | `IMPLEMENTED` | The load retains when the body also stores to that slot, so the store's release is not the last one (#527). Paid only at a move -- keyed on the store rather than on every bind from a strong lvalue, which would charge six live borrow sites in `OZArray`/`OZDictionary`. Measured +2 instructions at `-Os` on cortex-m3. `emit::moved_slot_locals` and `arc::return_hands_back_ownership` read one predicate, so the retain and the caller's `+1` cannot disagree. Was `UNEXAMINED` until #527, and the record was accurate about the analysis while the construct was **accepted and miscompiled** -- the third outcome it did not name |
 | 2.6.1 | Weak-unavailable types | `N/A` | No `__weak` |
 | 2.6.2 | `__autoreleasing` must have automatic storage duration | `N/A` | No pool |
 | 2.6.3 | Conversion between differently-qualified pointers is ill-formed | `DELEGATED` | `casting 'Thing *__strong *' to type 'Thing *__weak *' changes retain/release properties of pointer` |
@@ -205,14 +205,17 @@ transpiler — a row can carry a verdict and have the wrong one, and several did
 true when the check learned to read it; this row's own `__weak` entry recorded
 the property as covered on the strength of the *attribute* rule while the
 *qualifier* spelling reached the generated C. Both were verdicts, and both were
-wrong. And the two `UNEXAMINED` rows below are not gaps but are not assurances
-either: they are labelled so they cannot be mistaken for covered.
+wrong. And the remaining `UNEXAMINED` row below is not a gap but is not an
+assurance either: it is labelled so it cannot be mistaken for covered. It was
+two rows until #527 implemented 2.5.5 -- and that row is the reason to distrust
+the label rather than the count: it read "no construct in the accepted subset
+moves a slot", which was true of the *subset* and false of what the transpiler
+*accepted*. The construct compiled, ran, and handed the caller a freed block.
 
 **`UNEXAMINED` — recorded, not scheduled:**
 
 | § | what |
 |---|---|
-| 2.5.5 | moving a `__strong` lvalue — no construct in the subset does it |
 | 2.6.6 | `__strong` in a union — Clang accepted the probe; unverified here |
 | 3.4.3 | the class-send half of related result types is not separately asserted |
 
