@@ -4327,3 +4327,57 @@ heavily litigated path in the transpiler (#405 made a strong ivar store release
 before evaluating, #423 narrowed the arm, five test files pin it), and it
 declines to pay the atomic again, which is what #351 records as inheriting the
 escape analysis. Adding traffic at one new site is the smaller claim.
+
+## The gate whose reason was true of two passes and false of two others (#540)
+
+A selector collision (#290) is a whole-program *name* check in `generics`. A
+`@try` or a block capture is a per-site refusal that `emit` reaches. Neither is
+a consequence of the other, and `front_end` returned at the first pass that
+produced anything -- so the collision was reported and the refusal three
+classes away was invisible. **Fixing the collision revealed it on the next
+build. Each rebuild showed one layer.**
+
+The rationale in the code was *"later passes would only report consequences of
+the first failure."* That is not wrong; it is **true of two gates and false of
+two others**, and the comment did not say which. `Collect` and the AST checks
+really do produce a `Program` whose later readers cannot be trusted -- a
+`superclass` string that is not a key in `classes`, which emit indexes
+directly, giving an unlocated panic naming neither class nor file (#205, #501).
+`Generics` and `Pools` produce no such thing.
+
+So those two now defer into `FrontEnd::deferred` and the caller fails on the
+union with emit's. The outcome is unchanged -- still hard errors, still no
+output -- and only the *timing* moved.
+
+### Two things the experiment found that reading could not
+
+Removing the generics gate alone changed nothing: the **pools** gate two lines
+later returned first. Worth knowing before concluding a gate has been removed.
+
+With both gates gone, emit reported the `@try` refusal and the collision
+**disappeared** -- because `front_end`'s accumulated `diagnostics` is a local
+the `Ok` path never returned, so the masking simply inverted. The fix is not
+"remove the gate"; it is "carry the diagnostics forward and merge", and the
+difference between those two is a silently dropped error.
+
+### Why running emit over a refused program is safe here, and how that is known
+
+Not by argument. The `expect_reject` corpus is now the standing check: every
+shape the front end refuses has emit run over it, and the whole suite passes
+with **zero panics**. If a future front-end refusal leaves a `Program` emit
+cannot walk, that corpus is where it will show up -- which is a better place
+for it than a consumer's build.
+
+### A merged assertion reversed, and its other half kept
+
+`progress_observer::a_failing_pass_ends_the_sequence_there` asserted
+`[Repair, Collect, AstIngest, Arc, Generics]` with the message *"generics
+rejected, so pools and emit must not be reported"*. It was right about the
+pipeline as it stood, and it is now
+`a_generics_refusal_no_longer_ends_the_sequence`.
+
+The half that did **not** change is asserted beside it rather than left
+implicit: `a_collect_refusal_still_ends_the_sequence` pins the sequence
+stopping at `Collect`. The reversal is only safe because that one holds, so the
+two belong together -- and if a later change widens the hard gate, that test is
+the one that fails first.
