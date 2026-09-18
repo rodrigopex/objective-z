@@ -305,6 +305,12 @@ fn collect_local_decls(body: Node, ctx: &mut EmitCtx) {
      * reset was the first fix and is one added caller away from
      * reintroducing this bug. */
     ctx.arc_managed_locals = managed.difference(&statics).cloned().collect();
+    /* Replaced, not extended, for the reason above: these hold names, and a
+     * name left behind by an earlier body would answer for a later one. */
+    ctx.arc_retain_on_bind = moved_slot_locals(body, ctx.src, ctx.program)
+        .difference(&statics)
+        .cloned()
+        .collect();
     ctx.arc_managed_slots = statics;
 }
 
@@ -379,6 +385,44 @@ fn declares_bare_managed_local(decl: Node, ctx: &EmitCtx) -> bool {
     }
     let name = crate::collect::find_declared_name(declarators[0], ctx.src);
     !name.is_empty() && ctx.arc_managed_locals.contains(&name)
+}
+
+/// The single declarator of a `#527` move declaration, as (name, initialiser
+/// node), when this declaration is one.
+///
+/// One declarator only, on the same reasoning as
+/// `declares_bare_managed_local`: a multi-declarator line would need the
+/// retain on some initialisers and not others, and the text this arm builds
+/// names exactly one.
+fn declares_retain_on_bind_local<'a>(
+    decl: Node<'a>,
+    ctx: &EmitCtx,
+) -> Option<(String, Node<'a>)> {
+    if decl.kind() != "declaration" {
+        return None;
+    }
+    let mut cursor = decl.walk();
+    let declarators: Vec<Node> = decl
+        .children(&mut cursor)
+        .filter(|c| {
+            matches!(
+                c.kind(),
+                "pointer_declarator" | "init_declarator" | "array_declarator" | "identifier"
+            )
+        })
+        .collect();
+    if declarators.len() != 1 || declarators[0].kind() != "init_declarator" {
+        return None;
+    }
+    let name = crate::collect::find_declared_name(declarators[0], ctx.src);
+    if name.is_empty() || !ctx.arc_retain_on_bind.contains(&name) {
+        return None;
+    }
+    let mut c2 = declarators[0].walk();
+    let parts: Vec<Node> = declarators[0].children(&mut c2).collect();
+    let eq = parts.iter().position(|n| n.kind() == "=")?;
+    let value = parts.get(eq + 1).copied()?;
+    Some((name, value))
 }
 
 /// Is this initializer just "nothing yet" -- `nil`, `NULL` or `0`?
@@ -803,6 +847,128 @@ pub(crate) fn static_object_locals(
     found
 }
 
+/// Object-typed locals whose initialiser reads a slot this body also
+/// stores to -- the **move** of a `__strong` lvalue (#527).
+///
+/// `Reading *taken = _slots[i]; _slots[i] = nil; return taken;` is the
+/// idiomatic queue pop, and it handed the caller a freed block: the load
+/// retained nothing, so the nil store's release was the last one.
+///
+/// Clang's ARC retains when a `__strong` local is initialised from a
+/// `__strong` lvalue -- its AST marks the local `cinit destroyed` and the
+/// return `ARCProduceObject` -- and `arc.rs` deliberately elides that
+/// retain, which is sound exactly while the source slot cannot be
+/// invalidated during the local's lifetime. This is the condition under
+/// which that premise fails, and the retain is paid only here.
+///
+/// **Narrow on purpose, and measured.** Retaining every bind from a strong
+/// lvalue is Clang's model verbatim and would add a retain/release pair to
+/// six live sites -- `OZArray`'s element access and enumeration,
+/// `OZDictionary`'s key and value access -- every one a borrow whose slot is
+/// never overwritten, and all of them the SDK's hottest paths. Nothing
+/// downstream would remove the pair either: there is no `ObjCARCOpt` here
+/// (see docs/STATUS.md, "Why this is not Clang's ARC"), and GCC elided zero
+/// refcount traffic even under `-flto`. Keyed on the store, those six are
+/// untouched and no live site in the corpora, the samples or `src/` reaches
+/// this at all.
+///
+/// The caller is asked for nothing. Ownership here is computed from the
+/// body rather than from the selector's family, so a local in this set makes
+/// `arc::return_hands_back_ownership` report `+1` and every caller release
+/// -- no create-rule name required, which is where this departs from Clang.
+fn moved_slot_locals(
+    body: Node,
+    src: &str,
+    program: &Program,
+) -> std::collections::HashSet<String> {
+    let mut found = std::collections::HashSet::new();
+    walk_moved_slot_locals(body, body, src, program, &mut found);
+    found
+}
+
+fn walk_moved_slot_locals(
+    node: Node,
+    body: Node,
+    src: &str,
+    program: &Program,
+    found: &mut std::collections::HashSet<String>,
+) {
+    if node.kind() == "block_literal" {
+        /* A block literal has its own scope, exactly as
+         * `managed_object_locals` reasons. */
+        return;
+    }
+    if node.kind() == "declaration" && !is_block_qualified_declaration(node, src) {
+        let (type_text, stars) = crate::collect::extract_type_and_stars(node, src);
+        let bare = type_text.trim();
+        let is_object = (stars == 1 && program.is_class(bare)) || (stars == 0 && bare == "id");
+        if is_object {
+            let mut cursor = node.walk();
+            for child in node.children(&mut cursor) {
+                if child.kind() != "init_declarator" {
+                    continue;
+                }
+                if crate::collect::qualifies(node, child, src, "__unsafe_unretained") {
+                    continue;
+                }
+                let name = crate::collect::find_declared_name(child, src);
+                if name.is_empty() {
+                    continue;
+                }
+                let mut c2 = child.walk();
+                let parts: Vec<Node> = child.children(&mut c2).collect();
+                let eq = parts.iter().position(|n| n.kind() == "=");
+                let Some(value) = eq.and_then(|i| parts.get(i + 1)).copied() else {
+                    continue;
+                };
+                if let Some(slot) = read_ivar_name(value, src) {
+                    if body_stores_to_ivar(body, src, &slot) {
+                        found.insert(name);
+                    }
+                }
+            }
+        }
+    }
+    let mut cursor = node.walk();
+    let kids: Vec<Node> = node.children(&mut cursor).collect();
+    for child in kids {
+        walk_moved_slot_locals(child, body, src, program, found);
+    }
+}
+
+/// The ivar an expression names, peeling one subscript and the `self->`
+/// spelling: `_x`, `self->_x`, `_x[i]`, `self->_x[i]`. `None` for anything
+/// else, so a call, a send or an arbitrary expression never reaches the
+/// store scan.
+pub(crate) fn read_ivar_name(node: Node, src: &str) -> Option<String> {
+    let mut cursor = node.walk();
+    let kids: Vec<Node> = node.children(&mut cursor).collect();
+    let inner = if node.kind() == "subscript_expression" { *kids.first()? } else { node };
+    let mut c2 = inner.walk();
+    let parts: Vec<Node> = inner.children(&mut c2).collect();
+    let name = match inner.kind() {
+        "identifier" => node_text(inner, src).to_string(),
+        "field_expression" => node_text(*parts.last()?, src).to_string(),
+        _ => return None,
+    };
+    name.starts_with('_').then_some(name)
+}
+
+/// Does `body` assign to `ivar` -- `_x = ...` or `_x[i] = ...`, with or
+/// without `self->`?
+pub(crate) fn body_stores_to_ivar(body: Node, src: &str, ivar: &str) -> bool {
+    if body.kind() == "assignment_expression" {
+        let mut cursor = body.walk();
+        let kids: Vec<Node> = body.children(&mut cursor).collect();
+        if kids.first().and_then(|lhs| read_ivar_name(*lhs, src)).as_deref() == Some(ivar) {
+            return true;
+        }
+    }
+    let mut cursor = body.walk();
+    let kids: Vec<Node> = body.children(&mut cursor).collect();
+    kids.into_iter().any(|child| body_stores_to_ivar(child, src, ivar))
+}
+
 pub(crate) fn managed_object_locals(
     body: Node,
     src: &str,
@@ -894,6 +1060,17 @@ pub(crate) fn managed_object_locals(
                             program,
                             &program.owning_methods,
                         ) {
+                            found.push(name);
+                        } else if read_ivar_name(value, src)
+                            .is_some_and(|slot| body_stores_to_ivar(body, src, &slot))
+                        {
+                            /* The move (#527). Managed, so the scope exit
+                             * releases it and a `return` hands its `+1` on
+                             * -- and `moved_slot_locals` makes the
+                             * declaration retain, without which this
+                             * release would be the second on one
+                             * reference. The two must agree; they read the
+                             * same predicate. */
                             found.push(name);
                         }
                     }
@@ -1402,6 +1579,11 @@ struct EmitCtx<'a> {
     /// neither, which is why `staticbar` had to reject the loop above
     /// rather than emit it.
     arc_managed_locals: std::collections::HashSet<String>,
+    /// Locals whose **initialiser** must be retained, because it reads a
+    /// slot the body invalidates (#527). A strict subset of
+    /// `arc_managed_locals`: the release is what that set buys, and this is
+    /// the matching retain, without which the release is a double free.
+    arc_retain_on_bind: std::collections::HashSet<String>,
     /// Strong slots whose lifetime outlives the enclosing scope: object
     /// locals declared `static`. A store into one retains and releases
     /// what it replaced, exactly like `arc_managed_locals`, but nothing
@@ -1543,6 +1725,7 @@ impl<'a> EmitCtx<'a> {
             pools,
             arc_scopes: Vec::new(),
             arc_managed_locals: HashSet::new(),
+            arc_retain_on_bind: HashSet::new(),
             arc_managed_slots: HashSet::new(),
             introspection_used: IntrospectionUse::default(),
             lines,
@@ -1951,6 +2134,45 @@ fn render_expr(node: Node, ctx: &mut EmitCtx) -> (String, String) {
         // indeterminate `c` would be passed to `oz_release` and
         // dereferenced. `oz_release` is null-safe (`if (!self)
         // return;`), so nil makes that first release a no-op.
+        /* The **move** of a `__strong` lvalue (#527). The initialiser
+         * reads a slot this body invalidates, so the load has to retain --
+         * without it the slot's own release is the last one on the
+         * reference and the caller is handed a freed block.
+         *
+         * This is the retain half of a pair. `managed_object_locals` puts
+         * the same local in `arc_managed_locals`, which buys the scope-exit
+         * release and lets a `return` hand the `+1` on instead; either half
+         * alone is wrong in opposite directions -- the release alone is a
+         * double free, the retain alone a leak. They read the same
+         * predicate so they cannot disagree.
+         *
+         * Built explicitly rather than by rebuilding and patching the text:
+         * the cast back to the declared type is required because
+         * `oz_retain` answers in the root class's pointer type, the same
+         * round trip every other retain-bearing expression here makes. */
+        "declaration" if declares_retain_on_bind_local(node, ctx).is_some() => {
+            let Some((name, value)) = declares_retain_on_bind_local(node, ctx) else {
+                unreachable!("guard just matched")
+            };
+            let known: HashSet<String> = ctx.program.classes.keys().cloned().collect();
+            let (type_text, stars) = crate::collect::extract_type_and_stars(node, ctx.src);
+            let c_type = crate::collect::render_type(&type_text, stars, &known);
+            let (value_text, _) = render_expr(value, ctx);
+            let text = match ctx.program.root_class() {
+                Some(root) => format!(
+                    "{ty} {name} = ({ty})oz_retain((struct {root} *)({value}));",
+                    ty = c_type,
+                    name = name,
+                    root = root,
+                    value = value_text
+                ),
+                /* No root class means no refcount to touch -- leave the
+                 * declaration exactly as written rather than emitting a
+                 * call to a function this program does not have. */
+                None => format!("{ty} {name} = {value};", ty = c_type, name = name, value = value_text),
+            };
+            (text, "id".to_string())
+        }
         "declaration" if declares_bare_managed_local(node, ctx) => {
             let text = rebuild(node, ctx, &mut |child, ctx| {
                 if needs_translation(child, ctx.src) {
