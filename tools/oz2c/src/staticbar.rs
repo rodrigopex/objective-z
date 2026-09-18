@@ -2137,6 +2137,139 @@ fn named_ownership_attribute(spec: Node, src: &str) -> Option<&'static str> {
 /// needs `program.owning_methods`, which `arc::analyze` fills in after
 /// `collect` has run, so it cannot sit beside the refusals `collect`
 /// registers.
+/// Two defects a method *declaration* can carry that nothing looked for:
+/// a variadic ellipsis (#538) and a parameter name used twice (#549).
+///
+/// Both were silent here and surfaced from **GCC, on generated C** -- the
+/// failure shape #501, #205 and OZ-001/002/004 all share, and the one this
+/// project exists to avoid.
+///
+/// **A deferred check, not a hard gate**, and that placement is #540's
+/// rule rather than a preference. `collect`'s root scans gate the pipeline
+/// because a diagnostic there means the `Program` may be unwalkable -- a
+/// `superclass` that is not a key in `classes`. Neither of these does that:
+/// the class table is fine, one signature is merely wrong. So they sit with
+/// `check_out_parameter_stores` where the diagnostics are carried forward,
+/// and an author who writes both a duplicate parameter and a `@try` sees
+/// both in one build. Putting them in `collect` would have made them the
+/// earliest masker in the pipeline, which is the thing #540 fixed.
+pub fn check_method_declarations(source: &str) -> Vec<Diagnostic> {
+    let tree = crate::parse::parse(source);
+    let mut diags = Vec::new();
+    walk_method_declarations(tree.root_node(), source, &mut diags);
+    diags
+}
+
+fn walk_method_declarations(node: Node, src: &str, diags: &mut Vec<Diagnostic>) {
+    if matches!(node.kind(), "method_declaration" | "method_definition") {
+        check_variadic_parameter(node, src, diags);
+        check_duplicate_parameter_names(node, src, diags);
+    }
+    let mut cursor = node.walk();
+    let kids: Vec<Node> = node.children(&mut cursor).collect();
+    for child in kids {
+        walk_method_declarations(child, src, diags);
+    }
+}
+
+/// `- (int)sumOf:(int)count, ...` -- the ellipsis was **dropped**, not
+/// refused (#538).
+///
+/// The declaration was altered rather than rejected, which is the part that
+/// matters: `extract_method_sig` rebuilds the C signature from `params`
+/// alone, so `, ...` could not reappear, and the comment the emitter writes
+/// above the function preserved it verbatim while the signature did not. A
+/// body that never reaches for `va_start` would compile silently as a
+/// fixed-arg function; the one that does failed on GCC's
+/// `'va_start' used in function with fixed arguments`, naming a cause that
+/// is a *symptom* of the drop.
+///
+/// Refused rather than implemented: the dispatch shims declare one concrete
+/// signature per selector and `-performSelector:`'s wrapper has a fixed
+/// shape, so a variadic Objective-C method has nowhere to go. `OZLog` is
+/// variadic and works because it is a plain C function (`src/OZLog.c`) --
+/// the obvious counter-example, and worth naming before a reader finds it.
+fn check_variadic_parameter(node: Node, src: &str, diags: &mut Vec<Diagnostic>) {
+    let mut cursor = node.walk();
+    let kids: Vec<Node> = node.children(&mut cursor).collect();
+    /* The node kind is the anonymous token `"..."`, **not**
+     * `variadic_parameter`. That type does exist in tree-sitter-objc's
+     * `node-types.json` and belongs to a plain C parameter list; an
+     * Objective-C method's ellipsis is filed as a bare token child of the
+     * `method_declaration`. Settled by dumping the tree for the fragment,
+     * because the grammar's own type list points the other way -- the same
+     * trap `id<Proto>` set for #367, where the obvious `generic_specifier`
+     * was wrong and the answer was `typedefed_specifier`. */
+    let Some(ellipsis) = kids.into_iter().find(|c| c.kind() == "...") else {
+        return;
+    };
+    err_detailed(
+        diags,
+        src,
+        ellipsis,
+        Rejection {
+            message: "a variadic Objective-C method is not supported".to_string(),
+            note: Some(
+                "the ellipsis was silently dropped before this check existed, so the                  generated C declared a fixed-arg function and a 'va_start' in the body                  failed on GCC instead of here"
+                    .to_string(),
+            ),
+            help: vec![
+                "pass the arguments as an OZArray, or add a counted parameter and a                  pointer to the values"
+                    .to_string(),
+                "a variadic plain C function is still available -- 'OZLog' is one                  ('src/OZLog.c'); it is an Objective-C *method* that cannot be, because                  a dispatch shim declares one concrete signature per selector"
+                    .to_string(),
+            ],
+        },
+    );
+}
+
+/// `- (int)addA:(int)amount andB:(int)amount` -- accepted here, rejected by
+/// GCC on `oz2c_dispatch.h`, a file the author never opened (#549).
+///
+/// Located at the **second** occurrence, which is the one to rename: the
+/// first is where the reader expects the name to be introduced.
+fn check_duplicate_parameter_names(node: Node, src: &str, diags: &mut Vec<Diagnostic>) {
+    let mut cursor = node.walk();
+    let kids: Vec<Node> = node.children(&mut cursor).collect();
+    let mut seen: Vec<String> = Vec::new();
+    for child in kids {
+        if child.kind() != "method_parameter" {
+            continue;
+        }
+        /* The same accessor `collect::extract_method_sig` uses, so the two
+         * cannot disagree about which identifier is the parameter's name. */
+        let mut c2 = child.walk();
+        let name = child
+            .children(&mut c2)
+            .find(|n| n.kind() == "identifier")
+            .map(|n| node_text(n, src).to_string())
+            .unwrap_or_default();
+        if name.is_empty() {
+            continue;
+        }
+        if seen.contains(&name) {
+            err_detailed(
+                diags,
+                src,
+                child,
+                Rejection {
+                    message: format!(
+                        "parameter '{}' is declared more than once in this method",
+                        name
+                    ),
+                    note: Some(
+                        "each selector component's parameter becomes a separate C                          parameter of one function, so two of the same name is a                          redefinition -- which GCC used to report against                          'oz2c_dispatch.h', a generated file with no line the author                          wrote"
+                            .to_string(),
+                    ),
+                    help: vec![format!("rename this '{}' to something distinct", name)],
+                },
+            );
+        } else {
+            seen.push(name);
+        }
+    }
+}
+
 pub fn check_out_parameter_stores(source: &str, program: &Program) -> Vec<Diagnostic> {
     let tree = crate::parse::parse(source);
     let mut diags = Vec::new();

@@ -261,6 +261,18 @@ fn front_end(
     /* Needs `program.owning_methods`, which the pass above fills in, so it
      * cannot sit with the refusals `collect` registers (#461). */
     diagnostics.extend(staticbar::check_out_parameter_stores(text, &program));
+    /* Declaration-level refusals that need no `Program` at all, placed
+     * here rather than with `collect`'s root scans deliberately: neither a
+     * variadic ellipsis (#538) nor a repeated parameter name (#549) makes
+     * the class table unwalkable, so neither has earned a hard gate.
+     *
+     * Here they accumulate with `arc`'s and `generics`' and are reported
+     * together; in `collect` they would return before those ran and be
+     * the earliest masker in the pipeline, which is the shape #540
+     * describes. Once #540's deferral lands they will co-report with
+     * emit's per-site refusals too, and this placement is what makes that
+     * follow without another change. */
+    diagnostics.extend(staticbar::check_method_declarations(text));
     obs.enter(progress::Phase::Generics);
     diagnostics.extend(generics::check_program(text, &program));
     /* **Not a gate any more** (#540). A selector collision here is a
