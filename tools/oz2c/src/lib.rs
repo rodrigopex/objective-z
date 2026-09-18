@@ -183,6 +183,15 @@ struct FrontEnd {
     repaired_semicolons: Vec<usize>,
     program: Program,
     pools: pools::PoolSizes,
+    /// Diagnostics from the generics and pools passes, carried forward
+    /// rather than returned immediately, so that emit's **per-site**
+    /// refusals can be reported in the same build (#540).
+    ///
+    /// These still make the build fail; the only thing that changes is
+    /// *when*. The caller merges them with emit's and fails on the union,
+    /// so a whole-program name check can no longer hide an unrelated
+    /// refusal three classes away.
+    deferred: Vec<Diagnostic>,
 }
 
 /// Every pass up to and including pool sizing -- the half of the pipeline
@@ -196,10 +205,27 @@ struct FrontEnd {
 /// precede `arc::analyze`, and `generics` must see a fully-populated
 /// `Program`), and nothing enforced that both agreed.
 ///
-/// Diagnostics stop the pipeline at the first pass that produces any --
-/// oz2c has no soft-diagnostic mode, so a returned `Err` is always
-/// final and later passes would only report consequences of the first
-/// failure.
+/// Diagnostics are always final -- oz2c has no soft-diagnostic mode, and a
+/// returned `Err` means no output. What changed at #540 is *when* they are
+/// returned.
+///
+/// The justification for stopping at the first producing pass was that
+/// "later passes would only report consequences of the first failure", and
+/// that is true of the two gates above `Arc` and false below them. A
+/// selector collision is a whole-program *name* check; a `@try` in an
+/// unrelated class is a per-site refusal that emit reaches. Neither is a
+/// consequence of the other, and returning at the collision made the
+/// second invisible -- so a consumer adding one file got an error about two
+/// others, and fixing it revealed a third that had been there all along.
+/// Each rebuild showed one layer (#540).
+///
+/// So `Generics` and `Pools` now defer into `FrontEnd::deferred` and the
+/// caller fails on the union with emit's. `Collect` and the AST checks stay
+/// hard, and the asymmetry is the whole point: a `collect` diagnostic means
+/// the `Program` itself may be inconsistent -- a `superclass` string that is
+/// not a key in `classes` -- and emit indexes those directly, so it would
+/// panic without a location rather than report anything (#205, #501).
+/// `progress_observer.rs` pins both halves, one test each.
 fn front_end(
     source: &str,
     options: &Options,
@@ -237,9 +263,24 @@ fn front_end(
     diagnostics.extend(staticbar::check_out_parameter_stores(text, &program));
     obs.enter(progress::Phase::Generics);
     diagnostics.extend(generics::check_program(text, &program));
-    if !diagnostics.is_empty() {
-        return Err(diagnostics);
-    }
+    /* **Not a gate any more** (#540). A selector collision here is a
+     * whole-program *name* check, and it used to return before emit ever
+     * ran -- so an unrelated `@try` or capture refusal three classes away
+     * was invisible, and fixing the collision revealed it on the next
+     * build. Each rebuild showed one layer.
+     *
+     * The pass order is unchanged and so is the outcome: these are still
+     * hard errors and the build still fails. They are merged with emit's
+     * and reported together.
+     *
+     * Verified rather than assumed, because the reason for the gate was
+     * that later passes see an inconsistent `Program`: emit runs cleanly
+     * over a program carrying a collision, and the whole `expect_reject`
+     * corpus is the standing check that it does so for every other shape
+     * the front end refuses. The two gates *above* stay hard for the
+     * reason #205 and #501 record -- a `collect` diagnostic means a
+     * `Program` whose `superclass` strings may not be keys, and emit
+     * indexes those directly. */
     obs.enter(progress::Phase::Pools);
     let pools = resolve_pools(
         text,
@@ -248,10 +289,7 @@ fn front_end(
         options.item_pool_size,
         &mut diagnostics,
     );
-    if !diagnostics.is_empty() {
-        return Err(diagnostics);
-    }
-    Ok(FrontEnd { repaired, repaired_semicolons, program, pools })
+    Ok(FrontEnd { repaired, repaired_semicolons, program, pools, deferred: diagnostics })
 }
 
 /// `transpile` with everything a caller can supply.
@@ -281,8 +319,13 @@ pub fn transpile_observed(
         &fe.repaired_semicolons,
         &line_directives(options),
     );
-    if !result.diagnostics.is_empty() {
-        return Err(result.diagnostics);
+    /* Front-end first, then emit's: the union in pipeline order, so a
+     * reader sees the earliest cause first and the per-site refusals that
+     * used to be hidden behind it after (#540). */
+    let mut diagnostics = fe.deferred;
+    diagnostics.extend(result.diagnostics);
+    if !diagnostics.is_empty() {
+        return Err(diagnostics);
     }
     Ok(TranspileOutput {
         source_c: result.source_c,
@@ -352,7 +395,11 @@ pub fn transpile_split_observed(
         &fe.repaired_semicolons,
         &line_directives(options),
     );
-    let diagnostics = std::mem::take(&mut result.diagnostics);
+    /* The same union the single-output path takes (#540) -- both callers
+     * have to merge, or the split emitter would still let a whole-program
+     * check hide a per-site one. */
+    let mut diagnostics = fe.deferred;
+    diagnostics.extend(std::mem::take(&mut result.diagnostics));
     if !diagnostics.is_empty() {
         return Err(diagnostics);
     }
