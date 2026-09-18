@@ -135,9 +135,25 @@ fn each_ast_dump_is_reported_by_index_and_size() {
 /// phase was entered -- that would attribute time to work that never
 /// happened.
 #[test]
-fn a_failing_pass_ends_the_sequence_there() {
+fn a_generics_refusal_no_longer_ends_the_sequence() {
     /* Two classes, one dynamically-dispatched selector, incompatible
-     * return types -- rejected by `generics::check_program` (#290). */
+     * return types -- rejected by `generics::check_program` (#290).
+     *
+     * **This assertion is reversed.** It read
+     * `[Repair, Collect, AstIngest, Arc, Generics]` with the message
+     * "generics rejected, so pools and emit must not be reported", and it
+     * was right about the pipeline as it stood. #540 changed the pipeline:
+     * a whole-program name check that returned before emit ran was hiding
+     * unrelated per-site refusals -- a `@try` or a capture three classes
+     * away -- so each rebuild revealed one layer. Generics and pools now
+     * defer their diagnostics instead of gating on them, and the caller
+     * fails on the union.
+     *
+     * The phases the sequence *still* stops at are asserted below, in
+     * `a_collect_refusal_still_ends_the_sequence`. That half did not
+     * change and must not: a `collect` diagnostic means a `Program` whose
+     * `superclass` strings may not be keys in `classes`, and emit indexes
+     * those directly (#205, #501). */
     let src = format!(
         "{}{}",
         ozobject_src(),
@@ -168,8 +184,17 @@ struct beta { long b; };
 
     assert_eq!(
         rec.phases,
-        vec![Phase::Repair, Phase::Collect, Phase::AstIngest, Phase::Arc, Phase::Generics],
-        "generics rejected, so pools and emit must not be reported"
+        vec![
+            Phase::Repair,
+            Phase::Collect,
+            Phase::AstIngest,
+            Phase::Arc,
+            Phase::Generics,
+            Phase::Pools,
+            Phase::Emit
+        ],
+        "a generics refusal no longer ends the sequence: pools and emit still run so \
+         their own diagnostics can be reported in the same build (#540)"
     );
 }
 
@@ -192,4 +217,36 @@ fn observing_does_not_change_the_output() {
     assert_eq!(plain.source_c, observed.source_c);
     assert_eq!(plain.companion_h, observed.companion_h);
     assert_eq!(plain.companion_c, observed.companion_c);
+}
+
+/// The half of the old assertion that did **not** change, and must not.
+///
+/// #540 stopped generics and pools from gating, so that emit's per-site
+/// refusals reach the same build. The two gates above them stay hard, and
+/// for a reason that is not stylistic: a `collect` diagnostic means the
+/// `Program` may be inconsistent -- a `superclass` string that is not a key
+/// in `classes` -- and emit indexes those directly, so it would panic with
+/// no location rather than report anything (#205, #501).
+///
+/// So the sequence still ends at `Collect` here, and if a later change makes
+/// it continue, this test is the one that should fail first.
+#[test]
+fn a_collect_refusal_still_ends_the_sequence() {
+    /* A superclass this translation unit never declares -- refused by
+     * `collect`, which is the gate that has to stay hard. Deliberately not
+     * using `ozobject_src()`: the point is that `OZObject` is undeclared. */
+    let src = "@interface Orphan : OZObject\n- (void)greet;\n@end\n\
+               @implementation Orphan\n- (void)greet {\n}\n@end\n";
+    let mut rec = Recorder::default();
+    let diags = match oz2c::transpile_observed(src, &oz2c::Options::default(), &mut rec) {
+        Err(diags) => diags,
+        Ok(_) => panic!("an undeclared superclass must be rejected"),
+    };
+    assert!(!diags.is_empty());
+    assert_eq!(
+        rec.phases,
+        vec![Phase::Repair, Phase::Collect],
+        "a collect refusal still ends the sequence -- the Program is not safe for \
+         later passes to walk (#205, #501)"
+    );
 }
