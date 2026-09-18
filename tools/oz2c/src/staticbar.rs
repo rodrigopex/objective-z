@@ -2210,13 +2210,18 @@ fn check_variadic_parameter(node: Node, src: &str, diags: &mut Vec<Diagnostic>) 
         Rejection {
             message: "a variadic Objective-C method is not supported".to_string(),
             note: Some(
-                "the ellipsis was silently dropped before this check existed, so the                  generated C declared a fixed-arg function and a 'va_start' in the body                  failed on GCC instead of here"
+                "the ellipsis was silently dropped before this check existed, so the generated \
+                  C declared a fixed-arg function and a 'va_start' in the body failed on GCC \
+                  instead of here"
                     .to_string(),
             ),
             help: vec![
-                "pass the arguments as an OZArray, or add a counted parameter and a                  pointer to the values"
+                "pass the arguments as an OZArray, or add a counted parameter and a pointer to \
+                  the values"
                     .to_string(),
-                "a variadic plain C function is still available -- 'OZLog' is one                  ('src/OZLog.c'); it is an Objective-C *method* that cannot be, because                  a dispatch shim declares one concrete signature per selector"
+                "a variadic plain C function is still available -- 'OZLog' is one \
+                  ('src/OZLog.c'); it is an Objective-C *method* that cannot be, because a \
+                  dispatch shim declares one concrete signature per selector"
                     .to_string(),
             ],
         },
@@ -2258,7 +2263,10 @@ fn check_duplicate_parameter_names(node: Node, src: &str, diags: &mut Vec<Diagno
                         name
                     ),
                     note: Some(
-                        "each selector component's parameter becomes a separate C                          parameter of one function, so two of the same name is a                          redefinition -- which GCC used to report against                          'oz2c_dispatch.h', a generated file with no line the author                          wrote"
+                        "each selector component's parameter becomes a separate C parameter of \
+                          one function, so two of the same name is a redefinition -- which GCC \
+                          used to report against 'oz2c_dispatch.h', a generated file with no \
+                          line the author wrote"
                             .to_string(),
                     ),
                     help: vec![format!("rename this '{}' to something distinct", name)],
