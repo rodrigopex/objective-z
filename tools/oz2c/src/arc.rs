@@ -564,6 +564,21 @@ fn return_hands_back_ownership(
     {
         return true;
     }
+    /* The **move** of a `__strong` lvalue (#527): the returned name was
+     * initialised from a slot this body then invalidates, so
+     * `emit::moved_slot_locals` made that load retain and the reference is
+     * the local's to hand on. Asked here because the two sides have to
+     * agree -- and the shape of the disagreement is #351's exactly, one
+     * direction over. With emit retaining and suppressing the escaping
+     * local's release while this reported `+0`, no caller released and the
+     * object leaked; #351 was the mirror image, emit releasing an owner
+     * this same function called borrowed. One predicate, both sides. */
+    if declared_initializer(body, src, name).is_some_and(|init| {
+        crate::emit::read_ivar_name(init, src)
+            .is_some_and(|slot| crate::emit::body_stores_to_ivar(body, src, &slot))
+    }) {
+        return true;
+    }
     /* The returned name may be an *alias* of the local that owns the
      * reference rather than that local itself, and the caller is handed
      * the reference either way (#351). `emit::render_return_statement`
