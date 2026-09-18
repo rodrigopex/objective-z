@@ -132,6 +132,62 @@ fn reaches_objc(
 /// those 73 cases fails to resolve -- `.m` files live in `src`, which is
 /// an `--impl-dir`, not an `-I`. Include dirs are tried first, so a header
 /// is still found where a header is expected.
+/// An unresolvable `#import`, with everything needed to report it the way
+/// every other oz2c diagnostic is reported (#550).
+///
+/// The message alone was what this used to be, and it was the **only
+/// unlocated diagnostic the front end could produce**: clear about the path
+/// and the search dirs, silent about which file and line asked for it. A
+/// missing header is among the most common mistakes there is, so it
+/// deserves a location more than most.
+///
+/// It carries its own `source` because it is raised *during* the splice --
+/// the merged buffer does not exist yet and the `SourceMap` is incomplete,
+/// so `Diagnostic::resolve_in` has nothing to resolve against. The file's
+/// own text is the buffer the span indexes, and `render::render` draws the
+/// frame from it directly.
+#[derive(Debug)]
+pub struct ImportError {
+    /// Located at the `#import` directive itself, with `file` already set:
+    /// this never goes through `resolve_in`.
+    pub diagnostic: crate::model::Diagnostic,
+    /// The text of the file that holds the failing directive -- the buffer
+    /// `diagnostic.span` indexes.
+    pub source: String,
+}
+
+impl ImportError {
+    /// An import-stage failure with **no source position**, which is
+    /// honest for exactly one kind: an I/O error reading a file that
+    /// resolved. "cannot read 'X': permission denied" is about the
+    /// filesystem, not about a line anyone wrote, and inventing a caret
+    /// for it would point at the directive that is *correct*.
+    ///
+    /// Distinct from the unresolvable-import case on purpose -- that one
+    /// has a line, and #550 was the bug of treating them the same.
+    fn unlocated(message: String) -> Self {
+        ImportError { diagnostic: crate::model::Diagnostic::new(message, 1, 1), source: String::new() }
+    }
+}
+
+impl std::fmt::Display for ImportError {
+    /// The one-line form, for a caller that has no renderer -- the tests'
+    /// `.expect()` messages, mostly. `main.rs` renders the frame instead.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.diagnostic.file {
+            Some(path) => write!(
+                f,
+                "{}:{}:{}: {}",
+                path.display(),
+                self.diagnostic.line,
+                self.diagnostic.col,
+                self.diagnostic.message
+            ),
+            None => write!(f, "{}", self.diagnostic.message),
+        }
+    }
+}
+
 fn resolve_import_path(
     target: &ImportTarget,
     current_dir: &Path,
@@ -151,10 +207,16 @@ fn resolve_import_path(
                     return Ok(candidate);
                 }
             }
+            /* `current_dir` is empty when the entry file was named
+             * relatively -- `user.m` rather than `src/user.m` -- and
+             * "not found in ''" reads like a bug in the tool. It is the
+             * file's own directory either way, so say that. */
+            let here = current_dir.display().to_string();
+            let here = if here.is_empty() { "the file's own directory".to_string() } else { format!("'{}'", here) };
             Err(format!(
-                "cannot resolve #import \"{}\" -- not found in '{}' or any of {} search dir(s)",
+                "cannot resolve #import \"{}\" -- not found in {} or any of {} search dir(s)",
                 p,
-                current_dir.display(),
+                here,
                 search.len()
             ))
         }
@@ -556,7 +618,7 @@ pub fn resolve_imports(
     include_dirs: &[PathBuf],
     impl_dirs: &[PathBuf],
     main_stem: &str,
-) -> Result<ResolvedSource, String> {
+) -> Result<ResolvedSource, ImportError> {
     let mut seen: HashSet<PathBuf> = HashSet::new();
     let mut objc_memo = HashMap::new();
     let mut acc = ResolvedSource::default();
@@ -610,7 +672,7 @@ pub fn resolve_entry_files(
     entry_paths: &[PathBuf],
     include_dirs: &[PathBuf],
     impl_dirs: &[PathBuf],
-) -> Result<ResolvedSource, String> {
+) -> Result<ResolvedSource, ImportError> {
     let mut seen: HashSet<PathBuf> = HashSet::new();
     let mut objc_memo = HashMap::new();
     let mut acc = ResolvedSource::default();
@@ -621,7 +683,7 @@ pub fn resolve_entry_files(
             continue;
         }
         let source = fs::read_to_string(path)
-            .map_err(|e| format!("cannot read '{}': {}", path.display(), e))?;
+            .map_err(|e| ImportError::unlocated(format!("cannot read '{}': {}", path.display(), e)))?;
         let dir = path.parent().unwrap_or(Path::new(".")).to_path_buf();
         let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("out").to_string();
         resolve_into(
@@ -723,7 +785,7 @@ fn resolve_into(
     seen: &mut HashSet<PathBuf>,
     objc_memo: &mut HashMap<PathBuf, bool>,
     acc: &mut ResolvedSource,
-) -> Result<(), String> {
+) -> Result<(), ImportError> {
     let SpliceInput { text: source, dir: current_dir, stem, path, dropped_lines, is_header } =
         *input;
     acc.stem_paths.entry(stem.to_string()).or_insert_with(|| path.to_path_buf());
@@ -772,7 +834,48 @@ fn resolve_into(
                     acc.text.push('\n');
                     continue;
                 }
-                return Err(why);
+                /* Located at the directive, in the file that wrote it
+                 * (#550). Everything needed is already in hand here and
+                 * was simply not used: `path` names the file,
+                 * `source_line` is its *own* line number (already
+                 * corrected for the guard lines the splice dropped, which
+                 * is why it is not `idx`), and `trimmed` is a subslice of
+                 * `line`, itself a subslice of `source` -- so the span is
+                 * arithmetic on the three, not a re-scan.
+                 *
+                 * `line`/`col` are set directly rather than left to
+                 * `resolve_in`: this is raised *during* the splice, so
+                 * there is no merged buffer to resolve against and no
+                 * complete `SourceMap` to do it with. That makes it the
+                 * one diagnostic whose position is a real file position
+                 * from birth. */
+                let line_off = line.as_ptr() as usize - source.as_ptr() as usize;
+                let col_off = trimmed.as_ptr() as usize - line.as_ptr() as usize;
+                let start = line_off + col_off;
+                let mut diagnostic = crate::model::Diagnostic::spanning(
+                    why,
+                    source,
+                    start..start + trimmed.len(),
+                );
+                diagnostic.line = source_line;
+                diagnostic.col = col_off + 1;
+                diagnostic.file = Some(path.to_path_buf());
+                diagnostic.note = Some(
+                    "oz2c resolves '#import' itself and splices the file in, so an \
+                     unresolvable one is a hard error rather than something left to \
+                     the C compiler -- unlike a '#include', which is passed through \
+                     untouched because it may name a header only the target's \
+                     toolchain has"
+                        .to_string(),
+                );
+                diagnostic.help = vec![
+                    "add the directory holding it to '-I', or '--impl-dir' if it is \
+                     a '.m'"
+                        .to_string(),
+                    "or spell it '#include' if the C compiler is meant to resolve it"
+                        .to_string(),
+                ];
+                return Err(ImportError { diagnostic, source: source.to_string() });
             }
         };
         let carries_objc = reaches_objc(&resolved_path, include_dirs, impl_dirs, objc_memo);
@@ -810,7 +913,7 @@ fn resolve_into(
         }
 
         let header_text = fs::read_to_string(&resolved_path)
-            .map_err(|e| format!("cannot read '{}': {}", resolved_path.display(), e))?;
+            .map_err(|e| ImportError::unlocated(format!("cannot read '{}': {}", resolved_path.display(), e)))?;
         let header_dir = resolved_path.parent().unwrap_or(current_dir).to_path_buf();
         let header_stem =
             resolved_path.file_stem().and_then(|s| s.to_str()).unwrap_or("import").to_string();
@@ -849,7 +952,7 @@ fn resolve_into(
             let impl_canonical = impl_path.canonicalize().unwrap_or_else(|_| impl_path.clone());
             if seen.insert(impl_canonical) {
                 let impl_text = fs::read_to_string(&impl_path)
-                    .map_err(|e| format!("cannot read '{}': {}", impl_path.display(), e))?;
+                    .map_err(|e| ImportError::unlocated(format!("cannot read '{}': {}", impl_path.display(), e)))?;
                 let impl_dir = impl_path.parent().unwrap_or(current_dir).to_path_buf();
                 resolve_into(
                     &SpliceInput {

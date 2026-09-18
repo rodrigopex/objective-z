@@ -452,7 +452,22 @@ fn main() -> ExitCode {
         match oz2c::imports::resolve_entry_files(&entry_paths, &include_dirs, &impl_dirs) {
             Ok(r) => r,
             Err(e) => {
-                oz_err!("{}", e);
+                /* Rendered, not printed as a bare line (#550). This was
+                 * the only unlocated diagnostic the front end could
+                 * produce: it named the path and the search dirs and not
+                 * the file that asked for it. `render` draws the same
+                 * `--> file:line:col` frame, snippet and caret every other
+                 * refusal gets -- against the *failing file's own* text,
+                 * which the error carries, because this is raised during
+                 * the splice when no merged buffer exists yet.
+                 *
+                 * `render` emits the `oz2c error:` prefix and its own
+                 * trailing newline, so `eprint!` rather than `oz_err!` --
+                 * the same reason the diagnostic loop at the end of this
+                 * file does (#457). An I/O read failure carries no span
+                 * and falls back to the bare line, which is right: there
+                 * is no source position for "permission denied". */
+                eprint!("{}", oz2c::render::render(&e.diagnostic, &e.source));
                 return ExitCode::FAILURE;
             }
         };
