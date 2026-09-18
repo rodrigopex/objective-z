@@ -4245,3 +4245,85 @@ source while being reported as a clean tree. Nothing was lost, and the result
 happened to be the right one, but the lesson is the same as every other entry
 here: a restore is a claim, and it needs an explicit absence check --
 `grep -c 'if true ||'` returning 0 -- before anything downstream is believed.
+
+## The move of a strong lvalue, and what mimicking ARC actually costs (#527)
+
+`Reading *taken = _slots[i]; _slots[i] = nil; return taken;` -- the idiomatic
+queue pop -- handed the caller a **freed block**. The load retained nothing, so
+the store's release was the last one on the reference. With
+`CONFIG_OBJZ_DEBUG_REFCOUNT=y` the caller read `0xA5A5A5A5`; with the
+instruments off it read a plausible `11`, which is why it survived a passing
+on-target run.
+
+`docs/ARC.md` 2.5.5 had it as `UNEXAMINED` -- "no construct in the accepted
+subset moves a slot". **That row is the lesson, not the fix.** It was true of
+the *subset* and false of what the transpiler *accepted*: the construct
+compiled, ran, and miscompiled. An `UNEXAMINED` label describes the analysis
+and says nothing about the third outcome, and the third outcome is the
+dangerous one.
+
+### The answer is Clang's, and Clang's optimizer is the part that does not come
+
+Measured from Clang's own AST: a `__strong` local initialised from a `__strong`
+lvalue is `cinit destroyed` -- it retains, and the scope releases -- and the
+return is `ARCProduceObject`, so the caller receives a retained reference.
+**The load retains.** That is the whole of it.
+
+What cannot be copied is how Clang affords it. Clang emits the pair at every
+binding and deletes the redundant ones in `ObjCARCOpt`; there is no such pass
+here, and nothing downstream elides an `oz_retain`/`oz_release` pair because
+they are ordinary C functions over an atomic counter whose decrement gates
+`-dealloc` (see "Why this is not Clang's ARC"). So retaining at every bind
+from a strong lvalue would charge **six live sites** permanently --
+`OZArray`'s element access and enumeration, `OZDictionary`'s key and value
+access -- every one a borrow whose slot is never overwritten, and all of them
+the SDK's hottest paths.
+
+**Keyed on the store instead**, which is exactly the condition under which the
+elision is unsound: the local retains only when the same body also writes the
+slot it read. All six borrows pay nothing. Measured cost where it does apply,
+arm-zephyr-eabi-gcc 14.3.0, cortex-m3: **9 -> 11 instructions at `-Os`, 10 ->
+11 at `-O2`** -- and zero live sites in the corpora, the samples or `src/`
+reach it, so the present cost of this change is nothing at all.
+
+### Two halves, one predicate, and the leak that proved it
+
+The retain is half the fix. The other half is that the reference now belongs to
+the local, so either the scope releases it or a `return` hands it on -- and
+`arc::return_hands_back_ownership` has to agree, because it is what tells a
+*caller* to release.
+
+Getting one half first produced both failure modes, in order:
+
+- **Managed set only:** the scope-exit release was emitted with no retain to
+  balance it, turning one use-after-free into a **double free**. The invariant
+  it violated is written down at `for_header_owned_declaration`: "a borrowed
+  initialiser is left alone -- releasing one is a use-after-free on whatever
+  still names the object."
+- **Both emit halves, `arc.rs` untouched:** emit retained and suppressed the
+  escaping local's release, while `arc` still reported the method `+0`, so no
+  caller released and the object **leaked**. That is #351's disagreement
+  exactly, one direction over -- there, emit released an owner this same
+  function called borrowed.
+
+So the two read one predicate rather than agreeing by assertion, which is the
+same resolution #351 reached: `emit::moved_slot_locals` decides the retain and
+`arc::return_hands_back_ownership` asks the same question for the caller.
+
+### What this is not
+
+Not keyed on the selector's family. Ownership here is computed from the
+**body**, so `-takeIndex:` hands back `+1` and its callers release without any
+create-rule name -- verified directly: `-buildOne`, no family prefix, already
+gets an `oz_release` in its caller. Clang ties `+1` returns to method families
+because its pool-backed convention needs the name; this does not, and the
+create-rule gating an earlier reading of #527 assumed turned out to be
+unnecessary.
+
+Not a change to any store. Suppressing the store's release instead -- the other
+way to balance this -- was considered and rejected: it would make two
+store-lowering switches conditional on a non-local property in the most
+heavily litigated path in the transpiler (#405 made a strong ivar store release
+before evaluating, #423 narrowed the arm, five test files pin it), and it
+declines to pay the atomic again, which is what #351 records as inheriting the
+escape analysis. Adding traffic at one new site is the smaller claim.
