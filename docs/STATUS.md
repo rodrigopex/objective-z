@@ -4718,3 +4718,148 @@ again under `--sanitize address,undefined`; `just test-adapted` 40 passed;
 oversight: the rule is to run it for any change that emits new *unconditional*
 C, and this change emits no C at all. Every string it adds is diagnostic text --
 checked by grepping the added `format!`/`push_str`/`write!` lines, not assumed.
+
+## Three answers, not one, for the `@`-keywords (#563, #564)
+
+The static subset accepted a *positive list* of `@`-keywords -- boxed
+numeric and boolean literals, `@selector`, `@protocol(...)` as
+`-conformsToProtocol:`'s argument -- and refused a few more by name
+(`@try`/`@catch`, `@synchronized`). A keyword in **neither** list was
+neither accepted nor refused: tree-sitter parsed it, no pass had a case for
+it, and `emit`'s catch-all copied the source text through. The first thing
+in the toolchain that understood it was GCC, saying `stray '@' in program`
+about a line the author did write, in a file they never saw.
+
+### The answer is per keyword, and that is the finding
+
+The tempting fix is a category -- "refuse every unrecognised `@`-keyword"
+-- and it is wrong, in both directions at once:
+
+- `@import` is unrecognised and must **not** be refused. Modules are a
+  front-end feature, Clang's own AST dump rejects it, and
+  `oz2c-challenges/MUTATIONS.md` grades M68 `CLANG` -- delegated, and
+  correctly. A category-shaped check takes it with them.
+- `@class` is unrecognised and must not be refused *either*, because a
+  forward declaration is not an operation. There was never anything to
+  lower; what was missing was a case (#564).
+
+So the surface is now three-way, and the split is not derivable from "is
+this implemented":
+
+| | keywords | why |
+|---|---|---|
+| **refused** | `@encode`, `@throw`, `@available`, `@defs`, handler-less `@try` | no meaning in this backend to lower to |
+| **supported** | `@class` | not an operation |
+| **delegated** | `@import` | a front-end feature; Clang is the right gate |
+
+### Two of the five overrule a `CLANG` grade, deliberately
+
+`MUTATIONS.md` grades M69 (`@defs`) and M70 (handler-less `@try`) as
+`CLANG`, meaning the C front end is expected to refuse them -- and it does.
+The decision to refuse them in oz2c anyway is not a disagreement about what
+Clang does; it is about *which* Clang. Both are caught only by the **AST
+dump**, and `oz2c` runs before it. So the diagnosis depends on a step that
+`--allow-missing-ast` can skip, and on a tool invoked for its facts rather
+than as a gate. Refusing in oz2c makes the answer independent of whether
+the dump happened.
+
+The three `GENERATED-C` grades (M64, M66, M67) need no such argument: those
+are valid Objective-C, Clang accepts them, and *nothing* before GCC ever
+looked.
+
+### Three of five node kinds were not what their names suggest
+
+Read out of a tree dump, not out of the grammar's type list:
+
+- `@encode(int)` -> `encode_expression`, `@throw` -> `throw_statement`,
+  `@available(...)` -> `available_expression`. Dedicated nodes, as expected.
+- **`@defs(P)` -> `at_expression`.** This grammar has no `@defs` rule at
+  all, so it arrives as the same generic node that carries `@42`, `@YES`
+  and `@protocol(...)`. `@protocol(P)` is byte-for-byte the same tree with
+  `protocol` where `defs` sits, so the **callee identifier text is the only
+  thing separating an accepted construct from a refused one**. A check on
+  the node kind would have refused every boxed literal in the tree.
+- **A handler-less `@try` -> `ERROR`.** tree-sitter builds a
+  `try_statement` only once a `@catch`/`@finally` follows, so the existing
+  refusal never saw a bare one. Matched as an `ERROR` whose *first child*
+  is the `@try` token -- narrow on purpose, since a general `ERROR` arm
+  would turn every parse failure in the file into an exceptions diagnostic.
+
+That is the fifth and sixth time in this tree that the obvious node was the
+wrong one, after `typedefed_specifier` not `generic_specifier`, a bare
+`struct_specifier` not a `declaration`, `"..."` not `variadic_parameter`,
+and `block_literal`'s inserted brace being a descendant rather than a child.
+
+### The position mattered more than the node kind
+
+`@defs` is reported by the corpus at **file scope**, and the obvious home
+for these checks -- `walk_for_reject`, where `try_statement` and
+`synchronized_statement` already live -- is entered *only* with a method or
+function **body** (`staticbar.rs`'s two call sites both pass one). A
+body-scoped arm would have looked like a fix and left the reported case
+untouched.
+
+Worse, the two halves of that one construct already disagreed before this
+change: `@defs` inside a body **was** refused, by the generic
+`at_expression` catch-all with a generic message, while the same construct
+at file scope was not refused at all. So the fix is one walk over the whole
+tree, and `walk_for_reject` now *defers* the `@defs` shape so that one
+construct yields one named diagnostic wherever it appears.
+
+### #564 was half-built already
+
+`@class` support turned out to be mostly present: #557 added
+`Program::forward_declared`, `is_forward_declared_only`,
+`collect::forward_declared_classes` and `emit::forward_declared_receiver`,
+so that a *send* through such a name could blame the forward declaration
+instead of reporting a receiver degraded to `id`. What was missing was
+everything about the name as a **type**:
+
+- the `@class` line itself, copied through verbatim -- now consumed and
+  replaced by the C spelling of the same statement, `struct Other;`, which
+  is legal with nothing ever defining `struct Other`. That is precisely the
+  property `@class` has. One `class_declaration` carries every name in
+  `@class A, B;`, so it emits one tag per name.
+- the use sites, which had no `struct` tag. Both spelling paths now ask
+  `Program::spells_with_struct_tag`.
+
+That predicate is deliberately **not** a widening of `is_class`.
+`is_class` has fourteen callers in `emit` alone and most are asking
+something a forward declaration cannot answer -- does this class have a
+slab, an allocator, ivars, a dispatch slot, a place in `class_order`?
+Widening it would hand `pools`, `companion` and `arc` a class with no
+shape. What a forward declaration settles is only the spelling.
+
+`nil` needs no lowering here, which was checked rather than assumed:
+`#define nil ((id)0)` with `typedef void *id`, so `struct Other *o = nil;`
+is a null pointer constant assigned to an object pointer and passes
+`-std=c17 -pedantic-errors` clean.
+
+### A green gate over code it had never seen
+
+`just test-pedantic` passed immediately after #564 -- and proved nothing,
+because **no sample in the tree used `@class`**, so the sweep had never
+compiled a tag declaration. Same failure mode as a violation behind an
+`#ifdef` the sweep does not define: the gate is green over code it cannot
+reach.
+
+`samples/class_forward` fixes that permanently rather than caveating it.
+The sweep now reports `class_forward   0 site(s)` -- enumerated, compiled,
+clean -- and `just test-boards` runs it on both architectures.
+
+The sample is built around a class that is forward-declared and **never
+defined**, which is the only shape that exercises the new path: a name with
+a real `@interface` later in the file is an ordinary class, and
+`is_forward_declared_only` is false for it. It also carries an **ivar** of
+that type, because that is a different lowering path from a local
+(`emit`'s bare-ivar edit, not `render_expr`'s `type_identifier` arm) and
+nothing else in the tree exercises it.
+
+### Gates
+
+`cargo test` 874 passed / 0 failed; `just test-behavior` 87 passed, and 87
+again under `--sanitize address,undefined`; `just test-adapted` 40 passed;
+`just test-boards` 17 suites on ARM and 15 on RISC-V, all passed, with
+`sample.objz.class_forward` green on both, tallied from `twister.json`;
+`just test-pedantic` 10 known sites and 0 for the new sample;
+`scripts/regen_zephyr_tests.py` left `tests/zephyr/generated/` untouched.

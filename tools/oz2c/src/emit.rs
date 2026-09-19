@@ -2107,7 +2107,12 @@ fn render_expr(node: Node, ctx: &mut EmitCtx) -> (String, String) {
         }
         "type_identifier" => {
             let name = node_text(node, ctx.src).to_string();
-            if ctx.program.is_class(&name) {
+            /* A `@class`-only name is spelled with its tag too (#564): C
+             * reaches an undefined type through one, and the
+             * `class_declaration` arm emits the matching `struct A;`. Asked
+             * as `spells_with_struct_tag` rather than widening `is_class`,
+             * which answers a different question -- see its doc. */
+            if ctx.program.spells_with_struct_tag(&name) {
                 (format!("struct {}", name), "id".to_string())
             } else {
                 (name, "id".to_string())
@@ -8202,7 +8207,11 @@ fn collect_ivar_lowering_edits(
             .find(|c| c.kind() == "type_identifier")
             .map(|c| (c.byte_range(), node_text(c, ctx.src).to_string()));
         if let Some((range, name)) = bare {
-            if ctx.program.is_class(&name) {
+            /* Same spelling question as `render_expr`'s `type_identifier`
+             * arm, so the same predicate (#564) -- an ivar may be typed by a
+             * forward-declared class, which is the case `@class` exists for
+             * (a pair of classes referring to each other). */
+            if ctx.program.spells_with_struct_tag(&name) {
                 edits.push((
                     range.start - origin..range.end - origin,
                     format!("struct {}", name),
@@ -9367,6 +9376,44 @@ fn walk_top_level<'a>(
                 bodies.entry(stem.clone()).or_default().push(format!(
                     "/* @compatibility_alias {} -- not needed, oz2c resolves classes by their own name only */",
                     names.join(" ")
+                ));
+            }
+            /* `@class A, B;` -- Objective-C's forward declaration (#564).
+             *
+             * Consumed rather than copied. Until now no pass had a case for
+             * it, so `emit`'s catch-all forwarded the line verbatim and GCC
+             * answered `stray '@' in program` about the generated file.
+             *
+             * What replaces it is the C spelling of the same statement: a
+             * `struct A;` tag declaration, which is legal with nothing ever
+             * defining `struct A` -- exactly the property `@class` has. That
+             * is what makes `A *p;` compile, because `render_expr`'s
+             * `type_identifier` arm now spells a forward-declared-only name
+             * with its tag (`Program::spells_with_struct_tag`).
+             *
+             * One `class_declaration` carries *every* name in the list (see
+             * `collect::forward_declared_classes`, which reads them the same
+             * way), so this emits one tag declaration per name and not one
+             * per statement.
+             *
+             * `collect` already registers the names -- #557 added
+             * `Program::forward_declared` so a send through such a name could
+             * blame the forward declaration instead of reporting a degraded
+             * `id`. This is the other half: the type is now spellable, not
+             * just diagnosable. */
+            "class_declaration" => {
+                let mut c = node.walk();
+                let names: Vec<&str> = node
+                    .children(&mut c)
+                    .filter(|c| c.kind() == "identifier")
+                    .map(|c| node_text(c, source))
+                    .collect();
+                let tags: String =
+                    names.iter().map(|n| format!("struct {};\n", n)).collect();
+                bodies.entry(stem.clone()).or_default().push(format!(
+                    "/* @class {} */\n{}",
+                    names.join(", "),
+                    tags.trim_end()
                 ));
             }
             "protocol_declaration" => {

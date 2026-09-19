@@ -278,6 +278,12 @@ fn front_end(
      * `}` was inserted leaves the class table intact -- what it corrupts
      * is one hoisted function body. */
     diagnostics.extend(staticbar::check_macro_and_block_syntax(text));
+    /* The `@`-keywords no pass had a case for, which `emit`'s catch-all
+     * copied into the generated C (#563). Deferred on the same rule: a
+     * `@throw` or an `@encode` leaves the class table intact. Whole-tree
+     * rather than body-scoped deliberately -- `@defs` is reported at file
+     * scope, which `check_out_parameter_stores`' walk never reaches. */
+    diagnostics.extend(staticbar::check_at_keywords(text));
     obs.enter(progress::Phase::Generics);
     diagnostics.extend(generics::check_program(text, &program));
     /* **Not a gate any more** (#540). A selector collision here is a
