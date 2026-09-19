@@ -752,13 +752,9 @@ fn dump_resolved_cst(resolved: &oz2c::imports::ResolvedSource) {
 /// The kind of a top-level construct nested inside `node` that should have
 /// been a sibling of it, if there is one.
 fn absorbed_construct(node: tree_sitter::Node) -> Option<&'static str> {
-    const TOP_LEVEL: &[&str] = &[
-        "class_interface",
-        "class_implementation",
-        "category_interface",
-        "category_implementation",
-        "protocol_declaration",
-    ];
+    /* The same set `preproc` decides on, so the marker keeps predicting
+     * the behaviour rather than drifting from it. */
+    const TOP_LEVEL: &[&str] = oz2c::preproc::TOP_LEVEL_OBJC;
     fn walk(node: tree_sitter::Node, depth: usize) -> Option<&'static str> {
         if depth > 0 {
             if let Some(found) = TOP_LEVEL.iter().find(|k| **k == node.kind()) {

@@ -318,6 +318,14 @@ pub struct Program {
     /// A fact about the source rather than an option, unlike `heap_support`
     /// and its neighbours below.
     pub function_return_types: HashMap<String, String>,
+    /// Which preprocessor conditional arms are part of the program.
+    ///
+    /// A fact about the source, like `function_return_types` above.
+    /// Carried on `Program` because `emit` needs the same verdicts
+    /// `collect` used -- re-deriving them there would be a second oracle
+    /// able to disagree with the first, and the arm a class was collected
+    /// from must be the arm it is emitted from.
+    pub preproc: crate::preproc::Liveness,
     /// Ownership facts read from a Clang AST dump, when one was supplied
     /// (`--ast`). Clang resolves types; tree-sitter does not, so this is the
     /// only authority on whether an `id`-typed ivar is an object the class

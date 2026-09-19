@@ -9436,8 +9436,7 @@ fn walk_top_level<'a>(
     // *full* struct definition visible, not just a forward declare.
     let mut class_to_stem: HashMap<String, String> = HashMap::new();
     {
-        let mut cursor = root.walk();
-        for node in root.children(&mut cursor) {
+        for node in program.preproc.effective_top_level(root) {
             if node.kind() != "class_interface" && node.kind() != "class_implementation" {
                 continue;
             }
@@ -9471,8 +9470,12 @@ fn walk_top_level<'a>(
     let mut hoisted_strings_by_stem: HashMap<String, Vec<(String, String)>> = HashMap::new();
     let mut hoisted_statics_by_stem: HashMap<String, Vec<(String, String)>> = HashMap::new();
 
-    let mut cursor = root.walk();
-    for node in root.children(&mut cursor) {
+    /* The program's top level as it actually is, with a conditional oz2c
+     * resolved replaced by its live arm's constructs. Without this the
+     * nested `@interface` reaches no arm below and the catch-all copies
+     * the whole `#ifdef` into the generated header as raw Objective-C --
+     * no struct, no method, no dispatch row (#573). */
+    for node in program.preproc.effective_top_level(root) {
         let stem = origin_for(node.start_byte());
         note_stem(&mut stem_order, &stem);
         match node.kind() {
@@ -10839,9 +10842,7 @@ fn base_scope(class_name: &str, program: &Program) -> HashMap<String, String> {
 fn file_scope_vars(root: Node, ctx_src: &str, program: &Program) -> HashMap<String, String> {
     let known: HashSet<String> = program.classes.keys().cloned().collect();
     let mut out = HashMap::new();
-    let mut cursor = root.walk();
-    let children: Vec<Node> = root.children(&mut cursor).collect();
-    for child in children {
+    for child in program.preproc.effective_top_level(root) {
         if child.kind() != "declaration" {
             continue;
         }

@@ -14,6 +14,7 @@ pub mod imports;
 pub mod model;
 pub mod parse;
 pub mod pools;
+pub mod preproc;
 pub mod progress;
 pub mod render;
 pub mod staticbar;
@@ -286,6 +287,12 @@ fn front_end(
     diagnostics.extend(staticbar::check_at_keywords(text));
     obs.enter(progress::Phase::Generics);
     diagnostics.extend(generics::check_program(text, &program));
+    /* Every check above walks the whole tree, dead conditional arms
+     * included, so each can complain about text Clang never sees (#570).
+     * `collect` filtered its own; these are the rest. Applied once here,
+     * rather than taught to each walk, for the reason
+     * `Liveness::retain_live` records. */
+    program.preproc.retain_live(&mut diagnostics);
     /* **Not a gate any more** (#540). A selector collision here is a
      * whole-program *name* check, and it used to return before emit ever
      * ran -- so an unrelated `@try` or capture refusal three classes away
@@ -347,6 +354,9 @@ pub fn transpile_observed(
      * used to be hidden behind it after (#540). */
     let mut diagnostics = fe.deferred;
     diagnostics.extend(result.diagnostics);
+    /* And emit's own, for the same reason: `walk_top_level` skips a dead
+     * arm but the per-body walks it delegates to do not (#570). */
+    fe.program.preproc.retain_live(&mut diagnostics);
     if !diagnostics.is_empty() {
         return Err(diagnostics);
     }
@@ -423,6 +433,9 @@ pub fn transpile_split_observed(
      * check hide a per-site one. */
     let mut diagnostics = fe.deferred;
     diagnostics.extend(std::mem::take(&mut result.diagnostics));
+    /* And emit's own, for the same reason: `walk_top_level` skips a dead
+     * arm but the per-body walks it delegates to do not (#570). */
+    fe.program.preproc.retain_live(&mut diagnostics);
     if !diagnostics.is_empty() {
         return Err(diagnostics);
     }
