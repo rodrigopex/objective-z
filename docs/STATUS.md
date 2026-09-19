@@ -5140,3 +5140,88 @@ untouched.
 diagnostic text at all — it removes one diagnostic in one case. Checked by
 grepping the added lines for `format!`/`push_str`/`write!` outside doc
 comments, which finds nothing.
+
+## An absence claim needs a parse (#566/#567 regression)
+
+#576 added two checks that assert something is **absent**:
+
+- #567 — "no `@interface` for this name exists in this source"
+- #566 — "this selector is declared and defined nowhere"
+
+Both are unsound on malformed input, and the reason is sharper than
+"incomplete data": a syntax error does not leave the class graph merely
+missing pieces, it leaves it **misleading**.
+
+```objc
+@interface : OZObject      /* nameless (M21) */
+```
+
+tree-sitter puts an `ERROR` on the stray `:` and leaves `OZObject` as the
+first `identifier`, so `class_header` reads the *superclass* as the class
+name. The real class is then declared nowhere — and #567 reported exactly
+that, pointing at the `@implementation` while the mistake sat on the
+`@interface` line above it.
+
+```objc
+int x = [self value;       /* unclosed bracket (M04, M05, M09) */
+```
+
+The body stops parsing, so a method that **is** defined looks undefined, and
+#566 reported "declared and defined nowhere" about a method whose definition
+is right there.
+
+In each case the conclusion is true of the parse, derived from the syntax
+error, and names a construct that is not the mistake — the same defect class
+as #561, created three PRs before #561 fixed its sibling.
+
+### It pre-empted the reporter that had the right answer
+
+`oz2c-challenges` grades all four fixtures `CLANG`: the C front end is the
+right reporter, and it says `expected identifier` and `expected ']'`, which
+name the actual lines.
+
+#567 made that unreachable. Its check runs in `collect`, which **hard-gates
+and returns before `attach_ast`**, so the author never reached the AST
+requirement, let alone Clang. #566's check was saved only by the AST gate
+firing first — which holds in a real build and *not* under
+`--allow-missing-ast`, so luck rather than design.
+
+### The fix, and the boundary it must not cross
+
+`Program::source_parsed` is computed once in `collect` and carried, and both
+checks consult it. A file that failed to parse loses no coverage by being
+skipped: the AST requirement refuses it, or Clang does at dump time.
+
+The boundary is that this must **not** become a blanket "stop checking on
+bad input". A *presence* claim needs no such guard — a construct that is
+really there is really there whatever else failed to parse — so
+`a_presence_claim_still_fires_over_a_broken_parse` asserts `@throw` is still
+refused in a file that also has an unclosed bracket. Without it, the fix
+could have been written as an early return over the whole front end and
+every other test would still have passed.
+
+### How it was found, and when it should have been
+
+By sweeping the **whole 99-fixture corpus** against the pre-#576 binary and
+diffing: 14 fixtures changed, and only 10 had ever been examined. The four
+nobody looked at were the regression.
+
+That sweep costs about two minutes and it should have run *before* #576 was
+filed rather than four PRs later. The lesson is that its question is a
+different one from the grade check that did run: *"is the fixture this issue
+names graded correctly?"* was asked and answered; *"which other fixtures does
+my new check newly reach?"* was not asked at all.
+
+Scope after the fix, measured the same way: **1 of 99 fixtures changes in a
+real build** (M21, which now defers to the AST gate) and **4 of 99 under
+`--allow-missing-ast`** (those four deferring, as their grades say). The
+other 95 are byte-identical in both modes.
+
+### Gates
+
+`cargo test` 894 passed / 0 failed; `just test-behavior` 87 passed, and 87
+again under `--sanitize address,undefined`; `just test-adapted` 40 passed;
+`just test-boards` 17 suites on ARM and 15 on RISC-V, all passed;
+`scripts/regen_zephyr_tests.py` left `tests/zephyr/generated/` untouched.
+`just test-pedantic` not run: no emitted C changes, and this change only
+*removes* diagnostics in one condition.

@@ -2790,6 +2790,18 @@ fn contains_objc(node: Node) -> Option<Node> {
 /// which would reject a macro containing nothing but C. So a body that does
 /// not parse cleanly keeps today's behaviour of being emitted verbatim,
 /// rather than becoming a spurious error.
+/// Does the subtree at `node` contain a parse error or a missing token?
+///
+/// `probe_has_errors`' public twin, for callers outside this module. A
+/// check that asserts something is **absent** from the source can only do
+/// so over a tree that parsed: `collect`'s "no `@interface` for this name"
+/// is the case that had to learn it (#567's regression on M21), because a
+/// syntax error makes the class graph itself unreliable rather than merely
+/// incomplete.
+pub fn tree_has_errors(node: Node) -> bool {
+    probe_has_errors(node)
+}
+
 fn probe_has_errors(node: Node) -> bool {
     if node.is_error() || node.is_missing() {
         return true;

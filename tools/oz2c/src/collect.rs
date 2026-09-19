@@ -1284,8 +1284,37 @@ pub fn collect(source: &str) -> (Program, Vec<crate::model::Diagnostic>) {
             info.has_primary_implementation = true;
         }
     }
+    /* Not when the source did not parse (#567's own regression, found by
+     * sweeping the whole mutation corpus rather than the fixtures the issue
+     * named -- `oz2c-challenges` M21).
+     *
+     * This check asserts an **absence**: no `@interface` for this name
+     * exists in this source. That claim is only sound over a tree that
+     * parsed. `@interface : OZObject` -- a nameless interface, M21 -- puts
+     * an `ERROR` node on the stray `:` and leaves `OZObject` as the first
+     * `identifier`, so `class_header` reads the *superclass* as the class
+     * name and the real class is declared nowhere. The conclusion is then
+     * true of the parse and derived from the syntax error, and the
+     * diagnostic points at the `@implementation` while the mistake is on
+     * the `@interface` line several lines above.
+     *
+     * Worse, it *pre-empted* the AST gate: this runs in `collect`, which
+     * returns before `attach_ast`, so the author never reached Clang's
+     * `expected identifier` -- the message `MUTATIONS.md` grades M21
+     * `CLANG` for, meaning the C front end is the right reporter. M04, M05
+     * and M09 reach #566's check the same way and are saved only by the
+     * AST gate firing first, which is luck rather than design.
+     *
+     * A file with a parse error loses no coverage by being skipped here:
+     * it is refused by the AST requirement, or by Clang at dump time, and
+     * either names the cause instead of a consequence. Same reasoning as
+     * #561 -- do not diagnose a fact derived from an earlier failure. */
     let mut reported_impl: HashSet<String> = HashSet::new();
+    let source_parsed = !crate::staticbar::tree_has_errors(root);
     for (name, span) in &impl_sites {
+        if !source_parsed {
+            break;
+        }
         if interface_declared.contains(name) || !reported_impl.insert(name.clone()) {
             continue;
         }
@@ -1751,6 +1780,7 @@ source",
             uses_responds_to_selector: reflection.responds,
             uses_synchronized: contains_kind(root, "synchronized_statement"),
             forward_declared: forward_declared_classes(root, source),
+            source_parsed: !crate::staticbar::tree_has_errors(root),
         },
         diagnostics,
     )
