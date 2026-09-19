@@ -4408,6 +4408,7 @@ fn send_to_resolved_class(
         reject_ambiguous_dispatch(node, ctx, Some(class), selector);
         return dynamic_dispatch_call(ctx.program, &root, selector, recv_text, arg_texts);
     };
+    reject_undefined_target(node, ctx, &defining, selector, false);
     let (ret_ty, returns_instancetype) = method_return_type(ctx.program, &defining, selector, false)
         .unwrap_or_else(|| ("void".to_string(), false));
     let mut call_args = vec![format!("(struct {} *)({})", defining, recv_text)];
@@ -5235,6 +5236,7 @@ fn render_message(node: Node, ctx: &mut EmitCtx) -> (String, String) {
         let target = target.to_string();
         return match find_defining_class(ctx.program, &target, &parts.selector, true) {
             Some(defining) => {
+                reject_undefined_target(node, ctx, &defining, &parts.selector, true);
                 let (ret_ty, returns_instancetype) =
                     method_return_type(ctx.program, &defining, &parts.selector, true)
                         .unwrap_or_else(|| ("void".to_string(), false));
@@ -5394,6 +5396,7 @@ fn render_message(node: Node, ctx: &mut EmitCtx) -> (String, String) {
                  * that is a contradiction rather than an ambiguity
                  * (#483). */
                 reject_static_dispatch_contradiction(node, ctx, &parts.selector);
+                reject_undefined_target(node, ctx, &defining, &parts.selector, false);
                 let (ret_ty, returns_instancetype) =
                     method_return_type(ctx.program, &defining, &parts.selector, false)
                         .unwrap_or_else(|| ("void".to_string(), false));
@@ -5540,6 +5543,128 @@ fn reject_ambiguous_dispatch(
 /// shared resolver is a pass-structure change (`arc::analyze` runs in
 /// `front_end`, before `ctx.scope` exists), and a gate asserting the two
 /// enumerations agree cannot see a shape that is not a node kind.
+/// Refuse a send whose target oz2c declares and never defines (#566).
+///
+/// Every direct call below is written as `Defining_selector(...)`, and
+/// `companion.rs` also *declares* it in `oz2c_dispatch.h`. What makes the
+/// symbol real is an `@implementation` body, and nothing so far has
+/// required the two halves of a class to agree: an `@interface` may
+/// declare `-missing` that no body defines, or declare `-first:second:`
+/// against a body spelling `-first:third:`, and both transpile silently.
+///
+/// The result is a call to a function that exists nowhere. Whether the
+/// program builds then depends on the *caller*: with a reachable call site
+/// the linker reports `undefined reference to 'MT76Probe_missing'`, and
+/// with none, `-Wl,--gc-sections` drops the enclosing function and the
+/// build is clean. One typo, two outcomes, no diagnostic at either stage.
+///
+/// # Why this is on the call and not on the declaration
+///
+/// #566 asks for the stronger rule -- "every selector declared in an
+/// `@interface` needs a definition in the matching `@implementation`" --
+/// and that rule refuses the SDK. `include/oz_sdk/Foundation/OZArray.h`
+/// and `OZDictionary.h` both declare
+/// `countByEnumeratingWithState:objects:count:`, which no built `.m`
+/// implements; `Program::method_is_defined` exists because of it, and
+/// `reachable_implementors` and `render_protocol_dispatch` already filter
+/// it out of the dispatch so nothing routes to it. `for (x in a)` lowers to
+/// `OZ_PROTOCOL_SEND_nextObject`, never to that selector, so on the call
+/// the SDK's declaration costs nothing -- and a declaration nobody calls
+/// harms nobody, which is the line this check draws.
+///
+/// It leaves #566's "clean build" case clean, deliberately: there is no
+/// emitted call to be undefined. What it removes is the divergence, which
+/// only ever existed where a call was written.
+///
+/// A method defined and never *declared* stays legal (#566's M75) -- that
+/// is an ordinary private method, `defined_selectors` holds it, and this
+/// asks the question the other way round.
+///
+/// `synthetic_class_call` is not routed through here: it resolves with
+/// `find_defining_class` and returns `None` when the method does not
+/// exist, and its callers are oz2c's own literal lowerings
+/// (`@"..."` -> `OZString`), not author-written sends.
+fn reject_undefined_target(
+    node: Node,
+    ctx: &mut EmitCtx,
+    defining: &str,
+    selector: &str,
+    is_class_method: bool,
+) {
+    if ctx.program.method_is_defined(defining, selector, is_class_method) {
+        return;
+    }
+    /* No primary `@implementation` for the defining class in this source, so
+     * there is no half that omitted the body: the class is implemented in
+     * another translation unit, or by hand-written C providing
+     * `Defining_selector()`. The whole-program model cannot see either and
+     * `method_is_defined`'s doc says so, so the call stands.
+     *
+     * This is the narrowing #566's own wording asks for -- a definition "in
+     * the matching `@implementation`" -- and without it the check refuses a
+     * live pattern: `method_family_ownership.rs` declares `@interface Remote`
+     * with no implementation at all and reads the *emitted* release, never
+     * linking, which is how the create-rule families are tested. */
+    if !ctx
+        .program
+        .classes
+        .get(defining)
+        .is_some_and(|info| info.has_primary_implementation)
+    {
+        return;
+    }
+    let dash = if is_class_method { '+' } else { '-' };
+    let fn_name = method_fn_name(defining, selector, is_class_method);
+    /* The nearest selector `defining` *does* define, so a piece-name typo
+     * (#566's M79: `second:` declared, `third:` defined) names the body
+     * the author meant rather than only the symbol that is missing. */
+    let near: Option<String> = ctx
+        .program
+        .classes
+        .get(defining)
+        .map(|info| {
+            info.defined_selectors
+                .iter()
+                .filter(|(_, cls)| *cls == is_class_method)
+                .map(|(sel, _)| sel.clone())
+                .filter(|sel| {
+                    sel != selector
+                        && sel.matches(':').count() == selector.matches(':').count()
+                        && sel.split(':').next() == selector.split(':').next()
+                })
+                .min()
+        })
+        .unwrap_or(None);
+    let mut help = vec![format!("define '{dash}{selector}' in '@implementation {defining}'")];
+    if let Some(near) = &near {
+        help.push(format!(
+            "or, if '{dash}{near}' is the body meant here, spell the two the same -- the \
+             declaration and the definition agree on the first piece and differ later, \
+             so they are separate selectors"
+        ));
+    }
+    help.push(format!(
+        "or remove the declaration of '{dash}{selector}' from '@interface {defining}' if \
+         nothing should call it"
+    ));
+    ctx.err_detailed(
+        node,
+        format!(
+            "'{dash}{selector}' is declared on '{defining}' and defined nowhere, so this \
+             send emits a call to '{fn_name}()', a function oz2c never generates"
+        ),
+        Some(
+            "an '@interface' declaration makes a selector callable and an \
+             '@implementation' body is what defines it. Left to the linker this is an \
+             `undefined reference` naming a mangled symbol that appears nowhere in the \
+             source -- and only when the call site is reachable, since \
+             '-Wl,--gc-sections' drops the enclosing function otherwise"
+                .to_string(),
+        ),
+        help,
+    );
+}
+
 fn reject_static_dispatch_contradiction(node: Node, ctx: &mut EmitCtx, selector: &str) {
     let Some(crate::arc::DispatchOwnership::Ambiguous { owning, borrowed }) =
         crate::arc::polled_dispatch_ownership(

@@ -235,6 +235,19 @@ pub struct ClassInfo {
     /// error rather than a compile error -- the mistake surfacing at the
     /// wrong end of the pipeline. See `Program::method_is_defined`.
     pub defined_selectors: HashSet<(String, bool)>,
+    /// Does a primary `@implementation` for this class appear in this
+    /// source? Categories and class extensions do not count -- only the
+    /// block that claims to define the class's own methods.
+    ///
+    /// This is the difference between a selector that is *missing* and one
+    /// that is merely *elsewhere*, and `emit::reject_undefined_target`
+    /// turns on it (#566). With the primary implementation here, a
+    /// declaration with no body is an omission oz2c can name; without it,
+    /// the class is implemented in another translation unit or by
+    /// hand-written C providing `Foo_bar()`, which the whole-program model
+    /// cannot see and must not refuse. `method_is_defined`'s own doc sets
+    /// that boundary out.
+    pub has_primary_implementation: bool,
 }
 
 #[derive(Debug, Clone, Default)]

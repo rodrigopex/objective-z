@@ -41,6 +41,10 @@ fn id_protocol_mismatch_rejected() {
 - (void)read {}
 @end
 
+@interface User : OZObject
+- (void)test;
+@end
+
 @implementation User
 - (void)test {
 	id<Frobbable> x = [Sensor alloc];
@@ -160,6 +164,10 @@ fn id_protocol_mismatch_on_later_assignment_rejected() {
 @implementation Sensor
 @end
 
+@interface User : OZObject
+- (void)test;
+@end
+
 @implementation User
 - (void)test {
 	id<Frobbable> x = 0;
@@ -193,6 +201,10 @@ fn array_generic_element_class_mismatch_rejected() {
 @interface Sensor : OZObject
 @end
 @implementation Sensor
+@end
+
+@interface User : OZObject
+- (void)test;
 @end
 
 @implementation User
@@ -269,6 +281,10 @@ fn dictionary_generic_value_mismatch_rejected() {
 @interface Sensor : OZObject
 @end
 @implementation Sensor
+@end
+
+@interface User : OZObject
+- (void)test;
 @end
 
 @implementation User
