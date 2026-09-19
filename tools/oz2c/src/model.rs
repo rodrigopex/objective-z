@@ -417,6 +417,28 @@ impl Program {
         self.forward_declared.contains(name) && !self.is_class(name)
     }
 
+    /// Is `name` a type oz2c spells with a `struct` tag?
+    ///
+    /// True for a real class and for one only forward-declared (#564) --
+    /// and the distinction between those two is exactly why this is
+    /// separate from `is_class` rather than folded into it. `is_class` has
+    /// fourteen callers in `emit` alone, and most of them are asking
+    /// something a forward declaration cannot answer: does this class have
+    /// a slab, an allocator, ivars, a dispatch slot, a place in the
+    /// `class_order`? A forward-declared name has none of that, so
+    /// widening `is_class` would hand `pools`, `companion` and `arc` a
+    /// class with no shape.
+    ///
+    /// What a forward declaration *does* settle is the spelling: C reaches
+    /// an undefined type through a tag, `struct A;` is legal with nothing
+    /// ever defining `struct A`, and that is the whole meaning of `@class`.
+    /// So this is the predicate for the spelling sites only -- the
+    /// `type_identifier` arm of `render_expr` and the bare-ivar lowering --
+    /// and nothing else should reach for it.
+    pub fn spells_with_struct_tag(&self, name: &str) -> bool {
+        self.is_class(name) || self.is_forward_declared_only(name)
+    }
+
     /// The C access path from a `self` typed as `struct {from_class} *` to
     /// reach `ivar_name`: "_x" if `from_class` declares it itself, or
     /// "base._x" / "base.base._x" etc. if an ancestor does (struct

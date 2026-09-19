@@ -1,0 +1,20 @@
+sample:
+  description: "@class forward declarations on target (#564)"
+  name: ObjZ Class Forward
+common:
+  tags: objz
+  integration_platforms:
+    - mps2/an385
+    - qemu_riscv32
+  harness: console
+  harness_config:
+    type: multi_line
+    ordered: true
+    regex:
+      - "=== Class Forward Demo ==="
+      - "slot=564"
+      - "peerUnset=1"
+      - "=== Demo complete ==="
+tests:
+  sample.objz.class_forward:
+    tags: objz class_forward

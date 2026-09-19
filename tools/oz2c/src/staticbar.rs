@@ -1288,6 +1288,17 @@ fn walk_for_reject(
             }
             return;
         }
+        /* `@defs(...)` reaches this arm's condition too -- it is neither
+         * numeric nor `@protocol`-shaped -- and `check_at_keywords` now
+         * names it specifically (#563). Returning here rather than
+         * widening that arm's negation keeps one construct to one
+         * diagnostic: before this, a `@defs` inside a method body was
+         * refused by the generic message below while the same construct at
+         * file scope was not refused at all, which is how the two halves
+         * of #563 came to disagree. */
+        "at_expression" if is_defs_shape(node, src) => {
+            return;
+        }
         "at_expression" if !crate::emit::is_numeric_boxed_shape(node, src) => {
             err(
                 diags,
@@ -2981,4 +2992,204 @@ pub fn check_function_body(
     };
     walk_for_reject(body, src, program, &mut scope, false, false, &mut diags);
     diags
+}
+
+/// Is `node` (an `at_expression`) shaped like `@defs(Name)`?
+///
+/// The twin of `emit::is_protocol_literal_shape`, and the same node kind:
+/// this grammar has no `@defs` rule at all, so `@defs(P)` parses as a
+/// generic `at_expression` wrapping a `call_expression` whose callee
+/// `identifier` is the text `defs`. `@protocol(P)` is byte-for-byte the
+/// same tree with `protocol` in that position, so the identifier text is
+/// the *only* thing separating an accepted construct from a refused one.
+///
+/// Two consequences worth stating, both learned by dumping the tree
+/// (#563):
+///
+/// - This cannot be a check on `at_expression` alone. Four constructs
+///   share that node -- `@42`, `@YES`, `@protocol(...)` and `@defs(...)`
+///   -- and the first three are accepted.
+/// - `@import` is *not* one of them. It has its own `module_import` node,
+///   so no rule keyed on `at_expression` can reach it, which matters
+///   because `@import` is deliberately left to Clang
+///   (`oz2c-challenges/MUTATIONS.md` grades M68 `CLANG`, and that grade is
+///   correct -- modules are a front-end feature, not a lowering gap).
+fn is_defs_shape(node: Node, src: &str) -> bool {
+    let mut cursor = node.walk();
+    let Some(inner) = node.children(&mut cursor).find(|c| c.kind() != "@") else {
+        return false;
+    };
+    if inner.kind() != "call_expression" {
+        return false;
+    }
+    let mut c2 = inner.walk();
+    let callee = inner.children(&mut c2).find(|c| c.kind() == "identifier");
+    callee.is_some_and(|f| node_text(f, src) == "defs")
+}
+
+/// Is `node` an `ERROR` standing in for a `@try` with no handler?
+///
+/// tree-sitter builds a `try_statement` only once a `@catch` or `@finally`
+/// follows, so the existing `try_statement` refusal never sees a bare
+/// `@try` -- the parser hands back an `ERROR` node whose first child is
+/// the `@try` token, with the block parsed normally underneath. #563 is
+/// explicit that this is the same refusal, not a syntax complaint: the
+/// construct is exceptions, and exceptions have no unwinding info here
+/// whether or not a handler was written.
+///
+/// Matching `ERROR` is narrow on purpose -- the *first child* must be the
+/// `@try` token. A general `ERROR` arm would turn every parse failure in
+/// the file into an exceptions diagnostic.
+fn is_handlerless_try(node: Node) -> bool {
+    node.kind() == "ERROR" && node.child(0).is_some_and(|c| c.kind() == "@try")
+}
+
+/// The `@`-keywords oz2c forwards into the generated C, refused here
+/// instead (#563).
+///
+/// # The gap this closes
+///
+/// The static subset accepts a *positive list* of `@`-keywords -- boxed
+/// numeric and boolean literals, `@selector`, `@protocol(...)` as
+/// `-conformsToProtocol:`'s argument -- and refuses a few more by name
+/// (`@try`/`@catch`, `@synchronized`). A keyword in neither list was
+/// **neither accepted nor refused**: tree-sitter parses it, no pass has a
+/// case for it, and `emit`'s catch-all copies the source text through. The
+/// first thing in the toolchain that understands it is then GCC, which
+/// says `stray '@' in program` about a line the author did write and a
+/// file they never wrote -- the generated `.c`.
+///
+/// None of the five has a meaning in this backend to lower to:
+///
+/// - `@encode` -- no runtime type strings; there is no reflection.
+/// - `@throw` -- no unwinding info, and `@try`/`@catch` is already refused.
+/// - `@available` -- a single-target static build has no OS to inquire of.
+/// - `@defs` -- no ivar-layout object to hand out.
+/// - a handler-less `@try` -- exceptions, same as the handled form.
+///
+/// # Why a named list and not "every unrecognised `@`-keyword"
+///
+/// Because the category is wrong even though it is tempting. `@import` is
+/// an unrecognised `@`-keyword and must **not** be refused here: it is a
+/// front-end feature, Clang's own dump rejects it, and
+/// `oz2c-challenges/MUTATIONS.md` grades it `CLANG` -- delegated, and
+/// correctly so. `@class` is another, and #564 *supports* it in the same
+/// change rather than refusing it. So the set is five names, each with its
+/// own reason, not a sweep over what the grammar happens not to cover.
+///
+/// # Placement
+///
+/// One walk over the whole tree rather than arms in `walk_for_reject`,
+/// because position is exactly what this family gets wrong. `@defs` in the
+/// corpus fixture sits at **file scope**, and `walk_for_reject` is entered
+/// only with a method or function *body* -- so a body-only arm would have
+/// left the reported case untouched while appearing to cover it. The three
+/// expression keywords can appear in either place.
+///
+/// Deferred rather than gating, on #540's rule: none of these makes the
+/// class table unwalkable, so each should co-report with whatever else the
+/// file is wrong about.
+pub fn check_at_keywords(source: &str) -> Vec<Diagnostic> {
+    let tree = crate::parse::parse(source);
+    let mut diags = Vec::new();
+    walk_at_keywords(tree.root_node(), source, &mut diags);
+    diags
+}
+
+fn walk_at_keywords(node: Node, src: &str, diags: &mut Vec<Diagnostic>) {
+    let refusal: Option<Rejection> = match node.kind() {
+        "encode_expression" => Some(Rejection {
+            message: "'@encode' is not in the static subset -- there are no runtime type \
+                      strings to read"
+                .to_string(),
+            note: Some(
+                "'@encode(T)' is a compile-time operator yielding Objective-C's type \
+                 encoding for T, which only a runtime that reads those strings can use. \
+                 This backend has no reflection and no type-encoding table, so there is \
+                 nothing to lower it to -- left alone it reaches the C compiler as \
+                 `stray '@' in program`, pointing into the generated file"
+                    .to_string(),
+            ),
+            help: vec![
+                "if a type's size is what is wanted, use 'sizeof'".to_string(),
+                "if a fixed tag is what is wanted, write the string literal directly"
+                    .to_string(),
+            ],
+        }),
+        "throw_statement" => Some(Rejection {
+            message: "'@throw' is not in the static subset -- exceptions have no unwinding \
+                      information here"
+                .to_string(),
+            note: Some(
+                "the matching '@try'/'@catch' is refused for the same reason, so a throw \
+                 could never be caught. Nothing unwinds the stack, and an escaping throw \
+                 would leave every ARC release in every frame it passed unrun"
+                    .to_string(),
+            ),
+            help: vec![
+                "return a status value, or an out-parameter error, and check it at the \
+                 call site"
+                    .to_string(),
+            ],
+        }),
+        "available_expression" => Some(Rejection {
+            message: "'@available' is not in the static subset -- a single-target static \
+                      build has no OS version to inquire against"
+                .to_string(),
+            note: Some(
+                "'@available' asks the host's Objective-C runtime which OS it is running \
+                 on, and answers at run time. This backend compiles to C for one fixed \
+                 target chosen at build time, so the question has no subject"
+                    .to_string(),
+            ),
+            help: vec![
+                "branch on a build-time condition instead -- a Kconfig option, or '#if' \
+                 on a macro the build defines"
+                    .to_string(),
+            ],
+        }),
+        "at_expression" if is_defs_shape(node, src) => Some(Rejection {
+            message: "'@defs' is not in the static subset -- there is no ivar-layout \
+                      object to hand out"
+                .to_string(),
+            note: Some(
+                "'@defs(C)' is a GNU operator expanding to C's ivar layout so it can be \
+                 embedded in a plain struct. oz2c already emits each class as a plain \
+                 'struct C' whose ivars are ordinary members, so the layout is directly \
+                 available and the operator has nothing to add"
+                    .to_string(),
+            ),
+            help: vec!["name the generated type directly -- 'struct C'".to_string()],
+        }),
+        _ if is_handlerless_try(node) => Some(Rejection {
+            message: "'@try' is not in the static subset -- exceptions have no unwinding \
+                      information here"
+                .to_string(),
+            note: Some(
+                "this '@try' has no '@catch' or '@finally', which the parser cannot build \
+                 a 'try_statement' from -- so it arrives as a syntax error rather than as \
+                 the construct it is. The refusal is the same either way; a handled \
+                 '@try' is refused too"
+                    .to_string(),
+            ),
+            help: vec![
+                "remove the '@try' and keep its body, then return a status value for the \
+                 failure it was guarding"
+                    .to_string(),
+            ],
+        }),
+        _ => None,
+    };
+    if let Some(rejection) = refusal {
+        err_detailed(diags, src, node, rejection);
+        /* One diagnostic per construct. A handler-less `@try` is an
+         * `ERROR` node and its block parses normally underneath, so
+         * descending would report anything inside it a second time
+         * against a span the author cannot act on separately. */
+        return;
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        walk_at_keywords(child, src, diags);
+    }
 }
