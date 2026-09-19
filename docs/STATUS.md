@@ -4972,3 +4972,90 @@ argued: the generated C for a conforming program is **byte-identical** to
 sample was added for the same reason — nothing about code generation moved,
 and `samples/reflection_demo` already exercises `-respondsToSelector:` on
 both boards.
+
+## A source `#define` that rewrites oz2c's own output (#571)
+
+oz2c copies a file-scope `#define` into the generated header verbatim --
+deliberately, because a macro may be a constant the emitted C needs -- and
+emits its own identifiers from the raw source token. When the two namespaces
+collide the copied macro rewrites *some* of oz2c's output and not the rest,
+and the generated C stops type-checking on lines the author never wrote.
+
+### The copy alone is harmless; the include order is what breaks it
+
+The issue frames this as "the struct tag is rewritten but `MT93Alias_run` is
+one token, so it is not". True, and not yet a conflict — a consistently
+rewritten file would compile, just with oddly matched names. What produces
+the error is that oz2c includes the shared dispatch **before** the copied
+`#define`:
+
+```c
+#include "oz2c_dispatch.h"   /* declares MT93Alias_run(struct MT93Alias *) */
+#define MT93Alias MT93Probe  /* copied from source, after that include    */
+struct MT93Alias { ... };    /* now reads `struct MT93Probe`              */
+int MT93Alias_run(struct MT93Alias *self);   /* and so does this one      */
+```
+
+Two declarations of one function name at two different macro states. Measured
+on the corpus fixture: **four** `conflicting types` errors, not the three the
+issue records, and each conflicts against `Foundation/oz2c_dispatch.h` rather
+than within the class's own header.
+
+### Refused, rather than dropped or namespaced
+
+#571 offers two remedies and the choice matters:
+
+- **Namespace every emitted identifier** so a user macro cannot reach it, the
+  rule #462 applied to `oz_`. This is the larger change and the wrong one
+  here: the emitted names *are* the runtime ABI, declared by hand in
+  `samples/smp_shared/main.m:96-97`, so renaming them is a break for every
+  consumer in order to buy back one exotic case.
+- **Silently drop the `#define`**, which is worse than either. The macro may
+  be load-bearing for the author's own C, so removing it turns one compile
+  error into a different compile error elsewhere — the "silently degrades"
+  mode this transpiler deliberately does not have.
+
+So it is refused, located at the `#define`. The remedy the diagnostic gives
+is the one the issue already records as the workaround: spell the class by
+its own name.
+
+### A set, not a prefix test
+
+Every emitted per-class name is `<Class>` or `<Class>_something`, so a prefix
+rule looks equivalent and is not: `Widget_MAX` shares the prefix and collides
+with nothing, because the generated C never emits that name. Refusing it
+would reject ordinary source to catch an exotic case, so the check is keyed
+on the exact set — and `oz_slab_<Class>` is the member that does not start
+with the class name, so it cannot be a suffix test either.
+
+### The guard for the set's own drift
+
+Those spellings live in `companion.rs` as `format!` strings. A new
+synthesized member added there would not appear in the set, which would
+silently stop covering the thing it exists to cover — with every
+hand-written case still green, because each names a shape already handled.
+
+`macro_shadowing.rs::the_emitted_identifier_set_still_covers_the_output`
+closes that by reading the identifiers out of a **real transpile's output**
+and driving the check with each one, rather than asserting anything about the
+set directly. It sweeps seven for the probe program — the struct tag, an
+instance method, a class method's `_cls` form, `dealloc`, the slab, the
+allocator and the deallocator — and carries a floor assertion so an empty
+sweep fails instead of passing.
+
+Verified by sabotage rather than by inspection: dropping `oz_slab_` from the
+set makes it fail, naming `oz_slab_Probe` as uncovered.
+
+### Gates
+
+`cargo test` 881 passed / 0 failed; `just test-behavior` 87 passed, and 87
+again under `--sanitize address,undefined`; `just test-adapted` 40 passed;
+`just test-boards` 17 suites on ARM and 15 on RISC-V, all passed, tallied
+from `twister.json`; `scripts/regen_zephyr_tests.py` left
+`tests/zephyr/generated/` untouched.
+
+`just test-pedantic` was not run, measured rather than argued: the generated
+C for a non-colliding program is byte-identical to `main`'s, since every
+string this change adds is diagnostic text. Rebuilding the identifier set per
+`#define` costs nothing observable — the behaviour corpus runs in 27.8s
+against 29.1s before.
