@@ -118,10 +118,24 @@
  * token-pastes its callback into a symbol name. `INPUT_CALLBACK_DEFINE`
  * does (`_input_callback__##name`, with `name` defaulting to the callback),
  * so with `OZFN` the argument expands to `0` before the paste and two
- * callbacks in one file both become `_input_callback__0` -- Clang reports
- * `redefinition`, and it does so on the AST-dump path, where a truncated
- * dump silently costs ivar ownership facts. Use `OZM` there, or Zephyr's
- * own `INPUT_CALLBACK_DEFINE_NAMED` to choose the symbol yourself.
+ * callbacks in one file both become `_input_callback__0`. Clang reports
+ * `redefinition`, and the build fails **loudly**: oz2c's AST-dump wrapper
+ * prints it with `file:line:col` and a full macro-expansion trace, and
+ * exits non-zero. Use `OZM` there, or Zephyr's own
+ * `INPUT_CALLBACK_DEFINE_NAMED` to choose the symbol yourself -- the
+ * collision is real and worth avoiding, just not silent.
+ *
+ * This paragraph used to say the redefinition lands "on the AST-dump path,
+ * where a truncated dump silently costs ivar ownership facts", and that
+ * overstated it in a way worth correcting rather than deleting (#553).
+ * `cmake/oz2c.cmake` already separates the two cases, and this is the
+ * harmless one: a **fatal** Clang error stops the dump, so declarations
+ * after it are absent from a file that still looks complete -- that is the
+ * case that costs ownership facts, and the wrapper says so. An **ordinary**
+ * error like this redefinition does not truncate anything; Clang recovers
+ * and keeps parsing, the dump is complete, and the only thing lost is the
+ * build. Sending a future reader to look for silent data loss that better
+ * error handling already closed is the cost of leaving it as it was.
  *
  * Expands to `0` rather than to nothing, because the position it stands in
  * wants a value: a null pointer constant, which converts to any function
