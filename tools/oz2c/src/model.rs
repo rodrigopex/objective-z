@@ -399,6 +399,36 @@ pub struct Program {
     /// "receiver type is 'id'" -- for a receiver the author had spelled
     /// with a class name (#557).
     pub forward_declared: std::collections::BTreeSet<String>,
+    /// Did the source parse without an `ERROR` or a missing token?
+    ///
+    /// Computed once in `collect` and carried, rather than re-derived by
+    /// each pass that needs it -- the walk is over the whole tree and the
+    /// answer cannot change.
+    ///
+    /// **What it is for: an *absence* claim is only sound over a tree that
+    /// parsed.** Two checks assert one, and both were wrong on malformed
+    /// input until #567's regression was swept out of the mutation corpus:
+    ///
+    /// - "no `@interface` for this name exists in this source" (#567). A
+    ///   nameless `@interface : OZObject` puts an `ERROR` on the stray `:`
+    ///   and leaves `OZObject` as the first `identifier`, so
+    ///   `class_header` reads the superclass as the class name and the
+    ///   real class is declared nowhere.
+    /// - "this selector is declared and defined nowhere" (#566). An
+    ///   unclosed bracket stops a method body parsing, so a defined method
+    ///   looks undefined.
+    ///
+    /// In both cases the conclusion is true of the parse, derived from the
+    /// syntax error, and points at a construct that is not the mistake. A
+    /// file that failed to parse loses no coverage by being skipped: the
+    /// AST requirement refuses it, or Clang does at dump time, and either
+    /// names the cause. `oz2c-challenges` grades all four such fixtures
+    /// (M04, M05, M09, M21) `CLANG` for exactly that reason.
+    ///
+    /// A *presence* claim needs no such guard, which is why this is not a
+    /// blanket "stop checking": a construct that is really there is really
+    /// there whatever else failed to parse.
+    pub source_parsed: bool,
 }
 
 impl Program {

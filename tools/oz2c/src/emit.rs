@@ -5608,6 +5608,19 @@ fn reject_undefined_target(
     if ctx.program.method_is_defined(defining, selector, is_class_method) {
         return;
     }
+    /* Not over a tree that did not parse. An unclosed bracket stops a
+     * method body parsing, so a method that *is* defined looks undefined
+     * and this reports "declared and defined nowhere" about the wrong
+     * thing entirely -- the mistake is the bracket
+     * (`oz2c-challenges` M04, M05, M09, all graded `CLANG`).
+     *
+     * Until now those were saved only by the AST gate happening to fire
+     * first, which is luck rather than design: it holds in a real build
+     * and not under `--allow-missing-ast`. See
+     * `Program::source_parsed`. */
+    if !ctx.program.source_parsed {
+        return;
+    }
     /* No primary `@implementation` for the defining class in this source, so
      * there is no half that omitted the body: the class is implemented in
      * another translation unit, or by hand-written C providing
