@@ -493,11 +493,14 @@ pub fn expect_reject(source: &str) -> String {
 // sense across multiple files (`#pragma once`, `#import ...`) and
 // unwrapping the `#ifdef __clang__ / @compatibility_alias .../ #endif`
 // guard some headers use (oz2c's top-level emit pass elides a bare
-// `compatibility_alias_declaration` to a comment, but doesn't recurse
-// into `#ifdef`/`#endif` conditionals to find one nested inside, so left
-// wrapped it would pass through as invalid raw ObjC text -- and the
-// `#ifdef` was only ever a compiler-portability guard in the original
-// anyway, since this harness's `cc` always defines `__clang__`).
+// `compatibility_alias_declaration` to a comment, and an alias is not
+// one of the class-declaring constructs `preproc::TOP_LEVEL_OBJC` names,
+// so a conditional around one is copied through rather than resolved --
+// left wrapped it would pass through as invalid raw ObjC text. A
+// conditional around an `@interface` *is* resolved, since #573; this
+// unwrap is not that case. And the `#ifdef` was only ever a
+// compiler-portability guard in the original anyway, since this
+// harness's `cc` always defines `__clang__`).
 //
 // A few classes (OZArray; OZNumber for one method) need real content
 // removed or added on top of that, because they use something oz2c
