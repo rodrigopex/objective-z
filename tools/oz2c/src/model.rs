@@ -10,6 +10,26 @@ pub struct MethodSig {
     pub selector: String,
     pub return_type: String,
     pub params: Vec<(String, String)>, // (name, c_type)
+    /// Was this declared under a protocol's `@optional` marker (#536)?
+    ///
+    /// Only ever true for a method collected from a `@protocol` body; a
+    /// class's own declarations have no such marker and are all `false`.
+    /// The marker is **sticky** and applies to everything after it until a
+    /// `@required` resets it, which is how Objective-C defines it and how
+    /// tree-sitter models it -- each marker gets its own
+    /// `qualified_protocol_interface_declaration` wrapping the
+    /// declarations that follow, as a *sibling* of any previous one rather
+    /// than nested inside it, so the value is read on entry and not
+    /// inherited.
+    ///
+    /// Exactly one consumer: `emit::render_interface`'s conformance check,
+    /// which must not require an optional member of a conformer. Nothing
+    /// else may filter on it, and in particular
+    /// `Program::all_protocol_methods` must keep returning optional
+    /// members -- they still need an `OZ_PROTOCOL_SEND_*` dispatch
+    /// function, because `-respondsToSelector:` is how a caller tests for
+    /// one and then sends it.
+    pub is_optional: bool,
     /// Was `return_type` spelled `instancetype` in source? `return_type`
     /// itself already resolved that to `struct {declaring_class} *` (see
     /// `collect::extract_method_sig`) -- callers dispatching this method

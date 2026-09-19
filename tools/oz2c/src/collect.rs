@@ -150,7 +150,7 @@ fn extract_protocol(node: Node, src: &str, known_classes: &HashSet<String>) -> P
         None => Vec::new(),
     };
     let mut methods = Vec::new();
-    collect_protocol_methods(node, src, &name, known_classes, &mut methods);
+    collect_protocol_methods(node, src, &name, known_classes, false, &mut methods);
     ProtocolInfo { name, super_protocols, methods, properties: Vec::new() }
 }
 
@@ -158,23 +158,57 @@ fn extract_protocol(node: Node, src: &str, known_classes: &HashSet<String>) -> P
 /// level inside a `@required`/`@optional`-qualified sub-block
 /// (`qualified_protocol_interface_declaration`) -- tree-sitter-objc
 /// wraps everything after such a marker in its own node, so a flat
-/// direct-children scan misses them entirely. Required-vs-optional
-/// isn't tracked either way: protocols are a compile-time contract
-/// here, not a runtime filter (see `model::Program::all_protocol_methods`'s
-/// doc comment), so nothing downstream cares about the distinction.
+/// direct-children scan misses them entirely.
+///
+/// **Required-vs-optional is tracked, and the comment here used to say it
+/// was not** -- "protocols are a compile-time contract here, not a runtime
+/// filter, so nothing downstream cares about the distinction". Something
+/// downstream did: `emit::render_interface`'s conformance check reads this
+/// list and requires *every* entry of every conformer, so a class omitting
+/// an `@optional` member was refused outright (#536). That is the entire
+/// purpose of the keyword, and px-app carried `WA-011` -- delete the
+/// `@optional` section and redeclare the method on the implementing
+/// class -- for as long as the claim stood.
+///
+/// The marker is **sticky**: it applies to every declaration after it
+/// until a `@required` resets it. tree-sitter models that by giving each
+/// marker its own node wrapping what follows, and those nodes are
+/// **siblings** rather than nested -- verified on a dump, because a nested
+/// shape would need the flag inherited-then-overridden instead. So
+/// `optional` is read on entry to each qualified block and not passed down
+/// from an enclosing one.
+///
+/// A `method_declaration` *directly* in the protocol body, before any
+/// marker, is required -- which is the `false` the outer call starts with.
 fn collect_protocol_methods(
     node: Node,
     src: &str,
     protocol_name: &str,
     known_classes: &HashSet<String>,
+    optional: bool,
     out: &mut Vec<MethodSig>,
 ) {
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
         match child.kind() {
-            "method_declaration" => out.push(extract_method_sig(child, src, protocol_name, known_classes)),
+            "method_declaration" => {
+                let mut sig = extract_method_sig(child, src, protocol_name, known_classes);
+                sig.is_optional = optional;
+                out.push(sig);
+            }
             "qualified_protocol_interface_declaration" => {
-                collect_protocol_methods(child, src, protocol_name, known_classes, out)
+                /* The marker is this block's own first child, so a
+                 * `@required` after an `@optional` resets rather than
+                 * inherits. Anything that is neither marker keeps the
+                 * enclosing value, which is what an unmarked block would
+                 * mean if the grammar ever produced one. */
+                let marker = child.child(0).map(|c| c.kind());
+                let nested = match marker {
+                    Some("@optional") => true,
+                    Some("@required") => false,
+                    _ => optional,
+                };
+                collect_protocol_methods(child, src, protocol_name, known_classes, nested, out)
             }
             _ => {}
         }
@@ -932,7 +966,16 @@ pub(crate) fn extract_method_sig(
         }
     }
 
-    MethodSig { is_class_method, selector, return_type, params, returns_instancetype }
+    /* `is_optional` is the protocol collector's to set -- this extractor
+     * is shared with class declarations, which have no marker. */
+    MethodSig {
+        is_class_method,
+        selector,
+        return_type,
+        params,
+        returns_instancetype,
+        is_optional: false,
+    }
 }
 
 pub fn collect(source: &str) -> (Program, Vec<crate::model::Diagnostic>) {
@@ -2325,6 +2368,9 @@ fn resolve_properties(classes: &mut std::collections::HashMap<String, ClassInfo>
                     return_type: prop.c_type.clone(),
                     params: Vec::new(),
                     returns_instancetype: false,
+                    /* A synthesized accessor on a class: no protocol
+                     * marker can reach it. */
+                    is_optional: false,
                 });
             }
             if !prop.is_readonly {
@@ -2336,6 +2382,7 @@ fn resolve_properties(classes: &mut std::collections::HashMap<String, ClassInfo>
                         return_type: "void".to_string(),
                         params: vec![(prop.name.clone(), prop.c_type.clone())],
                         returns_instancetype: false,
+                        is_optional: false,
                     });
                 }
             }
