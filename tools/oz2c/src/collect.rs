@@ -958,6 +958,17 @@ pub fn collect(source: &str) -> (Program, Vec<crate::model::Diagnostic>) {
      * categories and class extensions alike, each with the `InterfaceKind`
      * needed to word its diagnostic. */
     let mut category_sites: Vec<(String, InterfaceKind, std::ops::Range<usize>)> = Vec::new();
+    /* Every `@implementation Foo` with no category or extension marker, so
+     * it can be checked for a matching `@interface` once pass 1 has seen
+     * every declaration (#567). Separate from `category_sites` because the
+     * diagnostic differs: a category extends a class, an implementation
+     * *is* one half of it. */
+    let mut impl_sites: Vec<(String, std::ops::Range<usize>)> = Vec::new();
+    /* Names an `@interface` actually declared. `known_classes` cannot answer
+     * this: pass 1 still creates a `ClassInfo` from an `@implementation`, so
+     * the fabricated class is in the map by the time the check runs -- which
+     * is the same reason #529's extension check could not use it either. */
+    let mut interface_declared: HashSet<String> = HashSet::new();
     let mut cursor = root.walk();
     for node in root.children(&mut cursor) {
         if node.kind() == "protocol_declaration" {
@@ -982,6 +993,30 @@ pub fn collect(source: &str) -> (Program, Vec<crate::model::Diagnostic>) {
             continue;
         }
         let (name, superclass, kind) = class_header(node, source);
+        /* An `@implementation` does not bring a class into existence -- only
+         * an `@interface` does. Until #567 this loop accepted both node
+         * kinds and `class_header` answered `Primary` for either, so a bare
+         * `@implementation` **fabricated** the class: exactly what a class
+         * extension used to do before #529, one construct over.
+         *
+         * The consequence is worse than the extension's was. Every class
+         * gets synthesized members -- `Foo_oz_alloc`, `Foo_oz_free`, the
+         * slab -- and those are driven by the `@interface`, which is absent,
+         * so the shared `oz2c_dispatch.c`'s `oz_release` called a
+         * `Foo_oz_free` nothing defined. `--gc-sections` cannot hide that
+         * one: the dispatch is reached from `main`.
+         *
+         * Clang only *warns* here ("cannot find interface declaration"), so
+         * the AST-dump gate lets it through -- a warning is not a gate.
+         * Recorded and checked against `known_classes` below, beside the
+         * category (#501) and the extension (#529): one construct, three
+         * spellings, one refusal. */
+        if node.kind() == "class_implementation" && kind.declares_class() {
+            impl_sites.push((name.clone(), node.start_byte()..node.end_byte()));
+        }
+        if node.kind() == "class_interface" && kind.declares_class() {
+            interface_declared.insert(name.clone());
+        }
         if !kind.declares_class() {
             /* Neither a category nor a class extension declares a new
              * class, so neither contributes anything here -- but both are
@@ -1185,6 +1220,52 @@ pub fn collect(source: &str) -> (Program, Vec<crate::model::Diagnostic>) {
             }
             cur = classes[&sup].superclass.clone();
         }
+    }
+
+    /* An `@implementation` with no `@interface` (#567). Beside the category
+     * and extension checks below for the same reason: a construct that does
+     * not declare a class, reaching a pipeline that assumes one was
+     * declared.
+     *
+     * Reported per class rather than per block, so a class with several
+     * `@implementation` blocks -- the primary plus categories -- names its
+     * missing `@interface` once. */
+    /* `impl_sites` is every primary `@implementation` in this source, which
+     * is also the question `emit::reject_undefined_target` needs answered
+     * (#566): a declared selector with no body is an omission only when the
+     * class's own implementation is here to have omitted it. Recorded off
+     * the same list rather than a second scan, so the two checks cannot
+     * disagree about what counts as primary. */
+    for (name, _) in &impl_sites {
+        if let Some(info) = classes.get_mut(name) {
+            info.has_primary_implementation = true;
+        }
+    }
+    let mut reported_impl: HashSet<String> = HashSet::new();
+    for (name, span) in &impl_sites {
+        if interface_declared.contains(name) || !reported_impl.insert(name.clone()) {
+            continue;
+        }
+        diagnostics.push(
+            crate::model::Diagnostic::spanning(
+                format!("'@implementation {}' has no '@interface {}' in this source", name, name),
+                source,
+                span.clone(),
+            )
+            .with_note(
+                "every class gets synthesized members driven by its '@interface' -- an \
+                 allocator, a deallocator and a slab -- so without one the shared \
+                 dispatch calls a deallocator nothing defines, and the author reads a \
+                 mangled symbol in a generated file. Clang only warns here, so the \
+                 AST-dump gate does not catch it"
+                    .to_string(),
+            )
+            .with_help(format!(
+                "add '@interface {} : OZObject' (or a suitable superclass), or '#import' \
+                 the header that declares it",
+                name
+            )),
+        );
     }
 
     /* A category on a class this translation unit never declares, for the
@@ -1422,10 +1503,78 @@ source",
                         }
                         info.defined_selectors
                             .insert((sig.selector.clone(), sig.is_class_method));
-                        if !info.methods.iter().any(|m| {
+                        let declared = info.methods.iter().find(|m| {
                             m.selector == sig.selector && m.is_class_method == sig.is_class_method
-                        }) {
-                            info.methods.push(sig);
+                        });
+                        match declared {
+                            /* The declaration already holds this selector, so
+                             * the body adds nothing to the table -- except
+                             * when the two disagree about the return type
+                             * (#568).
+                             *
+                             * The `@interface`'s spelling wins here, silently:
+                             * `method_return_type` answers `int` for a body
+                             * that returns an object, and `arc` then claims a
+                             * `+1` reference on an `int`, which is an
+                             * impossible state it reports as an
+                             * ownership-analysis *bug* -- "please report it
+                             * with the snippet (#398)". Ordinary malformed
+                             * source was asking the author to file a
+                             * transpiler issue.
+                             *
+                             * Gating here rather than deferring, on #540's
+                             * criterion and not by default: this is the case
+                             * where later passes read an inconsistent
+                             * `Program`. One selector has two return types and
+                             * the table can only hold one, so every consumer
+                             * downstream -- `arc`'s ownership, emit's casts,
+                             * the dispatch's signature -- is reasoning from a
+                             * type the body does not have.
+                             *
+                             * Comparison is on the *resolved* C spelling, so
+                             * `instancetype` against `Foo *` on `Foo` agrees
+                             * (both are `struct Foo *`, per
+                             * `extract_method_sig`) and only a genuine
+                             * disagreement is reported. Clang's own wording
+                             * for this is `conflicting return type in
+                             * implementation of 'value'`, and it never gets to
+                             * say it -- the internal error fired before the
+                             * AST dump. */
+                            Some(prior) if prior.return_type != sig.return_type => {
+                                let dash = if sig.is_class_method { '+' } else { '-' };
+                                diagnostics.push(
+                                    crate::model::Diagnostic::spanning(
+                                        format!(
+                                            "'{}{}' is declared on '{}' returning '{}' and \
+                                             defined returning '{}'",
+                                            dash,
+                                            sig.selector,
+                                            name,
+                                            prior.return_type,
+                                            sig.return_type
+                                        ),
+                                        source,
+                                        method_def.start_byte()..method_def.end_byte(),
+                                    )
+                                    .with_note(
+                                        "the '@interface' spelling is the one every caller \
+                                         compiles against, so the two have to agree. Taking \
+                                         the declaration's type over the body's is what \
+                                         reached `a +1 reference was claimed for an \
+                                         expression of type 'int'` -- an internal-invariant \
+                                         message asking for a bug report, from source the \
+                                         author can fix"
+                                            .to_string(),
+                                    )
+                                    .with_help(format!(
+                                        "change the definition to return '{}', or the \
+                                         declaration to return '{}'",
+                                        prior.return_type, sig.return_type
+                                    )),
+                                );
+                            }
+                            Some(_) => {}
+                            None => info.methods.push(sig),
                         }
                         continue;
                     }

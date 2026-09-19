@@ -4564,3 +4564,157 @@ it sends a reader looking for silent data loss that better error handling had
 already closed. Corrected rather than deleted, with the distinction stated, so
 the next reader inherits the fatal-versus-ordinary rule instead of rediscovering
 it.
+
+## Two halves of a class, three wrong ends (#566, #567, #568)
+
+`collect` gathers `@interface` declarations and `@implementation` definitions
+into the same `ClassInfo` and, until now, never asked whether the two described
+the same class. Three issues, one gap, and not one of them surfaced where the
+mistake was.
+
+This file's own **links** entry already names the shape: *"a call to a method
+declared but defined nowhere compiles fine against its prototype and fails only
+at link, so a compile-only sweep once reported OK for three samples that could
+not be built."* That sentence was written about a *sweep*. It is also a
+statement about what oz2c let through, and the three issues below are the
+author-facing half of it.
+
+### Each one surfaced at the wrong end
+
+- **#567** — an `@implementation` with no `@interface` did not fail. It
+  *fabricated* the class: pass 1 accepted either node kind and `class_header`
+  answered `Primary` for both, so the class got a `ClassInfo`, a slab, and a
+  slot in the shared dispatch. But `companion.rs` synthesizes `Foo_oz_alloc`
+  and `Foo_oz_free` from the **`@interface`**, so the dispatch's `oz_release`
+  called a deallocator nothing defined. This is the same defect one construct
+  over from #529's class extension, and worse: `oz_release` is the single
+  release path every ARC'd program calls, so `-dead_strip`/`--gc-sections`
+  cannot reach it.
+
+- **#566** — a declared selector with no body (M76), or a body whose selector
+  differs from the declaration's (M79), emitted a call to a mangled symbol that
+  appears nowhere in the source. Whether the program built then depended on the
+  *caller*: with a reachable call site the linker says
+  `undefined reference to 'MT76Probe_missing'`, and with none, `--gc-sections`
+  drops the enclosing function and the build is clean. One typo, two outcomes.
+
+- **#568** — a declaration and a body disagreeing about the return type let
+  the declaration's spelling win *silently*, because the implementation arm
+  de-duplicates against `info.methods` and simply declined to push. So
+  `method_return_type` answered `int` for a body returning an object, `arc`
+  claimed a `+1` reference on an `int`, and the author was told
+  `This is an ownership-analysis bug rather than a problem with this source --
+  please report it with the snippet`. Ordinary malformed input was asking for a
+  transpiler bug report, and it fired *before* the Clang AST dump, so Clang
+  never got to say `conflicting return type in implementation of 'value'`.
+
+### The link failure was measured, not argued
+
+#567's guard rests on a claim about the linker, so it was run rather than
+reasoned about. A driver that never names the class, `-dead_strip` on:
+
+```
+Undefined symbols for architecture arm64:
+  "_P77_oz_free", referenced from:
+      _oz_release in oz2c_dispatch.o
+```
+
+That matters because a **merged test asserted the opposite.** #501 left behind
+`implementation_with_no_interface_still_accepted`, whose comment read: pass 1
+inserts the class in its own right, "so it has a `ClassInfo`, its methods are
+emitted, and Clang only warns -- **there is no divergence to correct**." The
+first three clauses are true and the conclusion does not follow: the test
+checked the method *body* and never the dispatcher. It is the same mistake
+`project_oz_undeclared_override_renames_silently` records -- read the generated
+dispatcher, not the build log -- and the same shape as #529's
+`category_property_synthesizes_accessors_once`. Reversed, with the reversal
+stated in the test.
+
+#501's own scoping stays right: its guard is about the *category*, which pass 1
+skips. What changed is that the neighbouring shape it declined to catch turns
+out to be a defect of its own.
+
+### Where each check sits, and why the placements differ
+
+- **#567 in `collect`, gating.** Beside the category (#501) and extension
+  (#529) checks: one construct, three spellings, one refusal.
+- **#568 in `collect`, gating**, at the exact point the implementation arm
+  declines to push. Gating is on #540's criterion rather than by default: this
+  *is* the case where later passes read an inconsistent `Program`. One selector
+  has two return types, the table holds one, and every consumer downstream --
+  `arc`'s ownership, emit's casts, the dispatch signature -- reasons from a type
+  the body does not have. Comparison is on the **resolved** C spelling, so
+  `instancetype` against `Foo *` on `Foo` agrees and only a real disagreement is
+  reported.
+- **#566 in `emit`, at the send.** Not at the declaration, which is what the
+  issue asks for -- and that rule refuses the SDK.
+
+### #566's stated fix would have refused Foundation
+
+The issue asks for "every selector declared in an `@interface` needs a
+definition in the matching `@implementation`". Stated at the declaration, that
+rejects `include/oz_sdk/Foundation/OZArray.h` and `OZDictionary.h`, which both
+declare `countByEnumeratingWithState:objects:count:` -- implemented only in
+`src/runtime_legacy/`, which no build file references.
+`Program::method_is_defined` exists *because* of that selector, and
+`reachable_implementors` and `render_protocol_dispatch` already filter it out of
+the dispatch.
+
+On the call it costs nothing, because `for (x in a)` lowers to
+`OZ_PROTOCOL_SEND_nextObject` and never to that selector -- so there is no call
+to be undefined. That is a claim about the lowering, so
+`decl_impl_reconciliation.rs` asserts it, paired with a *presence* check that
+the loop still lowers to `nextObject`. An absence assertion alone also passes
+when the feature stops being emitted, which is the failure mode #542's four
+green guards had.
+
+The check therefore leaves #566's "clean build" case clean, deliberately: with
+no emitted call there is nothing undefined, and a declaration nobody calls harms
+nobody. What it removes is the divergence, which only ever existed where a call
+was written.
+
+### The boundary the first cut got wrong
+
+The first version refused every row of `method_family_ownership.rs`. That suite
+declares `@interface Remote` with **no `@implementation` at all** and reads the
+emitted `oz_release` text without ever linking -- which is how the create-rule
+families are tested.
+
+That is not fixture economy; it is a legal shape. A class declared here and
+implemented in another translation unit, or by hand-written C providing
+`Remote_ping()`, is invisible to the whole-program model, and
+`method_is_defined`'s own doc already draws that line. So the check turns on
+`ClassInfo::has_primary_implementation`: a declared selector with no body is an
+omission only when the class's own implementation is present to have omitted it.
+A category or class extension does not count.
+
+The distinction is exactly #566's own wording -- a definition *"in the matching
+`@implementation`"* -- and the narrowing is now a test of its own rather than a
+distant suite that happens to depend on it.
+
+A body with **no** declaration stays legal in both directions: that is an
+ordinary private method (#566's M75), `defined_selectors` holds it, and this
+check asks the question the other way round.
+
+### Not the fixtures' fault, four times over
+
+Four of `type_constraints.rs`'s cases failed, and the split was clean: every
+accepting fixture (`compile_and_run`) declared `@interface User : OZObject`,
+and every rejecting one (`expect_reject`) omitted it. The authors already knew a
+bare `@implementation` does not link -- that is *why* the ones that actually
+compile all carry the interface. The four rejecting fixtures were
+under-specified, not evidence against the check, and each got the declaration
+the accepting ones already had.
+
+### Gates
+
+`cargo test` 862 passed / 0 failed; `just test-behavior` 87 passed, and 87
+again under `--sanitize address,undefined`; `just test-adapted` 40 passed;
+`just test-boards` 16 suites on ARM and 14 on RISC-V, all passed, tallied from
+`twister.json` rather than the recipe's exit code; and
+`scripts/regen_zephyr_tests.py` left `tests/zephyr/generated/` untouched.
+
+`just test-pedantic` was not run, and the omission is deliberate rather than an
+oversight: the rule is to run it for any change that emits new *unconditional*
+C, and this change emits no C at all. Every string it adds is diagnostic text --
+checked by grepping the added `format!`/`push_str`/`write!` lines, not assumed.

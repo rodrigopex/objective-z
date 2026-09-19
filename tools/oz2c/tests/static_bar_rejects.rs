@@ -550,18 +550,41 @@ fn class_extension_on_declared_class_still_accepted() {
 }
 
 #[test]
-fn implementation_with_no_interface_still_accepted() {
-    // The neighbouring shape the new check must *not* catch. Pass 1 inserts
-    // an `@implementation` with no `@interface` as a class in its own right,
-    // so it has a `ClassInfo`, its methods are emitted, and Clang only warns
-    // -- there is no divergence to correct. #501's guard is about the
-    // category, which pass 1 skips.
+fn implementation_with_no_interface_rejected() {
+    // This test is the reverse of the assertion #501 merged here as
+    // `implementation_with_no_interface_still_accepted`, and the reversal is
+    // deliberate: that assertion's stated reason was wrong (#567).
+    //
+    // It held that pass 1 inserts an `@implementation` with no `@interface`
+    // as a class in its own right, "so it has a `ClassInfo`, its methods are
+    // emitted, and Clang only warns -- there is no divergence to correct".
+    // The first three clauses are true and the conclusion does not follow:
+    // it checked the method *body* and never the dispatcher. Pass 1 gives
+    // the class a `ClassInfo` and so a slot in the shared dispatch, which
+    // emits a call to `Lonely_oz_free`, but only an `@interface` makes
+    // `companion.rs` *define* the allocator and the deallocator. The result
+    // links nowhere:
+    //
+    //     Undefined symbols for architecture arm64:
+    //       "_P77_oz_free", referenced from:
+    //           _oz_release in oz2c_dispatch.o
+    //
+    // measured on a driver that never names the class, with `-dead_strip`
+    // on -- `oz_release` is the one release path every ARC'd program calls,
+    // so nothing can strip the branch. A warning from Clang is not a gate
+    // (`ObjcClang.cmake` passes no `-Werror`), so before this check the
+    // typo reached the linker, where the message names a symbol that
+    // appears nowhere in the source.
+    //
+    // #501's guard remains about the category, which pass 1 skips; that
+    // scoping was right for #501. What changed is that the shape it
+    // declined to catch turns out to be a defect of its own.
     let src = "@implementation Lonely\n- (int)answer {\n\treturn 42;\n}\n@end\n";
-    let out = oz2c::transpile(src).expect("an @implementation with no @interface still transpiles");
+    let diags = expect_reject(src);
     assert!(
-        out.source_c.contains("int Lonely_answer(struct Lonely *self)"),
-        "source_c:\n{}",
-        out.source_c
+        diags.contains("'@implementation Lonely' has no '@interface Lonely' in this source"),
+        "diagnostics:\n{}",
+        diags
     );
 }
 
