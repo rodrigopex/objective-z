@@ -384,6 +384,15 @@ fn walk_sites(
     body: Option<Node>,
     scan: &mut Scan,
 ) {
+    /* An allocation site in a dead conditional arm is not an allocation
+     * site. Counting one reserves a slab slot -- real static storage on a
+     * target with no heap -- for a `[Foo alloc]` the C compiler never
+     * sees: three `alloc`s inside `#if 0` took `PDThing`'s slab from 1
+     * slot to 4. Pruned here, at the recursion's entry, so the whole dead
+     * subtree is skipped in one test rather than at each site (#570). */
+    if program.preproc.is_dead(node.start_byte()) {
+        return;
+    }
     /* Descend into a new owner where one starts, so every site below it is
      * attributed to it rather than to whatever enclosed the class. */
     match node.kind() {
