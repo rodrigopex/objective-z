@@ -4496,3 +4496,71 @@ That is the same shape as a guard whose subject is text you also wrote, and the
 fix is the same: assert the property positively. The note's presence is now the
 assertion, since a reader who saw the old GCC error needs exactly that sentence
 to connect the two.
+
+## The one argument Clang cannot see, and the parser that closed it for us (#548, #553)
+
+`OZFN(...)` expands to `0` for Clang and to `__VA_ARGS__` for C, so its
+argument is invisible to Clang **by construction** -- and `OZMacro.h` gives the
+reason it must be: to reach a static initializer the expansion has to be a null
+pointer constant, so the block goes unparsed. That makes oz2c the only gate on
+it, and oz2c validated nothing.
+
+Four shapes, of which one is much worse than the other three:
+
+- **A block missing its closing brace was silently completed and hoisted.**
+  tree-sitter recovers by *inserting* the `}`, so oz2c received a well-formed
+  `block_literal` ending at the macro's `)`, hoisted it, wrote the hoisted name
+  back into the macro, and exited 0. The emitted function body was not the one
+  the author wrote and nothing said so -- the same "quietly shortened" failure
+  #494 removed for sends, still live inside a macro argument. **Outside** one
+  the identical mutation is caught, because there Clang sees it.
+- `OZFN()` and `OZFN(42)` in a typed slot reached GCC as errors against
+  generated C.
+- `(void)OZFN(42)` was accepted by everybody.
+
+### Ask the parser, not the braces
+
+A recovered node is marked `is_missing()`, so "did the author close this block?"
+has an exact answer with no lexing of our own. Two details cost a pass each:
+
+- The inserted `}` is a **descendant** of the `block_literal` -- it belongs to
+  the `compound_statement` inside it -- not a direct child. A direct-child test
+  found nothing and left the headline case unreported, and the fix was found by
+  dumping the tree. That is now the fourth time the tree has had to be dumped
+  because the obvious node was the wrong one (`typedefed_specifier` not
+  `generic_specifier`, a bare `struct_specifier` not a `declaration`, `"..."`
+  not `variadic_parameter`, and this).
+- The descent stops at a nested `block_literal`, which reports itself on its own
+  visit. Without that an outer block is blamed for an inner one's missing brace,
+  and both are reported for the same defect.
+
+### The control that failed first, and why it was the test's fault
+
+The accepting control -- a well-formed `OZFN` block that must still compile --
+was first written on Zephyr's `K_TIMER_DEFINE` and failed. Not because the check
+over-reached: the transpile succeeded and hoisted correctly, and the **host stub**
+for `K_TIMER_DEFINE` cannot compile a hoisted callback. A control that fails for
+a reason unrelated to its subject is worse than no control, because the obvious
+reading is that the change is broken.
+
+Rewritten on the function-pointer-field shape `ozfn_escape.rs` uses, which does
+host-compile. The real macro's evidence is `just test-boards`:
+`sample.transpiled_blocks`, `sample.objz.zbus` and `sample.objz.zbus_service`
+all use `OZFN` and all pass on both boards.
+
+### #553: the same macro's comment overstated its own hazard
+
+`OZMacro.h` warned that an `INPUT_CALLBACK_DEFINE` token-paste collision lands
+"on the AST-dump path, where a truncated dump silently costs ivar ownership
+facts". `cmake/oz2c.cmake` already separates the two cases and this is the
+harmless one: a **fatal** Clang error stops the dump, so declarations after it
+are absent from a file that still looks complete -- that is the case that costs
+ownership facts. An **ordinary** error like a redefinition does not truncate
+anything. Clang recovers, the dump is complete, oz2c's wrapper prints
+`file:line:col` with a macro-expansion trace, and the build fails loudly.
+
+The advice was right and the reason was wrong, which is the more expensive half:
+it sends a reader looking for silent data loss that better error handling had
+already closed. Corrected rather than deleted, with the distinction stated, so
+the next reader inherits the fatal-versus-ordinary rule instead of rediscovering
+it.
