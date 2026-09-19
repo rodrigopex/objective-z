@@ -2153,6 +2153,143 @@ fn named_ownership_attribute(spec: Node, src: &str) -> Option<&'static str> {
 /// and an author who writes both a duplicate parameter and a `@try` sees
 /// both in one build. Putting them in `collect` would have made them the
 /// earliest masker in the pipeline, which is the thing #540 fixed.
+/// A block literal the parser had to **guess the end of**, and an `OZFN`
+/// argument that is not a block or a function name (#548).
+///
+/// `OZFN(...)` expands to `0` for Clang and to `__VA_ARGS__` for C, so its
+/// argument is invisible to Clang *by construction* -- `OZMacro.h` explains
+/// why it has to be: to reach a static initializer the expansion must be a
+/// null pointer constant, and the block has to go unparsed. oz2c is
+/// therefore the only gate on it, and it validated nothing.
+///
+/// The worst shape was a block missing its closing brace. tree-sitter
+/// recovers by **inserting** one, so oz2c received a well-formed
+/// `block_literal` ending at the macro's `)`, hoisted it, and wrote the
+/// hoisted name back -- exit 0, no diagnostic, and a function body the
+/// author never wrote. That is the same "quietly shortened" failure #494
+/// removed for sends, still live inside a macro argument. Outside one the
+/// same mutation is caught, because Clang sees it there.
+///
+/// Detected from the parser rather than by counting braces: a recovered
+/// node is marked `is_missing()`, so the question "did the author close
+/// this block?" has an exact answer and needs no lexing of our own.
+pub fn check_macro_and_block_syntax(source: &str) -> Vec<Diagnostic> {
+    let tree = crate::parse::parse(source);
+    let mut diags = Vec::new();
+    walk_macro_and_block_syntax(tree.root_node(), source, &mut diags);
+    diags
+}
+
+fn walk_macro_and_block_syntax(node: Node, src: &str, diags: &mut Vec<Diagnostic>) {
+    if node.kind() == "block_literal" {
+        check_block_is_closed(node, src, diags);
+    }
+    if node.kind() == "call_expression" {
+        check_ozfn_argument(node, src, diags);
+    }
+    let mut cursor = node.walk();
+    let kids: Vec<Node> = node.children(&mut cursor).collect();
+    for child in kids {
+        walk_macro_and_block_syntax(child, src, diags);
+    }
+}
+
+/// A `block_literal` whose closing `}` the parser inserted.
+fn check_block_is_closed(block: Node, src: &str, diags: &mut Vec<Diagnostic>) {
+    /* A descendant, not a direct child: the inserted `}` belongs to the
+     * `compound_statement` the block wraps, not to the block itself. A
+     * direct-child test found nothing and the headline case went
+     * unreported -- confirmed by dumping the tree, which is the only way
+     * these questions have ever been settled here.
+     *
+     * Descent stops at a nested `block_literal`, because that one reports
+     * itself on its own visit and would otherwise be blamed twice. */
+    if !has_inserted_close_brace(block, true) {
+        return;
+    }
+    err_detailed(
+        diags,
+        src,
+        block,
+        Rejection {
+            message: "this block literal is missing its closing '}'".to_string(),
+            note: Some(
+                "the parser inserted one to carry on, so the block ended wherever the                  enclosing construct did -- inside a macro argument that is the                  closing ')', and the body hoisted from it is not the one written here"
+                    .to_string(),
+            ),
+            help: vec![
+                "close the block with '}' before the enclosing ')' or ';'".to_string(),
+                "an 'OZFN'/'OZM' argument is the one place this is not caught for you:                  the macro hides it from Clang by design, so oz2c is the only check on it"
+                    .to_string(),
+            ],
+        },
+    );
+}
+
+/// Does this subtree contain a `}` the parser inserted, without crossing
+/// into a nested block literal?
+fn has_inserted_close_brace(node: Node, is_root: bool) -> bool {
+    if !is_root && node.kind() == "block_literal" {
+        return false;
+    }
+    if node.is_missing() && node.kind() == "}" {
+        return true;
+    }
+    let mut cursor = node.walk();
+    let kids: Vec<Node> = node.children(&mut cursor).collect();
+    kids.into_iter().any(|child| has_inserted_close_brace(child, false))
+}
+
+/// `OZFN`'s argument must be a block literal or the name of a function.
+///
+/// `OZFN(42)` reached the output verbatim: in a typed callback slot GCC
+/// then reported `initialization of 'void (*)(struct k_timer *)' from
+/// 'int'` against generated C, and in a discarded expression --
+/// `(void)OZFN(42)` -- nothing complained at all. `OZFN()` reached it too
+/// and produced `expected expression before ')'`.
+///
+/// `OZM` is deliberately not checked here: its first argument is the target
+/// macro's *name* and the rest are that macro's own arguments, so it has a
+/// different contract and no single shape to assert.
+fn check_ozfn_argument(call: Node, src: &str, diags: &mut Vec<Diagnostic>) {
+    let mut cursor = call.walk();
+    let kids: Vec<Node> = call.children(&mut cursor).collect();
+    let Some(callee) = kids.first() else { return };
+    if callee.kind() != "identifier" || node_text(*callee, src) != "OZFN" {
+        return;
+    }
+    let Some(args) = kids.iter().find(|c| c.kind() == "argument_list") else { return };
+    let mut c2 = args.walk();
+    let given: Vec<Node> = args
+        .children(&mut c2)
+        .filter(|c| !matches!(c.kind(), "(" | ")" | ","))
+        .collect();
+    let bad = match given.as_slice() {
+        [] => Some("it is empty"),
+        [one] if matches!(one.kind(), "block_literal" | "identifier") => None,
+        [_one] => Some("it is neither a block literal nor the name of a function"),
+        _ => None,
+    };
+    let Some(why) = bad else { return };
+    err_detailed(
+        diags,
+        src,
+        *args,
+        Rejection {
+            message: format!("'OZFN' takes one block literal or function name, and {}", why),
+            note: Some(
+                "'OZFN' expands to '0' for Clang so that it is a null pointer constant                  in a static initializer, which is exactly why Clang never sees the                  argument -- oz2c is the only thing that can check it, and an argument                  it cannot use reaches the C compiler as written"
+                    .to_string(),
+            ),
+            help: vec![
+                "pass a block literal -- 'OZFN(^void(struct k_timer *t) { ... })'"
+                    .to_string(),
+                "or the name of a plain C function with the right signature".to_string(),
+            ],
+        },
+    );
+}
+
 pub fn check_method_declarations(source: &str) -> Vec<Diagnostic> {
     let tree = crate::parse::parse(source);
     let mut diags = Vec::new();

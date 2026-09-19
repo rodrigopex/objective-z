@@ -273,6 +273,11 @@ fn front_end(
      * emit's per-site refusals too, and this placement is why that needed
      * no further change. */
     diagnostics.extend(staticbar::check_method_declarations(text));
+    /* `OZFN`'s argument, and any block the parser had to guess the end of
+     * (#548). Deferred rather than gating, on #540's rule: a block whose
+     * `}` was inserted leaves the class table intact -- what it corrupts
+     * is one hoisted function body. */
+    diagnostics.extend(staticbar::check_macro_and_block_syntax(text));
     obs.enter(progress::Phase::Generics);
     diagnostics.extend(generics::check_program(text, &program));
     /* **Not a gate any more** (#540). A selector collision here is a
