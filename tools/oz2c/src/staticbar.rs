@@ -3193,3 +3193,163 @@ fn walk_at_keywords(node: Node, src: &str, diags: &mut Vec<Diagnostic>) {
         walk_at_keywords(child, src, diags);
     }
 }
+
+/// The per-class identifiers the generated C emits, as a set (#571).
+///
+/// # Why a set and not a prefix rule
+///
+/// Everything here is `<Class>` or `<Class>_something`, so a prefix test
+/// looks equivalent and is not: a macro named `Widget_MAX` shares the
+/// prefix and collides with nothing, because the generated C never emits
+/// that name. Refusing it would reject ordinary source to catch an exotic
+/// case. The set is exact, so the check can only fire on a name that is
+/// really there.
+///
+/// # The drift this has to survive
+///
+/// These spellings live in `companion.rs` as `format!` strings, and a new
+/// synthesized member added there would not appear here -- the set would
+/// silently stop covering the thing it exists to cover. That is why
+/// `macro_shadowing.rs::the_emitted_identifier_set_still_covers_the_output`
+/// greps a real transpile's output for `<Class>`-prefixed identifiers and
+/// drives the check with each one: the guard fails when `companion.rs`
+/// grows a shape rather than when someone remembers to update this. It was
+/// verified by sabotage -- dropping `oz_slab_` from the set below makes it
+/// fail, naming that identifier.
+///
+/// `oz_slab_<Class>` is the one that does not start with the class name,
+/// which is why this cannot be written as a suffix test either.
+fn emitted_class_identifiers(program: &crate::model::Program) -> HashSet<String> {
+    let mut out: HashSet<String> = HashSet::new();
+    for (class, info) in &program.classes {
+        /* The struct tag. This is the one M93 trips: `struct <Class>` is a
+         * bare token in the generated C, so an object-like macro named
+         * `<Class>` rewrites it -- while `<Class>_run` is a *single* token
+         * the preprocessor cannot reach into, so that one does not move. */
+        out.insert(class.clone());
+        out.insert(format!("oz_slab_{}", class));
+        for suffix in [
+            "oz_alloc",
+            "oz_free",
+            "oz_init",
+            "oz_auto_init",
+            "oz_release_ivars",
+            "oz_dynamic_alloc_with_heap",
+        ] {
+            out.insert(format!("{}_{}", class, suffix));
+        }
+        /* Every declared method, through the same mangler emit calls, so
+         * the two cannot disagree about `:` -> `_` or the `_cls` suffix. */
+        for m in &info.methods {
+            out.insert(crate::emit::method_fn_name(class, &m.selector, m.is_class_method));
+        }
+    }
+    out
+}
+
+/// A `#define` whose name is an identifier the generated C emits (#571).
+///
+/// # What goes wrong
+///
+/// oz2c copies a file-scope `#define` into the generated header verbatim --
+/// deliberately, because a macro may be a constant the emitted C needs --
+/// and emits its own identifiers from the raw source token. When the two
+/// namespaces collide, the copied macro rewrites *some* of oz2c's output
+/// and not the rest, and the result does not type-check.
+///
+/// The reported case is `#define MT93Alias MT93Probe` over
+/// `@interface MT93Alias`. What makes it fail is the **interaction with
+/// oz2c's own include order**, which is worth stating because the copy
+/// alone would be harmless:
+///
+/// ```text
+/// #include "oz2c_dispatch.h"   <- declares MT93Alias_run(struct MT93Alias *)
+/// #define MT93Alias MT93Probe  <- copied from source, AFTER that include
+/// struct MT93Alias { ... };    <- now reads `struct MT93Probe`
+/// int MT93Alias_run(struct MT93Alias *self);   <- and so does this one
+/// ```
+///
+/// The function *name* is a single token the preprocessor cannot reach
+/// into, so both declarations are called `MT93Alias_run` -- while their
+/// parameter types are now `struct MT93Alias` and `struct MT93Probe`. Four
+/// `conflicting types` errors, on generated lines, naming mangled symbols
+/// the author never wrote.
+///
+/// # Why refused rather than dropped or namespaced
+///
+/// #571 offers two remedies: do not copy such a `#define`, or namespace
+/// every emitted identifier so a user macro cannot reach it.
+///
+/// Namespacing is the larger change and the wrong one here -- the emitted
+/// names *are* the runtime ABI, declared by hand in
+/// `samples/smp_shared/main.m`, so renaming them is a break for every
+/// consumer to buy back one exotic case.
+///
+/// Silently dropping the `#define` is worse than either: the macro may be
+/// load-bearing for the author's own C, and removing it would turn a
+/// compile error into a different compile error somewhere else, which is
+/// exactly the "silently degrades" mode this transpiler does not have.
+///
+/// So it is refused, located at the `#define`, per the standing rule that
+/// anything outside the subset is a hard located error. The remedy is the
+/// one the issue already records: spell the class by its own name.
+pub fn check_macro_shadows_emitted_name(
+    node: Node,
+    src: &str,
+    program: &crate::model::Program,
+) -> Vec<Diagnostic> {
+    let mut diags = Vec::new();
+    let mut cursor = node.walk();
+    let children: Vec<Node> = node.children(&mut cursor).collect();
+    let Some(name_node) = children.iter().find(|c| c.kind() == "identifier") else {
+        return diags;
+    };
+    let name = node_text(*name_node, src);
+    if !emitted_class_identifiers(program).contains(name) {
+        return diags;
+    }
+    let is_class = program.is_class(name);
+    let note = if is_class {
+        format!(
+            "'{name}' is a class in this program, so the generated C spells its type as \
+             the two tokens `struct {name}` -- which this macro rewrites. Its methods are \
+             single tokens like '{name}_...', which the preprocessor cannot reach into, so \
+             those do not move. The generated header is also included *before* this \
+             '#define' is copied in, so the shared dispatch declares the same functions \
+             against the unrewritten type: the two disagree and neither is wrong on its own"
+        )
+    } else {
+        format!(
+            "'{name}' is a name oz2c synthesizes for a class in this program, so the \
+             generated C already defines it. A macro of the same name rewrites the \
+             occurrences that stand alone as tokens and leaves the rest, which the C \
+             compiler then sees as two different declarations of one symbol"
+        )
+    };
+    err_detailed(
+        &mut diags,
+        src,
+        node,
+        Rejection {
+            message: format!(
+                "macro '{}' has the same name as an identifier the generated C emits, so \
+                 it would rewrite oz2c's own output",
+                name
+            ),
+            note: Some(note),
+            help: vec![
+                if is_class {
+                    "spell the class by its own name and delete the macro -- a class \
+                     name reached through a '#define' is what this cannot support"
+                        .to_string()
+                } else {
+                    format!("rename the macro so it does not collide with '{}'", name)
+                },
+                "or move the macro into a plain C header that the generated code does \
+                 not include"
+                    .to_string(),
+            ],
+        },
+    );
+    diags
+}

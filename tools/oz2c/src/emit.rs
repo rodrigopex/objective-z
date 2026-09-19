@@ -9897,6 +9897,16 @@ fn walk_top_level<'a>(
                 // `staticbar::check_macro_body` (#238).
                 if node.kind() == "preproc_function_def" || node.kind() == "preproc_def" {
                     diags.extend(crate::staticbar::check_macro_body(node, source));
+                    /* And the neighbouring collision: the `#define` is
+                     * copied through verbatim, so a macro *named* after
+                     * something the generated C emits rewrites oz2c's own
+                     * output (#571). Checked here rather than in a
+                     * whole-tree scan because this is the site that does
+                     * the copying, and because it needs the `Program` to
+                     * know which names are emitted at all. */
+                    diags.extend(crate::staticbar::check_macro_shadows_emitted_name(
+                        node, source, program,
+                    ));
                 }
 
                 let mut edits = if node.kind() == "declaration" {
