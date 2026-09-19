@@ -8345,6 +8345,21 @@ fn render_interface(node: Node, ctx: &mut EmitCtx, program: &Program) -> (String
 
     for protocol in &info.conforms {
         for required in program.protocol_methods(protocol) {
+            /* `@optional` is exactly the case where absence is legal, and
+             * this loop used to require every member regardless (#536).
+             * The variable is still called `required` because that is now
+             * true of everything that reaches the check below.
+             *
+             * The check itself is right to exist -- a missing protocol
+             * method used to yield a NULL vtable entry and a silent crash
+             * (OZ-033) -- so this narrows it rather than removing it. An
+             * optional member still gets its `OZ_PROTOCOL_SEND_*` dispatch
+             * function, because `-respondsToSelector:` is how a caller
+             * tests for one and then sends it; only the *conformance*
+             * requirement is lifted. */
+            if required.is_optional {
+                continue;
+            }
             // The whole superclass chain, not just this class's own
             // methods: an inherited implementation satisfies a protocol
             // requirement (#307). Reading `info.methods` alone made
@@ -8356,12 +8371,29 @@ fn render_interface(node: Node, ctx: &mut EmitCtx, program: &Program) -> (String
                 required.is_class_method,
             );
             if !implemented {
-                ctx.err(
+                ctx.err_detailed(
                     node,
                     format!(
                         "'{}' declares conformance to '{}' but doesn't implement '{}'",
                         name, protocol, required.selector
                     ),
+                    Some(format!(
+                        "'{}' is a required member of '{}', and conformance here is a \
+                         compile-time contract rather than a runtime lookup: the \
+                         generated dispatch has no entry to fall back to, so a missing \
+                         implementation is a call through nothing",
+                        required.selector, protocol
+                    )),
+                    vec![
+                        format!("implement '{}' on '{}'", required.selector, name),
+                        format!(
+                            "or, if conformers may legitimately omit it, move it under \
+                             '@optional' in '{}' and test for it with \
+                             '-respondsToSelector:'",
+                            protocol
+                        ),
+                        format!("or drop '{}' from '{}'s conformance list", protocol, name),
+                    ],
                 );
             }
         }

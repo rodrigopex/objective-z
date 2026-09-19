@@ -4863,3 +4863,112 @@ again under `--sanitize address,undefined`; `just test-adapted` 40 passed;
 `sample.objz.class_forward` green on both, tallied from `twister.json`;
 `just test-pedantic` 10 known sites and 0 for the new sample;
 `scripts/regen_zephyr_tests.py` left `tests/zephyr/generated/` untouched.
+
+## `@optional`, and the comment that said nobody cared (#536)
+
+`emit::render_interface` required **every** method of every protocol a class
+conforms to, so a conformer omitting an `@optional` member was refused
+outright — which is the entire case the keyword exists for. px-app's torture
+suite carried `WA-011` for it: delete the `@optional` section and redeclare
+the method on the implementing class's own `@interface`, keeping the
+behaviour and losing only the spelling.
+
+### The gap was held open by a comment asserting it did not exist
+
+`collect::collect_protocol_methods` descended through the
+`@required`/`@optional` blocks correctly — it had to, or a marked
+declaration would have been collected nowhere at all — and then discarded
+which marker it had passed, on this reasoning:
+
+> Required-vs-optional isn't tracked either way: protocols are a
+> compile-time contract here, not a runtime filter, so **nothing downstream
+> cares about the distinction**.
+
+Something downstream did. The conformance check reads that list and requires
+each entry. The comment is the third this session whose "this does not
+matter" turned out to be the defect, after #567's
+`implementation_with_no_interface_still_accepted` and #563's
+`at_expression` catch-all covering one position of `@defs` and not the
+other. The pattern is worth naming: **a claim that a distinction is
+irrelevant is a claim about every consumer, and it ages the moment one is
+added.**
+
+### Narrowed, not removed
+
+The check is right to exist. A missing protocol method used to yield a NULL
+vtable entry and a silent crash (OZ-033, `px-app CHANGELOG.md:37`), so the
+required half still refuses, and `an_unmarked_member_is_required` pins the
+default — every protocol in the tree relies on it, since none used a marker
+before this change.
+
+### The two consumers of one list want opposite things
+
+`Program::protocol_methods` has exactly two callers, and this is the part a
+careless fix gets wrong:
+
+- **the conformance check**, which must now *skip* optional members;
+- **`all_protocol_methods` → `dynamic_dispatch_methods`**, which must keep
+  them, because an optional member still needs its `OZ_PROTOCOL_SEND_*`
+  function. `-respondsToSelector:` is how a caller tests for one and then
+  sends it, so lifting the requirement *and* the dispatch would leave the
+  member unreachable and the keyword useless.
+
+So the narrowing sits at the check, not in `protocol_methods`, and the
+standing assertion is
+`responds_to_selector_still_distinguishes_the_two_conformers` — run, not
+inspected: `t=1 g=0`, which is the whole observable behaviour of
+`@optional` and exactly the contrast `WA-011` was preserving by hand.
+
+### The marker is sticky, and its nodes are siblings
+
+`@optional` applies to everything after it until a `@required` resets it.
+tree-sitter models that by giving each marker its own
+`qualified_protocol_interface_declaration` wrapping the declarations that
+follow — and those nodes are **siblings**, not nested. Verified on a dump
+rather than assumed, because the two shapes need different code: siblings
+mean the flag is read on entry to each block, nesting would mean inherit
+then override. `a_required_marker_resets_a_previous_optional` is the test
+that would have caught the difference.
+
+Protocol **properties** are out of scope, and that is a fact rather than a
+decision deferred: `extract_property` puts them in `ProtocolInfo::properties`
+while `protocol_methods` returns only `methods`, so an `@optional @property`
+never reaches the conformance check at all.
+
+### Half the issue was already fixed
+
+#536 also reports the message as "the only unlocated diagnostic in the
+entire run — no `file:line:col`, no snippet, no caret, no help". That
+**no longer reproduces**. It was filed against px-app v0.100.1, and #456
+fixed the underlying cause: diagnostics carry a byte offset into the
+`#import`-spliced buffer, and until `resolve_in` maps it back, a position in
+that buffer is "a line in no file on disk" — a 9-line `.m` once reported its
+defect at line 1989. Checked in both shapes, since px-app's `@interface`
+lives in a header:
+
+```
+ --> PXTStrainGauge.h:3:1
+  |
+3 | @interface PXTStrainGauge : OZObject <PXCalibratable>
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+```
+
+What did survive from that paragraph is "no help": the message had no reason
+and no remedy, so it could not say that moving the member under `@optional`
+was an option — the very fix the issue was asking for. It has a `note` and
+three `help` lines now.
+
+### Gates
+
+`cargo test` 879 passed / 0 failed; `just test-behavior` 87 passed, and 87
+again under `--sanitize address,undefined`; `just test-adapted` 40 passed;
+`just test-boards` 17 suites on ARM and 15 on RISC-V, all passed, tallied
+from `twister.json`; `scripts/regen_zephyr_tests.py` left
+`tests/zephyr/generated/` untouched.
+
+`just test-pedantic` was not run, and the reason is measured rather than
+argued: the generated C for a conforming program is **byte-identical** to
+`main`'s, because every string this change adds is diagnostic text. No
+sample was added for the same reason — nothing about code generation moved,
+and `samples/reflection_demo` already exercises `-respondsToSelector:` on
+both boards.
