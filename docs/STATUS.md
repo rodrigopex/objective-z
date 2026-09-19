@@ -5059,3 +5059,84 @@ C for a non-colliding program is byte-identical to `main`'s, since every
 string this change adds is diagnostic text. Rebuilding the identifier set per
 `#define` costs nothing observable — the behaviour corpus runs in 27.8s
 against 29.1s before.
+
+## A recovery value read back as a fact (#561)
+
+A send oz2c refuses is recovered as `("0", "int")` — the literal `0`, typed
+`int` — so emission continues and gathers the rest of the file's diagnostics
+instead of stopping at the first. That is the right trade, and it had one bad
+consequence: when the refused send was itself the **receiver** of an outer
+send, the outer send resolved against `int` and reported a second failure
+naming a type that appears nowhere in the source.
+
+```objc
+id t = [[Absent alloc] init];        /* `Absent` declared nowhere */
+```
+
+```
+error: cannot statically resolve the receiver type for selector 'alloc' (receiver type is 'id')
+error: cannot statically resolve the receiver type for selector 'init'  (receiver type is 'int')
+```
+
+Correcting `Absent` removed both. There was no `init` problem to act on, and
+`int` was oz2c's own recovery value read back as though it were a fact about
+the program — so an author reading the second went looking for a type they
+never wrote.
+
+### Why not a poison type
+
+The textbook fix is to recover with a distinguished error type that absorbs
+further errors, as Clang and rustc do. It is the wrong change *here*, because
+`"int"` is not merely a placeholder: it is load-bearing at the eight sites
+that return it. `arc` asks whether a type is an object pointer and has to keep
+answering no, and #568's ownership-invariant check reads that exact spelling —
+the one that used to say *"a +1 reference was claimed for an expression of
+type `int`"*. A new type string would have to be taught to every one of them,
+and a site missed would turn a diagnostic into an internal error, which is the
+defect #568 had just removed.
+
+Asking instead whether the receiver was **already reported** needs nothing
+new. Diagnostics carry spans, and a report whose span *is* the receiver is by
+construction about the receiver.
+
+### Equality, not containment — or it becomes #540
+
+This is the same family as #540 (one diagnostic's handling degrading
+another's) and the opposite direction: #540 was a check that *suppressed*
+unrelated diagnostics, this was a recovery value that *invented* one. Fixing
+it carelessly swaps one for the other.
+
+The first cut tested span **containment**, which silences a case it should
+not: a refusal nested *inside* the receiver is not a refusal *of* the
+receiver.
+
+```objc
+id t = [[self wrap:@encode(int)] nosuchselector];
+```
+
+Here the `@encode` argument is refused (#563) and the outer send is
+unresolvable for its own, unrelated reason. Under containment the second
+diagnostic vanished, so the author would fix the `@encode` and meet the other
+on the next build — one layer per build, exactly what #540 was filed for.
+Span **equality** says the thing refused *is* this receiver, which is the only
+case whose recovery type is fictional.
+`an_unrelated_refusal_inside_the_receiver_still_reports_both` is the standing
+check, and it is the test that matters here rather than the headline one.
+
+#557's forward-declared-receiver diagnostic reaches the same arm from a
+different cause and sits after the new guard. The two cannot both apply — a
+forward-declared receiver is a bare name, never a refused send — but the guard
+was placed first, so the ordering is asserted rather than reasoned about.
+
+### Gates
+
+`cargo test` 882 passed / 0 failed; `just test-behavior` 87 passed, and 87
+again under `--sanitize address,undefined`; `just test-adapted` 40 passed;
+`just test-boards` 17 suites on ARM and 15 on RISC-V, all passed, tallied from
+`twister.json`; `scripts/regen_zephyr_tests.py` left `tests/zephyr/generated/`
+untouched.
+
+`just test-pedantic` was not run: this change adds no emitted C and no new
+diagnostic text at all — it removes one diagnostic in one case. Checked by
+grepping the added lines for `format!`/`push_str`/`write!` outside doc
+comments, which finds nothing.

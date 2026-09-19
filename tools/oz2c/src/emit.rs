@@ -5305,6 +5305,15 @@ fn render_message(node: Node, ctx: &mut EmitCtx) -> (String, String) {
             }
         }
         None => {
+            /* The receiver was already refused on its own terms, so its
+             * type here is this function's recovery value and not a fact
+             * about the program. Anything said about it now is derived
+             * from the first diagnostic, names a type the source never
+             * wrote, and disappears when the real mistake is fixed
+             * (#561). Recover quietly and let the first report stand. */
+            if receiver_already_reported(parts.receiver, ctx) {
+                return ("0".to_string(), "int".to_string());
+            }
             /* A name known only from a `@class` is a *different* cause
              * reaching the same arm, and it has its own diagnostic: the
              * receiver's type degraded because the class graph has no
@@ -5668,6 +5677,62 @@ fn reject_undefined_target(
         ),
         help,
     );
+}
+
+/// Has the receiver of this send already been refused in its own right
+/// (#561)?
+///
+/// A send oz2c refuses is recovered as `("0", "int")` -- the literal `0`,
+/// typed `int` -- so emission can continue and gather the rest of the
+/// file's diagnostics rather than stopping at the first. That is the right
+/// trade, and it has one bad consequence: when the refused send is itself
+/// the **receiver** of an outer send, the outer send resolves against
+/// `int` and reports a second failure naming a type that appears nowhere
+/// in the source.
+///
+/// ```text
+/// id t = [[Absent alloc] init];        // `Absent` declared nowhere
+///
+/// error: ... for selector 'alloc' (receiver type is 'id')    <- the mistake
+/// error: ... for selector 'init'  (receiver type is 'int')   <- invented
+/// ```
+///
+/// Correcting `Absent` removes both, there is no `init` problem to act on,
+/// and `int` is this function's own recovery value read back as if it were
+/// a fact about the program. An author reading the second goes looking for
+/// a type they never wrote.
+///
+/// # Why "already reported" rather than a poison type
+///
+/// The obvious alternative is to recover with a distinguished error type
+/// that absorbs further errors, as Clang and rustc do. It is the wrong
+/// change *here*: `"int"` is not just a placeholder, it is load-bearing at
+/// the eight sites that return it -- `arc` asks whether a type is an
+/// object pointer and must keep answering no, and #568's
+/// ownership-invariant check reads that exact spelling. A new type string
+/// would have to be taught to every one of them, and a missed site would
+/// turn a diagnostic into an internal error.
+///
+/// Asking whether the receiver was already reported needs nothing new: the
+/// diagnostics carry spans, and a report *inside* the receiver's span is by
+/// construction about the receiver. This is the same family as #540 -- one
+/// diagnostic's handling degrading another's -- and the opposite direction:
+/// #540 was a check that *suppressed* unrelated diagnostics, this is a
+/// recovery value that *invents* one.
+fn receiver_already_reported(recv: Node, ctx: &EmitCtx) -> bool {
+    let range = recv.start_byte()..recv.end_byte();
+    /* Span *equality*, not containment. Containment is the tempting
+     * spelling and it re-creates #540 in miniature: a refusal about
+     * something else nested inside the receiver -- an argument of it, say
+     * -- would silence this send's own unrelated diagnostic, and the
+     * author would fix the first and discover the second on the next
+     * build. One layer at a time is the failure mode #540 was filed for.
+     *
+     * Equality says the thing that was refused *is* this receiver, which
+     * is exactly the case whose recovery type is fictional. */
+    ctx.diags
+        .iter()
+        .any(|d| d.span.as_ref().is_some_and(|s| *s == range))
 }
 
 fn reject_static_dispatch_contradiction(node: Node, ctx: &mut EmitCtx, selector: &str) {
