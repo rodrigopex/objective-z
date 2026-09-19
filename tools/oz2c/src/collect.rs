@@ -982,6 +982,14 @@ pub fn collect(source: &str) -> (Program, Vec<crate::model::Diagnostic>) {
     let tree = crate::parse::parse(source);
     let root = tree.root_node();
 
+    /* Which preprocessor conditional arms are part of the program at all.
+     * Derived here, where the tree is already parsed, and carried on the
+     * `Program` so `emit` reads these verdicts rather than deriving its
+     * own -- two oracles could disagree, and a class collected from one
+     * arm and emitted from the other is not a shape worth allowing to
+     * exist (#570, #573). */
+    let preproc = crate::preproc::Liveness::scan(source);
+
     // Pass 1: class names + hierarchy + category associations, and
     // protocol declarations (name, inheritance, own methods).
     let mut classes: std::collections::HashMap<String, ClassInfo> = std::collections::HashMap::new();
@@ -1012,8 +1020,7 @@ pub fn collect(source: &str) -> (Program, Vec<crate::model::Diagnostic>) {
      * the fabricated class is in the map by the time the check runs -- which
      * is the same reason #529's extension check could not use it either. */
     let mut interface_declared: HashSet<String> = HashSet::new();
-    let mut cursor = root.walk();
-    for node in root.children(&mut cursor) {
+    for node in preproc.effective_top_level(root) {
         if node.kind() == "protocol_declaration" {
             // Protocol methods don't reference class types in these
             // fixtures; an empty known-class set is fine here since
@@ -1429,8 +1436,7 @@ source",
 
     // Pass 2: ivars (from interfaces) + method signatures (from
     // declarations and definitions, category included).
-    let mut cursor = root.walk();
-    for node in root.children(&mut cursor) {
+    for node in preproc.effective_top_level(root) {
         match node.kind() {
             "class_interface" => {
                 let (name, _, kind) = class_header(node, source);
@@ -1759,8 +1765,20 @@ source",
 
     reject_inline_anonymous_aggregates(root, source, &mut diagnostics);
 
+    /* An Objective-C-bearing conditional oz2c cannot evaluate. A hard
+     * gate, like `collect`'s other refusals: the class table is missing
+     * whichever arm would have supplied it, and emit indexes
+     * `superclass` strings into `classes` directly (#205, #501). */
+    diagnostics.extend(preproc.undecidable.iter().cloned());
+    /* Nothing a dead arm contains is part of the program, so no check's
+     * complaint about one is either -- `check_malformed_sends` above is
+     * the one #570 reported, and filtering here rather than inside each
+     * check covers the other 305 tree walks and the ones not yet
+     * written. */
+    preproc.retain_live(&mut diagnostics);
+
     let reflection = prescan_reflection(root, source);
-    let function_return_types = function_return_types(root, source, &known_classes);
+    let function_return_types = function_return_types(root, source, &known_classes, &preproc);
 
     (
         Program {
@@ -1768,6 +1786,7 @@ source",
             class_order,
             protocols,
             function_return_types,
+            preproc,
             owning_methods: Default::default(),
             ast: None,
             heap_support: false,
@@ -1904,11 +1923,11 @@ pub(crate) fn function_return_types(
     root: Node,
     src: &str,
     known: &HashSet<String>,
+    preproc: &crate::preproc::Liveness,
 ) -> HashMap<String, String> {
     let mut out: HashMap<String, String> = HashMap::new();
     let mut from_definition: HashSet<String> = HashSet::new();
-    let mut cursor = root.walk();
-    for node in root.children(&mut cursor) {
+    for node in preproc.effective_top_level(root) {
         let is_definition = node.kind() == "function_definition";
         if !is_definition && node.kind() != "declaration" {
             continue;
