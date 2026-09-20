@@ -71,6 +71,7 @@
 mod common;
 use common::{
     compile_and_run_strict, compile_and_run_with_cc_flags, expect_reject, ozobject_src,
+    ozstring_src,
 };
 
 /// `+make` is the spelling the old rule could not see: the allocation is
@@ -1181,6 +1182,281 @@ int main(void) {{ return 0; }}
             "the {} spelling must resolve to Foo on one slot too, not fall back to \
              'could not tell which class'; got:\n{}",
             name,
+            diags
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Which *value expressions* the bar asks about (#584)
+// ---------------------------------------------------------------------------
+//
+// Everything above varies the **destination** -- a managed local, an ivar,
+// an array element -- holding the value expression fixed at a message
+// send. This section varies the other axis, and it is the one that had a
+// hole: the rule was asked in a per-kind match arm, and **only some kinds
+// had an arm**.
+//
+//   | value expression                | asked before #584 | consumes a slot |
+//   | ---                             | ---               | ---             |
+//   | `[Foo make]`                    | yes               | yes             |
+//   | `@[...]` / `@{...}`             | yes               | yes             |
+//   | `cfactory()` returning `+1`     | **no**            | yes             |
+//   | `@42`                           | **no**            | yes             |
+//   | `@"static"`                     | n/a               | **no** (immortal) |
+//
+// Measured on the unfixed tree, both holes producing a real failure rather
+// than a theoretical one:
+//
+//   * `_arr[i] = make_thing();` over four iterations, one-slot slab:
+//     accepted, and **`live=1 of 4`** at run time -- nil from the second
+//     iteration on, which is exactly what this rule exists to prevent.
+//   * `_arr[i] = @42;` over sixteen iterations: accepted, needing sixteen
+//     live `OZNumber`s against a slab of **five**.
+//
+// The provenance was never missing. `arc::is_owning_expr` has had a
+// `call_expression` arm consulting `OwningMethods::contains_function` since
+// `samples/arc_demo`'s `createSensor` MPU-faulted for this reason; the bar
+// just never consulted it. One predicate replaces the four arms, so a kind
+// `is_owning_expr` learns about later is policed without anyone
+// remembering to add a row -- **but a new kind still belongs in the table
+// above and in a case below**, because "policed" and "policed correctly"
+// are different claims.
+//
+// The immortal row is the one that makes the predicate more than
+// `is_owning_expr`. A boxed `@"..."` *is* owning by that function's
+// reckoning -- deliberately, since releasing it is a guarded no-op -- and
+// occupies no slab slot. The first version of this change excluded it with
+// `emit::is_boxed_string_literal`, which answers "has an `@` child" and is
+// therefore true of `@[...]`, `@{...}` and `@42` as well: it re-opened the
+// `@42` hole and *regressed* `@[...]`, which had been refused correctly
+// for as long as the rule existed. Only the "must stay refused" cases
+// caught it.
+
+/// The C-factory hole, as filed. A `+1` plain C function is exactly as
+/// owning as a factory method, and its result escaping a loop needs the
+/// same refusal.
+#[test]
+fn a_plus_one_c_factory_escaping_a_loop_is_refused() {
+    let src = program(
+        "\
+static Foo *make_foo(void)
+{
+	return [Foo make];
+}
+
+@interface Probe : OZObject {
+	Foo *_arr[4];
+}
+- (void)run;
+@end
+@implementation Probe
+- (void)run
+{
+	for (int i = 0; i < 4; i++) {
+		_arr[i] = make_foo();
+	}
+}
+@end
+",
+    );
+    let diags = expect_reject(&src);
+    assert!(
+        diags.contains("inside a loop is stored into an array element chosen per iteration"),
+        "expected the array-element escape refusal:\n{}",
+        diags
+    );
+    /* And it names the slab to raise, which is the actionable half. The
+     * class comes from the function's declared return type via
+     * `collect::function_return_types`; before that arm existed the
+     * message degraded to the bare "an allocation". */
+    assert!(diags.contains("an allocation of 'Foo'"), "should name the class:\n{}", diags);
+}
+
+/// The same C factory returned out of the loop -- the other escape shape,
+/// so the fix is not keyed on the destination either.
+#[test]
+fn a_plus_one_c_factory_returned_from_a_loop_is_refused() {
+    let src = program(
+        "\
+static Foo *make_foo(void)
+{
+	return [Foo make];
+}
+
+@interface Probe : OZObject
+- (Foo *)run;
+@end
+@implementation Probe
+- (Foo *)run
+{
+	for (int i = 0; i < 4; i++) {
+		if (i == 2) {
+			return make_foo();
+		}
+	}
+	return nil;
+}
+@end
+",
+    );
+    let diags = expect_reject(&src);
+    assert!(diags.contains("is returned"), "expected the return escape refusal:\n{}", diags);
+}
+
+/// A **`+0`** C function is not this rule's problem: it hands back a
+/// reference it does not own, so no slab slot is consumed per iteration.
+///
+/// This is what makes the fix provenance-keyed rather than "refuse every
+/// call in a loop", and the case a spelling-based rule would over-reject.
+///
+/// **Asserted as the absence of *this* refusal, not as acceptance.** A
+/// `+0` value stored into an owned array element is refused anyway, by a
+/// rule that predates this one and has nothing to do with loops --
+/// "neither a `+1` value, a plain variable, nor nil". Writing the test as
+/// `expect_accept` therefore failed for a reason unrelated to what it
+/// claimed, which would have read as this change over-rejecting. What
+/// matters here is only that the loop bar stays quiet.
+#[test]
+fn a_plus_zero_c_function_in_a_loop_is_not_refused_by_this_rule() {
+    let src = program(
+        "\
+@class Probe;
+static Foo *borrow_foo(Probe *p);
+
+@interface Probe : OZObject {
+	Foo *_held;
+}
+- (void)run;
+@end
+@implementation Probe
+- (void)run
+{
+	for (int i = 0; i < 4; i++) {
+		Foo *borrowed = borrow_foo(self);
+		printf(\"borrowed %d\\n\", [borrowed tag]);
+	}
+}
+@end
+
+static Foo *borrow_foo(Probe *p)
+{
+	(void)p;
+	return g_borrowed;
+}
+",
+    )
+    .replace("int g_freed = 0;", "int g_freed = 0;\nFoo *g_borrowed;");
+
+    match oz2c::transpile(&src) {
+        Ok(_) => {}
+        Err(diags) => {
+            let text = diags.iter().map(|d| d.to_string()).collect::<Vec<_>>().join("\n");
+            assert!(
+                !text.contains("inside a loop"),
+                "the loop bar must not fire on a +0 C function:\n{}",
+                text
+            );
+        }
+    }
+}
+
+/// A boxed number allocates an `OZNumber`, so it is policed like any other
+/// allocation. This hole had no issue of its own -- it was found by
+/// enumerating the kinds `is_owning_expr` recognises against the arms the
+/// bar had.
+#[test]
+fn a_boxed_number_escaping_a_loop_is_refused() {
+    let src = program(
+        "\
+@interface Probe : OZObject {
+	OZNumber *_arr[4];
+}
+- (void)run;
+@end
+@implementation Probe
+- (void)run
+{
+	for (int i = 0; i < 4; i++) {
+		_arr[i] = @42;
+	}
+}
+@end
+",
+    );
+    let diags = expect_reject(&src);
+    assert!(
+        diags.contains("an allocation of 'OZNumber'"),
+        "a boxed number allocates an OZNumber and should say so:\n{}",
+        diags
+    );
+}
+
+/// **The immortal exception.** A boxed `@"..."` is a static: no slab slot,
+/// so no bound to exceed however many iterations run.
+///
+/// The one case that stops the predicate being plain `is_owning_expr`, and
+/// the one a careless unification breaks.
+#[test]
+fn a_boxed_string_escaping_a_loop_is_accepted() {
+    /* `program` supplies only OZObject and Foo, and a boxed string needs
+     * the real OZString to desugar against -- so this one case assembles
+     * its own preamble rather than using the shared helper. */
+    let src = format!(
+        "/* oz-pool: Foo=1 */\n{}{}{}\n{}",
+        ozobject_src(),
+        ozstring_src(),
+        PRELUDE,
+        "\
+@interface Probe : OZObject {
+	OZString *_arr[16];
+}
+- (void)run;
+@end
+@implementation Probe
+- (void)run
+{
+	for (int i = 0; i < 16; i++) {
+		_arr[i] = @\"static\";
+	}
+}
+@end
+"
+    );
+    expect_accept(&src);
+}
+
+/// The collection literals stay refused. They were the *other* kind that
+/// already had an arm, so this is the regression the unified predicate had
+/// to not cause -- and did cause, on the first attempt.
+#[test]
+fn a_collection_literal_escaping_a_loop_stays_refused() {
+    for (literal, wording) in
+        [("@[@1, @2]", "a boxed array literal"), ("@{@\"k\": @1}", "a boxed dictionary literal")]
+    {
+        let src = program(&format!(
+            "\
+@interface Probe : OZObject {{
+	id _arr[4];
+}}
+- (void)run;
+@end
+@implementation Probe
+- (void)run
+{{
+	for (int i = 0; i < 4; i++) {{
+		_arr[i] = {};
+	}}
+}}
+@end
+",
+            literal
+        ));
+        let diags = expect_reject(&src);
+        assert!(
+            diags.contains(wording),
+            "{} should keep its own wording, got:\n{}",
+            literal,
             diags
         );
     }
