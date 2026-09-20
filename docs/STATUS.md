@@ -3932,6 +3932,42 @@ catches it" would have credited a backstop that never sees the file.
   because the same harness, given an upcast return, *does* report a
   difference -- a sweep that cannot see the change it is measuring reports
   agreement about nothing (#424, #433).
+- **A type named by a method signature is hoisted to the companion header,
+  and hoisted types keep source order (#533).** `oz2c_dispatch.h` declares a
+  prototype for every method of every class and includes no user header, so
+  a type a signature names has to be there. A `struct` and a bare `enum`
+  were hoisted; a `typedef` was not, so the prototype named a type the file
+  never defined and GCC answered `unknown type name 'PXSensorFlags'` on a
+  generated line with oz2c exiting 0. It was every typedef, not the enum the
+  report named -- four shapes, four errors -- and a *bare* enum compiling
+  clean is what made it look enum-specific. It is why px-app passes every
+  enum as `int`.
+
+  **Source order, not order by kind.** The hoisted declarations lived in
+  three lists -- forward declares, then enums, then structs and unions --
+  resting on a sound argument for exactly two kinds: "a hoisted struct can
+  have an enum field by value ... nothing runs the other way: an enum
+  cannot contain a struct". A typedef runs both ways
+  (`typedef int Celsius;` then `struct reading { Celsius temp; }`, or a
+  struct then `typedef struct px_range Range;`), so no order over kinds can
+  place it. The first of those was already broken before the fix, with
+  `Celsius` missing from *inside* the hoisted struct. One list in source
+  order needs no analysis at all: C required the author to write a working
+  order already, and the top-level walk visits them in it.
+
+  A `type_definition` carries its own trailing `;` where a specifier node
+  stops before it. Entries are normalised without one so the consumer can
+  append exactly one; pushing the text verbatim emitted
+  `typedef int Celsius;;`, an empty declaration at file scope that
+  `just test-pedantic` gates.
+
+  **Still open** (see the F14 issue): a header declaring *no class* is
+  included by nobody, because a per-origin header is pulled in by a file
+  needing a class from it. Anything left in such a header after hoisting is
+  unreachable, and `split_output::header_macro_invocation_reaches_other_origins`
+  asserts the opposite property and passes -- because its fixture's header
+  declares a class. A green test on the working side of the boundary.
+
 - **A message to nil is a no-op answering zero of the send's type (#528).**
   Objective-C's best-known safety property, and `[[Foo sharedInstance] bar]`
   depends on it. oz2c lowers a send to a direct call, so the receiver arrived
@@ -3962,8 +3998,34 @@ catches it" would have credited a backstop that never sees the file.
   - **One spelling of the zero**, `emit::nil_send_return`, shared by both
     guards and by `companion`'s `default:` arm for an unrecognised class id.
     That arm wrote `({ret_ty})0` inline, which is not a conversion C allows to
-    a struct type; a struct return needs the `(T){0}` compound literal. Two
-    spellings of one answer is how they come to disagree.
+    a struct type. Two spellings of one answer is how they come to disagree.
+
+    **And that one spelling was itself keyed on a form, which is the part
+    worth keeping (#533).** It chose between `({t})0` and `({t}){0}` by
+    testing `t.starts_with("struct ")`, with a doc comment asserting the
+    premise: "this tree writes `struct X` explicitly rather than
+    typedef'ing it". A test written for #533 disproved that **within the
+    hour** -- `typedef struct reading Reading;` and a method returning
+    `Reading` is neither spelled `struct` nor castable from 0, so the guard
+    emitted `return (Reading)0;` and clang answered `used type 'Reading'
+    (aka 'struct reading') where arithmetic or pointer type is required`.
+    oz2c resolves no typedefs, so *no* rule keyed on the spelling can tell
+    the cases apart.
+
+    This is the #351/#352/#359/#365/#398/#400 shape -- key on the thing,
+    not on how it is written -- committed in the same session as the rule
+    that names it, by someone who had just written that rule down. The
+    lesson is not "remember the rule"; it is that a spelling test comes
+    with a *premise about the tree*, and the premise is the thing to
+    doubt. This one was even stated in the comment, which is what made it
+    checkable.
+
+    `(T){0}` needs no premise: it is valid and zero-initialising for a
+    struct, a union, a typedef of either, a scalar, an enum, a pointer and
+    `bool`, verified against `-std=c17 -pedantic-errors -Wall -Wextra` over
+    all of them. `void` is the one type with no value to return, and is
+    handled before the format. Prefer the construct that needs no
+    classification over the classification.
   - **The Kconfig flag is negative, deliberately.**
     `CONFIG_OBJZ_NIL_SAFE_SENDS` defaults `y` and reaches oz2c as
     `--no-nil-safe-sends` -- the only negative feature flag in the tool, and
