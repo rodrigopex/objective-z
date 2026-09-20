@@ -160,6 +160,9 @@ struct OZNumber * OZNumber_numberWithUnsignedInt__cls(unsigned int value)
 /* - (int8_t)int8Value */
 int8_t OZNumber_int8Value(struct OZNumber *self)
 {
+	if (!self) {
+		return (int8_t)0;
+	}
 	/* return (int8_t)_oz_decode_int32(_raw, _shift); */
 	return (int8_t)(_oz_decode_int32(self->_raw, self->_shift));
 }
@@ -167,6 +170,9 @@ int8_t OZNumber_int8Value(struct OZNumber *self)
 /* - (uint8_t)unsignedInt8Value */
 uint8_t OZNumber_unsignedInt8Value(struct OZNumber *self)
 {
+	if (!self) {
+		return (uint8_t)0;
+	}
 	/* return (uint8_t)_oz_decode_int32(_raw, _shift); */
 	return (uint8_t)(_oz_decode_int32(self->_raw, self->_shift));
 }
@@ -174,6 +180,9 @@ uint8_t OZNumber_unsignedInt8Value(struct OZNumber *self)
 /* - (int16_t)int16Value */
 int16_t OZNumber_int16Value(struct OZNumber *self)
 {
+	if (!self) {
+		return (int16_t)0;
+	}
 	/* return (int16_t)_oz_decode_int32(_raw, _shift); */
 	return (int16_t)(_oz_decode_int32(self->_raw, self->_shift));
 }
@@ -181,6 +190,9 @@ int16_t OZNumber_int16Value(struct OZNumber *self)
 /* - (uint16_t)unsignedInt16Value */
 uint16_t OZNumber_unsignedInt16Value(struct OZNumber *self)
 {
+	if (!self) {
+		return (uint16_t)0;
+	}
 	/* return (uint16_t)_oz_decode_int32(_raw, _shift); */
 	return (uint16_t)(_oz_decode_int32(self->_raw, self->_shift));
 }
@@ -188,6 +200,9 @@ uint16_t OZNumber_unsignedInt16Value(struct OZNumber *self)
 /* - (int32_t)int32Value */
 int32_t OZNumber_int32Value(struct OZNumber *self)
 {
+	if (!self) {
+		return (int32_t)0;
+	}
 	/* return _oz_decode_int32(_raw, _shift); */
 	return _oz_decode_int32(self->_raw, self->_shift);
 }
@@ -195,6 +210,9 @@ int32_t OZNumber_int32Value(struct OZNumber *self)
 /* - (uint32_t)unsignedInt32Value */
 uint32_t OZNumber_unsignedInt32Value(struct OZNumber *self)
 {
+	if (!self) {
+		return (uint32_t)0;
+	}
 	/* return (uint32_t)_oz_decode_int32(_raw, _shift); */
 	return (uint32_t)(_oz_decode_int32(self->_raw, self->_shift));
 }
@@ -202,6 +220,9 @@ uint32_t OZNumber_unsignedInt32Value(struct OZNumber *self)
 /* - (float)floatValue */
 float OZNumber_floatValue(struct OZNumber *self)
 {
+	if (!self) {
+		return (float)0;
+	}
 	/* return _oz_decode_float(_raw, _shift); */
 	return _oz_decode_float(self->_raw, self->_shift);
 }
@@ -209,6 +230,9 @@ float OZNumber_floatValue(struct OZNumber *self)
 /* - (BOOL)boolValue */
 BOOL OZNumber_boolValue(struct OZNumber *self)
 {
+	if (!self) {
+		return (BOOL)0;
+	}
 	/* return _raw != 0; */
 	return self->_raw != 0;
 }
@@ -216,6 +240,9 @@ BOOL OZNumber_boolValue(struct OZNumber *self)
 /* - (int)intValue */
 int OZNumber_intValue(struct OZNumber *self)
 {
+	if (!self) {
+		return (int)0;
+	}
 	/* return (int)_oz_decode_int32(_raw, _shift); */
 	return (int)(_oz_decode_int32(self->_raw, self->_shift));
 }
@@ -223,6 +250,9 @@ int OZNumber_intValue(struct OZNumber *self)
 /* - (unsigned int)unsignedIntValue */
 unsigned int OZNumber_unsignedIntValue(struct OZNumber *self)
 {
+	if (!self) {
+		return (unsigned int)0;
+	}
 	/* return (unsigned int)_oz_decode_int32(_raw, _shift); */
 	return (unsigned int)(_oz_decode_int32(self->_raw, self->_shift));
 }
@@ -230,6 +260,9 @@ unsigned int OZNumber_unsignedIntValue(struct OZNumber *self)
 /* - (int32_t)rawValue */
 int32_t OZNumber_rawValue(struct OZNumber *self)
 {
+	if (!self) {
+		return (int32_t)0;
+	}
 	/* return _raw; */
 	return self->_raw;
 }
@@ -237,6 +270,9 @@ int32_t OZNumber_rawValue(struct OZNumber *self)
 /* - (uint8_t)shift */
 uint8_t OZNumber_shift(struct OZNumber *self)
 {
+	if (!self) {
+		return (uint8_t)0;
+	}
 	/* return _shift; */
 	return self->_shift;
 }
@@ -244,6 +280,9 @@ uint8_t OZNumber_shift(struct OZNumber *self)
 /* - (instancetype)adding:(OZNumber *)other */
 struct OZNumber * OZNumber_adding_(struct OZNumber *self, struct OZNumber * other)
 {
+	if (!self) {
+		return (struct OZNumber *)0;
+	}
 	/* int32_t a = _raw; */
 	int32_t a = self->_raw;
 	int32_t b = other->_raw;
@@ -273,6 +312,9 @@ struct OZNumber * OZNumber_adding_(struct OZNumber *self, struct OZNumber * othe
 /* - (instancetype)subtracting:(OZNumber *)other */
 struct OZNumber * OZNumber_subtracting_(struct OZNumber *self, struct OZNumber * other)
 {
+	if (!self) {
+		return (struct OZNumber *)0;
+	}
 	/* int32_t a = _raw; */
 	int32_t a = self->_raw;
 	int32_t b = other->_raw;
@@ -301,6 +343,9 @@ struct OZNumber * OZNumber_subtracting_(struct OZNumber *self, struct OZNumber *
 /* - (instancetype)multiplyingBy:(OZNumber *)other */
 struct OZNumber * OZNumber_multiplyingBy_(struct OZNumber *self, struct OZNumber * other)
 {
+	if (!self) {
+		return (struct OZNumber *)0;
+	}
 	/*
 	 * Q31 multiply:
 	 * result_raw = (a_raw * b_raw) >> 31
@@ -324,6 +369,9 @@ struct OZNumber * OZNumber_multiplyingBy_(struct OZNumber *self, struct OZNumber
 /* - (instancetype)dividingBy:(OZNumber *)other */
 struct OZNumber * OZNumber_dividingBy_(struct OZNumber *self, struct OZNumber * other)
 {
+	if (!self) {
+		return (struct OZNumber *)0;
+	}
 	/*
 	 * Q31 integer-only division using 64-bit long division.
 	 * No float intermediate — preserves full Q31 precision.
@@ -340,6 +388,9 @@ struct OZNumber * OZNumber_dividingBy_(struct OZNumber *self, struct OZNumber * 
 /* - (int)getDescription:(char *)buf maxLength:(size_t)maxLen */
 int OZNumber_getDescription_maxLength_(struct OZNumber *self, char* buf, size_t maxLen)
 {
+	if (!self) {
+		return (int)0;
+	}
 	int prec = oz_log_precision();
 	if (prec < 0) {
 		prec = 14;
@@ -351,6 +402,9 @@ int OZNumber_getDescription_maxLength_(struct OZNumber *self, char* buf, size_t 
 /* - (BOOL)isEqual:(id)anObject */
 BOOL OZNumber_isEqual_(struct OZNumber *self, void * anObject)
 {
+	if (!self) {
+		return (BOOL)0;
+	}
 	if (self == anObject) {
 		return YES;
 	}
@@ -363,7 +417,9 @@ BOOL OZNumber_isEqual_(struct OZNumber *self, void * anObject)
 /* - (void)dealloc */
 void OZNumber_dealloc(struct OZNumber *self)
 {
-	(void)self;
+	if (!self) {
+		return;
+	}
 	/* OZNumber is a compile-time constant and must never be freed. */
 }
 

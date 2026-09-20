@@ -51,24 +51,35 @@ struct OZObject * OZObject_alloc_cls(void)
 /* - (instancetype)init */
 struct OZObject * OZObject_init(struct OZObject *self)
 {
+	if (!self) {
+		return (struct OZObject *)0;
+	}
 	return self;
 }
 
 /* - (void)dealloc */
 void OZObject_dealloc(struct OZObject *self)
 {
-	(void)self;
+	if (!self) {
+		return;
+	}
 }
 
 /* - (BOOL)isEqual:(id)anObject */
 BOOL OZObject_isEqual_(struct OZObject *self, void * anObject)
 {
+	if (!self) {
+		return (BOOL)0;
+	}
 	return self == anObject;
 }
 
 /* - (int)getDescription:(char *)buf maxLength:(size_t)maxLen */
 int OZObject_getDescription_maxLength_(struct OZObject *self, char* buf, size_t maxLen)
 {
+	if (!self) {
+		return (int)0;
+	}
 	/* #if OZ_DEFAULT_DESCRIPTION return _oz_write_default_description(oz_class_name(self), (unsigned long)self, buf, maxLen); #else (void)buf; (void)maxLen; return 0; #endif */
 	#if OZ_DEFAULT_DESCRIPTION
 	return _oz_write_default_description(oz_class_name(self),
