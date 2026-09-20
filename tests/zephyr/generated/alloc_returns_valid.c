@@ -52,6 +52,9 @@ void Widget_oz_free(struct Widget *obj)
 /* - (void)setTag:(int)t */
 void Widget_setTag_(struct Widget *self, int t)
 {
+	if (!self) {
+		return;
+	}
 	/* _tag = t; */
 	self->_tag = t;
 }
@@ -59,6 +62,9 @@ void Widget_setTag_(struct Widget *self, int t)
 /* - (int)tag */
 int Widget_tag(struct Widget *self)
 {
+	if (!self) {
+		return (int)0;
+	}
 	/* return _tag; */
 	return self->_tag;
 }

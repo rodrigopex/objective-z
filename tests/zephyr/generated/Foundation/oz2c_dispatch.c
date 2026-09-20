@@ -335,6 +335,9 @@ int oz_check_all_slabs(void)
  * (not from source) */
 void * OZ_PROTOCOL_SEND_init(struct OZObject *self)
 {
+	if (!self) {
+		return (void *)0;
+	}
 	switch (self->_meta.class_id) {
 	case OZ_CLASS_OZObject: return OZObject_init((struct OZObject *)self);
 	case OZ_CLASS_Widget: return OZObject_init((struct OZObject *)self);
@@ -357,6 +360,9 @@ void * OZ_PROTOCOL_SEND_init(struct OZObject *self)
  * (not from source) */
 void OZ_PROTOCOL_SEND_dealloc(struct OZObject *self)
 {
+	if (!self) {
+		return;
+	}
 	switch (self->_meta.class_id) {
 	case OZ_CLASS_OZObject: OZObject_dealloc((struct OZObject *)self); return;
 	case OZ_CLASS_Widget: OZObject_dealloc((struct OZObject *)self); return;
@@ -379,6 +385,9 @@ void OZ_PROTOCOL_SEND_dealloc(struct OZObject *self)
  * (not from source) */
 BOOL OZ_PROTOCOL_SEND_isEqual_(struct OZObject *self, void * anObject)
 {
+	if (!self) {
+		return (BOOL)0;
+	}
 	switch (self->_meta.class_id) {
 	case OZ_CLASS_OZObject: return OZObject_isEqual_((struct OZObject *)self, anObject);
 	case OZ_CLASS_Widget: return OZObject_isEqual_((struct OZObject *)self, anObject);
@@ -401,6 +410,9 @@ BOOL OZ_PROTOCOL_SEND_isEqual_(struct OZObject *self, void * anObject)
  * (not from source) */
 int OZ_PROTOCOL_SEND_getDescription_maxLength_(struct OZObject *self, char* buf, size_t maxLen)
 {
+	if (!self) {
+		return (int)0;
+	}
 	switch (self->_meta.class_id) {
 	case OZ_CLASS_OZObject: return OZObject_getDescription_maxLength_((struct OZObject *)self, buf, maxLen);
 	case OZ_CLASS_Widget: return OZObject_getDescription_maxLength_((struct OZObject *)self, buf, maxLen);
@@ -423,6 +435,9 @@ int OZ_PROTOCOL_SEND_getDescription_maxLength_(struct OZObject *self, char* buf,
  * (not from source) */
 int OZ_PROTOCOL_SEND_toggle(struct OZObject *self)
 {
+	if (!self) {
+		return (int)0;
+	}
 	switch (self->_meta.class_id) {
 	case OZ_CLASS_LightSwitch: return LightSwitch_toggle((struct LightSwitch *)self);
 	case OZ_CLASS_Fan: return Fan_toggle((struct Fan *)self);
@@ -434,6 +449,9 @@ int OZ_PROTOCOL_SEND_toggle(struct OZObject *self)
  * (not from source) */
 int OZ_PROTOCOL_SEND_depth(struct OZObject *self)
 {
+	if (!self) {
+		return (int)0;
+	}
 	switch (self->_meta.class_id) {
 	case OZ_CLASS_Level1: return Level1_depth((struct Level1 *)self);
 	case OZ_CLASS_Level2: return Level2_depth((struct Level2 *)self);
