@@ -3009,9 +3009,18 @@ pub fn check_function_body(
 /// Is `node` (an `at_expression`) shaped like `@defs(Name)`?
 ///
 /// The twin of `emit::is_protocol_literal_shape`, and the same node kind:
-/// this grammar has no `@defs` rule at all, so `@defs(P)` parses as a
-/// generic `at_expression` wrapping a `call_expression` whose callee
-/// `identifier` is the text `defs`. `@protocol(P)` is byte-for-byte the
+/// in *this* position `@defs(P)` parses as a generic `at_expression`
+/// wrapping a `call_expression` whose callee `identifier` is the text
+/// `defs`.
+///
+/// **This comment used to say the grammar "has no `@defs` rule at all",
+/// and that was wrong** -- it has `atdef_field`, for the struct-field
+/// position, which is `@defs`'s idiomatic one. So the rarer spelling was
+/// refused here while the normal one had no disposition and was copied
+/// into generated C, where `outputbar` found it (#582). The lesson is the
+/// one this repo keeps relearning: a claim that a construct has exactly
+/// one node kind is a claim about the grammar, and it needs a dump to
+/// support it. Both spellings now route through `defs_rejection`. `@protocol(P)` is byte-for-byte the
 /// same tree with `protocol` in that position, so the identifier text is
 /// the *only* thing separating an accepted construct from a refused one.
 ///
@@ -3022,10 +3031,39 @@ pub fn check_function_body(
 ///   share that node -- `@42`, `@YES`, `@protocol(...)` and `@defs(...)`
 ///   -- and the first three are accepted.
 /// - `@import` is *not* one of them. It has its own `module_import` node,
-///   so no rule keyed on `at_expression` can reach it, which matters
-///   because `@import` is deliberately left to Clang
-///   (`oz2c-challenges/MUTATIONS.md` grades M68 `CLANG`, and that grade is
-///   correct -- modules are a front-end feature, not a lowering gap).
+///   so no rule keyed on `at_expression` can reach it -- which is why it
+///   now has an arm of its own in `walk_at_keywords`.
+///
+///   **That arm reverses what this comment used to say.** It read
+///   "`@import` is deliberately left to Clang (`oz2c-challenges` grades
+///   M68 `CLANG`, and that grade is correct -- modules are a front-end
+///   feature, not a lowering gap)". Clang does reject it, so the argument
+///   held wherever Clang runs; it does not run for a source declaring no
+///   class (`lib::check_ast_present` returns early on an empty class
+///   table) or under `--allow-missing-ast`, and there `@import` reached
+///   generated C. M68's grade is oz2c's to answer now, not Clang's.
+/// The refusal both `@defs` spellings get.
+///
+/// One function rather than two literals because the construct is one
+/// construct: #582 found the struct-field spelling reaching generated C
+/// while the expression spelling was already refused, and two copies of a
+/// message is how the next spelling comes to disagree with the first.
+fn defs_rejection() -> Rejection {
+    Rejection {
+        message: "'@defs' is not in the static subset -- there is no ivar-layout object \
+                  to hand out"
+            .to_string(),
+        note: Some(
+            "'@defs(C)' is a GNU operator expanding to C's ivar layout so it can be \
+             embedded in a plain struct. oz2c already emits each class as a plain \
+             'struct C' whose ivars are ordinary members, so the layout is directly \
+             available and the operator has nothing to add"
+                .to_string(),
+        ),
+        help: vec!["name the generated type directly -- 'struct C'".to_string()],
+    }
+}
+
 fn is_defs_shape(node: Node, src: &str) -> bool {
     let mut cursor = node.walk();
     let Some(inner) = node.children(&mut cursor).find(|c| c.kind() != "@") else {
@@ -3108,6 +3146,18 @@ pub fn check_at_keywords(source: &str) -> Vec<Diagnostic> {
     diags
 }
 
+/// Whether `node` has a direct child of kind `kind`.
+///
+/// Used to tell `@dynamic` from `@synthesize`: the grammar gives
+/// `property_implementation` the directive keyword as its first child, so
+/// the token is the discriminator and the node's text never has to be
+/// matched.
+fn has_child_kind(node: Node, kind: &str) -> bool {
+    let mut cursor = node.walk();
+    let children: Vec<Node> = node.children(&mut cursor).collect();
+    children.into_iter().any(|c| c.kind() == kind)
+}
+
 fn walk_at_keywords(node: Node, src: &str, diags: &mut Vec<Diagnostic>) {
     let refusal: Option<Rejection> = match node.kind() {
         "encode_expression" => Some(Rejection {
@@ -3125,6 +3175,53 @@ fn walk_at_keywords(node: Node, src: &str, diags: &mut Vec<Diagnostic>) {
             help: vec![
                 "if a type's size is what is wanted, use 'sizeof'".to_string(),
                 "if a fixed tag is what is wanted, write the string literal directly"
+                    .to_string(),
+            ],
+        }),
+        /* `@dynamic value;` -- refused, and it is the *silent* half of
+         * #582 rather than the stray-'@' half. Every other keyword here
+         * reaches the C compiler as text; this one was commented out and
+         * the accessors synthesized anyway, under a comment claiming it
+         * had been handled:
+         *
+         *     /* @dynamic value; -- synthesized accessor(s) emitted below */
+         *     int B_value(struct B *self) { ... self->_value ... }
+         *
+         * which is the *opposite* of what `@dynamic` asks for. Measured
+         * before the fix: the program ran and printed the synthesized
+         * value, so nothing anywhere would have reported it (#574).
+         *
+         * There is nothing to lower it to. `@dynamic` promises an accessor
+         * will exist at runtime -- from `+resolveInstanceMethod:`, a
+         * category loaded later, or `forwardInvocation:` -- and a static
+         * subset with one dispatch table fixed at build time has no
+         * moment at which that promise could be kept. Refused the same way
+         * `@encode`, `@throw` and `@available` were under #563.
+         *
+         * `@synthesize` is untouched and is the remedy: it asks for
+         * exactly what this backend does. The two are told apart by the
+         * directive token itself -- `property_implementation`'s first
+         * child is `@dynamic` or `@synthesize` -- rather than by matching
+         * the node's text, so a reformatted or oddly-spaced directive
+         * cannot slip past. */
+        "property_implementation" if has_child_kind(node, "@dynamic") => Some(Rejection {
+            message: "'@dynamic' is not in the static subset -- there is no runtime to \
+                      resolve the accessor it promises"
+                .to_string(),
+            note: Some(
+                "'@dynamic name' tells the compiler *not* to synthesize accessors, because \
+                 something will supply them at runtime. This backend resolves every \
+                 selector into a dispatch table fixed at build time, so there is no later \
+                 moment at which one could appear. Until this refusal the directive was \
+                 commented out and the accessors were synthesized anyway -- the opposite \
+                 of what it asks for, with no diagnostic"
+                    .to_string(),
+            ),
+            help: vec![
+                "write '@synthesize name;' if a synthesized accessor is what is wanted -- \
+                 that is what this backend already emits"
+                    .to_string(),
+                "or define the getter and setter by hand in this '@implementation'"
                     .to_string(),
             ],
         }),
@@ -3160,18 +3257,54 @@ fn walk_at_keywords(node: Node, src: &str, diags: &mut Vec<Diagnostic>) {
                     .to_string(),
             ],
         }),
-        "at_expression" if is_defs_shape(node, src) => Some(Rejection {
-            message: "'@defs' is not in the static subset -- there is no ivar-layout \
-                      object to hand out"
+        /* Both spellings, through one constructor. `@defs` reaches the
+         * tree as two unrelated node kinds depending on where it is
+         * written, and until #582 only the rarer one was refused -- see
+         * `defs_rejection`. */
+        "at_expression" if is_defs_shape(node, src) => Some(defs_rejection()),
+        "atdef_field" => Some(defs_rejection()),
+        /* `@import Foundation;` -- refused here, and this **reverses a
+         * stated decision** rather than filling a gap, so it is worth
+         * saying why out loud.
+         *
+         * The comment on `is_defs_shape` argued `@import` was deliberately
+         * left to Clang: modules are a front-end feature, not a lowering
+         * gap, and `oz2c-challenges` grades M68 `CLANG` on that basis.
+         * Clang does reject it -- `error: use of '@import' when modules
+         * are disabled`, verified against the harness's own flags -- so
+         * the argument was sound as far as it went.
+         *
+         * What it missed is that the Clang pass is not universal.
+         * `lib::check_ast_present` returns early when
+         * `program.classes.is_empty()`, so a source declaring no class
+         * never needs a dump, and `--allow-missing-ast` skips the
+         * requirement outright. In either case `@import` reached the
+         * output and GCC met a stray `@` in a generated file -- which is
+         * how `outputbar` found it (#582).
+         *
+         * So the disposition is oz2c's, per #582's rule that a node kind
+         * is lowered or refused and never merely unnamed. The message is
+         * also the better one to receive: it names `#import`, which is
+         * what this backend actually resolves, where Clang can only say
+         * that modules are off. */
+        "module_import" => Some(Rejection {
+            message: "'@import' is not in the static subset -- oz2c resolves '#import', \
+                      not modules"
                 .to_string(),
             note: Some(
-                "'@defs(C)' is a GNU operator expanding to C's ivar layout so it can be \
-                 embedded in a plain struct. oz2c already emits each class as a plain \
-                 'struct C' whose ivars are ordinary members, so the layout is directly \
-                 available and the operator has nothing to add"
+                "'@import M;' asks the compiler for a prebuilt module, which needs a \
+                 module map and a module cache. oz2c splices '#import'ed headers into \
+                 one translation unit itself (see `imports.rs`), so there is no module \
+                 to load and nothing to lower this to. Clang refuses it too when modules \
+                 are disabled, but not every source reaches Clang -- one declaring no \
+                 class needs no AST dump, and '--allow-missing-ast' skips it"
                     .to_string(),
             ),
-            help: vec!["name the generated type directly -- 'struct C'".to_string()],
+            help: vec![
+                "write '#import <Foundation/Foundation.h>' instead -- the header form is \
+                 what oz2c resolves"
+                    .to_string(),
+            ],
         }),
         _ if is_handlerless_try(node) => Some(Rejection {
             message: "'@try' is not in the static subset -- exceptions have no unwinding \

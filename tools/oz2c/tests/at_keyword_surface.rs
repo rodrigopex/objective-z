@@ -224,15 +224,30 @@ fn handled_try_keeps_its_original_refusal() {
 
 /* ------------------------------------------------------ #563 delegations */
 
-/// **Accepting, and the one a category-shaped check would have broken.**
+/// **Refusing, and this test used to assert the opposite (#582).**
 ///
-/// `@import` is an unrecognised `@`-keyword and must still pass oz2c:
-/// modules are a front-end feature, Clang's dump rejects it, and
-/// `MUTATIONS.md` grades M68 `CLANG` -- delegated, correctly. The grammar
-/// helps here (it is a dedicated `module_import` node, not an
-/// `at_expression`), but the guarantee is behavioural, so it is asserted.
+/// It was `module_import_is_left_to_clang`, and it asserted the passthrough
+/// as a feature -- `out.source_c.contains("@import Foundation;")` -- on the
+/// reasoning that modules are a front-end concern, that Clang's dump
+/// rejects them, and that `MUTATIONS.md` grades M68 `CLANG`, delegated
+/// correctly.
+///
+/// That reasoning was sound wherever Clang runs, and Clang does refuse it:
+/// `error: use of '@import' when modules are disabled`, checked against
+/// this harness's own flags. **Clang does not always run.**
+/// `lib::check_ast_present` returns early when `program.classes.is_empty()`,
+/// so a source declaring no class needs no dump, and `--allow-missing-ast`
+/// skips the requirement outright. In both cases `@import` rode the
+/// passthrough into generated C and GCC met a stray `@` in a file the
+/// author never wrote -- which is how `outputbar` found it.
+///
+/// So the delegation is withdrawn and the disposition is oz2c's, per #582's
+/// rule that every node kind is lowered or refused and never merely
+/// unnamed. M68's grade is oz2c's to answer now. The message is also the
+/// better one to receive: it names `#import`, the form this backend
+/// resolves, where Clang can only say that modules are off.
 #[test]
-fn module_import_is_left_to_clang() {
+fn module_import_is_refused() {
     let src = format!(
         "{}{}",
         PREAMBLE(),
@@ -250,10 +265,13 @@ fn module_import_is_left_to_clang() {
 @end
 "
     );
-    let out = oz2c::transpile(&src).expect("'@import' is Clang's to refuse, not oz2c's");
-    /* Passed through untouched, which is what "delegated" means -- Clang's
-     * AST dump is the gate, and it runs on the `.m`, not on this. */
-    assert!(out.source_c.contains("@import Foundation;"), "source_c:\n{}", out.source_c);
+    let diags = expect_reject(&src);
+    assert!(
+        diags.contains("'@import' is not in the static subset"),
+        "expected the located refusal:\n{}",
+        diags
+    );
+    assert!(diags.contains("#import"), "the remedy is the header form:\n{}", diags);
 }
 
 /* ------------------------------------------------ #563 accepted keywords */

@@ -9536,6 +9536,34 @@ fn walk_top_level<'a>(
                     name
                 ));
             }
+            /* `@protocol Foo;` -- a forward declaration, and the exact
+             * analogue of the two arms above. Without an arm of its own it
+             * fell to the catch-all and was copied through as the author's
+             * bytes, so GCC met `@protocol PFwd;` in generated C and said
+             * `expected identifier or '('` while oz2c exited 0 (#582).
+             *
+             * A comment and nothing else: `@class Foo;` needs
+             * `struct Foo;` because a class becomes a C type, and a
+             * protocol never does -- it is compile-time only, resolved by
+             * name into the dispatch tables. There is no tag to forward
+             * declare.
+             *
+             * Lowered rather than refused, because Clang accepts it and
+             * its *full* form is already supported: refusing the
+             * declaration of something whose definition is legal would be
+             * a subset boundary drawn by accident. */
+            "protocol_forward_declaration" => {
+                let mut c = node.walk();
+                let names: Vec<&str> = node
+                    .children(&mut c)
+                    .filter(|c| c.kind() == "identifier")
+                    .map(|c| node_text(c, source))
+                    .collect();
+                bodies.entry(stem.clone()).or_default().push(format!(
+                    "/* @protocol {} -- forward declaration, compile-time only */",
+                    names.join(", ")
+                ));
+            }
             "class_interface" => {
                 let (name, _, kind) = crate::collect::class_header(node, source);
                 if kind.is_category() {
