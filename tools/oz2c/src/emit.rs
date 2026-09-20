@@ -498,6 +498,80 @@ fn is_null_initializer(node: Node, src: &str) -> bool {
 /// warning -- the safe direction, and the only inaccuracy left: a false "used"
 /// leaves a warning in place, while a false "unused" would emit a redundant
 /// `(void)x;`, which is valid C either way. Neither can change behaviour.
+/// The `return` that a send to `nil` must answer with, for a method whose
+/// return type is `ret_ty`.
+///
+/// Objective-C's rule is that the send answers zero *of the send's static
+/// type*. With a direct call the callee's declared return type **is** the
+/// send's type -- same signature -- so returning zero from the callee is
+/// exactly the language's answer and not an approximation of it.
+///
+/// A struct return needs a compound literal rather than a cast: `(T)0` is
+/// not a conversion C allows to a struct type. `(T){0}` is C99 and this
+/// tree compiles generated C as C17 (`corpus_parity.rs` passes
+/// `-std=c17 -pedantic-errors`), so it is in dialect.
+///
+/// Two callers, deliberately one function: the method prologue guard here,
+/// and `companion`'s `OZ_PROTOCOL_SEND_*` dispatchers -- both its new nil
+/// guard and its pre-existing `default:` arm for an unrecognised class id.
+/// That arm spelled the zero `({ret_ty})0` inline, which is a cast C does
+/// not allow to a struct type; routing it through here fixes that on the
+/// way past rather than leaving two spellings of one answer to disagree
+/// later (#528).
+pub(crate) fn nil_send_return(ret_ty: &str) -> String {
+    let t = ret_ty.trim();
+    if t == "void" {
+        return "return;".to_string();
+    }
+    /* A pointer -- including `id` and every `struct X *` -- takes a cast
+     * from 0, which is the null pointer constant. */
+    if t.ends_with('*') || t == "id" || t == "Class" || t == "SEL" {
+        return format!("return ({})0;", t);
+    }
+    /* A struct or union by value: zero-initialise. Detected on the
+     * spelling because that is what the signature carries, and this tree
+     * writes `struct X` explicitly rather than typedef'ing it. */
+    if t.starts_with("struct ") || t.starts_with("union ") {
+        return format!("return ({}){{0}};", t);
+    }
+    /* Everything else is arithmetic -- integer, floating, enum, `BOOL`. */
+    format!("return ({})0;", t)
+}
+
+/// The nil-receiver guard for an instance method's prologue, or `None`
+/// when the method needs none.
+///
+/// **In the callee, not at the call site**, and that is the load-bearing
+/// choice (#528). Three reasons, in order of how much they matter:
+///
+/// * **It covers every path to the method.** A direct call is only one of
+///   them: a send can arrive through the shared dispatch table
+///   (`OZ_PROTOCOL_SEND_*`), through `-performSelector:`'s wrapper, or
+///   through a `-dealloc` chain. Guarding at the call site means guarding
+///   each of those separately, and the next path added would need to know
+///   to ask.
+/// * **It is smaller.** One guard per method, against one per call site.
+///   A method called from ten places pays once here and ten times there.
+/// * **It needs no receiver temporary.** A call-site guard on
+///   `[[self make] poke]` has to bind the receiver to a temporary first or
+///   evaluate it twice, and the receiver's own side effects make that a
+///   correctness problem rather than a tidiness one.
+///
+/// A **class** method gets none, and needs none: class-side functions are
+/// emitted as `Foo_bar_cls(void)` with no receiver parameter at all, so
+/// there is no pointer to be nil. That is why the whole class side of the
+/// program costs nothing here.
+fn nil_receiver_guard(
+    is_class_method: bool,
+    ret_ty: &str,
+    program: &Program,
+) -> Option<String> {
+    if is_class_method || program.nil_sends_unchecked {
+        return None;
+    }
+    Some(format!("\tif (!self) {{\n\t\t{}\n\t}}", nil_send_return(ret_ty)))
+}
+
 fn unused_param_acks(
     rendered_body: &str,
     params: &[(String, String)],
@@ -9032,7 +9106,15 @@ fn render_method_definition(
     // function's body is the author's own text, patched in place, and adding
     // acknowledgements to code someone wrote is not this pass's business.
     let body_text = if translated {
-        let acks = unused_param_acks(&body_text, &sig.params, sig.is_class_method);
+        let mut acks = unused_param_acks(&body_text, &sig.params, sig.is_class_method);
+        /* Ahead of the acknowledgements, and it consumes `self`'s: the
+         * guard mentions `self`, so a `(void)self;` after it would be
+         * redundant -- and `unused_param_acks` cannot see that, because it
+         * reads the rendered *body* and the guard is prologue. */
+        if let Some(guard) = nil_receiver_guard(sig.is_class_method, &ret_ty, ctx.program) {
+            acks.retain(|a| a.trim() != "(void)self;");
+            acks.insert(0, guard);
+        }
         let resume = match body {
             Some(body) => {
                 ctx.lines.resume_after_brace(ctx.src, body.start_byte(), body.end_byte())

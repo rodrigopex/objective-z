@@ -21,7 +21,7 @@ fn usage() -> ExitCode {
         "usage: oz2c [-I <dir>]... [--impl-dir <dir>]... [--manifest <path>] \
          [--root-class <name>] [--pool-sizes <Class=N,...>] \
          [--item-pool-size <N>] [--ast <ast.json>]... [--allow-missing-ast] \
-         [--heap-support] [--introspection] [--reflection] \
+         [--heap-support] [--introspection] [--reflection] [--no-nil-safe-sends] \
          [--line-directives] [--timings] [--quiet] \
          [--manifest-only] [--dump-cst] \
          <input.m>... <outdir>\n\
@@ -150,6 +150,7 @@ fn main() -> ExitCode {
     let mut heap_support = false;
     let mut introspection = false;
     let mut reflection = false;
+    let mut nil_sends_unchecked = false;
     let mut item_pool_size: Option<usize> = None;
     let mut line_directives = false;
     let mut dump_cst = false;
@@ -212,6 +213,17 @@ fn main() -> ExitCode {
             // it emitted for a selector no `@selector(...)` names.
             "--reflection" => {
                 reflection = true;
+                i += 1;
+            }
+            /* `CONFIG_OBJZ_NIL_SAFE_SENDS=n`. The only *negative* feature
+             * flag here, because the fail-safe direction is opposite to
+             * its siblings: a missing `--introspection` removes a feature,
+             * while a missing nil guard is a null dereference (#528). So
+             * the guards are on unless this says otherwise, and cmake
+             * passes this when the option is `n` rather than passing a
+             * positive flag when it is `y`. */
+            "--no-nil-safe-sends" => {
+                nil_sends_unchecked = true;
                 i += 1;
             }
             // `CONFIG_OBJZ_DEBUG_LINES`. Put `#line` directives on the code
@@ -574,6 +586,7 @@ fn main() -> ExitCode {
             heap_support,
             introspection,
             reflection,
+        nil_sends_unchecked,
             item_pool_size,
             source_map: line_directives.then(|| resolved.source_map.clone()),
             generated_dirs,

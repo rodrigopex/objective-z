@@ -297,6 +297,32 @@ pub fn compile_and_run_with_introspection(source: &str, stem: &str) -> String {
     )
 }
 
+/// `compile_and_run` with whatever `Options` the case needs.
+///
+/// The general form, for a configuration the named wrappers above do not
+/// cover -- `nil_sends_unchecked` is the first, since
+/// `CONFIG_OBJZ_NIL_SAFE_SENDS=n` has to be *run* and not merely inspected
+/// to show that removing the guards leaves ordinary sends working (#528).
+pub fn compile_and_run_with_options(
+    source: &str,
+    stem: &str,
+    options: &oz2c::Options,
+) -> String {
+    compile_and_run_inner(
+        source,
+        stem,
+        &[],
+        oz2c::Options {
+            heap_support: options.heap_support,
+            introspection: options.introspection,
+            reflection: options.reflection,
+            nil_sends_unchecked: options.nil_sends_unchecked,
+            ..Default::default()
+        },
+        true,
+    )
+}
+
 /// `compile_and_run` with `--reflection`, i.e. what
 /// `CONFIG_OBJZ_REFLECTION`'s own default (`y`) produces.
 pub fn compile_and_run_with_reflection(source: &str, stem: &str) -> String {

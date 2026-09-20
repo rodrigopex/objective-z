@@ -1056,7 +1056,25 @@ fn render_protocol_dispatch(program: &Program, root: &str) -> (String, String) {
             "/* protocol dispatch: routes '{}' to whichever class implements it\n * (not from source) */\n",
             m.selector
         ));
-        c.push_str(&format!("{} {}({})\n{{\n\tswitch (self->_meta.class_id) {{\n", ret_ty, fn_name, params));
+        c.push_str(&format!("{} {}({})\n{{\n", ret_ty, fn_name, params));
+        /* The dispatcher reads the receiver's class id to route, so it
+         * dereferences `self` *before* any method body is reached -- the
+         * prologue guard `emit` puts in each method cannot help here, and
+         * a dispatched send to nil crashed in this switch (#528).
+         *
+         * Enumerated rather than assumed: 9 of the 12 pointer-parameter
+         * dereferences in a reflection-enabled companion were unguarded,
+         * and every one of them was an `OZ_PROTOCOL_SEND_*`.
+         * `oz_retain`, `oz_release` and `oz_class_name` already guarded,
+         * so the pattern was in the tree and the dispatchers were simply
+         * missed. */
+        if !program.nil_sends_unchecked {
+            c.push_str(&format!(
+                "\tif (!self) {{\n\t\t{}\n\t}}\n",
+                crate::emit::nil_send_return(&ret_ty)
+            ));
+        }
+        c.push_str("\tswitch (self->_meta.class_id) {\n");
         for (name, defining) in &routed {
             let target = crate::emit::method_fn_name(defining, &m.selector, m.is_class_method);
             let mut call_args = vec![format!("(struct {} *)self", defining)];
@@ -1068,13 +1086,11 @@ fn render_protocol_dispatch(program: &Program, root: &str) -> (String, String) {
                 c.push_str(&format!("\tcase OZ_CLASS_{}: return {};\n", name, call));
             }
         }
-        if m.return_type == "void" {
-            c.push_str("\tdefault: return;\n\t}\n}\n\n");
-        } else {
-            c.push_str("\tdefault: return (");
-            c.push_str(&ret_ty);
-            c.push_str(")0;\n\t}\n}\n\n");
-        }
+        /* One spelling of "zero of this return type", shared with the
+         * guard above and with `emit`'s method prologue. This arm used to
+         * write `({ret_ty})0` inline, which is not a conversion C allows
+         * to a struct type. */
+        c.push_str(&format!("\tdefault: {}\n\t}}\n}}\n\n", crate::emit::nil_send_return(&ret_ty)));
     }
     (h, c)
 }

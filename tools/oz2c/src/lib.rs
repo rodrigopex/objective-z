@@ -95,6 +95,28 @@ pub struct Options {
     /// Kconfig option's `n` means. With it off every one of those
     /// constructs stays a hard located error naming the option.
     pub reflection: bool,
+    /// Emit no nil-receiver guard, which `CONFIG_OBJZ_NIL_SAFE_SENDS=n`
+    /// passes as `--no-nil-safe-sends`.
+    ///
+    /// **Named for the unsafe state, and that is deliberate.** Every other
+    /// feature flag here is positive and off by default, so the flag's
+    /// absence is what its Kconfig option's `n` means. This one inverts
+    /// that, because the fail-safe direction is opposite: a missing
+    /// `--introspection` removes a feature and refuses the source that
+    /// wanted it, while a missing nil guard is a null dereference that
+    /// reads whatever is at address 0 -- on `mps2/an385` that is flash, so
+    /// it answers a plausible number and drifts between builds (#528).
+    ///
+    /// Naming the field for the unsafe state keeps `derive(Default)`:
+    /// `false` is guarded, so the safe behaviour is the zero value and
+    /// every test that constructs `Options` literally gets it without
+    /// asking. A `nil_safe_sends: bool` defaulting to `true` would need a
+    /// hand-written `Default` whose one interesting line is easy to lose.
+    ///
+    /// Measured cost of the guards, 17 ARM configurations on
+    /// `mps2/an385`: `.text` +832 bytes (+0.22%), `data` and `bss`
+    /// unchanged. That is what this flag buys back.
+    pub nil_sends_unchecked: bool,
     /// Slots for the shared collection element pool instead of the count
     /// taken from the source, as `--item-pool-size N` supplies. `None`
     /// leaves the counted size (or an `oz-item-pool:` directive) in force.
@@ -260,6 +282,7 @@ fn front_end(
     program.heap_support = options.heap_support;
     program.introspection = options.introspection;
     program.reflection = options.reflection;
+    program.nil_sends_unchecked = options.nil_sends_unchecked;
     /* Needs `program.owning_methods`, which the pass above fills in, so it
      * cannot sit with the refusals `collect` registers (#461). */
     diagnostics.extend(staticbar::check_out_parameter_stores(text, &program));
