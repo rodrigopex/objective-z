@@ -266,7 +266,7 @@ from an AST, which is why unexpanded macros survive into the output.
 - CLI: `--pool-sizes`, `--item-pool-size`, `--heap-support`, `--introspection`,
   `--reflection`, `--line-directives`, `--root-class`, `--ast`, `--allow-missing-ast`,
   `-I`, `--timings`, `--quiet`, `--manifest-only`, `--dump-cst`, `--dump-ast-facts`,
-  `--check-arc`.
+  `--check-arc`, `--no-nil-safe-sends`.
   `--check-arc` is an audit and not a gate — it **always succeeds**, takes sources and
   no outdir, and prints a work queue: the ivar-ownership diff (the one question both
   models answer independently), every ARC transfer grouped by the syntactic position
@@ -277,7 +277,17 @@ from an AST, which is why unexpanded macros survive into the output.
   `--ast` is required of any source declaring a class; every other feature flag
   (`--heap-support`, `--introspection`, `--reflection`, `--line-directives`) is off unless
   passed — its absence is what the matching Kconfig option's `n` means, and
-  `cmake/oz2c.cmake` is what supplies it
+  `cmake/oz2c.cmake` is what supplies it.
+  **`--no-nil-safe-sends` is the one exception, and it is negative** (#528):
+  the nil-receiver guards are on by default and this removes them, so
+  `cmake/oz2c.cmake` passes it when `CONFIG_OBJZ_NIL_SAFE_SENDS` is `n` rather than
+  passing something when it is `y`. The polarity is inverted because the fail-safe
+  direction is: a missing `--introspection` removes a feature and refuses the source
+  that wanted it, while a missing nil guard is a null dereference that reads whatever
+  is at address 0. The `Options` field is `nil_sends_unchecked` for the same reason —
+  `derive(Default)` then yields the guarded behaviour, so every test constructing
+  `Options` literally gets it without asking. Don't "tidy" either into the positive
+  form; that is how the safe default becomes opt-in
 - Progress goes to **stdout**; stderr is diagnostics only, because
   `tests/tools/oz2c_build.py` reports its first line as the reason a transpile failed
 - Tests: `cargo test --manifest-path tools/oz2c/Cargo.toml`
@@ -292,6 +302,17 @@ Three standing design rules, easy to violate with good intentions:
   alternative kept happening — #563, #573 and #574 were each one `@`-keyword arriving
   at GCC as `stray '@'`, filed one issue at a time. Do not add a keyword to the
   passthrough; give it an arm or a refusal.
+- **A message to nil is a no-op answering zero, and two guards implement it
+  (#528).** Each instance method tests its receiver on entry; each
+  `OZ_PROTOCOL_SEND_*` dispatcher tests it before reading
+  `self->_meta.class_id`, because that read happens before any method body is
+  reached. Both are needed and neither is sufficient. A class method has no
+  receiver (`Foo_bar_cls(void)`), so the class side costs nothing. `.text` +0.22%
+  and no RAM, measured across 17 configurations on `mps2/an385`; the linker drops
+  the unreachable guards, which is why 65 emitted guards cost 832 bytes.
+  Before this, a send to nil called through a null `self` and the body read
+  `self->_field` — on `mps2/an385` address 0 is flash, so it returned a plausible
+  number that drifted between builds rather than faulting.
 - **ARC is the only ownership model.** A send of `retain`, `release`, `autorelease`,
   `dealloc` or `retainCount` is a hard located error, and so is declaring or defining
   any of them but `dealloc` (`staticbar::check_manual_memory_sends`, #428 and #436) —

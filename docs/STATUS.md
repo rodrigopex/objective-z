@@ -3887,6 +3887,71 @@ catches it" would have credited a backstop that never sees the file.
   because the same harness, given an upcast return, *does* report a
   difference -- a sweep that cannot see the change it is measuring reports
   agreement about nothing (#424, #433).
+- **A message to nil is a no-op answering zero of the send's type (#528).**
+  Objective-C's best-known safety property, and `[[Foo sharedInstance] bar]`
+  depends on it. oz2c lowers a send to a direct call, so the receiver arrived
+  as `self == NULL` and the body read `self->_field`. **It produced a wrong
+  value before anyone was looking for it**: a second singleton's `+initialize`
+  logged 20385 where the value was 80, and two deliberate sends printed 20413
+  and drifted between builds. On `mps2/an385` address 0 is flash, so it
+  answers a plausible number instead of faulting -- which is the whole reason
+  it stayed silent.
+
+  **Two guards, and neither is sufficient alone.** Each instance method tests
+  its receiver on entry, which covers a direct call. Each
+  `OZ_PROTOCOL_SEND_*` dispatcher tests it before reading
+  `self->_meta.class_id`, because that read happens *before* any method body
+  is reached and no prologue guard can help there. A class method needs
+  neither: it is emitted `Foo_bar_cls(void)`, with no receiver to be nil, so
+  the whole class side is free.
+
+  Four things to preserve:
+
+  - **In the callee, not at the call site.** It covers every path at once --
+    direct call, dispatcher, `-performSelector:`, the dealloc chain -- where a
+    call-site guard would need each taught separately and the next path added
+    would have to know to ask. It is also smaller (one guard per method, not
+    per send) and it needs no receiver temporary, which
+    `[[self make] poke]` would otherwise require to avoid evaluating the
+    receiver twice.
+  - **One spelling of the zero**, `emit::nil_send_return`, shared by both
+    guards and by `companion`'s `default:` arm for an unrecognised class id.
+    That arm wrote `({ret_ty})0` inline, which is not a conversion C allows to
+    a struct type; a struct return needs the `(T){0}` compound literal. Two
+    spellings of one answer is how they come to disagree.
+  - **The Kconfig flag is negative, deliberately.**
+    `CONFIG_OBJZ_NIL_SAFE_SENDS` defaults `y` and reaches oz2c as
+    `--no-nil-safe-sends` -- the only negative feature flag in the tool, and
+    `cmake/oz2c.cmake` passes it when the option is `n` rather than passing
+    something when it is `y`. Every sibling flag is positive because absence
+    removes a *feature*; here absence is a null dereference, so the fail-safe
+    direction is opposite and so is the polarity. `Options::nil_sends_unchecked`
+    is named for the unsafe state for the same reason: `derive(Default)` then
+    yields the guarded behaviour.
+  - **Enumerate the dereferences, not the parameter name.** The sibling sweep
+    found 9 of 12 pointer-parameter dereferences in a reflection-enabled
+    companion unguarded, every one an `OZ_PROTOCOL_SEND_*`, while
+    `oz_retain`, `oz_release` and `oz_class_name` already guarded -- the
+    pattern was in the tree and the dispatchers were missed. The first version
+    of that sweep keyed on the parameter being called `self`, which would have
+    missed a receiver named `obj` and reported a clean number for the wrong
+    set.
+
+  **Cost, measured rather than assumed**, by building the samples with and
+  without across 17 configurations on `mps2/an385`:
+
+  | | before | after | delta |
+  |---|---|---|---|
+  | `.text` | 377,944 | 378,776 | +832 (+0.22%) |
+  | `data` | 5,137 | 5,137 | +0 |
+  | `bss` | 137,771 | 137,771 | +0 |
+
+  Worst single sample `class_side` +188 (+1.43%), best `zbus_objc` +4
+  (+0.01%). The total is far below what the guard count suggests because 65
+  guards are emitted for a minimal two-class program and only the *reachable*
+  ones survive the linker. That number is the argument for the guards being
+  unconditional-by-default, and it is what the Kconfig `n` buys back.
+
 - **The generated output parses as C, and that is checked on every transpile
   (#582).** `staticbar` asks whether the input is in the subset;
   `outputbar` asks whether the output is C, and the two are not the same
