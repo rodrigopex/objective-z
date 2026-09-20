@@ -12,6 +12,7 @@ pub mod emit;
 pub mod generics;
 pub mod imports;
 pub mod model;
+pub mod outputbar;
 pub mod parse;
 pub mod pools;
 pub mod preproc;
@@ -357,6 +358,22 @@ pub fn transpile_observed(
     /* And emit's own, for the same reason: `walk_top_level` skips a dead
      * arm but the per-body walks it delegates to do not (#570). */
     fe.program.preproc.retain_live(&mut diagnostics);
+    /* Only when oz2c believes it succeeded. A construct with no
+     * disposition rode the passthrough into the output and this is the
+     * last chance to say so (#582) -- but *already-refused* source
+     * reaches here too, because `emit` copies a construct through whether
+     * or not `staticbar` rejected it. Running the check then would hand
+     * the author an "internal, please file an issue" beside the correct
+     * refusal of the very same `@try`, which is noise at best and
+     * misdirection at worst. The question this asks is precisely "oz2c
+     * thought this was C and it is not". */
+    if diagnostics.is_empty() {
+        diagnostics.extend(outputbar::check_output_is_c(&result.source_c, "source"));
+        diagnostics
+            .extend(outputbar::check_output_is_c(&result.companion_h, "companion header"));
+        diagnostics
+            .extend(outputbar::check_output_is_c(&result.companion_c, "companion source"));
+    }
     if !diagnostics.is_empty() {
         return Err(diagnostics);
     }
@@ -436,6 +453,25 @@ pub fn transpile_split_observed(
     /* And emit's own, for the same reason: `walk_top_level` skips a dead
      * arm but the per-body walks it delegates to do not (#570). */
     fe.program.preproc.retain_live(&mut diagnostics);
+    /* Same rule as the single-output path: only when nothing else is
+     * wrong. Labelled per generated file, because the split emitter
+     * writes one `.h`/`.c` pair per origin and "the output" would not say
+     * which (#582). Those labels are why the check cannot run alongside a
+     * refusal -- `emitter_agreement.rs` requires the two emitters to
+     * refuse *identically*, and a per-origin label is by construction not
+     * the single-file one. It caught exactly that. */
+    if diagnostics.is_empty() {
+        for (stem, header, source_c) in &result.files {
+            diagnostics
+                .extend(outputbar::check_output_is_c(header, &format!("header for '{}'", stem)));
+            diagnostics
+                .extend(outputbar::check_output_is_c(source_c, &format!("source for '{}'", stem)));
+        }
+        diagnostics
+            .extend(outputbar::check_output_is_c(&result.companion_h, "companion header"));
+        diagnostics
+            .extend(outputbar::check_output_is_c(&result.companion_c, "companion source"));
+    }
     if !diagnostics.is_empty() {
         return Err(diagnostics);
     }
