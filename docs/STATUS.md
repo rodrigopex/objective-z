@@ -2870,15 +2870,60 @@ standing rule of every ARC defect since #351. A ternary with a *borrowing*
 arm still resolves to nothing, which is why the case that exercises that
 shape kept its meaning unchanged.
 
-### What this leaves open
+### What this left open, and the relay that did not arrive (#584)
 
-`walk_for_reject` has arms for `message_expression`, `array_literal` and
-`dictionary_literal`, and **none for `call_expression`**. A plain C factory
-that reads its own destination inside a loop — `_thing = copy_of(_thing);` —
-is therefore never asked the loop question at all, at any pool size. That is
-pre-existing and untouched by this change, and it is the same shape as every
-defect since #355: a position nobody asked the question in. Filed separately
-rather than folded in.
+`walk_for_reject` had arms for `message_expression`, `array_literal` and
+`dictionary_literal`, and **none for `call_expression`**. A plain `+1` C
+factory escaping a loop was therefore never asked the loop question at
+all, at any pool size — the same shape as every defect since #355, a
+position nobody asked the question in.
+
+**"Filed separately rather than folded in" was not true when written.** No
+issue existed. A reader met a sentence saying the position was tracked and
+had no way to tell that it was not, which is worse than saying nothing:
+the hole survived because the document claimed someone was on it. It is
+#584 now, and closed.
+
+Two things the fix changed about the shape of the rule.
+
+**It is one predicate, not four arms.** The question is asked of every node
+ahead of the per-kind match, so a kind `arc::is_owning_expr` learns about
+later is policed without anyone remembering to add an arm. The provenance
+was never the missing part: `is_owning_expr` has had a `call_expression`
+arm consulting `OwningMethods::contains_function` since `samples/arc_demo`'s
+`createSensor` MPU-faulted for exactly this, and the bar simply never
+consulted it — #398/#400 again, the correct rule a few lines from a check
+that never reaches it.
+
+**The predicate is not `is_owning_expr`**, and the subtraction is the part
+to preserve. The bar asks about *slab pressure*; `is_owning_expr` answers
+about *ownership*; they diverge on immortal literals. A boxed `@"..."` is
+owning by that function's reckoning — deliberately, since releasing it is
+a guarded no-op — and occupies no slot: `_arr[i] = @"static"` across
+sixteen iterations emits no `oz_slab_OZString` at all.
+
+The first attempt at that subtraction used `emit::is_boxed_string_literal`
+unscoped. It answers "does this node have an `@` child", which is its whole
+job at the one call site that already knows the node is a `string_literal`
+— and is equally true of `@[...]`, `@{...}` and `@42`. So it re-opened the
+`@42` hole the same change was closing and **regressed `@[...]`**, refused
+correctly since the rule existed. Nothing but the "must stay refused"
+fixtures would have caught it, which is the argument for keeping a
+refused-side row for every kind and not only an accepted-side one.
+
+A second hole fell out of enumerating the kinds `is_owning_expr` recognises
+against the arms the bar had: `_arr[i] = @42;` was accepted needing sixteen
+live `OZNumber`s against a slab of five. It had no issue of its own and was
+fixed here, per #582's instruction not to file one issue per spelling.
+
+**Still open, recorded rather than closed:** a C function with only a
+prototype reads as `+0` and is accepted, because `contains_function` cannot
+tell it from one whose returns really are borrowed — `collect`'s
+`from_definition` never reaches `Program`. oz2c merges every `#import` into
+one translation unit, so a function handing back an oz2c object almost
+always has its body visible, and no failing case could be constructed.
+Closing it means threading the set of *defined* C functions onto `Program`.
+This sentence is deliberately not a claim that anyone is on it.
 
 ## A qualifier read as text, forty lines from one read as a node (#488)
 
