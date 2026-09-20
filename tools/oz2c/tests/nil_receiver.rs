@@ -415,3 +415,133 @@ int main(void) {{
     );
     assert_eq!(out.trim(), "n=41");
 }
+
+/// A method returning a **typedef'd** struct: the nil guard's zero cannot
+/// be chosen from the return type's spelling.
+///
+/// `nil_send_return` used to pick between `(T)0` and `(T){0}` by testing
+/// `t.starts_with("struct ")`, on the stated grounds that this tree writes
+/// `struct X` explicitly rather than typedef'ing it. #533's test
+/// disproved that: `typedef struct reading Reading;` and a method
+/// returning `Reading` is neither spelled `struct` nor castable from 0, so
+/// the guard emitted
+///
+///     return (Reading)0;
+///
+/// and clang answered `used type 'Reading' (aka 'struct reading') where
+/// arithmetic or pointer type is required`. oz2c resolves no typedefs, so
+/// no rule keyed on the spelling can tell the cases apart -- the same
+/// "keyed on a form rather than the thing" shape as #351, #352, #359,
+/// #365, #398 and #400.
+///
+/// `(T){0}` needs no rule: valid and zero-initialising for a struct, a
+/// union, a typedef of either, a scalar, an enum, a pointer and `bool`.
+#[test]
+fn a_typedefd_struct_return_gets_a_valid_zero() {
+    let src = format!(
+        "{}
+struct nr_reading {{
+	int temp;
+}};
+
+typedef struct nr_reading NRReading;
+
+@interface Typedefd : OZObject
+- (NRReading)reading;
+@end
+@implementation Typedefd
+- (NRReading)reading
+{{
+	struct nr_reading r = {{ 21 }};
+	return r;
+}}
+@end
+
+#include <stdio.h>
+
+int main(void) {{
+	Typedefd *absent = nil;
+	Typedefd *real = [Typedefd alloc];
+	NRReading a = [real reading];
+	NRReading b = [absent reading];
+	printf(\"real=%d\\n\", a.temp);
+	printf(\"nil=%d\\n\", b.temp);
+	return 0;
+}}
+",
+        PREAMBLE()
+    );
+    /* Compiled and run: the defect was a C type error, so the emitted text
+     * alone proves nothing -- reading `return (Reading)0;` looks fine. */
+    let out = compile_and_run(&src, "nil_receiver_typedefd_struct");
+    assert_eq!(out.trim().lines().collect::<Vec<_>>(), vec!["real=21", "nil=0"]);
+}
+
+/// Every return-type shape a guard can have to zero, in one place.
+///
+/// The matrix exists because the old spelling test passed for four of
+/// these and failed for the fifth, and nothing said which were covered.
+///
+/// **A bare `union u` return is deliberately absent**, and not because it
+/// works: oz2c drops the `union` tag from the prototype and emits
+/// `nr_u Shapes_bareUnion(struct Shapes *self);`, which clang refuses with
+/// `must use 'union' tag to refer to type 'nr_u'`. That is a separate
+/// defect in return-type rendering, independent of the nil guard -- the
+/// prototype is emitted whether or not guards are on -- and it is not
+/// #533's or #528's. A *typedef'd* union is covered below and works,
+/// because a plain name needs no tag.
+#[test]
+fn the_guards_zero_is_valid_for_every_return_shape() {
+    let src = format!(
+        "{}
+struct nr_pair {{
+	int a;
+	int b;
+}};
+union nr_u {{
+	int i;
+	float f;
+}};
+typedef struct nr_pair NRPair;
+typedef union nr_u NRUnion;
+typedef int NRInt;
+enum nr_e {{ NREOne = 1 }};
+
+@interface Shapes : OZObject
+- (struct nr_pair)bareStruct;
+- (NRPair)tdStruct;
+- (NRUnion)tdUnion;
+- (NRInt)tdInt;
+- (enum nr_e)bareEnum;
+- (unsigned char)scalar;
+- (id)object;
+- (void)nothing;
+@end
+@implementation Shapes
+- (struct nr_pair)bareStruct {{ struct nr_pair p = {{ 1, 2 }}; return p; }}
+- (NRPair)tdStruct {{ struct nr_pair p = {{ 4, 5 }}; return p; }}
+- (NRUnion)tdUnion {{ union nr_u u; u.i = 6; return u; }}
+- (NRInt)tdInt {{ return 7; }}
+- (enum nr_e)bareEnum {{ return NREOne; }}
+- (unsigned char)scalar {{ return 8; }}
+- (id)object {{ return self; }}
+- (void)nothing {{ }}
+@end
+
+#include <stdio.h>
+
+int main(void) {{
+	Shapes *n = nil;
+	printf(\"%d %d %d %d %d %d %d\\n\",
+	       [n bareStruct].a, [n tdStruct].a,
+	       [n tdUnion].i, (int)[n tdInt], (int)[n bareEnum],
+	       (int)[n scalar], [n object] == nil);
+	[n nothing];
+	return 0;
+}}
+",
+        PREAMBLE()
+    );
+    let out = compile_and_run(&src, "nil_receiver_zero_shapes");
+    assert_eq!(out.trim(), "0 0 0 0 0 0 1");
+}

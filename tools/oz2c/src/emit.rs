@@ -523,19 +523,29 @@ pub(crate) fn nil_send_return(ret_ty: &str) -> String {
     if t == "void" {
         return "return;".to_string();
     }
-    /* A pointer -- including `id` and every `struct X *` -- takes a cast
-     * from 0, which is the null pointer constant. */
-    if t.ends_with('*') || t == "id" || t == "Class" || t == "SEL" {
-        return format!("return ({})0;", t);
-    }
-    /* A struct or union by value: zero-initialise. Detected on the
-     * spelling because that is what the signature carries, and this tree
-     * writes `struct X` explicitly rather than typedef'ing it. */
-    if t.starts_with("struct ") || t.starts_with("union ") {
-        return format!("return ({}){{0}};", t);
-    }
-    /* Everything else is arithmetic -- integer, floating, enum, `BOOL`. */
-    format!("return ({})0;", t)
+    /* A compound literal, for **every** type, with no analysis of the
+     * spelling.
+     *
+     * This used to pick between `({t})0` and `({t}){{0}}` by testing
+     * `t.starts_with("struct ")`, on the stated grounds that "this tree
+     * writes `struct X` explicitly rather than typedef'ing it". #533's own
+     * test disproved that within the hour: a method returning `Reading`,
+     * a `typedef struct reading Reading`, is neither spelled `struct` nor
+     * castable from 0, and the guard emitted `return (Reading)0;` --
+     * `used type 'Reading' (aka 'struct reading') where arithmetic or
+     * pointer type is required`. oz2c resolves no typedefs, so it cannot
+     * tell which case a bare name is, and any rule keyed on the spelling
+     * has the same hole.
+     *
+     * `(T){0}` needs no such rule: it is valid for a struct, a union, a
+     * typedef of either, a scalar, an enum, a pointer and `bool`, and
+     * zero-initialises each. Verified against
+     * `-std=c17 -pedantic-errors -Wall -Wextra` over all of those, which
+     * is the dialect `corpus_parity.rs` compiles generated C in.
+     *
+     * The one type it cannot serve is `void`, which has no value to
+     * return -- handled above. */
+    format!("return ({}){{0}};", t)
 }
 
 /// The nil-receiver guard for an instance method's prologue, or `None`
@@ -9286,9 +9296,7 @@ pub fn emit(
     let (companion_h, companion_c) = crate::companion::render(
         program,
         &walked.hoisted_structs,
-        &walked.hoisted_enums,
-        &walked.hoisted_forward_decls,
-        &walked.hoisted_c_structs,
+        &walked.hoisted_c_types,
         pools,
         &crate::imports::collect_system_includes(source),
         &walked.introspection_used,
@@ -9335,9 +9343,9 @@ struct TopLevel {
     /// Destined for the shared companion header rather than any one
     /// origin's -- see `companion::render`.
     hoisted_structs: Vec<(String, String)>,
-    hoisted_enums: Vec<String>,
-    hoisted_forward_decls: Vec<String>,
-    hoisted_c_structs: Vec<String>,
+    /// Plain C type declarations hoisted to the companion header, in
+    /// **source order** -- see the consuming block in `companion`.
+    hoisted_c_types: Vec<String>,
     /// Which origin owns each class's declaration.
     class_to_stem: HashMap<String, String>,
     /// See `IntrospectionUse`.
@@ -9540,9 +9548,7 @@ fn walk_top_level<'a>(
     let mut diags: Vec<Diagnostic> = Vec::new();
     let mut introspection_used = IntrospectionUse::default();
     let mut hoisted_structs: Vec<(String, String)> = Vec::new();
-    let mut hoisted_enums: Vec<String> = Vec::new();
-    let mut hoisted_forward_decls: Vec<String> = Vec::new();
-    let mut hoisted_c_structs: Vec<String> = Vec::new();
+    let mut hoisted_c_types: Vec<String> = Vec::new();
 
     let mut stem_order: Vec<String> = Vec::new();
     let mut headers: HashMap<String, Vec<String>> = HashMap::new();
@@ -9812,11 +9818,49 @@ fn walk_top_level<'a>(
                 hoisted_statics_by_stem.entry(stem.clone()).or_default().extend(ctx.hoisted_statics);
                 bodies.entry(stem.clone()).or_default().push(out);
             }
+            /* `typedef enum { ... } E;`, `typedef struct { ... } S;`,
+             * `typedef int I;` -- every typedef, whatever it aliases.
+             *
+             * Hoisted for exactly the reason the two arms below are: the
+             * header a method prototype naming the type actually lands in
+             * is `oz2c_dispatch.h`, unconditionally, whichever origin the
+             * declaration was written in. Without this arm the typedef
+             * reached only its own origin's `.h` while the prototype
+             * naming it went to the companion, so GCC met
+             * `unknown type name 'PXSensorFlags'` on a generated line and
+             * oz2c said nothing (#533).
+             *
+             * It was every typedef and not only the enum the issue
+             * reported -- measured across four shapes, four errors. A
+             * *bare* `enum E { ... }` was already hoisted and compiled
+             * clean, which is what made the report look enum-specific.
+             *
+             * The whole `type_definition` is pushed as one unit, so a
+             * `typedef struct { ... } S;` carries its anonymous struct
+             * with it; this arm claims the node, so the `struct_specifier`
+             * arm below never sees the inner definition and cannot hoist
+             * it a second time. */
+            "type_definition" => {
+                /* Without its trailing `;`, which is the invariant every
+                 * entry in this list holds: the consumer appends exactly
+                 * one. A `struct_specifier` and an `enum_specifier` stop
+                 * before the semicolon in this grammar, so they satisfy it
+                 * for free -- a `type_definition` does *not*, and pushing
+                 * its text verbatim emitted `typedef int Celsius;;`. An
+                 * empty declaration at file scope is not valid ISO C and
+                 * `just test-pedantic` gates on it. */
+                let text = node_text(node, source).trim_end();
+                let text = text.strip_suffix(';').unwrap_or(text);
+                hoisted_c_types.push(text.to_string());
+                headers.entry(stem.clone()).or_default().push(
+                    "/* typedef hoisted to the companion header -- named by generated prototypes there, and by other origins' code */".to_string(),
+                );
+            }
             "enum_specifier" => {
                 let mut c = node.walk();
                 let has_body = node.children(&mut c).any(|ch| ch.kind() == "enumerator_list");
                 if has_body {
-                    hoisted_enums.push(node_text(node, source).to_string());
+                    hoisted_c_types.push(node_text(node, source).to_string());
                     headers.entry(stem.clone()).or_default().push(
                         "/* enum hoisted to the companion header -- needed there before any method prototype references it by value */".to_string(),
                     );
@@ -9833,7 +9877,7 @@ fn walk_top_level<'a>(
                 let mut c = node.walk();
                 let has_body = node.children(&mut c).any(|ch| ch.kind() == "field_declaration_list");
                 if !has_body {
-                    hoisted_forward_decls.push(node_text(node, source).to_string());
+                    hoisted_c_types.push(node_text(node, source).to_string());
                     headers.entry(stem.clone()).or_default().push(
                         "/* forward-declared struct hoisted to the companion header -- needed there before any method prototype references it by pointer */".to_string(),
                     );
@@ -9887,7 +9931,7 @@ fn walk_top_level<'a>(
                             &mut field_edits,
                         );
                     }
-                    hoisted_c_structs.push(apply_edits(
+                    hoisted_c_types.push(apply_edits(
                         source,
                         node.start_byte(),
                         node.end_byte(),
@@ -10216,9 +10260,7 @@ fn walk_top_level<'a>(
         hoisted_strings_by_stem,
         hoisted_statics_by_stem,
         hoisted_structs,
-        hoisted_enums,
-        hoisted_forward_decls,
-        hoisted_c_structs,
+        hoisted_c_types,
         class_to_stem,
         introspection_used,
         diags,
@@ -10251,9 +10293,7 @@ pub fn emit_split(
         hoisted_strings_by_stem,
         hoisted_statics_by_stem,
         hoisted_structs,
-        hoisted_enums,
-        hoisted_forward_decls,
-        hoisted_c_structs,
+        hoisted_c_types,
         class_to_stem,
         introspection_used,
         diags,
@@ -10480,9 +10520,7 @@ pub fn emit_split(
         crate::companion::render(
             program,
             &hoisted_structs,
-            &hoisted_enums,
-            &hoisted_forward_decls,
-            &hoisted_c_structs,
+            &hoisted_c_types,
             pools,
             &crate::imports::collect_system_includes(source),
             &introspection_used,

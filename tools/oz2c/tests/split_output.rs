@@ -454,3 +454,205 @@ fn header_macro_invocation_reaches_other_origins() {
     );
     assert_eq!(stdout, "direct=7 method=7\n");
 }
+
+/// A `typedef` in a header, named by a method signature, reaches the
+/// companion header where that signature's prototype lands (#533).
+///
+/// `oz2c_dispatch.h` declares a prototype for every method of every class
+/// and includes no user header. A `struct` or a bare `enum` written in a
+/// class's own header is hoisted into it for exactly that reason; a
+/// `typedef` was not, so the prototype named a type the file never
+/// defined and GCC answered `unknown type name 'PXSensorFlags'` on a
+/// generated line, with oz2c exiting 0.
+///
+/// It was **every** typedef and not only the enum the issue reported.
+/// Measured across four shapes before the fix: four errors, one each for
+/// `typedef enum`, `typedef struct`, `typedef int` and
+/// `typedef unsigned char`. A *bare* `enum E { ... }` was already hoisted
+/// and compiled clean, which is what made the report look enum-specific.
+#[test]
+fn a_typedef_named_by_a_method_signature_reaches_the_companion_header() {
+    let dir = scratch_dir("typedef_in_signature");
+    fs::create_dir_all(dir.join("include")).unwrap();
+    fs::create_dir_all(dir.join("src")).unwrap();
+    fs::write(
+        dir.join("include/Kinds.h"),
+        "#pragma once\n#import <Foundation/OZObject.h>\n\n\
+         struct bare_struct { int a; };\n\
+         enum bare_enum { BareOne = 1 };\n\
+         typedef enum { TdEnumOne = 1 } TdEnum;\n\
+         typedef struct { int b; } TdStruct;\n\
+         typedef int TdInt;\n\
+         typedef unsigned char TdByte;\n\n\
+         @interface Kinds : OZObject\n\
+         - (int)useBareStruct:(struct bare_struct)v;\n\
+         - (int)useBareEnum:(enum bare_enum)v;\n\
+         - (int)useTdEnum:(TdEnum)v;\n\
+         - (int)useTdStruct:(TdStruct)v;\n\
+         - (int)useTdInt:(TdInt)v;\n\
+         - (int)useTdByte:(TdByte)v;\n\
+         @end\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("src/Kinds.m"),
+        "#import \"Kinds.h\"\n\n@implementation Kinds\n\
+         - (int)useBareStruct:(struct bare_struct)v { return v.a; }\n\
+         - (int)useBareEnum:(enum bare_enum)v { return (int)v; }\n\
+         - (int)useTdEnum:(TdEnum)v { return (int)v; }\n\
+         - (int)useTdStruct:(TdStruct)v { return v.b; }\n\
+         - (int)useTdInt:(TdInt)v { return v; }\n\
+         - (int)useTdByte:(TdByte)v { return (int)v; }\n\
+         @end\n",
+    )
+    .unwrap();
+    /* `main` is a second origin on purpose: the point is that the *shared*
+     * header carries the type, not that the declaring origin's own `.h`
+     * happens to. */
+    fs::write(
+        dir.join("main.m"),
+        "#import \"Kinds.h\"\n\n#include <stdio.h>\n\
+         int main(void) {\n\tKinds *k = [Kinds alloc];\n\
+         \tstruct bare_struct bs = { 1 };\n\
+         \tTdStruct ts = { 4 };\n\
+         \tprintf(\"sum=%d\\n\",\n\
+         \t       [k useBareStruct:bs] + [k useBareEnum:BareOne]\n\
+         \t       + [k useTdEnum:TdEnumOne] + [k useTdStruct:ts]\n\
+         \t       + [k useTdInt:8] + [k useTdByte:16]);\n\
+         \treturn 0;\n}\n",
+    )
+    .unwrap();
+
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let include_dirs = vec![repo_root.join("include/oz_sdk"), dir.join("include")];
+    let impl_dirs = vec![repo_root.join("src"), dir.join("src")];
+    let source = fs::read_to_string(dir.join("main.m")).unwrap();
+    let resolved = resolve_imports(&source, &dir, &include_dirs, &impl_dirs, "main")
+        .unwrap_or_else(|e| panic!("resolve failed: {}", e));
+    let out = oz2c::transpile_split_with_options(
+        &resolved.text,
+        &resolved.origins,
+        &oz2c::Options { header_ranges: resolved.header_ranges.clone(), ..Default::default() },
+    )
+    .unwrap_or_else(|diags| {
+        panic!(
+            "transpile_split failed:\n{}",
+            diags.iter().map(|d| d.to_string()).collect::<Vec<_>>().join("\n")
+        )
+    });
+
+    /* Every one of the six, in the file the prototypes live in. The two
+     * bare shapes were already there; the four typedefs are #533. */
+    for needle in [
+        "struct bare_struct",
+        "enum bare_enum",
+        "} TdEnum",
+        "} TdStruct",
+        "typedef int TdInt",
+        "typedef unsigned char TdByte",
+    ] {
+        assert!(
+            out.companion_h.contains(needle),
+            "`{}` should be hoisted into the companion header:\n{}",
+            needle,
+            out.companion_h
+        );
+    }
+    /* And no `;;`: a `type_definition` carries its own semicolon where a
+     * specifier node does not, so pushing its text verbatim emitted
+     * `typedef int TdInt;;` -- an empty declaration at file scope, which
+     * is not valid ISO C and which `just test-pedantic` gates on. */
+    assert!(!out.companion_h.contains(";;"), "no doubled semicolon:\n{}", out.companion_h);
+
+    /* Compiled and linked across both origins, which is the claim: reading
+     * the header would not have caught the ordering case below. */
+    let ran = compile_link_run(
+        &dir.join("out"),
+        &out.files,
+        &out.companion_h,
+        &out.companion_c,
+    );
+    assert_eq!(ran.trim(), "sum=31");
+}
+
+/// Source order is preserved across every hoisted kind, because a
+/// `typedef` can name a struct *or* be named by one (#533).
+///
+/// This was broken before the fix and independently of it: the hoisted
+/// declarations lived in three lists keyed on kind -- forward declares,
+/// then enums, then structs and unions -- so a `typedef` the struct
+/// depended on could not be placed. `typedef int Celsius;` followed by
+/// `struct reading { Celsius temp; };` emitted the struct with `Celsius`
+/// nowhere above it: two errors, one of them *inside* the hoisted struct.
+///
+/// The old ordering rested on a sound argument for two kinds -- "a hoisted
+/// struct can have an enum field by value ... nothing runs the other way:
+/// an enum cannot contain a struct" -- and a typedef is the counterexample
+/// that made a third list unorderable. One list in source order needs no
+/// analysis: C required the author to write a working order already.
+#[test]
+fn hoisted_c_types_keep_source_order_so_a_typedef_can_precede_its_user() {
+    let dir = scratch_dir("hoist_source_order");
+    fs::create_dir_all(dir.join("include")).unwrap();
+    fs::create_dir_all(dir.join("src")).unwrap();
+    fs::write(
+        dir.join("include/Ord.h"),
+        "#pragma once\n#import <Foundation/OZObject.h>\n\n\
+         typedef int Celsius;\n\n\
+         struct reading { Celsius temp; };\n\n\
+         typedef struct reading Reading;\n\n\
+         @interface Ord : OZObject\n\
+         - (struct reading)read;\n\
+         - (Celsius)temp;\n\
+         - (Reading)again;\n\
+         @end\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("src/Ord.m"),
+        "#import \"Ord.h\"\n\n@implementation Ord\n\
+         - (struct reading)read { struct reading r = { 21 }; return r; }\n\
+         - (Celsius)temp { return 21; }\n\
+         - (Reading)again { struct reading r = { 21 }; return r; }\n\
+         @end\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("main.m"),
+        "#import \"Ord.h\"\n\n#include <stdio.h>\n\
+         int main(void) {\n\tOrd *o = [Ord alloc];\n\
+         \tprintf(\"t=%d\\n\", (int)[o temp] + [o read].temp + [o again].temp);\n\
+         \treturn 0;\n}\n",
+    )
+    .unwrap();
+
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let include_dirs = vec![repo_root.join("include/oz_sdk"), dir.join("include")];
+    let impl_dirs = vec![repo_root.join("src"), dir.join("src")];
+    let source = fs::read_to_string(dir.join("main.m")).unwrap();
+    let resolved = resolve_imports(&source, &dir, &include_dirs, &impl_dirs, "main")
+        .unwrap_or_else(|e| panic!("resolve failed: {}", e));
+    let out = oz2c::transpile_split_with_options(
+        &resolved.text,
+        &resolved.origins,
+        &oz2c::Options { header_ranges: resolved.header_ranges.clone(), ..Default::default() },
+    )
+    .unwrap_or_else(|diags| {
+        panic!(
+            "transpile_split failed:\n{}",
+            diags.iter().map(|d| d.to_string()).collect::<Vec<_>>().join("\n")
+        )
+    });
+
+    /* The order, asserted directly: a dependency must precede its user,
+     * and `Reading` must follow the struct it names. Compiling alone would
+     * catch this, but the positions say *why* it compiles. */
+    let celsius = out.companion_h.find("typedef int Celsius").expect("Celsius hoisted");
+    let reading = out.companion_h.find("struct reading {").expect("struct reading hoisted");
+    let alias = out.companion_h.find("typedef struct reading Reading").expect("Reading hoisted");
+    assert!(celsius < reading, "the typedef must precede the struct using it:\n{}", out.companion_h);
+    assert!(reading < alias, "the struct must precede the typedef naming it:\n{}", out.companion_h);
+
+    let ran = compile_link_run(&dir.join("out"), &out.files, &out.companion_h, &out.companion_c);
+    assert_eq!(ran.trim(), "t=63");
+}

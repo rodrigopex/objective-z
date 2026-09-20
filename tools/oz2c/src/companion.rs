@@ -1474,9 +1474,7 @@ and is not counted here (not from source) */\n",
 pub fn render(
     program: &Program,
     hoisted_structs: &[(String, String)],
-    hoisted_enums: &[String],
-    hoisted_forward_decls: &[String],
-    hoisted_c_structs: &[String],
+    hoisted_c_types: &[String],
     pools: &crate::pools::PoolSizes,
     system_includes: &[String],
     introspection_used: &crate::emit::IntrospectionUse,
@@ -1694,34 +1692,39 @@ via the PAL. */\nextern oz_mem_blocks_t oz_item_pool;\n\n",
         );
     }
 
-    if !hoisted_forward_decls.is_empty() {
-        h.push_str("/* forward-declared structs (no body in source), hoisted here so a\n * method prototype below referencing one as a pointer type still compiles */\n");
-        for d in hoisted_forward_decls {
-            h.push_str(d);
-            h.push_str(";\n");
-        }
-        h.push('\n');
-    }
-
-    if !hoisted_enums.is_empty() {
-        h.push_str("/* enum definitions, hoisted here from source so they're complete\n * before any method prototype below references one by value */\n");
-        for e in hoisted_enums {
-            h.push_str(e);
-            h.push_str(";\n");
-        }
-        h.push('\n');
-    }
-
-    // After the enums, not before: a hoisted struct can have an enum field
-    // by value, and then needs that enum complete first --
+    // One list in **source order**, where this used to be three keyed on
+    // kind: forward declares, then enums, then structs and unions.
+    //
+    // Three lists could not be ordered correctly once `typedef` joined
+    // them (#533). The old arrangement rested on a real argument -- "a
+    // hoisted struct can have an enum field by value, and then needs that
+    // enum complete first ... nothing runs the other way: an enum cannot
+    // contain a struct", with
     // `tests/behavior/cases/regression/issue_090_header_preservation.m`
-    // has exactly that ("field has incomplete type 'enum sensor_state'").
-    // Nothing runs the other way: an enum cannot contain a struct.
-    if !hoisted_c_structs.is_empty() {
+    // behind it. That holds for exactly two kinds. A typedef runs **both**
+    // ways:
+    //
+    //     typedef int Celsius;
+    //     struct reading { Celsius temp; };      /* typedef first */
+    //
+    //     struct px_range { int lo, hi; };
+    //     typedef struct px_range Range;         /* struct first */
+    //
+    // so no fixed order over kinds can serve both, and picking one leaves
+    // the other emitting a type before its dependency. Measured before the
+    // change: the first shape produced `unknown type name 'Celsius'`
+    // *inside* the hoisted struct.
+    //
+    // Source order is the answer and needs no analysis: C required the
+    // author to write these in a working order already, and the top-level
+    // walk visits them in that order, so appending to one list preserves
+    // it. It also still satisfies the enum-before-struct case, because the
+    // author had to write the enum first for their own file to compile.
+    if !hoisted_c_types.is_empty() {
         h.push_str(
-            "/* plain C struct and union definitions, hoisted here from source so\n * the type is complete before any method prototype below returns or\n * takes one, and in every generated file rather than only the one it\n * was written in. Source order is kept: one may contain the other. */\n",
+            "/* plain C type declarations hoisted here from source -- enums, structs,\n * unions, forward declares and typedefs -- so each is complete before\n * any method prototype below names it, and in every generated file\n * rather than only the one it was written in.\n *\n * Source order is preserved across all of them: a typedef may name a\n * struct or be named by one, so no ordering keyed on the kind works. */\n",
         );
-        for d in hoisted_c_structs {
+        for d in hoisted_c_types {
             h.push_str(d);
             h.push_str(";\n");
         }
