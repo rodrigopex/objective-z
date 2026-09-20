@@ -3887,6 +3887,42 @@ catches it" would have credited a backstop that never sees the file.
   because the same harness, given an upcast return, *does* report a
   difference -- a sweep that cannot see the change it is measuring reports
   agreement about nothing (#424, #433).
+- **The generated output parses as C, and that is checked on every transpile
+  (#582).** `staticbar` asks whether the input is in the subset;
+  `outputbar` asks whether the output is C, and the two are not the same
+  claim. `emit::walk_top_level` has a named arm per construct it knows and
+  copies everything else through as the author's bytes -- which is the
+  product, since that passthrough is what carries `ZBUS_CHAN_DECLARE`,
+  `K_TIMER_DEFINE` and an unexpanded `#define` through intact. It is also
+  how an unnamed Objective-C construct reaches GCC as `stray '@' in
+  program`, in a file the author never saw, with oz2c exiting 0.
+
+  Three properties to preserve, each learned by getting it wrong first:
+
+  - **Reparse, do not grep.** Every generated class carries a banner
+    comment holding its original declaration, so `@interface` appears in
+    all 30 output files of every program. The parser calls that a
+    `comment`. A textual scan is a false positive generator, and the same
+    argument covers a `@` inside a string literal.
+  - **Speak only when oz2c believed it succeeded.** `emit` copies a
+    construct through whether or not `staticbar` refused it, so
+    already-refused source reaches the check too. Running it there hands
+    the author an "internal, please file an issue" beside the correct
+    refusal of the same `@try`. `emitter_agreement.rs` is what caught
+    that: the split emitter labels a finding per origin file and the
+    single-file one cannot, so the two refused *differently*.
+  - **It is a hard error, not a test.** The corpora do not contain these
+    shapes -- that is exactly why the property went ungated for so long --
+    so a test over them asserts nothing about the next keyword. A
+    build-time refusal reaches every consumer, and it cannot reject a
+    program that worked: every shape it catches is one the C compiler was
+    already going to refuse. It costs ~5ms per source, about 15% of
+    oz2c's own runtime, which is noise against the compile that follows.
+
+  The companion record is `objc_node_disposition.rs`, which classifies all
+  191 named kinds of the grammar and pins the count, so a `tree-sitter-objc`
+  upgrade cannot quietly add a kind that nobody dispositioned. "Unknown" is
+  not a third option beside lowered and refused.
 - **A preprocessor conditional around Objective-C is oz2c's decision, settled
   before any C is emitted (#570, #573).** oz2c runs ahead of Clang and its
   parser reads the raw file, not the preprocessed translation unit, so both
@@ -4823,6 +4859,57 @@ this implemented":
 | **refused** | `@encode`, `@throw`, `@available`, `@defs`, handler-less `@try` | no meaning in this backend to lower to |
 | **supported** | `@class` | not an operation |
 | **delegated** | `@import` | a front-end feature; Clang is the right gate |
+
+#### The delegated row is gone, and per-keyword was the wrong unit (#582)
+
+**The `@import` bullet and the `delegated` row above are superseded.** The
+reasoning was sound wherever Clang runs, and Clang does refuse it --
+`error: use of '@import' when modules are disabled`. It does not always
+run: `lib::check_ast_present` returns early when
+`program.classes.is_empty()`, so a source declaring no class needs no
+dump, and `--allow-missing-ast` skips the requirement outright. In both
+cases `@import` rode the passthrough into generated C. Delegation to a
+step that can be skipped is not delegation; it is a gap with a citation.
+M68's grade is oz2c's to answer now.
+
+The larger correction is to the heading. "The answer is per keyword" was
+true of each answer and wrong about the *unit of work*: it licensed one
+issue per `@`-keyword, and #563, #573 and #574 each arrived that way.
+`outputbar.rs` replaces that with a property -- **the generated output
+parses as C** -- checked on every transpile. It found three more the
+moment it existed, one of which (`@protocol Foo;`) #582 had predicted in
+so many words and nobody had filed.
+
+The surface is therefore four-way, and the fourth row is the one that
+matters:
+
+| | constructs | why |
+|---|---|---|
+| **refused** | `@encode`, `@throw`, `@available`, `@defs` (both spellings), handler-less `@try`, `@dynamic`, `@import` | no meaning in this backend to lower to |
+| **supported** | `@class`, `@protocol Foo;`, `@synthesize` | not an operation, or exactly what this backend does |
+| **gated** | every other ObjC node kind the grammar defines | `objc_node_disposition.rs` classifies all 191 named kinds against the grammar's own count, so a `tree-sitter-objc` bump cannot add an unclassified one |
+| ~~delegated~~ | — | withdrawn: a gate that `--allow-missing-ast` skips is not a gate |
+
+Two things worth carrying forward, both about how the defects were found
+rather than what they were.
+
+**`@dynamic`'s argument was already written here, and the code did the
+opposite.** Further up this document: "`@dynamic`, the other half of
+Clang's advice, promises the accessor arrives at runtime, and nothing here
+has a runtime." That is the whole case for refusing it. What the code did
+was comment the directive out and synthesize the accessors anyway, under a
+comment claiming it had been handled -- so the program ran and returned
+the synthesized value. This is the #398/#400 shape at documentation scale:
+the correct rule stated a few pages away from an implementation that
+contradicts it, with nothing forcing them to meet.
+
+**A refusal keyed on one spelling is a refusal of one spelling.** `@defs`
+was refused through `at_expression`, and the comment on `is_defs_shape`
+asserted the grammar "has no `@defs` rule at all". It has `atdef_field`
+too, for the struct-field position -- which is `@defs`'s *idiomatic* one,
+so the rare spelling was caught and the normal one was copied into
+generated C. A claim that a construct has exactly one node kind is a claim
+about the grammar and needs a dump behind it.
 
 ### Two of the five overrule a `CLANG` grade, deliberately
 

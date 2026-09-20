@@ -239,7 +239,23 @@ from an AST, which is why unexpanded macros survive into the output.
   `Options::default()`, so the pure `transpile(source)` form still works on a string
   with no file behind it
 - **`pools.rs`** — slab and element-pool sizing, counted from allocation sites
-- **`staticbar.rs`** — accept/reject scan for the static subset
+- **`staticbar.rs`** — accept/reject scan for the static subset, on the **input**
+- **`outputbar.rs`** — the dual, on the **output**: the generated `.h`/`.c` parse as C,
+  checked on every transpile and a hard error. `emit`'s catch-all copies any construct
+  it has no arm for through as the author's bytes — which is what carries Zephyr macros
+  and unexpanded `#define`s intact, and also how an unnamed ObjC construct reached GCC
+  as `stray '@' in program` with oz2c exiting 0. It reparses rather than grepping
+  (every class's banner comment holds its own `@interface`), and stays silent when
+  something was already refused. `tests/objc_node_disposition.rs` is the record: all
+  191 named grammar kinds classified, count pinned, so a `tree-sitter-objc` bump cannot
+  add an unclassified one (#582)
+- **`preproc.rs`** — which arm of a `#if`/`#ifdef` is part of the program. oz2c parses
+  the raw file, not the preprocessed translation unit, so both arms used to reach every
+  pass: a nested `@interface` was copied through unlowered (#573) and checks fired on
+  `#if 0` text (#570). The verdicts ride on `Program::preproc` so collect and emit
+  cannot answer differently. A conditional around ObjC is resolved at transpile time —
+  a class becomes a struct, a dispatch row and a slab, and there is no way to hand GCC
+  half a dispatch table — while one carrying only C is passed through untouched
 - **`imports.rs`** — `#import` resolution and per-origin provenance, plus the merged-offset
   → (`.m`/`.h`, line) source map the `#line` directives are resolved through
   (`ResolvedSource::source_location`/`source_position`, #305)
@@ -270,6 +286,12 @@ Three standing design rules, easy to violate with good intentions:
 
 - **It never silently degrades.** Anything outside the supported subset is a hard, *located*
   error. That is deliberate — do not add a soft-diagnostic or best-effort mode.
+  Since #582 this is **enforced on the output too**, not just intended on the input:
+  every ObjC node kind is lowered or refused, never merely unnamed, and `outputbar`
+  refuses generated text that still parses as Objective-C. The rule exists because the
+  alternative kept happening — #563, #573 and #574 were each one `@`-keyword arriving
+  at GCC as `stray '@'`, filed one issue at a time. Do not add a keyword to the
+  passthrough; give it an arm or a refusal.
 - **ARC is the only ownership model.** A send of `retain`, `release`, `autorelease`,
   `dealloc` or `retainCount` is a hard located error, and so is declaring or defining
   any of them but `dealloc` (`staticbar::check_manual_memory_sends`, #428 and #436) —
