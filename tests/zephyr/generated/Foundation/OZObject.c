@@ -52,7 +52,7 @@ struct OZObject * OZObject_alloc_cls(void)
 struct OZObject * OZObject_init(struct OZObject *self)
 {
 	if (!self) {
-		return (struct OZObject *)0;
+		return (struct OZObject *){0};
 	}
 	return self;
 }
@@ -69,7 +69,7 @@ void OZObject_dealloc(struct OZObject *self)
 BOOL OZObject_isEqual_(struct OZObject *self, void * anObject)
 {
 	if (!self) {
-		return (BOOL)0;
+		return (BOOL){0};
 	}
 	return self == anObject;
 }
@@ -78,7 +78,7 @@ BOOL OZObject_isEqual_(struct OZObject *self, void * anObject)
 int OZObject_getDescription_maxLength_(struct OZObject *self, char* buf, size_t maxLen)
 {
 	if (!self) {
-		return (int)0;
+		return (int){0};
 	}
 	/* #if OZ_DEFAULT_DESCRIPTION return _oz_write_default_description(oz_class_name(self), (unsigned long)self, buf, maxLen); #else (void)buf; (void)maxLen; return 0; #endif */
 	#if OZ_DEFAULT_DESCRIPTION

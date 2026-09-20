@@ -67,6 +67,7 @@ typedef bool BOOL;
  * one includes -- forward-declared so the tag is file-scoped rather than
  * scoped to a parameter list */
 struct oz_metadata;
+struct or;
 
 #include "platform/oz_platform.h"
 #include <stdlib.h>
@@ -98,6 +99,15 @@ typedef const struct oz_selector *SEL;
 /* OZLog -- formatted logging with %@ object support; defined in src/OZLog.c */
 void OZLog(const char *fmt, ...);
 int oz_log_precision(void);
+
+/* plain C type declarations hoisted here from source -- enums, structs,
+ * unions, forward declares and typedefs -- so each is complete before
+ * any method prototype below names it, and in every generated file
+ * rather than only the one it was written in.
+ *
+ * Source order is preserved across all of them: a typedef may name a
+ * struct or be named by one, so no ordering keyed on the kind works. */
+typedef bool BOOL;
 
 /* -- OZObject (id 0, root) -- */
 #define OZ_CLASS_OZObject 0

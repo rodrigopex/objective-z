@@ -57,7 +57,7 @@ void LightSwitch_oz_free(struct LightSwitch *obj)
 int LightSwitch_toggle(struct LightSwitch *self)
 {
 	if (!self) {
-		return (int)0;
+		return (int){0};
 	}
 	/* _state = !_state; */
 	self->_state = !self->_state;
@@ -118,7 +118,7 @@ void Fan_oz_free(struct Fan *obj)
 int Fan_toggle(struct Fan *self)
 {
 	if (!self) {
-		return (int)0;
+		return (int){0};
 	}
 	/* _running = !_running; */
 	self->_running = !self->_running;

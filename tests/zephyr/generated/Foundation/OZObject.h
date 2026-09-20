@@ -33,7 +33,7 @@
 /** @brief A Boolean value.
   * @ingroup objc
   */
-typedef bool BOOL;
+/* typedef hoisted to the companion header -- named by generated prototypes there, and by other origins' code */
 /** @brief The Boolean value `true`.
   * @ingroup objc
   */

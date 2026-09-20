@@ -55,7 +55,7 @@ void Level1_oz_free(struct Level1 *obj)
 int Level1_depth(struct Level1 *self)
 {
 	if (!self) {
-		return (int)0;
+		return (int){0};
 	}
 	return 1; }
 
@@ -112,7 +112,7 @@ void Level2_oz_free(struct Level2 *obj)
 int Level2_depth(struct Level2 *self)
 {
 	if (!self) {
-		return (int)0;
+		return (int){0};
 	}
 	return 2; }
 
@@ -169,7 +169,7 @@ void Level3_oz_free(struct Level3 *obj)
 int Level3_depth(struct Level3 *self)
 {
 	if (!self) {
-		return (int)0;
+		return (int){0};
 	}
 	return 3; }
 
@@ -226,7 +226,7 @@ void Level4_oz_free(struct Level4 *obj)
 int Level4_depth(struct Level4 *self)
 {
 	if (!self) {
-		return (int)0;
+		return (int){0};
 	}
 	return 4; }
 
