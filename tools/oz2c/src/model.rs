@@ -349,6 +349,13 @@ pub struct Program {
     /// `SEL`, `-respondsToSelector:` and the `-performSelector:` family
     /// are available. An option, not a fact about the source.
     pub reflection: bool,
+    /// `--no-nil-safe-sends` (`CONFIG_OBJZ_NIL_SAFE_SENDS=n`): emit no
+    /// nil-receiver guard. An option, not a fact about the source.
+    ///
+    /// Named for the unsafe state so `Default` gives the guarded
+    /// behaviour -- see `Options::nil_sends_unchecked` for why this one
+    /// flag is negative where its siblings are positive.
+    pub nil_sends_unchecked: bool,
     /// Selectors named by a `@selector(...)` anywhere in the source.
     ///
     /// Unlike the introspection facts -- which `emit` accumulates as it

@@ -160,6 +160,16 @@ function(objz_transpile_sources_static target)
     if(CONFIG_OBJZ_REFLECTION)
         list(APPEND _oz2c_flags --reflection)
     endif()
+    # CONFIG_OBJZ_NIL_SAFE_SENDS gives a send to nil the language's
+    # behaviour instead of a null dereference (#528). **Passed when the
+    # option is `n`**, which is the opposite of every flag above: those add
+    # a feature when their option is `y`, and absence is what `n` means.
+    # Here absence would mean an unguarded receiver, so the guards are
+    # oz2c's default and this flag removes them -- the fail-safe direction
+    # is opposite, so the flag's polarity is too.
+    if(NOT CONFIG_OBJZ_NIL_SAFE_SENDS)
+        list(APPEND _oz2c_flags --no-nil-safe-sends)
+    endif()
     # CONFIG_OBJZ_DEBUG_LINES puts #line directives on the generated C, so
     # gdb, addr2line, a fatal-error backtrace and coverage all name the .m
     # the code was written in instead of oz2c_generated/<Class>.c

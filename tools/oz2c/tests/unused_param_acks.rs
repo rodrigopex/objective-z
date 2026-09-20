@@ -50,13 +50,53 @@ fn transpiled() -> String {
     oz2c::transpile(&src).expect("should transpile").source_c
 }
 
+/// The same program with the nil-receiver guards off
+/// (`CONFIG_OBJZ_NIL_SAFE_SENDS=n`), which is the configuration where
+/// `self` really is unmentioned and the acknowledgement has to appear.
+fn transpiled_unguarded() -> String {
+    let src = format!("{}{}", PREAMBLE(), DECLS);
+    let options = oz2c::Options { nil_sends_unchecked: true, ..Default::default() };
+    oz2c::transpile_with_options(&src, &options).expect("should transpile").source_c
+}
+
+/// Whether `body` uses `self` at all -- by the guard, by an
+/// acknowledgement, or in real code. That is the property `-Wunused-parameter`
+/// actually cares about; which construct satisfies it is an implementation
+/// detail, and #528 changed the answer.
+fn mentions_self(body: &str) -> bool {
+    body.contains("(void)self;") || body.contains("if (!self)")
+}
+
 /// An empty `-dealloc` is idiomatic Objective-C, so the warning fired on
 /// entirely correct code. This is the bulk of the 58.
+///
+/// **What satisfies it changed in #528.** The nil-receiver guard
+/// (`if (!self) { return; }`) uses `self`, so there is nothing left to
+/// acknowledge and `(void)self;` is suppressed -- the parameter is used,
+/// which is what stops the warning. This test used to assert the literal
+/// `(void)self;` and now asserts the property, with the guards-off
+/// configuration covering the case where the ack is still the only thing
+/// that can do the job.
 #[test]
-fn empty_dealloc_acknowledges_self() {
+fn empty_dealloc_does_not_leave_self_unmentioned() {
     let out = transpiled();
     let body = body_of(&out, "void Foo_dealloc(struct Foo *self)");
-    assert!(body.contains("(void)self;"), "expected an ack for self; got:\n{}", body);
+    assert!(mentions_self(body), "self must be used or acked; got:\n{}", body);
+}
+
+/// With the guards off there is no other user of `self`, so the
+/// acknowledgement itself has to be there -- the #229 property in the
+/// configuration that still needs it.
+#[test]
+fn empty_dealloc_acknowledges_self_when_unguarded() {
+    let out = transpiled_unguarded();
+    let body = body_of(&out, "void Foo_dealloc(struct Foo *self)");
+    assert!(
+        body.contains("(void)self;"),
+        "with --no-nil-safe-sends nothing else uses self, so the ack is required; got:\n{}",
+        body
+    );
+    assert!(!body.contains("if (!self)"), "no guard expected when unchecked:\n{}", body);
 }
 
 /// Only the parameters the body does not mention. `a` is used, `b` is not.
@@ -66,7 +106,7 @@ fn only_unmentioned_parameters_are_acknowledged() {
     let body = body_of(&out, "int Foo_useSome_other_(struct Foo *self, int a, int b)");
     assert!(body.contains("(void)b;"), "expected an ack for b; got:\n{}", body);
     assert!(!body.contains("(void)a;"), "`a` is used; must not be acked:\n{}", body);
-    assert!(body.contains("(void)self;"), "self is unused here; got:\n{}", body);
+    assert!(mentions_self(body), "self must be used or acked here; got:\n{}", body);
 }
 
 /// Nothing at all when every parameter is used.

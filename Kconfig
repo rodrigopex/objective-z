@@ -60,6 +60,37 @@ config OBJZ_INTROSPECTION
 	  certification discipline. Both selectors then become located
 	  transpile errors naming this option, never silently unavailable.
 
+config OBJZ_NIL_SAFE_SENDS
+	bool "Nil-safe message sends"
+	default y
+	help
+	  Give Objective-C's nil-receiver rule its behaviour: a message
+	  sent to nil is a no-op answering 0 / nil / a zeroed struct,
+	  rather than a dereference of a null receiver.
+
+	  Without this a send lowers to a direct call with self == NULL
+	  and the method body reads self->_field. On mps2/an385 address 0
+	  is flash, so that returns a plausible number and drifts between
+	  builds; on a part that traps a null read it faults instead. It
+	  is how a second singleton's +initialize read 20385 where the
+	  value was 80.
+
+	  Two guards implement it, and both are needed. Each instance
+	  method tests its receiver on entry, which covers a direct call.
+	  Each OZ_PROTOCOL_SEND_* dispatcher tests it before switching on
+	  the class id, because that read happens before any method body
+	  is reached. A class method needs neither: it is emitted as
+	  Foo_bar_cls(void) with no receiver at all.
+
+	  Cost, measured across 17 configurations on mps2/an385: .text
+	  +832 bytes (+0.22%), data and bss unchanged. Most of it is
+	  optimised or linked away -- 65 guards are emitted for a minimal
+	  two-class program and only the reachable ones survive.
+
+	  Say n only to buy those bytes back, and expect [[Foo
+	  sharedInstance] bar] to fault when the singleton is not up yet.
+	  The idiom depends on this rule.
+
 config OBJZ_REFLECTION
 	bool "Selectors (@selector, SEL, -respondsToSelector:, -performSelector:)"
 	default y
