@@ -565,6 +565,56 @@ impl LoopEscape {
 /// `class_method_callee` is. An unresolvable receiver now yields "an
 /// allocation" rather than a fabricated class name, which is a better
 /// diagnostic as well as a resolvable input.
+/// Does evaluating `node` once add a live object to a slab?
+///
+/// **Not the same question as "is this `+1`?"**, and the difference is one
+/// case that matters: `arc::is_owning_expr` counts a boxed `@"..."` string
+/// as owning -- deliberately, since "releasing it is a guarded no-op ...
+/// counting it as owning keeps the rule uniform and costs nothing" -- but
+/// an immortal literal is a static and occupies **no slab slot**. Measured:
+/// `_arr[i] = @"static";` across a 16-iteration loop emits no
+/// `oz_slab_OZString` at all. The loop bar is about slab pressure, so it
+/// has to subtract that case or it newly refuses working code.
+///
+/// A `+1` whose reference the enclosing send consumes is not a second live
+/// object either -- `[[Thing alloc] init]` is one allocation, not two --
+/// which is what `is_owning_receiver_of_owning_send` removes.
+fn consumes_a_slab_slot(node: Node, src: &str, program: &Program) -> bool {
+    /* The immortal case, and **scoped to the node kind on purpose**.
+     * `emit::is_boxed_string_literal` answers "does this node have an `@`
+     * child", which is its whole job at the one call site that already
+     * knows the node is a `string_literal` -- and is also true of
+     * `@[...]`, `@{...}` and `@42`. Testing it unscoped silently excluded
+     * three allocating kinds: it re-opened the `@42` hole this change
+     * exists to close and *regressed* `@[...]`, which the bar had refused
+     * correctly for as long as the rule existed. Caught only because the
+     * fixture list asserts the already-refused shapes stay refused. */
+    let immortal = node.kind() == "string_literal" && crate::emit::is_boxed_string_literal(node);
+
+    crate::arc::is_owning_expr(node, src, program, &program.owning_methods)
+        && !immortal
+        && !is_owning_receiver_of_owning_send(node, src, program)
+}
+
+/// How to name the thing in the diagnostic.
+///
+/// The collection literals get their own wording because "an allocation of
+/// 'OZArray'" is true and unhelpful -- the author wrote `@[...]` and that
+/// is what they should be shown. Everything else goes through
+/// `allocation_of`, which names the stored class when it can resolve one.
+fn owning_expr_description(
+    node: Node,
+    src: &str,
+    program: &Program,
+    scope: &MethodScope,
+) -> String {
+    match node.kind() {
+        "array_literal" => "a boxed array literal".to_string(),
+        "dictionary_literal" => "a boxed dictionary literal".to_string(),
+        _ => allocation_of(node, src, program, scope),
+    }
+}
+
 fn allocation_of(node: Node, src: &str, program: &Program, scope: &MethodScope) -> String {
     match stored_class(node, src, program, scope) {
         Some(class) => format!("an allocation of '{}'", class),
@@ -737,6 +787,27 @@ fn stored_class(
             let a = stored_class(*then, src, program, scope)?;
             let b = stored_class(*otherwise, src, program, scope)?;
             return if a == b { Some(a) } else { None };
+        }
+        /* A `+1` C factory. Its class comes from the function's declared
+         * return type, which `collect::function_return_types` already
+         * records in the C spelling `class_named_by` reads (#355) -- so
+         * `static Thing *make_thing(void)` resolves to `Thing` and the
+         * refusal can name the slab to raise.
+         *
+         * Without this the message degraded to the bare "an allocation",
+         * which is what `PoolAdvice::ClassUnresolved` exists for and is
+         * still the answer when the return type is `id`: a function
+         * handing back an untyped pointer names no slab, and guessing one
+         * would be worse than saying so. */
+        "call_expression" => {
+            let mut cursor = value.walk();
+            let callee = value.children(&mut cursor).next()?;
+            if callee.kind() != "identifier" {
+                return None;
+            }
+            let name = &src[callee.byte_range()];
+            let ret = program.function_return_types.get(name)?;
+            return class_named_by(ret, program);
         }
         "message_expression" => {}
         _ => return None,
@@ -1105,6 +1176,34 @@ fn walk_for_reject(
     fresh_decl: bool,
     diags: &mut Vec<Diagnostic>,
 ) {
+    /* One question, asked of every node, ahead of the per-kind arms
+     * below: does evaluating this expression once per iteration add a live
+     * object the iteration does not release? (#584)
+     *
+     * It used to be asked in a per-kind arm, and **only some kinds had
+     * one**: `message_expression` and the two collection literals did,
+     * while a `+1` C factory call and a boxed number did not -- so
+     * `_arr[i] = [Thing new];` in a loop was refused and
+     * `_arr[i] = make_thing();` was accepted, and the accepted one yielded
+     * `live=1 of 4` at run time off a one-slot slab. `_arr[i] = @42;` was
+     * accepted needing 16 slots against a slab of 5.
+     *
+     * The provenance was never the missing part. `arc::is_owning_expr`
+     * already has a `call_expression` arm consulting
+     * `OwningMethods::contains_function`, which exists because
+     * `samples/arc_demo`'s `createSensor` MPU-faulted for this reason.
+     * The bar simply did not consult it -- the #398/#400 shape, where the
+     * correct rule sits a few lines from a check that never reaches it.
+     *
+     * So it is one predicate rather than four copies of one, and a kind
+     * `is_owning_expr` learns about later is policed without anyone
+     * remembering to add an arm. */
+    if in_loop && consumes_a_slab_slot(node, src, program) {
+        if let Some(escape) = loop_escape(node, src, program, scope) {
+            err(diags, src, node, escape.describe(&owning_expr_description(node, src, program, scope)));
+        }
+    }
+
     match node.kind() {
         "try_statement" => {
             err(diags, src, node, "@try/@catch is not supported in the static subset (exception handling requires runtime unwinding info this backend does not generate)");
@@ -1112,29 +1211,6 @@ fn walk_for_reject(
         }
         "synchronized_statement" => {
             check_synchronized_body(node, src, diags);
-        }
-        "message_expression" => {
-            /* Any expression that *creates* a `+1`, not the literal
-             * `alloc` spelling. Keying on the selector name let every
-             * other way of producing one through untouched -- a class's
-             * own `+new`, `-copy`, and any analysis-derived factory -- so
-             * `_arr[i] = [Foo make];` in a loop was accepted and silently
-             * yielded `nil` from the second iteration on, which is exactly
-             * what this rule exists to prevent. `walk_for_reject` runs
-             * from `emit`, after `arc::analyze`, so
-             * `program.owning_methods` is populated and the question can
-             * be asked properly. */
-            let creates_plus_one = crate::arc::is_owning_expr(
-                node,
-                src,
-                program,
-                &program.owning_methods,
-            ) && !is_owning_receiver_of_owning_send(node, src, program);
-            if creates_plus_one && in_loop {
-                if let Some(escape) = loop_escape(node, src, program, scope) {
-                    err(diags, src, node, escape.describe(&allocation_of(node, src, program, scope)));
-                }
-            }
         }
         "block_literal" => {
             check_block_capture(node, src, scope, diags);
@@ -1157,16 +1233,6 @@ fn walk_for_reject(
         // child nodes (elements; key/value pairs) still get walked by the
         // default descent below, so an unsupported construct nested
         // inside one of them is still caught.
-        "array_literal" | "dictionary_literal" if in_loop => {
-            let what = if node.kind() == "array_literal" {
-                "a boxed array literal"
-            } else {
-                "a boxed dictionary literal"
-            };
-            if let Some(escape) = loop_escape(node, src, program, scope) {
-                err(diags, src, node, escape.describe(what));
-            }
-        }
         //
         // `selector_expression` (`@selector(...)`) is a real node kind
         // in tree-sitter-objc 3.0.2 (confirmed against its
