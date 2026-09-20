@@ -336,7 +336,7 @@ int oz_check_all_slabs(void)
 void * OZ_PROTOCOL_SEND_init(struct OZObject *self)
 {
 	if (!self) {
-		return (void *)0;
+		return (void *){0};
 	}
 	switch (self->_meta.class_id) {
 	case OZ_CLASS_OZObject: return OZObject_init((struct OZObject *)self);
@@ -352,7 +352,7 @@ void * OZ_PROTOCOL_SEND_init(struct OZObject *self)
 	case OZ_CLASS_Level4: return OZObject_init((struct OZObject *)self);
 	case OZ_CLASS_OZNumber: return OZObject_init((struct OZObject *)self);
 	case OZ_CLASS_BoxedTest: return OZObject_init((struct OZObject *)self);
-	default: return (void *)0;
+	default: return (void *){0};
 	}
 }
 
@@ -386,7 +386,7 @@ void OZ_PROTOCOL_SEND_dealloc(struct OZObject *self)
 BOOL OZ_PROTOCOL_SEND_isEqual_(struct OZObject *self, void * anObject)
 {
 	if (!self) {
-		return (BOOL)0;
+		return (BOOL){0};
 	}
 	switch (self->_meta.class_id) {
 	case OZ_CLASS_OZObject: return OZObject_isEqual_((struct OZObject *)self, anObject);
@@ -402,7 +402,7 @@ BOOL OZ_PROTOCOL_SEND_isEqual_(struct OZObject *self, void * anObject)
 	case OZ_CLASS_Level4: return OZObject_isEqual_((struct OZObject *)self, anObject);
 	case OZ_CLASS_OZNumber: return OZNumber_isEqual_((struct OZNumber *)self, anObject);
 	case OZ_CLASS_BoxedTest: return OZObject_isEqual_((struct OZObject *)self, anObject);
-	default: return (BOOL)0;
+	default: return (BOOL){0};
 	}
 }
 
@@ -411,7 +411,7 @@ BOOL OZ_PROTOCOL_SEND_isEqual_(struct OZObject *self, void * anObject)
 int OZ_PROTOCOL_SEND_getDescription_maxLength_(struct OZObject *self, char* buf, size_t maxLen)
 {
 	if (!self) {
-		return (int)0;
+		return (int){0};
 	}
 	switch (self->_meta.class_id) {
 	case OZ_CLASS_OZObject: return OZObject_getDescription_maxLength_((struct OZObject *)self, buf, maxLen);
@@ -427,7 +427,7 @@ int OZ_PROTOCOL_SEND_getDescription_maxLength_(struct OZObject *self, char* buf,
 	case OZ_CLASS_Level4: return OZObject_getDescription_maxLength_((struct OZObject *)self, buf, maxLen);
 	case OZ_CLASS_OZNumber: return OZNumber_getDescription_maxLength_((struct OZNumber *)self, buf, maxLen);
 	case OZ_CLASS_BoxedTest: return OZObject_getDescription_maxLength_((struct OZObject *)self, buf, maxLen);
-	default: return (int)0;
+	default: return (int){0};
 	}
 }
 
@@ -436,12 +436,12 @@ int OZ_PROTOCOL_SEND_getDescription_maxLength_(struct OZObject *self, char* buf,
 int OZ_PROTOCOL_SEND_toggle(struct OZObject *self)
 {
 	if (!self) {
-		return (int)0;
+		return (int){0};
 	}
 	switch (self->_meta.class_id) {
 	case OZ_CLASS_LightSwitch: return LightSwitch_toggle((struct LightSwitch *)self);
 	case OZ_CLASS_Fan: return Fan_toggle((struct Fan *)self);
-	default: return (int)0;
+	default: return (int){0};
 	}
 }
 
@@ -450,14 +450,14 @@ int OZ_PROTOCOL_SEND_toggle(struct OZObject *self)
 int OZ_PROTOCOL_SEND_depth(struct OZObject *self)
 {
 	if (!self) {
-		return (int)0;
+		return (int){0};
 	}
 	switch (self->_meta.class_id) {
 	case OZ_CLASS_Level1: return Level1_depth((struct Level1 *)self);
 	case OZ_CLASS_Level2: return Level2_depth((struct Level2 *)self);
 	case OZ_CLASS_Level3: return Level3_depth((struct Level3 *)self);
 	case OZ_CLASS_Level4: return Level4_depth((struct Level4 *)self);
-	default: return (int)0;
+	default: return (int){0};
 	}
 }
 

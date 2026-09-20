@@ -55,7 +55,7 @@ void Base_oz_free(struct Base *obj)
 struct Base * Base_init(struct Base *self)
 {
 	if (!self) {
-		return (struct Base *)0;
+		return (struct Base *){0};
 	}
 	/* self = [super init]; */
 	self = (struct Base *)(OZObject_init((struct OZObject *)(self)));
@@ -68,7 +68,7 @@ struct Base * Base_init(struct Base *self)
 int Base_baseVal(struct Base *self)
 {
 	if (!self) {
-		return (int)0;
+		return (int){0};
 	}
 	/* return _baseVal; */
 	return self->_baseVal;
@@ -127,7 +127,7 @@ void Child_oz_free(struct Child *obj)
 struct Child * Child_init(struct Child *self)
 {
 	if (!self) {
-		return (struct Child *)0;
+		return (struct Child *){0};
 	}
 	/* self = [super init]; */
 	self = (struct Child *)(Base_init((struct Base *)(self)));
@@ -140,7 +140,7 @@ struct Child * Child_init(struct Child *self)
 int Child_childVal(struct Child *self)
 {
 	if (!self) {
-		return (int)0;
+		return (int){0};
 	}
 	/* return _childVal; */
 	return self->_childVal;

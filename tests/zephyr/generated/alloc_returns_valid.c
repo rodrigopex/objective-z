@@ -63,7 +63,7 @@ void Widget_setTag_(struct Widget *self, int t)
 int Widget_tag(struct Widget *self)
 {
 	if (!self) {
-		return (int)0;
+		return (int){0};
 	}
 	/* return _tag; */
 	return self->_tag;

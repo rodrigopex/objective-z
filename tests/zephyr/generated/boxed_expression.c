@@ -93,7 +93,7 @@ void BoxedTest_run(struct BoxedTest *self)
 struct OZNumber * BoxedTest_fromVar(struct BoxedTest *self)
 {
 	if (!self) {
-		return (struct OZNumber *)0;
+		return (struct OZNumber *){0};
 	}
 	/* return _fromVar; */
 	return self->_fromVar;
@@ -103,7 +103,7 @@ struct OZNumber * BoxedTest_fromVar(struct BoxedTest *self)
 struct OZNumber * BoxedTest_fromExpr(struct BoxedTest *self)
 {
 	if (!self) {
-		return (struct OZNumber *)0;
+		return (struct OZNumber *){0};
 	}
 	/* return _fromExpr; */
 	return self->_fromExpr;
@@ -113,7 +113,7 @@ struct OZNumber * BoxedTest_fromExpr(struct BoxedTest *self)
 struct OZNumber * BoxedTest_fromCall(struct BoxedTest *self)
 {
 	if (!self) {
-		return (struct OZNumber *)0;
+		return (struct OZNumber *){0};
 	}
 	/* return _fromCall; */
 	return self->_fromCall;
@@ -123,7 +123,7 @@ struct OZNumber * BoxedTest_fromCall(struct BoxedTest *self)
 struct OZNumber * BoxedTest_fromFloat(struct BoxedTest *self)
 {
 	if (!self) {
-		return (struct OZNumber *)0;
+		return (struct OZNumber *){0};
 	}
 	/* return _fromFloat; */
 	return self->_fromFloat;
@@ -133,7 +133,7 @@ struct OZNumber * BoxedTest_fromFloat(struct BoxedTest *self)
 struct OZNumber * BoxedTest_fromUint(struct BoxedTest *self)
 {
 	if (!self) {
-		return (struct OZNumber *)0;
+		return (struct OZNumber *){0};
 	}
 	/* return _fromUint; */
 	return self->_fromUint;
