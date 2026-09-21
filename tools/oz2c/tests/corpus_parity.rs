@@ -423,3 +423,74 @@ fn corpus_generated_c_compiles() {
         unexpected_successes.join("\n")
     );
 }
+
+/// Every *document* that states a corpus size states the right one (#601).
+///
+/// `corpus_cases` above asserts the filesystem against two numbers written
+/// here. This asserts the prose against the same filesystem, because the
+/// number in a document is doing real work: it is what lets a reader tell a
+/// **narrowed** sweep from a complete one. A wrong glob does not fail -- it
+/// returns a smaller set, every case in it passes, and the run reports a
+/// clean number for a corpus it never opened (#400). The documented count is
+/// the only thing that makes such a number checkable.
+///
+/// It had drifted badly by #601: `tests/README.md` stated the behaviour
+/// corpus **twice, as 72 and as 71**, for a corpus of 81, and `docs/STATUS.md`
+/// called it 74/74. Three claims, three numbers, none of them right, and
+/// nothing to notice.
+///
+/// **Only filesystem-derived counts are gated here.** The Rust suite's own
+/// total (952 at the time of writing) is not: a test cannot count the tests
+/// without running them, and a hand-written total would be one more number to
+/// drift. It is flagged in #601 as the one that will go stale again.
+///
+/// Likewise the *sample* counts in `docs/STATUS.md`'s "Where it stands" are
+/// out of reach. They are what twister actually ran, and a `--dry-run` cannot
+/// substitute: every suite in a dry-run plan carries
+/// `status: None, reason: "Unknown Instance status"`, so the plan has not
+/// evaluated filtering and reports planned suites (17 on ARM) rather than
+/// executed ones (16). Correcting those from a dry-run writes a plausible
+/// wrong number.
+#[test]
+fn documented_corpus_counts_match_the_filesystem() {
+    let root = repo_root();
+    let behavior = cases_under(&root.join("tests/behavior/cases")).len();
+    let adapted = cases_under(&root.join("tests/adapted")).len();
+
+    /* (file, the substring that must appear, what it claims) -- spelled out
+     * rather than regexed, so a *reworded* line fails loudly here and is
+     * re-read by a human instead of being silently re-matched. */
+    let claims: Vec<(&str, String)> = vec![
+        ("tests/README.md", format!("{} tests — transpiled C compiled & run", behavior)),
+        ("tests/README.md", format!("{}-case behavior corpus", behavior)),
+        ("tests/README.md", format!("{} tests — LLVM/GNUstep/Apple/ObjFW/mulle/Bucket B", adapted)),
+        ("tests/README.md", format!("{} adapted upstream tests", adapted)),
+        ("docs/STATUS.md", format!("**{}/{}** transpile, compile and run", behavior, behavior)),
+        ("docs/STATUS.md", format!("**{}/{}** (LLVM, GNUstep, Apple, ObjFW, mulle-objc)", adapted, adapted)),
+        ("CLAUDE.md", format!("Behavior corpus, {} cases", behavior)),
+        ("CLAUDE.md", format!("{} adapted upstream tests", adapted)),
+    ];
+
+    let mut wrong = Vec::new();
+    for (file, needle) in &claims {
+        let path = root.join(file);
+        let body = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("cannot read {}: {}", path.display(), e));
+        if !body.contains(needle.as_str()) {
+            wrong.push(format!("{}: expected to find {:?}", file, needle));
+        }
+    }
+
+    assert!(
+        wrong.is_empty(),
+        "{} documented corpus count(s) disagree with the filesystem \
+         ({} behaviour cases under tests/behavior/cases, {} adapted under \
+         tests/adapted):\n{}\n\nEither the corpus grew and the documents need \
+         the new number, or a line was reworded -- in which case update the \
+         needle here after reading it, rather than loosening the match.",
+        wrong.len(),
+        behavior,
+        adapted,
+        wrong.join("\n")
+    );
+}
