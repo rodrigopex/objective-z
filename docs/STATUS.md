@@ -51,7 +51,7 @@ hidden a defect.
 
 | Subject | Status |
 | --- | --- |
-| Rust suite (`cargo test`) | **952 tests**, `RUSTFLAGS=-D warnings` clean. The primary gate |
+| Rust suite (`cargo test`) | **953 tests**, `RUSTFLAGS=-D warnings` clean. The primary gate |
 | Behaviour corpus | **81/81** transpile, compile and run — gcc/clang × `-O0`/`-O2`, plus ASan, UBSan and LeakSanitizer |
 | Corpus ISO C validity | Gate at **0** under `-std=c17 -pedantic-errors` |
 | Adapted upstream tests | **37/37** (LLVM, GNUstep, Apple, ObjFW, mulle-objc) |

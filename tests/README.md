@@ -16,7 +16,7 @@
 │  PAL Tests            │  4 test files — platform abstraction layer
 │  (tests/pal/)         │  just test-pal
 ├───────────────────────┤
-│  Transpiler Unit      │  952 tests — Rust tests for oz2c
+│  Transpiler Unit      │  953 tests — Rust tests for oz2c
 │  (tools/oz2c/    │  cargo test --manifest-path
 │   tests/)             │    tools/oz2c/Cargo.toml
 └───────────────────────┘
@@ -26,7 +26,7 @@
 
 | Command | What it runs |
 |---------|-------------|
-| `cargo test --manifest-path tools/oz2c/Cargo.toml` | The transpiler's own suite, 952 tests. The primary gate; it has no `just` recipe |
+| `cargo test --manifest-path tools/oz2c/Cargo.toml` | The transpiler's own suite, 953 tests. The primary gate; it has no `just` recipe |
 | `just test-behavior` | 81-case behavior corpus through `oz2c` (host). Takes `--compiler`, `--opt`, `--sanitize`, `--check-leaks` |
 | `just test-adapted` | 37 adapted upstream tests |
 | `just test-pal` | PAL function tests (pure C, no transpiler) |
