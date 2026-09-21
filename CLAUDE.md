@@ -128,7 +128,7 @@ Versions CI pins, and so the ones to match locally: **Zephyr v4.4.2**
 | `just test-all-boards`     | All three, including SMP |
 | `just test-pedantic`       | ISO C constraint violations in generated C, on target. Reports; the host half is a gate in `corpus_parity.rs` |
 | `just test-behavior`      | Behavior corpus, 81 cases; `--compiler`/`--opt`/`--sanitize`/`--check-leaks` |
-| `just test-adapted`       | 40 adapted upstream tests |
+| `just test-adapted`       | 37 adapted upstream tests |
 | `just test-hardware`      | Every single-core sample flashed and run on an nRF52833DK |
 | `just smoke`              | Transpile-and-compile smoke test |
 | `just test-pal`           | The PAL's own C tests, on the host |
@@ -431,12 +431,12 @@ Retained as reference for transpiler development. Not compiled — the runtime c
 
 - **`tests/behavior/`** — 81 compiled behavior tests across 17 categories (Unity
   framework, host-side), under `tests/behavior/cases/<category>/*.m`
-- **`tests/adapted/`** — 40 adapted upstream tests across 6 sources (LLVM, GNUstep,
+- **`tests/adapted/`** — 37 adapted upstream tests across 6 sources (LLVM, GNUstep,
   Apple, Bucket B, ObjFW, mulle-objc), under `tests/adapted/<source>/*.m` — **note the
   shape: there is no `cases/` level here**, unlike `tests/behavior/`. A blast-radius
   sweep that globs `tests/adapted/cases/*/*.m` matches nothing, reports a clean number
   for the 81 behaviour cases alone, and calls it "both corpora" (#400's PR did exactly
-  that). Glob `tests/adapted/**/*.m`, and assert the count is 40 before trusting the
+  that). Glob `tests/adapted/**/*.m`, and assert the count is 37 before trusting the
   result
 - **`tests/zephyr/`** — 24 Zephyr integration cases in 7 ztest suites (`native_sim` +
   `ztest` + `twister`), over C committed under `tests/zephyr/generated/`. That C is
