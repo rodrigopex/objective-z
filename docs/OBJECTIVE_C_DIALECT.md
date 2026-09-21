@@ -34,6 +34,17 @@ second spelling of the same six ideas is a second thing to keep in step:
 first: it means the construct compiles to *something* and nobody has checked
 what.
 
+**No row is `UNEXAMINED` as of #606.** The word stays in the vocabulary because
+it is `docs/ARC.md`'s and the next construct added will need it, but every
+construct listed here currently has an answer. Four rows carried it when the
+page landed and all four resolved when probed: two were already correct and
+unasserted (`protocol.optional.class`, `category.property` — the latter
+mislabelled, its tests predating the page), one was a verdict understated
+(`class.alias`, which is `REFUSED` in practice), and one was a real defect
+(`selector.empty-piece`, #605). That is the argument for the verdict existing:
+an `UNEXAMINED` row is a question someone can go and answer, where silence is
+not.
+
 **Row ids are the stable handle.** `send.nil.scalar` survives any rewording of
 the prose beside it, and `tools/oz2c/tests/dialect_ledger.rs` keys on the ids
 rather than on the wording, so this document's sentences are not part of a test
@@ -64,8 +75,8 @@ compiler will catch it" is not a verdict.
 | `class.extension` | `@interface C ()` | `IMPLEMENTED` | Members merge into the class. | `generics.rs`; `objc_node_disposition.rs` |
 | `category.methods` | `@interface C (Cat)` adding methods | `IMPLEMENTED` | Merged into one dispatch table at build time; a category method is indistinguishable from a primary one in the output. | `adapted/bucket_b/dispatch_category_merge.m` |
 | `category.override` | a category overriding an inherited method | `IMPLEMENTED` | Resolved at build time, whole-program. | `adapted/bucket_b/dispatch_category_merge.m` |
-| `category.property` | a category adding a `@property` | `UNEXAMINED` | No test declares one. | — |
-| `class.alias` | `@compatibility_alias A B;` | `UNEXAMINED` | Classified as an ObjC-only kind and gated on output, but no test declares one. | `objc_node_disposition.rs` (`compatibility_alias_declaration`) |
+| `category.property` | a category adding a `@property` | `IMPLEMENTED` | Declare the property in the category and write the accessors in its `@implementation`: a category cannot add storage, so they read an ivar the class already has. Omitting them is a located error naming both accessors — stronger than Clang, which only warns. | `behavior_category.rs::category_property_with_a_real_implementation_runs`, `behavior_category.rs::category_property_gets_no_backing_ivar_and_one_definition`, `behavior_category.rs::category_property_with_no_implementation_rejected`; the contrast is `class_extension.rs::extension_property_gets_real_backing_storage` |
+| `class.alias` | `@compatibility_alias A B;` | `REFUSED` | The *declaration* is accepted and lowered to a comment; any **use** of the alias is a located error, because the alias never enters the class graph and a send through it degrades to `id`. So the construct is unusable, and it fails loudly at the point of use rather than emitting something that misbehaves. **The diagnostic does not name the alias** — it reports an `id` receiver, which is the generic fallback #557 replaced for `@class` names and did not follow here. | `forward_declared_receiver.rs::a_send_through_a_compatibility_alias_is_refused` |
 | `class.decl-impl` | a method declared in `@interface` and defined nowhere | `REFUSED` | `'-missing' is declared on 'Probe' and defined nowhere`, naming the C symbol that would have been called. A mismatched selector piece is refused the same way. | `decl_impl_reconciliation.rs::declared_and_never_defined_send_rejected`, `:72`, `:109`; #566 |
 | `class.impl-only` | `@implementation C` with no `@interface C` | `REFUSED` | `'@implementation C' has no '@interface C' in this source`. Generated a class missing its synthesized allocator before #567. | `collect.rs`; `decl_impl_reconciliation.rs`; #567 |
 | `method.private` | a method **defined** but never **declared** | `IMPLEMENTED` | Deliberately accepted -- this is how a private method is written. Only the reverse direction is an error. | `decl_impl_reconciliation.rs::defined_and_never_declared_private_method_accepted` |
@@ -92,7 +103,7 @@ the constraint authors hit first and it is not obvious from any single file.
 | `return.instancetype` | `instancetype` | `IMPLEMENTED` | Covaries with the enclosing class, including through `super`. | `regression_instancetype_covariance.rs::super_init_covaries_with_enclosing_class` |
 | `method.variadic` | `- (void)log:(char *)f, ...;` | `REFUSED` | A dispatch shim declares one concrete signature per selector, so an ellipsis has nowhere to go. A variadic plain **C** function is unaffected -- `OZLog` is one. | `staticbar::check_variadic_parameter`; #538 |
 | `method.duplicate-param` | two parameters with one name | `REFUSED` | Was reaching GCC. | `method_declaration_refusals.rs`; `staticbar::check_duplicate_parameter_names` |
-| `selector.empty-piece` | `- (void)a:(int)x :(int)y;` | `UNEXAMINED` | Would build the selector `a::`, which `selector_to_c` mangles to `a__` with no collision check against a literal `a__`. Nothing exercises it. | `emit.rs:1264` |
+| `selector.empty-piece` | `- (void)a:(int)x :(int)y;` | `GAP` | The selector is built as `a::` and lowered correctly **on its own**. It collides with a selector literally named `a__`: `selector_to_c` is `replace(':', "_")` and is not injective, nothing checks that one class's selectors mangle apart, and oz2c emits two conflicting declarations *and* definitions then exits 0. GCC refuses the generated C. `put:to:` against `put_to_` is the same defect without the exotic syntax. | #605; `emit.rs:1264` |
 
 ## 3 — Properties and ivars
 
@@ -121,7 +132,7 @@ the constraint authors hit first and it is not obvious from any single file.
 | `protocol.conformance` | `@interface C : S <P>` | `IMPLEMENTED` | Checked at build time; an unimplemented `@required` member is a located error. | `generics.rs`; `protocol_optional_members.rs::a_required_member_is_still_required` |
 | `protocol.dispatch` | a send through `id<P>` | `IMPLEMENTED` | An `OZ_PROTOCOL_SEND_*` dispatcher switching on `_meta.class_id`, guarded against a nil receiver before the read. | `nil_receiver.rs::a_protocol_dispatcher_guards_before_switching`; `behavior/cases/protocol/` |
 | `protocol.optional.instance` | `@optional` instance method | `IMPLEMENTED` | May be omitted; `-respondsToSelector:` is the whole observable behaviour. | `protocol_optional_members.rs::an_optional_member_may_be_omitted`, `protocol_optional_members.rs::responds_to_selector_still_distinguishes_the_two_conformers` |
-| `protocol.optional.class` | `@optional` **class** method | `UNEXAMINED` | The conformance check skips optional members before consulting `is_class_method`, so it is plausibly correct and wholly unasserted. All four `@optional` tests use instance methods. | `emit.rs:8522` |
+| `protocol.optional.class` | `@optional` **class** method | `IMPLEMENTED` | A conformer may omit it, and one that supplies it gets the ordinary class-side entry point `C_sel_cls(void)`. The conformance walk skips optional members before consulting `is_class_method`, so both sides behave alike. | `protocol_optional_members.rs::an_optional_class_method_may_be_omitted_or_supplied`; `emit.rs:8522` |
 | `protocol.qualified-param` | `- (void)f:(id<P>)p` | `IMPLEMENTED` | Lowered. Reached the output unlowered until #367, which is why this row names a test rather than the code. | #367 |
 | `protocol.class-receiver` | `Class<P> c; [c make];` | `REFUSED` | The receiver arrives as `void *`. Located, and previously absent from every user-facing list. | oz2c-challenges M106 |
 | `protocol.as-value` | `@protocol(P)` as an expression | `REFUSED` | Accepted only as the argument of `-conformsToProtocol:`; a protocol has no runtime value here. | `staticbar`; `behavior/cases/reflection/` |
