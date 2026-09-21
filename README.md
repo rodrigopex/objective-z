@@ -36,7 +36,7 @@ Objective-Z doesn't. The developer writes Objective-C — a strict superset of C
 
 Existing Objective-C runtimes — Apple libobjc, GNUstep libobjc2, ObjFW, mulle-objc — assume a general-purpose heap. All dispatch tables, class tables, selector tables, and object instances are `malloc`'d at runtime. This is fine for desktop/mobile but incompatible with deterministic embedded firmware on MCUs with 64-512 KB RAM and no MMU.
 
-Objective-Z inverts this: the transpiler converts `.m` files to plain C at build time via Clang JSON AST analysis. Dispatch tables are `const` vtable arrays in `.rodata` (FLASH), indexed by `class_id` — zero RAM overhead. When the receiver type is known at transpile time, protocol calls are resolved to direct function calls via compile-time dispatch (`OZ_SEND` macro with token concatenation). Object instances are served from per-class `k_mem_slab` pools (BSS), auto-generated from AST analysis. No heap allocation needed.
+Objective-Z inverts this: the transpiler converts `.m` files to plain C at build time from a tree-sitter parse, with a Clang JSON AST alongside it as the authority on ownership. Dispatch tables are `const` vtable arrays in `.rodata` (FLASH), indexed by `class_id` — zero RAM overhead. When the receiver type is known at transpile time, protocol calls are resolved to direct function calls via compile-time dispatch (`OZ_SEND` macro with token concatenation). Object instances are served from per-class `k_mem_slab` pools (BSS), sized by counting allocation sites in the parse (`pools.rs`). No heap allocation needed.
 
 ### No dynamic ObjC magic
 
@@ -166,7 +166,6 @@ All benchmarks on **nRF52833 DK** (ARM Cortex-M4F @ 64 MHz), DWT cycle counter, 
 | `OZNumber`          | Q31+shift fixed-point — Zephyr sensor_decode interop, arithmetic |
 | `OZHeap`           | Dynamic heap allocator — initWithBuffer, dynamicAllocWithHeap   |
 | `OZSpinLock`       | RAII spinlock for `@synchronized` blocks                 |
-| `OZTimer`          | Zephyr `k_timer` wrapper — block expiry, strong userdata |
 | `OZDefer`          | Scope-guard for deterministic cleanup                    |
 | `OZLog`            | printf-style logging with `%@` object specifier          |
 
@@ -200,7 +199,7 @@ Hello, world from object
 | `hello_world`          | Basic class and instance method dispatch            |
 | `hello_category`       | Category extensions (adding methods to classes)     |
 | `arc_demo`             | ARC lifecycle, scoped cleanup, singletons, threads  |
-| `mem_demo`             | ARC memory management, autorelease pools            |
+| `mem_demo`             | ARC memory management, scope-based release          |
 | `pool_demo`            | Static slab pools, scoped reclaim, `@synchronized`     |
 | `transpiled_blocks`    | Blocks, `__block` variables, fast enumeration       |
 | `transpiled_literals`  | Boxed literals (`@42`) and collection literals (`@[]`, `@{}`) |
@@ -258,8 +257,9 @@ The transpiler converts this to plain C: `MyFirstObject_greet(self)` for instanc
 
 ```mermaid
 graph LR
-    A[".m sources"] --> B["Clang JSON AST"]
-    B --> C["oz2c (Rust)"]
+    A[".m sources"] --> C["oz2c (Rust)"]
+    A -.-> B["Clang JSON AST"]
+    B -.->|"--ast: ownership facts"| C
     C --> D[".h + .c"]
     D --> E["GCC"]
     E --> F["binary"]
@@ -279,8 +279,14 @@ graph LR
 2. **Emit** (`emit.rs`) — in-place substitution producing C, one `.h`/`.c` pair per origin file plus a shared companion. The source text is patched rather than regenerated from a tree, which is why unexpanded macros survive into the output
 3. Supporting passes: `arc.rs` (scope-based ARC), `pools.rs` (slab sizing from allocation sites), `staticbar.rs` (accept/reject for the static subset — a hard, located error rather than a degraded output), `imports.rs`, `generics.rs`
 
-A Clang JSON AST can be supplied with `--ast` as an *optional* oracle for ivar
-ownership and method definedness; tree-sitter is the primary frontend. There
+A Clang JSON AST is supplied with `--ast` and is **required** of any source that
+declares a class (#385) — a missing dump is a hard located error. tree-sitter
+stays the primary frontend for *syntax*; the AST is the authority on ivar
+ownership and every ARC transfer mark. Two stated exemptions: `--manifest-only`,
+the configure-time run that only discovers a file list, and
+`--allow-missing-ast`, the escape hatch, which transpiles with a narrower rule
+that skips every `id`-typed ivar — correct, and a leak. This guide called the
+dump *optional* until #583. There
 was a second, Python implementation reading a Clang AST directly
 (`tools/oz_transpile/`, three passes); it is retired and readable at the
 `python-backend-final` tag.
@@ -507,11 +513,17 @@ just board=qemu_riscv32 rebuild   # RISC-V target
 
 ## Limitations
 
+**[docs/OBJECTIVE_C_DIALECT.md](docs/OBJECTIVE_C_DIALECT.md) is the list to
+read** — one row per author-visible construct, each with one verdict
+(implemented / refused / deferred / not applicable), the contract you may rely
+on, and the test that proves it. `tools/oz2c/src/staticbar.rs` and its
+diagnostics remain authoritative, and [docs/STATUS.md](docs/STATUS.md) records
+*why*; neither is a page you should have to read to find out whether you may
+write something.
+
 `oz2c` rejects anything outside its supported subset with a located error
-rather than emitting code that misbehaves, so the authoritative list is
-`tools/oz2c/src/staticbar.rs` and the diagnostics it produces. See
-[docs/STATUS.md](docs/STATUS.md) for what is verified and what is not.
-The notable exclusions:
+rather than emitting code that misbehaves. The exclusions an author meets
+first:
 
 - **No `@try`/`@catch`/`@throw`** — exception handling is not supported
 - **No `@autoreleasepool`** — a hard located error; there is no `-autorelease` and no
@@ -524,6 +536,17 @@ The notable exclusions:
   non-capturing block is hoisted to a named function
 - **No dynamic dispatch** for non-protocol methods — all resolved statically
 - **OZNumber**: Q31+shift fixed-point, converts to int8/16/32 and float (no int64/double)
+- **No `Class<Protocol>` receiver** — `Class<Factory> c; [c make];` is a located
+  error: the receiver arrives as `void *`. Use a concrete class, or send through
+  an `id<Protocol>` instance
+- **`OZFN`/`OZM` contents are not typechecked** — the macro expands to `0` for
+  Clang, so the AST never contains the block and nothing checks the source
+  inside it. **Write the block's return type explicitly**; a signature mismatch
+  surfaces as a GCC error pointing into a generated file, not as a located
+  diagnostic
+- **One selector name, one return type, whole program** — two unrelated classes
+  may not declare the same selector with different return types (#290)
+- **`id` is a reserved word** (#317) — it cannot be used as an identifier
 
 <details>
 <summary><strong>ARC Guide</strong></summary>
@@ -553,7 +576,8 @@ Automatic Reference Counting (ARC) is always enabled. The transpiler inserts `re
 - (void)dealloc
 {
     OZLog("Sensor deallocated");
-    /* ARC auto-inserts [super dealloc] — do NOT call it yourself */
+    /* Do not send [super dealloc]: it is a located error (#428). The
+     * chain above this override runs automatically. */
 }
 @end
 
@@ -629,7 +653,7 @@ scope and ARC was already releasing each iteration's object at its end.
 
 ### Retain cycles
 
-ARC has no weak references (`__weak` panics at runtime). If two objects hold `strong` references to each other, neither can be deallocated:
+ARC has no weak references, and **`__weak` is a located transpile error** (`staticbar::check_refused_qualifiers`, #448) — not a runtime panic, which this guide claimed until #583. Refused rather than ignored, in all ten positions a qualifier can appear. If two objects hold `strong` references to each other, neither can be deallocated:
 
 ```objc
 /* PROBLEM: direct cycle — Parent <-> Child */
@@ -672,24 +696,32 @@ void no_leak(void)
 Use `__bridge` to cast between ObjC pointers and `void *` when interfacing with C APIs (e.g., Zephyr kernel callbacks). The transpiler emits a plain C cast and suppresses ARC retain/release for the result:
 
 ```objc
-#import <Foundation/OZTimer.h>
+/* Hand an ObjC object to a Zephyr callback as void* user data.
+ * `OZTimer` used to wrap this and was deleted in #193, so the timer is
+ * Zephyr's own. */
+static void on_expiry(struct k_timer *t)
+{
+	/* Recover the object — __bridge means borrowed, no retain/release */
+	MyTarget *tgt = (__bridge MyTarget *)k_timer_user_data_get(t);
+	[tgt onTimeout];
+}
 
-/* Pass an ObjC object as void* user data to a Zephyr timer */
-_timer = [[OZTimer alloc]
-    initWithUserData:target
-              expiry:^(struct k_timer *t) {
-                  /* Recover the object — __bridge means borrowed, no retain/release */
-                  MyTarget *tgt = (__bridge MyTarget *)k_timer_user_data_get(t);
-                  [tgt onTimeout];
-              }
-                stop:nil];
+K_TIMER_DEFINE(my_timer, on_expiry, NULL);
+
+/* ... in an @implementation: */
+- (void)arm
+{
+	/* `self` outlives the timer, so nothing needs to own the void *. */
+	k_timer_user_data_set(&my_timer, (__bridge void *)self);
+	k_timer_start(&my_timer, K_MSEC(100), K_NO_WAIT);
+}
 ```
 
 Rules:
 - `(__bridge void *)obj` — cast object to `void *` without ownership transfer
 - `(__bridge Type *)ptr` — cast `void *` back to object type, **borrowed** (not retained)
-- The `__bridge` result is never released at scope exit — the caller must ensure the object stays alive independently (e.g., via a strong ivar like OZTimer's `_userdata`)
-- A bridging cast is also the one cast ARC does not look through. An ordinary cast changes the static type and says nothing about ownership, so it never decides whether a `+1` is accounted for: `(void)[t copy];` releases the abandoned reference exactly as `[t copy];` does (#327), and `Thing *t = (Thing *)[Thing alloc];` is released at scope end exactly as `Thing *t = [Thing alloc];` is (#332) — at a local's initializer, a reassignment, a strong-ivar store and a `return` alike. `(__bridge_retained void *)[t copy];` is the exception: that spelling hands the reference to whatever took the `void *`, and releasing it would pull the object out from under that holder
+- The `__bridge` result is never released at scope exit — the caller must ensure the object stays alive independently (in the example above, `self` outlives the timer)
+- A bridging cast is also the one cast ARC does not look through. An ordinary cast changes the static type and says nothing about ownership, so it never decides whether a `+1` is accounted for: `(void)[t copy];` releases the abandoned reference exactly as `[t copy];` does (#327), and `Thing *t = (Thing *)[Thing alloc];` is released at scope end exactly as `Thing *t = [Thing alloc];` is (#332) — at a local's initializer, a reassignment, a strong-ivar store and a `return` alike. `(__bridge_retained void *)[t copy];` **is a located error since #460** — it emitted no retain, so the local was still released at scope exit and C was handed a freed slot. `(__bridge_transfer T)` is refused for the mirror reason. This guide presented the first as the working exception until #583
 - The cast is looked through, but what is behind it is still read exactly. `Thing *t = (Thing *)[u init];` is **not** released, because `-init…` consumes its receiver's `+1` and hands the same reference back — `u` owns it, and `u`'s own scope-exit release is the one that runs
 - A `+1` result passed straight as an **argument** to a message send is released right after the send (#328). `[self setFoo:[Foo new]];` needs no temporary of your own: the reference is held, the message is sent, the reference is dropped — so a strong setter's retain leaves the object at `+1` held by the ivar, and a method that only *borrows* its argument sees it torn down as the statement ends. The same reading applies to `[self setFoo:[u init]];`, which is left alone: it creates no reference, and releasing it would be a double free. (`[self setFoo:[x retain]];` was the other case here until #428 made a `retain` send a located error.) An argument to a plain **C** function is *not* released — a C callee cannot retain, so releasing would hand it a dangling pointer — which means `OZLog("%@", [Foo new])` still leaks; bind it to a local and let scope-based ARC release it
 
@@ -698,11 +730,11 @@ Rules:
 | Do                                      | Don't                                          |
 | --------------------------------------- | ---------------------------------------------- |
 | Use `objz_transpile_sources()` in CMake | Call `retain`, `release`, or `autorelease`      |
-| Let the compiler manage object lifetime | Call `[super dealloc]` — ARC inserts it         |
+| Let the compiler manage object lifetime | Send `[super dealloc]` (a located error, #428)  |
 | Let a loop body's own scope reclaim     | Write `@autoreleasepool` (refused, #430)        |
 | Use `strong` properties for ownership   | Assume temporaries are released immediately     |
 | Use `__bridge` for C API interop        | Cast objects to `void *` without `__bridge`     |
-| Break cycles manually before scope exit | Use `__weak` (not supported, panics at runtime) |
+| Break cycles with `__unsafe_unretained`  | Use `__weak` (a located error, #448)            |
 
 </details>
 
