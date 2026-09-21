@@ -489,7 +489,7 @@ Requires [just](https://github.com/casey/just). Default board: `mps2/an385`.
 | `just test-boards`     | ARM and RISC-V                         |
 | `just test-all-boards` | All three boards, including SMP        |
 | `just test-behavior`   | 81-case behavior corpus through `oz2c` |
-| `just test-adapted`    | 40 adapted upstream tests              |
+| `just test-adapted`    | 37 adapted upstream tests              |
 | `just smoke`           | Transpile-and-compile smoke test       |
 | `just test-pal`        | The PAL's own C tests, on the host     |
 | `just bench`           | Run ObjC benchmark (build + flash)     |
