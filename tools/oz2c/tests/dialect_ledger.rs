@@ -174,6 +174,9 @@ fn every_cited_in_repo_path_exists() {
          * the per-case check is
          * `every_apple_case_has_a_driver_and_a_row`. */
         let path = tok.split(':').next().unwrap_or(tok);
+        if tok.contains("::") {
+            continue; /* a test citation; `every_cited_test_name_exists` owns it */
+        }
         if path.contains(' ') || !path.contains('/') || path.contains('*') {
             continue;
         }
@@ -207,6 +210,56 @@ fn every_cited_in_repo_path_exists() {
         missing.is_empty(),
         "docs/OBJECTIVE_C_DIALECT.md cites {} path(s) that do not exist: {:?}\nA moved or \
          deleted test leaves the row it backed asserting nothing.",
+        missing.len(),
+        missing
+    );
+}
+
+/// A citation written `file.rs::test_name` must name a test that exists.
+///
+/// The page cited `nil_receiver.rs:494` until a peer's #595 fix shifted that
+/// file by three lines and the citation pointed at nothing in particular.
+/// Nothing failed: `every_cited_in_repo_path_exists` checks the *path*, and
+/// the path was fine. A line number rots on every edit to the file above it;
+/// a test name rots only on a rename, and unlike a line number it can be
+/// checked. Implementation sites keep line numbers -- they have no stable
+/// name, and `docs/ARC.md` cites them the same way.
+#[test]
+fn every_cited_test_name_exists() {
+    let root = repo_root();
+    let mut missing = Vec::new();
+    let mut checked = 0usize;
+
+    for tok in LEDGER.split('`').skip(1).step_by(2) {
+        let Some((file, name)) = tok.split_once("::") else {
+            continue;
+        };
+        if !file.ends_with(".rs") || name.contains(' ') || name.is_empty() {
+            continue;
+        }
+        checked += 1;
+        let path = root.join("tools/oz2c/tests").join(file);
+        let Ok(body) = std::fs::read_to_string(&path) else {
+            missing.push(format!("{}::{} (no such file)", file, name));
+            continue;
+        };
+        if !body.contains(&format!("fn {}(", name)) {
+            missing.push(format!("{}::{}", file, name));
+        }
+    }
+
+    /* Presence paired with absence, as everywhere else here: a splitter that
+     * stopped matching would report zero missing names. */
+    assert!(
+        checked > 10,
+        "found only {} `file.rs::test` citations -- the page carries more, so this \
+         check has stopped reading it",
+        checked
+    );
+    assert!(
+        missing.is_empty(),
+        "docs/OBJECTIVE_C_DIALECT.md cites {} test(s) that do not exist: {:?}\nA renamed \
+         or deleted test leaves the row it backed asserting nothing.",
         missing.len(),
         missing
     );
