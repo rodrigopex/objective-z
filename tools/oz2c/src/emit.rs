@@ -1261,8 +1261,34 @@ fn simple_literal_text(node: Node, src: &str) -> Option<String> {
     }
 }
 
+/// The one escape that makes every emitted C name injective (#605).
+///
+/// A selector piece's `:` becomes `_`, which means a literal `_` in a
+/// selector or a class name is indistinguishable from a colon unless it is
+/// marked. `_5F_` marks it -- `5F` is `_`'s code point, the convention JNI,
+/// Swift and Rust v0 all use for an escaped character.
+///
+/// **The marker has to be digit-led, and that is not a matter of taste.** No
+/// Objective-C selector piece or class name may begin with a digit
+/// (`collect::selector_literal_name` enforces it), so a `_` followed by `5`
+/// can only be an escape -- never the class/selector joiner, never a colon.
+/// A *letter* cannot serve: `_u_`, the obvious mnemonic, is indistinguishable
+/// from "colon, piece `u`, colon", and measured over 2,574 declarations it
+/// collides 234 times (`-[a a_]` against `-[a a:u:]`). Doubling is worse
+/// still -- `_` -> `__` collides 56 times in 448 (`-[_ __]` against
+/// `-[__ _]`), because a run of underscores has more than one reading.
+///
+/// Nothing is forbidden to make this work, and nothing is renamed: a name
+/// only moves if the class or selector contains `_`, and across the whole
+/// workspace that is one selector. `emitted_name_collisions.rs` pins the
+/// round trip, which is what makes injectivity a property rather than an
+/// argument.
+pub(crate) fn escape_underscores(name: &str) -> String {
+    name.replace('_', "_5F_")
+}
+
 pub(crate) fn selector_to_c(selector: &str) -> String {
-    selector.replace(':', "_")
+    escape_underscores(selector).replace(':', "_")
 }
 
 /// Render one `(name, c_type)` parameter as C text. Most types are prefix
@@ -1413,13 +1439,22 @@ fn render_block_type_param_list(node: Node, ctx: &mut EmitCtx, root: Option<&str
     })
 }
 
-/// Class methods get a `_cls` suffix so `+foo` and `-foo` on the same
-/// class never collide on the same C function name.
+/// Class methods get a `_cls` suffix, and the class name is escaped.
+///
+/// The suffix separates `+foo` from `-foo`. It does **not** make the two
+/// sides collision-free in general, which this comment claimed until #605:
+/// `+foo` and an instance `-foo_cls` both reached `F_foo_cls`. Nor does the
+/// single `_` joiner separate `-[X y:z:]` from `-[X_y z:]`, which both
+/// reached `X_y_z_`. Both are closed by `escape_underscores`, applied to the
+/// class name here and to the selector in `selector_to_c` -- so a literal
+/// `_` on either side of the joiner is marked and the joiner is the only
+/// unmarked `_` that can appear between them.
 pub(crate) fn method_fn_name(class_name: &str, selector: &str, is_class_method: bool) -> String {
+    let class = escape_underscores(class_name);
     if is_class_method {
-        format!("{}_{}_cls", class_name, selector_to_c(selector))
+        format!("{}_{}_cls", class, selector_to_c(selector))
     } else {
-        format!("{}_{}", class_name, selector_to_c(selector))
+        format!("{}_{}", class, selector_to_c(selector))
     }
 }
 

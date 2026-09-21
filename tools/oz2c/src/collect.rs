@@ -1121,6 +1121,15 @@ pub fn collect(source: &str) -> (Program, Vec<crate::model::Diagnostic>) {
     diagnostics.extend(crate::staticbar::check_reserved_names(root, source));
 
     /*
+     * And here for the same reason: a class name is declared at file scope,
+     * which none of the body-scoped entry points sees. `oz_`/`OZ_` is the
+     * generated namespace, and the struct tag is the one emitted name that
+     * is the *bare* class name -- so this is the family no escape in
+     * `method_fn_name` can reach (#605).
+     */
+    diagnostics.extend(crate::staticbar::check_generated_namespace(root, source));
+
+    /*
      * And for the same reason: a send of `-retain`, `-release`,
      * `-autorelease` or `-dealloc` is a fact about the send, not about the
      * body it sits in. ARC is always enabled, so those four are the
