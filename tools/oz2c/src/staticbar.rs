@@ -1640,6 +1640,109 @@ fn walk_reserved_names(node: Node, src: &str, diags: &mut Vec<Diagnostic>) {
 /// First rather than last: in `void (*id)(int count)` the declarator's own
 /// name comes before its parameter list, and the last identifier there is
 /// `count`.
+/// A class may not be named `oz_…` or `OZ_…` — the generated namespace (#605).
+///
+/// This closes the two collision families an encoding cannot reach. Every
+/// other emitted name is *composed* — `method_fn_name` joins a class to a
+/// selector, and `emit::escape_underscores` marks a literal `_` on either
+/// side so the join is unambiguous. But the **struct tag is the bare class
+/// name**, uncomposed, so a class literally named `oz_slab_Foo` emits
+/// `struct oz_slab_Foo`, which is exactly class `Foo`'s slab. Same for a
+/// class named `OZ_CLASS_Fan` against `Fan`'s class-id macro. No escape
+/// applied to composed names can separate those, because the collision is
+/// between a *bare* user name and a composed generated one.
+///
+/// Escaping the tag instead would work and was measured: 86 class-tag
+/// interpolations in `companion.rs` and 82 in `emit.rs`, every one of which
+/// would have to move together or the emitted C stops compiling. Reserving
+/// the prefix is one check, and it costs nothing — of 203 class names across
+/// this workspace and px-keyboard, none begins `oz_` or `OZ_`.
+///
+/// **The underscore is part of the reserved spelling**, deliberately:
+/// `OZObject`, `OZString` and the thirteen other `OZ`-prefixed SDK classes
+/// are untouched, because a generated name always has the separator.
+///
+/// `_oz`/`_OZ` could not have served as the marked namespace even though it
+/// looks more obviously internal: a leading `_` followed by an uppercase
+/// letter is reserved to the implementation in C, which is why #417 removed
+/// `_OZ_Q31_HELPERS` and `tests/sdk_spliced_file_scope.rs` now requires a
+/// spliced prelude's `#define` to start `OZ`.
+pub fn check_generated_namespace(root: Node, src: &str) -> Vec<Diagnostic> {
+    let mut diags = Vec::new();
+    /* One diagnostic per class, not per declaration. `@interface Foo` and
+     * `@implementation Foo` are two nodes and one mistake, and #567 makes an
+     * implementation without an interface an error of its own -- so reporting
+     * both would name the same rename twice for every offending class. */
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    walk_generated_namespace(root, src, &mut diags, &mut seen);
+    diags
+}
+
+fn walk_generated_namespace(
+    node: Node,
+    src: &str,
+    diags: &mut Vec<Diagnostic>,
+    seen: &mut std::collections::HashSet<String>,
+) {
+    if matches!(
+        node.kind(),
+        "class_interface" | "class_implementation" | "class_declaration"
+    ) {
+        /* The first identifier is the class name; a superclass follows a
+         * ':' and a category name a '(' (`collect::class_header`). Only the
+         * first is being declared here, so only it is checked. */
+        let mut cursor = node.walk();
+        let children: Vec<Node> = node.children(&mut cursor).collect();
+        if let Some(name) = children.iter().copied().find(|c| c.kind() == "identifier") {
+            let text = node_text(name, src);
+            if (text.starts_with("oz_") || text.starts_with("OZ_"))
+                && seen.insert(text.to_string())
+            {
+                err(
+                    diags,
+                    src,
+                    name,
+                    &format!(
+                        "class '{}' is in the generated namespace: a class name may not begin \
+                         'oz_' or 'OZ_', because the emitted C uses that prefix for the slab, \
+                         the allocators and the class-id macro -- rename it (e.g. '{}')",
+                        text,
+                        suggested_class_rename(text)
+                    ),
+                );
+            }
+        }
+    }
+
+    let mut walk_cursor = node.walk();
+    let kids: Vec<Node> = node.children(&mut walk_cursor).collect();
+    for child in kids {
+        walk_generated_namespace(child, src, diags, seen);
+    }
+}
+
+/// `oz_slab_Foo` -> `SlabFoo`: drop the prefix and upper-case the pieces, so
+/// the remedy in the diagnostic is a name the author can paste.
+fn suggested_class_rename(name: &str) -> String {
+    let rest = name
+        .strip_prefix("oz_")
+        .or_else(|| name.strip_prefix("OZ_"))
+        .unwrap_or(name);
+    let mut out = String::new();
+    for piece in rest.split('_').filter(|p| !p.is_empty()) {
+        let mut chars = piece.chars();
+        if let Some(first) = chars.next() {
+            out.extend(first.to_uppercase());
+            out.push_str(chars.as_str());
+        }
+    }
+    if out.is_empty() {
+        "Renamed".to_string()
+    } else {
+        out
+    }
+}
+
 fn reserved_name_err(diags: &mut Vec<Diagnostic>, src: &str, node: Node) {
     err(
         diags,
@@ -3439,10 +3542,17 @@ fn emitted_class_identifiers(program: &crate::model::Program) -> HashSet<String>
          * the preprocessor cannot reach into, so that one does not move. */
         out.insert(class.clone());
         out.insert(format!("oz_slab_{}", class));
+        /* The class-id macro. Missing until #605, and the drift guard could
+         * not have caught it: `tests/macro_shadowing.rs` sweeps `Probe`,
+         * `Probe_*` and `oz_slab_Probe`, so `OZ_CLASS_Probe` was in neither
+         * the set nor the sweep. */
+        out.insert(format!("OZ_CLASS_{}", class));
+        /* `oz_init` was in this list and nothing emits it -- a stale entry
+         * over-refuses a macro rather than under-refusing one, so it was
+         * harmless for #571 and still wrong. Removed in #605. */
         for suffix in [
             "oz_alloc",
             "oz_free",
-            "oz_init",
             "oz_auto_init",
             "oz_release_ivars",
             "oz_dynamic_alloc_with_heap",
