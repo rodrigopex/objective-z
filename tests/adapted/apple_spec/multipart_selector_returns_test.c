@@ -1,6 +1,10 @@
 /*
- * Behavioral spec: methods with computed return values.
- * Original test — no Apple code.
+ * Driver for `multipart_selector_returns.m`.
+ *
+ * Proves: each part of a two-part selector reaches its own ivar, and `-area`
+ * and `-perimeter` return values computed from them rather than stored.
+ * Does not prove: struct-by-value return -- no struct crosses a method
+ * boundary here. See the `.m` header for where that is actually covered.
  */
 #include "unity.h"
 #include "Geometry_ozh.h"

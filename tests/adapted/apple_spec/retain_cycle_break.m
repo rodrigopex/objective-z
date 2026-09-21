@@ -1,8 +1,22 @@
 /*
- * Behavioral spec derived from: Apple ARC documentation
- * This test is ORIGINAL CODE — no Apple code was copied.
- * Pattern: a parent/child pair that would cycle, broken the way this
- * backend documents — an `__unsafe_unretained` back-reference.
+ * Proves: a parent/child pair linked by a strong forward reference and an
+ * `__unsafe_unretained` back-reference does not leak -- both slab slots are
+ * recycled at scope exit, with a control assertion establishing that each pool
+ * really holds one slot.
+ *
+ * Does not prove: zeroing. The back-reference is `__unsafe_unretained`, which
+ * takes no ownership and is never nilled; after the owner dies it dangles.
+ * `__weak` is a located error here (`docs/ARC.md` s 2.2, #448) and there is no
+ * zeroing semantics to test.
+ *
+ * Inspiration: Apple's ARC documentation on retain cycles and non-owning
+ * back-references, as a behavioural specification.
+ * Upstream revision: not pinned at authoring time (pre-#596); the normative
+ * text is Clang's ARC specification s 2.2, which `docs/ARC.md` cites per rule.
+ * Omitted from upstream: the zeroing half of the upstream behaviour, which
+ * needs a weak side table this target does not have; and every runtime
+ * introspection call the upstream discussion assumes.
+ * Authorship: independently written. No APSL-licensed code copied.
  *
  * This file used to contain no reference between its two nodes at all: it
  * allocated two independent objects, set an integer tag on each, read them
