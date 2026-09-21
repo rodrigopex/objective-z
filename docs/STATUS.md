@@ -827,6 +827,45 @@ class parsed with ivars, and hard-error naming the class and the `.m` to add.
 
 ## How measurements mislead
 
+### A cross-repo grade carries no date, and two of the six were stale (#583)
+
+`docs/OBJECTIVE_C_DIALECT.md` cites boundary evidence, and for a handful of
+constructs the only record is `oz2c-challenges` -- the mutation corpus, which
+grades a shape against whatever `oz2c` binary it was last run with. Six rows
+were written citing its R/M ids straight out of `MUTATIONS.md`.
+
+**Two of the six described behaviour that had since been fixed.** R7 ("an
+`@interface` declaration and its `@implementation` definition are never
+reconciled") and R8 ("an `@implementation` with no `@interface` is accepted")
+became #566 and #567, both closed, and the tree now carries
+`decl_impl_reconciliation.rs` with the located refusals -- `'-missing' is
+declared on 'Probe' and defined nowhere`, naming the C symbol that would have
+been called. The row asserted a `GAP` where the answer is `REFUSED`, on the
+strength of a document that was accurate when it was written.
+
+Three more of the six had in-repo tests that were the better citation all
+along: R3 -> `method_declaration_refusals.rs`, R10 -> `macro_shadowing.rs`,
+R2 -> `ozfn_argument_validation.rs`. Only M106 (`Class<Protocol>` as a
+receiver) is genuinely challenge-only.
+
+**What caught it was not a check for staleness.** `dialect_ledger.rs` asserts
+that every `GAP` row cites an *issue*, and that row cited only an R-id -- so
+it failed for having no tracker entry, and the investigation that followed is
+what found the fix. A gate aimed at one property found a different one,
+which is luck rather than design: nothing in this repo can verify a claim
+about another repo's binary.
+
+So the standing rule for that column: **prefer in-repo evidence, and where a
+boundary is covered only in `oz2c-challenges`, port the case into
+`tools/oz2c/tests/` as a refusal test and cite that.** An imported case is
+gated like everything else. A cross-repo id is a measurement whose timestamp
+is not in the citation, and it will read exactly the same on the day it stops
+being true.
+
+The neighbouring version of this mistake is already recorded above: a green
+run's number describes the tree it ran against. This is the same error across
+a repository boundary, where there is no rebuild to make it visible.
+
 ### The freed-slot poison cannot survive the free (#452, #445)
 
 `_oz_free` stamps `OZ_CLASS_ID_FREED` into `_meta.class_id` before returning a
