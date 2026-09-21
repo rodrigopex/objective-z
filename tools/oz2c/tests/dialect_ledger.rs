@@ -37,7 +37,7 @@ const VERDICTS: &[&str] =
 
 /// Row count, pinned. A new construct is a deliberate act; an accidental
 /// one is what this catches.
-const ROW_COUNT: usize = 99;
+const ROW_COUNT: usize = 100;
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().unwrap()
