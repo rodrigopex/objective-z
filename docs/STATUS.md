@@ -54,7 +54,7 @@ hidden a defect.
 | Rust suite (`cargo test`) | **362 tests**, `RUSTFLAGS=-D warnings` clean. The primary gate |
 | Behaviour corpus | **74/74** transpile, compile and run — gcc/clang × `-O0`/`-O2`, plus ASan, UBSan and LeakSanitizer |
 | Corpus ISO C validity | Gate at **0** under `-std=c17 -pedantic-errors` |
-| Adapted upstream tests | **40/40** (LLVM, GNUstep, Apple, ObjFW, mulle-objc) |
+| Adapted upstream tests | **37/37** (LLVM, GNUstep, Apple, ObjFW, mulle-objc) |
 | Samples on ARM (`mps2/an385`) | **14/14** built and run under twister |
 | Samples on RISC-V (`qemu_riscv32`) | **13/13** — `gpio_demo` needs device-tree aliases the board lacks |
 | Samples on two cores (`qemu_cortex_a53/smp`) | **10/10**, the only place `@synchronized` faces real contention |
@@ -1123,7 +1123,7 @@ described it as both corpora. It was the behaviour corpus alone. The sweep globb
 glob('tests/behavior/cases/*/*.m') + glob('tests/adapted/cases/*/*.m')
 ```
 
-and the adapted corpus has **no `cases/` level** -- its 40 files live at
+and the adapted corpus has **no `cases/` level** -- its 37 files live at
 `tests/adapted/<source>/*.m`. The second glob matched nothing, contributed nothing,
 and said nothing about it. 81 is exactly the behaviour count, so the total looked
 right and the wrong number was the one that agreed with expectations.
