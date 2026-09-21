@@ -147,6 +147,47 @@ fn every_gap_cites_an_issue() {
     );
 }
 
+/// The page's own tracking issue is closed, so no `GAP` may cite it (#603).
+///
+/// This is the narrow, offline-checkable slice of a problem the gate cannot
+/// solve in general. `every_gap_cites_an_issue` asserts a `GAP` *names* an
+/// issue; nothing here can know whether that issue is still open, because
+/// nothing here can reach the tracker. The general answer is
+/// `ownership_matrix.rs`'s -- assert the defect *to still be defective*, so a
+/// fix fails the test -- which needs a probe per row.
+///
+/// What is checkable is the specific mistake that produced #603: **#583 is
+/// this document's own umbrella issue**, it was closed by the PR that created
+/// the document, and a sub-gap had been left citing it as a placeholder. An
+/// umbrella issue is the one citation guaranteed to be stale the moment the
+/// page lands, so it is worth refusing by name.
+#[test]
+fn no_gap_cites_the_documents_own_umbrella_issue() {
+    /* #583 asked for this page to exist. It cannot also be the tracker for a
+     * construct the page merely records as unfinished. */
+    const UMBRELLA: &[&str] = &["#583"];
+
+    let mut offenders = Vec::new();
+    for (id, verdict, evidence) in rows() {
+        if verdict != "GAP" {
+            continue;
+        }
+        for umbrella in UMBRELLA {
+            if evidence.contains(umbrella) {
+                offenders.push(format!("{} cites {}", id, umbrella));
+            }
+        }
+    }
+    assert!(
+        offenders.is_empty(),
+        "a `GAP` row cites this document's own umbrella issue, which was closed by the \
+         change that created the document: {:?}\n\nFile an issue for the gap itself and \
+         cite that. An umbrella issue is the one citation certain to be stale as soon as \
+         the page lands -- #603 is what happened when one was used as a placeholder.",
+        offenders
+    );
+}
+
 #[test]
 fn every_cited_in_repo_path_exists() {
     let root = repo_root();
