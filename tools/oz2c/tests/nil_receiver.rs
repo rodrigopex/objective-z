@@ -482,14 +482,11 @@ int main(void) {{
 /// The matrix exists because the old spelling test passed for four of
 /// these and failed for the fifth, and nothing said which were covered.
 ///
-/// **A bare `union u` return is deliberately absent**, and not because it
-/// works: oz2c drops the `union` tag from the prototype and emits
-/// `nr_u Shapes_bareUnion(struct Shapes *self);`, which clang refuses with
-/// `must use 'union' tag to refer to type 'nr_u'`. That is a separate
-/// defect in return-type rendering, independent of the nil guard -- the
-/// prototype is emitted whether or not guards are on -- and it is not
-/// #533's or #528's. A *typedef'd* union is covered below and works,
-/// because a plain name needs no tag.
+/// The bare `union u` row was absent when this was written, because oz2c
+/// dropped the `union` tag from the prototype -- a separate defect in
+/// type extraction, fixed in #595. It is back, so the matrix is complete
+/// again: had it been left out silently, "every return shape" would have
+/// been a claim about five of six.
 #[test]
 fn the_guards_zero_is_valid_for_every_return_shape() {
     let src = format!(
@@ -509,6 +506,7 @@ enum nr_e {{ NREOne = 1 }};
 
 @interface Shapes : OZObject
 - (struct nr_pair)bareStruct;
+- (union nr_u)bareUnion;
 - (NRPair)tdStruct;
 - (NRUnion)tdUnion;
 - (NRInt)tdInt;
@@ -519,6 +517,7 @@ enum nr_e {{ NREOne = 1 }};
 @end
 @implementation Shapes
 - (struct nr_pair)bareStruct {{ struct nr_pair p = {{ 1, 2 }}; return p; }}
+- (union nr_u)bareUnion {{ union nr_u u; u.i = 3; return u; }}
 - (NRPair)tdStruct {{ struct nr_pair p = {{ 4, 5 }}; return p; }}
 - (NRUnion)tdUnion {{ union nr_u u; u.i = 6; return u; }}
 - (NRInt)tdInt {{ return 7; }}
@@ -532,8 +531,8 @@ enum nr_e {{ NREOne = 1 }};
 
 int main(void) {{
 	Shapes *n = nil;
-	printf(\"%d %d %d %d %d %d %d\\n\",
-	       [n bareStruct].a, [n tdStruct].a,
+	printf(\"%d %d %d %d %d %d %d %d\\n\",
+	       [n bareStruct].a, [n bareUnion].i, [n tdStruct].a,
 	       [n tdUnion].i, (int)[n tdInt], (int)[n bareEnum],
 	       (int)[n scalar], [n object] == nil);
 	[n nothing];
@@ -543,5 +542,5 @@ int main(void) {{
         PREAMBLE()
     );
     let out = compile_and_run(&src, "nil_receiver_zero_shapes");
-    assert_eq!(out.trim(), "0 0 0 0 0 0 1");
+    assert_eq!(out.trim(), "0 0 0 0 0 0 0 1");
 }

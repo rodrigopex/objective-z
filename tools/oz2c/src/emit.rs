@@ -10628,7 +10628,21 @@ fn class_tag_edits(node: Node, src: &str, program: &Program) -> Vec<(Range<usize
         //
         // The tag itself is still skipped: only the body is descended into,
         // so `struct box` does not become `struct struct box`.
-        if node.kind() == "struct_specifier" {
+        //
+        // **`union` shares this, and did not before (#595).** Only
+        // `struct_specifier` was tested, so a union fell to the generic
+        // walk below, where its tag is an ordinary `type_identifier` -- and
+        // a tag that happens to match a class name was tagged as one:
+        //
+        //     union Thing { int raw; };   ->   union struct Thing { ... }
+        //
+        // three errors from a definition that compiles fine in the source.
+        // Obscure, in that it needs the tag to collide with a class name,
+        // and exactly as wrong as #367's struct case when it does. The
+        // field-tagging half worked for unions all along, because the
+        // generic walk reaches the body either way; it was only the tag
+        // that needed skipping.
+        if matches!(node.kind(), "struct_specifier" | "union_specifier") {
             let mut cursor = node.walk();
             let children: Vec<Node> = node.children(&mut cursor).collect();
             for child in children {

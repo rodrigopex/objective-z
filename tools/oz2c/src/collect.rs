@@ -483,48 +483,48 @@ fn extract_type_and_stars_inner(
                     }
                 }
             }
-            "enum_specifier" => {
-                // `enum Name { ... }` -- the tag name is a `type_identifier`
-                // child, but the "enum" keyword itself isn't a separate
-                // node, so it must be prepended explicitly or the rendered
-                // C type loses the tag (`Direction` instead of
-                // `enum Direction`), which doesn't name a type on its own.
+            /* C's three tagged type kinds, in one arm because they differ
+             * only in the keyword -- and because keeping them apart is how
+             * `union` came to be missing (#595).
+             *
+             * The keyword is not a separate node in this grammar: the tag
+             * is a `type_identifier` child and nothing else says which of
+             * the three it belongs to. Without prepending it, the generic
+             * recursive fallback below finds the tag's own
+             * `type_identifier` and uses it bare -- `Direction` for
+             * `enum Direction`, `nr_u` for `union nr_u` -- which does not
+             * name a type in C. A forward-declared struct or union has no
+             * typedef, so the keyword is the *only* way to spell it.
+             *
+             * `enum` and `struct` each had an arm and `union` had none, so
+             * a method returning `union nr_u` by value emitted
+             * `nr_u Shapes_bareUnion(struct Shapes *self);` in all three
+             * places the prototype appears, and clang answered
+             * `must use 'union' tag to refer to type 'nr_u'`. Three sites,
+             * one missing arm.
+             *
+             * This is the whole set -- C has no fourth tagged type -- so
+             * the match is complete rather than merely longer, and
+             * `reject_inline_anonymous_aggregates` already spells the same
+             * three in the same order. */
+            "enum_specifier" | "struct_specifier" | "union_specifier" => {
                 if type_text.is_empty() {
+                    let keyword = n.kind().trim_end_matches("_specifier");
                     let mut c = n.walk();
                     let found = n.children(&mut c).find(|ch| ch.kind() == "type_identifier");
                     *type_text = match found {
-                        Some(name) => format!("enum {}", node_text(name, src)),
-                        // Anonymous `enum { ... }` (no tag name): nothing
-                        // can name this type in the generated C, so the
-                        // bare keyword is the most that can be reported.
-                        // Only reachable for an *ivar*, whose declaration
-                        // `emit::lower_ivar_decl` copies through with its
-                        // body intact -- in a method signature the shape
-                        // is rejected outright by
-                        // `reject_inline_anonymous_aggregates`, since
-                        // there the bare keyword would reach codegen as
-                        // invalid C.
-                        None => "enum".to_string(),
-                    };
-                }
-            }
-            "struct_specifier" => {
-                // Same reasoning as `enum_specifier` just above, for a
-                // plain `struct Name` type reference (e.g. a parameter
-                // typed `struct NSFastEnumerationState *`) -- the "struct"
-                // keyword isn't a separate node either, so without this,
-                // the generic recursive fallback below would find just
-                // the tag name's own `type_identifier` child and use it
-                // bare (`NSFastEnumerationState *`), which C rejects: an
-                // incomplete (forward-declared, no body) struct type has
-                // no typedef, so it can only ever be spelled with the
-                // `struct` keyword, not bare.
-                if type_text.is_empty() {
-                    let mut c = n.walk();
-                    let found = n.children(&mut c).find(|ch| ch.kind() == "type_identifier");
-                    *type_text = match found {
-                        Some(name) => format!("struct {}", node_text(name, src)),
-                        None => "struct".to_string(),
+                        Some(name) => format!("{} {}", keyword, node_text(name, src)),
+                        /* Anonymous (`enum { ... }`, `struct { ... }`): no
+                         * name can reach the generated C, so the bare
+                         * keyword is the most that can be reported. Only
+                         * reachable for an *ivar*, whose declaration
+                         * `emit::lower_ivar_decl` copies through with its
+                         * body intact -- in a method signature the shape
+                         * is refused outright by
+                         * `reject_inline_anonymous_aggregates`, since
+                         * there the bare keyword would reach codegen as
+                         * invalid C. */
+                        None => keyword.to_string(),
                     };
                 }
             }
