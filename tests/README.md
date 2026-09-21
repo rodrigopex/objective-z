@@ -4,10 +4,10 @@
 
 ```
 ┌───────────────────────┐
-│  Zephyr Integration   │  21 tests — real kernel on native_sim
+│  Zephyr Integration   │  24 cases, 7 suites — real kernel on native_sim
 │  (tests/zephyr/)      │  just test-zephyr
 ├───────────────────────┤
-│  Behavior Tests       │  72 tests — transpiled C compiled & run
+│  Behavior Tests       │  81 tests — transpiled C compiled & run
 │  (tests/behavior/)    │  just test-behavior
 ├───────────────────────┤
 │  Adapted Upstream     │  37 tests — LLVM/GNUstep/Apple/ObjFW/mulle/Bucket B
@@ -16,7 +16,7 @@
 │  PAL Tests            │  4 test files — platform abstraction layer
 │  (tests/pal/)         │  just test-pal
 ├───────────────────────┤
-│  Transpiler Unit      │  288 tests — Rust tests for oz2c
+│  Transpiler Unit      │  952 tests — Rust tests for oz2c
 │  (tools/oz2c/    │  cargo test --manifest-path
 │   tests/)             │    tools/oz2c/Cargo.toml
 └───────────────────────┘
@@ -26,8 +26,8 @@
 
 | Command | What it runs |
 |---------|-------------|
-| `cargo test --manifest-path tools/oz2c/Cargo.toml` | The transpiler's own suite, 288 tests. The primary gate; it has no `just` recipe |
-| `just test-behavior` | 71-case behavior corpus through `oz2c` (host). Takes `--compiler`, `--opt`, `--sanitize`, `--check-leaks` |
+| `cargo test --manifest-path tools/oz2c/Cargo.toml` | The transpiler's own suite, 952 tests. The primary gate; it has no `just` recipe |
+| `just test-behavior` | 81-case behavior corpus through `oz2c` (host). Takes `--compiler`, `--opt`, `--sanitize`, `--check-leaks` |
 | `just test-adapted` | 37 adapted upstream tests |
 | `just test-pal` | PAL function tests (pure C, no transpiler) |
 | `just test-regression` | Regression tests only |
