@@ -122,7 +122,7 @@ Versions CI pins, and so the ones to match locally: **Zephyr v4.4.2**
 | `just clean-all`           | Everything regenerable this checkout owns; run it before leaving a worktree |
 | `just disk-report`         | What this checkout and its worktrees are holding. Read-only |
 | `just test` / `just t`    | Run twister on all samples (ARM)   |
-| `just test-riscv`          | Same samples on RISC-V (two fewer configurations than ARM: `gpio_demo` and the `CONFIG_DEBUG` scenario are ARM-only). 14 against 16 as of #539; a new sample moves both, so `--dry-run` rather than trust this |
+| `just test-riscv`          | Same samples on RISC-V (two fewer configurations than ARM: `gpio_demo` and the `CONFIG_DEBUG` scenario are ARM-only). 15 against 17, measured 2026-09-21 (#609); a new sample moves both, so `--dry-run` rather than trust this line — and the dry-run's count *is* the executed count, which #609 established after a test comment claimed otherwise |
 | `just test-smp`            | Two cores, `qemu_cortex_a53/smp` — the only board that exercises real lock contention |
 | `just test-boards`         | ARM + RISC-V, so neither hides an architecture-specific regression |
 | `just test-all-boards`     | All three, including SMP |

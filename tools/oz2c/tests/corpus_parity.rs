@@ -444,13 +444,24 @@ fn corpus_generated_c_compiles() {
 /// without running them, and a hand-written total would be one more number to
 /// drift. It is flagged in #601 as the one that will go stale again.
 ///
-/// Likewise the *sample* counts in `docs/STATUS.md`'s "Where it stands" are
-/// out of reach. They are what twister actually ran, and a `--dry-run` cannot
-/// substitute: every suite in a dry-run plan carries
-/// `status: None, reason: "Unknown Instance status"`, so the plan has not
-/// evaluated filtering and reports planned suites (17 on ARM) rather than
-/// executed ones (16). Correcting those from a dry-run writes a plausible
-/// wrong number.
+/// The *sample* counts in `docs/STATUS.md`'s "Where it stands" are also
+/// ungated here, but for a duller reason: they come from twister, not from a
+/// glob, so this test has nothing to compare them against.
+///
+/// **They are not hard to measure, and this comment used to say they were
+/// (#609).** It claimed a `--dry-run` reports *planned* rather than *executed*
+/// configurations and would write "a plausible wrong number". Measured
+/// afterwards on #605: the dry-run said 17 on ARM and 15 on RISC-V, and
+/// `just test-boards` executed exactly 17 and 15. The RISC-V log even prints
+/// `22 configurations selected, 7 configurations filtered (7 by static
+/// filter)`, so the plan had evaluated filtering all along. The stale numbers
+/// were the *document*'s, not the tool's.
+///
+/// Recorded because of how the mistake was made rather than what it said: a
+/// tool disagreed with a written number, and the tool got the suspicion. The
+/// document is the side with no gate on it, so "the document is stale" is the
+/// first hypothesis. An inferred mechanism written into a doc comment acquires
+/// the authority of the test beside it.
 #[test]
 fn documented_corpus_counts_match_the_filesystem() {
     let root = repo_root();

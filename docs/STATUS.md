@@ -55,8 +55,8 @@ hidden a defect.
 | Behaviour corpus | **81/81** transpile, compile and run — gcc/clang × `-O0`/`-O2`, plus ASan, UBSan and LeakSanitizer |
 | Corpus ISO C validity | Gate at **0** under `-std=c17 -pedantic-errors` |
 | Adapted upstream tests | **37/37** (LLVM, GNUstep, Apple, ObjFW, mulle-objc) |
-| Samples on ARM (`mps2/an385`) | **14/14** built and run under twister |
-| Samples on RISC-V (`qemu_riscv32`) | **13/13** — `gpio_demo` needs device-tree aliases the board lacks |
+| Samples on ARM (`mps2/an385`) | **17/17** built and run under twister |
+| Samples on RISC-V (`qemu_riscv32`) | **15/15** — `gpio_demo` needs device-tree aliases the board lacks |
 | Samples on two cores (`qemu_cortex_a53/smp`) | **10/10**, the only place `@synchronized` faces real contention |
 | Samples on real silicon (nRF52833DK) | **13/13** flashed and run; `smp_shared` cannot, needing two cores. `reflection_demo` builds for it and has not been run there — no board was attached when it landed |
 | Kernel lock validation | `CONFIG_SPIN_VALIDATE` silent on ARM (14/14) and SMP (10/10) |
