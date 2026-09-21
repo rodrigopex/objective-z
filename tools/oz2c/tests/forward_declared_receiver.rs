@@ -159,6 +159,76 @@ fn an_instance_send_through_a_forward_declared_type_names_the_cause() {
 /// `is_forward_declared_only(name)` -- and a forward declaration ahead of
 /// the interface is ordinary, idiomatic ObjC, so breaking it would refuse
 /// working programs.
+/// A third spelling reaches the same arm, and #557's remedy did not follow
+/// it there (#606).
+///
+/// `@compatibility_alias Alias Real;` gives a class a second name. oz2c
+/// lowers the directive to a comment -- "not needed, oz2c resolves classes
+/// by their own name only" -- which is true and is the whole problem: the
+/// alias never enters the class graph, so a send through it degrades to
+/// `id` exactly as a `@class` name did before #557.
+///
+/// The difference is the message. The two tests above assert that a
+/// forward-declared receiver now *names* its cause; an alias still gets the
+/// generic fallback:
+///
+///     cannot statically resolve the receiver type for selector 'alloc'
+///     (receiver type is 'id')
+///
+/// so an author who wrote `@compatibility_alias` is told about `id`. That
+/// is a diagnostic-quality gap, not a lowering one, and it is recorded
+/// rather than fixed here.
+///
+/// **What this test pins is the refusal**, which is the property
+/// `docs/OBJECTIVE_C_DIALECT.md`'s `class.alias` row depends on: the
+/// construct is accepted and then unusable, and it fails *loudly* at the
+/// point of use rather than emitting something that misbehaves. The exact
+/// wording is deliberately not asserted, so improving it does not fail
+/// this test.
+#[test]
+fn a_send_through_a_compatibility_alias_is_refused() {
+    let src = program(
+        "\
+@interface Real : OZObject
+- (int)v;
+@end
+
+@implementation Real
+- (int)v { return 7; }
+@end
+
+@compatibility_alias Alias Real;
+
+@interface Probe : OZObject
+- (int)run;
+@end
+
+@implementation Probe
+- (int)run
+{
+	Alias *a = [Alias alloc];
+
+	return [a v];
+}
+@end
+",
+    );
+    let err = expect_reject(&src);
+
+    /* The receiver is what fails, and it fails at the send rather than at
+     * the directive -- the declaration itself is accepted. */
+    assert!(
+        err.contains("receiver"),
+        "a send through an alias must be refused for its receiver; got:\n{}",
+        err
+    );
+    assert!(
+        err.contains("alloc"),
+        "the refusal must name the selector it could not resolve; got:\n{}",
+        err
+    );
+}
+
 #[test]
 fn a_forward_declaration_followed_by_the_interface_is_an_ordinary_class() {
     let src = program(

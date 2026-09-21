@@ -59,6 +59,69 @@ fn an_optional_member_may_be_omitted() {
     oz2c::transpile(&src).expect("an '@optional' member may be absent from a conformer");
 }
 
+/// The class side of `@optional`, which nothing exercised until #606.
+///
+/// `emit`'s conformance walk does `if required.is_optional { continue; }`
+/// *before* it consults `required.is_class_method`, so the class side was
+/// always going to behave -- but "always going to" is not a verdict, and
+/// `docs/OBJECTIVE_C_DIALECT.md` carried `protocol.optional.class` as
+/// `UNEXAMINED` for exactly that reason. Every other `@optional` test in
+/// this file uses instance methods.
+///
+/// Both directions, because one passing says nothing about the other: a
+/// conformer that omits the optional class method must be accepted, and
+/// one that supplies it must get its `_cls` entry point.
+#[test]
+fn an_optional_class_method_may_be_omitted_or_supplied() {
+    let src = format!(
+        "{}{}",
+        PREAMBLE(),
+        "\
+@protocol Spawnable
+- (int)tag;
+@optional
++ (int)spawn;
+@end
+
+@interface Absent : OZObject <Spawnable>
+- (int)tag;
+@end
+@implementation Absent
+- (int)tag { return 1; }
+@end
+
+@interface Present : OZObject <Spawnable>
+- (int)tag;
++ (int)spawn;
+@end
+@implementation Present
+- (int)tag { return 2; }
++ (int)spawn { return 42; }
+@end
+"
+    );
+    let out = oz2c::transpile(&src)
+        .expect("an '@optional' class method may be absent from a conformer");
+
+    /* The conformer that supplies it gets the class-side entry point. A
+     * class method takes no receiver, so the shape is `(void)`. */
+    assert!(
+        out.source_c.contains("int Present_spawn_cls(void)"),
+        "the conformer that implements the optional class method must get its \
+         class-side entry point; got:\n{}",
+        out.source_c
+    );
+
+    /* And the one that omits it contributes nothing under that name --
+     * paired with the presence check above, because a test that only
+     * looked for an absence would pass against an empty header. */
+    assert!(
+        !out.source_c.contains("Absent_spawn"),
+        "the conformer that omits it must not acquire an accessor; got:\n{}",
+        out.source_c
+    );
+}
+
 /// The half that must not move. A **required** member is still required,
 /// because the generated dispatch has no entry to fall back to.
 #[test]
