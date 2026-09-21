@@ -16,7 +16,7 @@
 │  PAL Tests            │  4 test files — platform abstraction layer
 │  (tests/pal/)         │  just test-pal
 ├───────────────────────┤
-│  Transpiler Unit      │  953 tests — Rust tests for oz2c
+│  Transpiler Unit      │  Rust tests for oz2c — the primary gate
 │  (tools/oz2c/    │  cargo test --manifest-path
 │   tests/)             │    tools/oz2c/Cargo.toml
 └───────────────────────┘
@@ -26,7 +26,7 @@
 
 | Command | What it runs |
 |---------|-------------|
-| `cargo test --manifest-path tools/oz2c/Cargo.toml` | The transpiler's own suite, 953 tests. The primary gate; it has no `just` recipe |
+| `cargo test --manifest-path tools/oz2c/Cargo.toml` | The transpiler's own suite. The primary gate; it has no `just` recipe. Its size is not recorded here — see below |
 | `just test-behavior` | 81-case behavior corpus through `oz2c` (host). Takes `--compiler`, `--opt`, `--sanitize`, `--check-leaks` |
 | `just test-adapted` | 37 adapted upstream tests |
 | `just test-pal` | PAL function tests (pure C, no transpiler) |
@@ -36,6 +36,28 @@
 | `just test-zephyr` | Zephyr integration over the committed C in `tests/zephyr/generated/` |
 | `just test-hardware` | Every single-core sample flashed and run on an nRF52833DK |
 | `just smoke` | Transpile-and-compile smoke test |
+
+## Why the Rust suite's size is not written down
+
+Every other number here is derived from a glob and is gated
+(`corpus_parity.rs`): 81 behaviour cases, 37 adapted, 24 ztest cases in 7
+suites. Those earn their place, because a documented count is what lets a
+reader tell a **narrowed** sweep from a complete one — a wrong glob does not
+fail, it returns a smaller set, every case in it passes, and the run reports a
+clean number for a corpus it never opened (#400).
+
+The Rust suite's total earns nothing by the same test. Nobody sweeps it with a
+glob, no gate reads the figure, and it moves on nearly every PR that adds a
+test — so recording it means a three-site edit per PR and a conflict point with
+every sibling branch, for a number that is stale within hours.
+
+That is the pathology #499 removed from `tools/oz2c/Cargo.toml`'s version, for
+the same reasons in the same words: *write-only, colliding with every sibling
+branch, verifying nothing.* #601 wrote **953** and #603 measured **954** an
+hour later, having added one test — the second of two moves in one afternoon.
+
+Run `cargo test --manifest-path tools/oz2c/Cargo.toml` when the number is
+wanted. It is authoritative and takes a couple of minutes.
 
 ## Adding a New Test
 

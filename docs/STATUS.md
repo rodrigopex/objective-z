@@ -51,7 +51,7 @@ hidden a defect.
 
 | Subject | Status |
 | --- | --- |
-| Rust suite (`cargo test`) | **953 tests**, `RUSTFLAGS=-D warnings` clean. The primary gate |
+| Rust suite (`cargo test`) | `RUSTFLAGS=-D warnings` clean. The primary gate. Its test *count* is deliberately not recorded — see "A count nobody can hold still" |
 | Behaviour corpus | **81/81** transpile, compile and run — gcc/clang × `-O0`/`-O2`, plus ASan, UBSan and LeakSanitizer |
 | Corpus ISO C validity | Gate at **0** under `-std=c17 -pedantic-errors` |
 | Adapted upstream tests | **37/37** (LLVM, GNUstep, Apple, ObjFW, mulle-objc) |
@@ -826,6 +826,38 @@ forbids. It needs a coverage assertion first: require `knows_class` for every
 class parsed with ivars, and hard-error naming the class and the `.m` to add.
 
 ## How measurements mislead
+
+### A count nobody can hold still (#601, #603)
+
+`tests/README.md` and this file recorded the Rust suite's test total. #601
+reconciled it to **953**, measured. #603 measured **954** an hour later, having
+added one test -- and #601 itself had moved it from 288 and 362, the two stale
+figures it found. Three values in one afternoon.
+
+**So the number is gone rather than maintained**, and the distinction worth
+keeping is *why the corpus counts stay*. A documented count earns its place
+when it makes a **narrowed** sweep detectable: a wrong glob does not fail, it
+returns a smaller set, every case in it passes, and the run reports a clean
+number for a corpus it never opened (#400). 81 behaviour cases and 37 adapted
+are exactly that, are derived from a glob, and are gated in
+`corpus_parity.rs` -- both against the filesystem and, since #601, against the
+prose in three documents.
+
+The Rust total earns nothing by that test. Nobody sweeps the suite with a glob,
+no gate reads the figure, and it moves on nearly every PR that adds a test. So
+recording it buys a three-site edit per PR and a conflict point with every
+sibling branch, in exchange for a number stale within hours.
+
+**This is #499's argument, arriving at the same answer by the same route.**
+That issue removed the version number from a PR's responsibility after
+measuring the cost -- 12 of 50 commits on `main` in one day touching
+`Cargo.toml`, one per PR, forcing N-1 rebases per merge -- and after
+establishing the number was *write-only*: `CARGO_PKG_VERSION` appears nowhere
+in the crate, no gate asserts it. A test count in a README is the same shape of
+claim: precise, unread, and expensive to keep true. The generalisable rule is
+**a number in prose must either be gated or be worth someone re-measuring by
+hand; a number that is neither is a liability, and precision is what disguises
+it.**
 
 ### A cross-repo grade carries no date, and two of the six were stale (#583)
 
