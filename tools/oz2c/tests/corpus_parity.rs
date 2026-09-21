@@ -119,7 +119,7 @@ fn cases_under(dir: &Path) -> Vec<PathBuf> {
     out
 }
 
-/// Both corpora: the 81 behaviour cases and the 40 adapted ones.
+/// Both corpora: the 81 behaviour cases and the 37 adapted ones.
 ///
 /// The adapted corpus had no ISO C gate at all until #455 -- this function
 /// read only `tests/behavior/cases`, so forty cases compiled in CI as
@@ -147,8 +147,8 @@ fn corpus_cases() -> Vec<PathBuf> {
     let adapted = cases_under(&root.join("tests/adapted"));
     assert_eq!(
         adapted.len(),
-        40,
-        "expected 40 adapted cases under tests/adapted, found {} -- note there \
+        37,
+        "expected 37 adapted cases under tests/adapted, found {} -- note there \
          is no `cases/` level here, unlike tests/behavior",
         adapted.len()
     );

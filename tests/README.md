@@ -10,7 +10,7 @@
 │  Behavior Tests       │  72 tests — transpiled C compiled & run
 │  (tests/behavior/)    │  just test-behavior
 ├───────────────────────┤
-│  Adapted Upstream     │  40 tests — LLVM/GNUstep/Apple/ObjFW/mulle/Bucket B
+│  Adapted Upstream     │  37 tests — LLVM/GNUstep/Apple/ObjFW/mulle/Bucket B
 │  (tests/adapted/)     │  just test-adapted
 ├───────────────────────┤
 │  PAL Tests            │  4 test files — platform abstraction layer
@@ -28,7 +28,7 @@
 |---------|-------------|
 | `cargo test --manifest-path tools/oz2c/Cargo.toml` | The transpiler's own suite, 288 tests. The primary gate; it has no `just` recipe |
 | `just test-behavior` | 71-case behavior corpus through `oz2c` (host). Takes `--compiler`, `--opt`, `--sanitize`, `--check-leaks` |
-| `just test-adapted` | 40 adapted upstream tests |
+| `just test-adapted` | 37 adapted upstream tests |
 | `just test-pal` | PAL function tests (pure C, no transpiler) |
 | `just test-regression` | Regression tests only |
 | `just test-all` | The host suites above + smoke |
@@ -70,7 +70,7 @@ oz2c's. That backend is readable at the `python-backend-final` tag.
 |--------|---------|-------|
 | LLVM Clang Rewriter | Apache 2.0 + LLVM | 10 |
 | GNUstep libobjc2 | MIT | 8 |
-| Apple objc4 | APSL (spec only) | 5 |
+| Apple objc4 | APSL (spec only) | 2 |
 | Bucket B reference | Internal | 9 |
 | ObjFW | LGPL-3.0 (spec only) | 5 |
 | mulle-objc | BSD-3-Clause | 3 |

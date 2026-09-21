@@ -433,7 +433,7 @@ ast-dump file *includes:
 test-behavior *args: oz2c
     python3 -m pytest tests/behavior/ -v {{args}}
 
-# 40 tests adapted from LLVM, GNUstep, Apple, ObjFW and mulle-objc.
+# 37 tests adapted from LLVM, GNUstep, Apple, ObjFW and mulle-objc.
 test-adapted *args: oz2c
     python3 -m pytest tests/adapted/ -v {{args}}
 
