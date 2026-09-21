@@ -210,8 +210,12 @@ from an AST, which is why unexpanded macros survive into the output.
   consumes one, by observed output — counting cannot see *which* pointer a release names,
   which is what #398 got wrong). Everything not in those two files is believed correct,
   so a new sink, selector or construct needs a row.
-  Those two records answer *where* a release goes. **[docs/ARC.md](docs/ARC.md) answers
-  which of ARC's rules apply at all** — one verdict per normative rule of the Clang ARC
+  Those two records answer *where* a release goes.
+  **[docs/OBJECTIVE_C_DIALECT.md](docs/OBJECTIVE_C_DIALECT.md) answers what an author
+  may write** -- one row per author-visible construct, one verdict each, gated by
+  `tools/oz2c/tests/dialect_ledger.rs`, whose exhaustiveness check is keyed to
+  `objc_node_disposition.rs` so a grammar bump cannot add an undocumented construct
+  (#583). **[docs/ARC.md](docs/ARC.md) answers which of ARC's rules apply at all** — one verdict per normative rule of the Clang ARC
   specification (implemented / delegated to `-fobjc-arc` / refused / N/A / gap), with
   `tools/oz2c/tests/arc_conformance.rs` pinning the delegated and refused ones. A new
   *rule* needs a row there; a new *site* needs one in the other two. Walking the spec that
