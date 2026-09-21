@@ -3103,6 +3103,59 @@ catches it" would have credited a backstop that never sees the file.
 
 ## Standing design rules
 
+- **Two declarations may never reach one emitted C name, and an escape rather
+  than a check is what guarantees it (#605).** `selector_to_c` mapped `:` to
+  `_`, and `_` is a legal selector character, so `-a::` and `-a__` both emitted
+  `Clash_a__` -- two conflicting declarations *and* definitions, oz2c exiting
+  0, GCC answering `conflicting types` in a generated file. Seven families did
+  this; six needed no colon at all.
+
+  **No colon-expansion is ever injective.** For any *n*, `:` -> `_`ⁿ collides
+  on two selectors identical except that one has `:` where the other has `_`ⁿ.
+  `__` merely moves the collision from `a::`/`a__` to `a:`/`a__` -- measured,
+  56 collisions in 448 declarations. The fix is to mark the literal underscore:
+  `_` -> `_5F_`, `_`'s code point, as JNI, Swift and Rust v0 do.
+
+  **The marker has to be digit-led, and that is not taste.** No selector piece
+  or class name may begin with a digit (`collect::selector_literal_name`), so
+  `_5F` can only be an escape. A *letter* cannot serve: `_u_`, the obvious
+  mnemonic for "underscore", is indistinguishable from "colon, piece `u`,
+  colon" and collides 234 times in 2,574. Every candidate was brute-forced
+  against an alphabet containing *its own marker characters* -- a probe without
+  them reports a clean zero, which this measurement did once before being
+  corrected.
+
+  **An encoding cannot close a bare slot, so one prefix is reserved.** Five
+  families are composed names -- `method_fn_name` joins a class to a selector,
+  and the escape marks a literal `_` on either side. The other two are the
+  **struct tag**, which is the bare class name: a class named `oz_slab_Foo`
+  emits `struct oz_slab_Foo`, exactly class `Foo`'s slab, and no escape over
+  composed names can separate them. Escaping the tag was measured at **86**
+  class-tag interpolations in `companion.rs` and **82** in `emit.rs` -- ~170
+  edits that must move together or the emitted C stops compiling. Reserving
+  `oz_`/`OZ_` on class names is one check and costs nothing: of 203 class names
+  in this workspace, none uses it, and the separator is part of the reserved
+  spelling so `OZObject` and friends are untouched. `_oz`/`_OZ` could not have
+  been the marked namespace -- a leading `_` before an uppercase letter is
+  reserved to the implementation in C, which is why #417 removed
+  `_OZ_Q31_HELPERS`.
+
+  **Nothing in the tree moved.** 0 of 118 corpus cases produced different C,
+  and no selector or class name in any *compiled* source contains `_` -- the
+  one that does, `__configureInterrupt:`, is in `src/runtime_legacy/`, which is
+  not compiled. The escape is latent until an author writes an underscored
+  selector, which is the whole reason it was chosen over the length-prefixed
+  respell that would have renamed 391 symbols across 118 driver files.
+
+  The round trip is the proof, not the argument:
+  `emitted_name_collisions.rs::the_escape_round_trips_for_every_shape_underscores_and_colons_can_take`
+  decodes every encoded name back to its `(class, selector, side)` triple. A
+  decodable encoding is injective, and unlike a collision *check* there is no
+  enumerator to drift -- which matters, because
+  `staticbar::emitted_class_identifiers` had already drifted twice (a stale
+  `oz_init` nothing emits, and a missing `OZ_CLASS_` its own drift guard never
+  swept for).
+
 - **The heap has one name per layer, and the layers are the point (#417).** The
   issue this closes counted "seven names for one concept" and called
   `oz_heap_obj_alloc` calling `oz_heap_alloc_obj` the worst pair in the tree.

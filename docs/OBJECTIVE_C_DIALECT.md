@@ -71,6 +71,7 @@ compiler will catch it" is not a verdict.
 |---|---|---|---|---|
 | `class.interface` | `@interface C : Super` | `IMPLEMENTED` | Becomes `struct C` with the superclass's struct as its first member, plus a dispatch row and a slab. Single inheritance only. | `collect.rs`; every corpus case |
 | `class.root` | a class with no superclass | `IMPLEMENTED` | `--root-class` names it; `OZObject` by default. | `--root-class`; `object_protocol.rs` |
+| `class.generated-prefix` | a class named `oz_…` or `OZ_…` | `REFUSED` | The generated C uses that prefix for the slab, the allocators and the class-id macro, and the struct tag is the *bare* class name — so a class spelling one of those is the one collision an escape over composed names cannot reach. The separator is part of the reserved spelling, so `OZObject`, `OZString` and the other `OZ`-prefixed SDK classes are unaffected. | `staticbar::check_generated_namespace`; `emitted_name_collisions.rs::families_6_and_7_the_generated_namespace_is_reserved_on_class_names`; #605 |
 | `class.forward` | `@class C;` | `IMPLEMENTED` | Lowered to a comment. The real declaration must be reachable by `#import`. | `objc_node_disposition.rs` (`class_declaration`) |
 | `class.extension` | `@interface C ()` | `IMPLEMENTED` | Members merge into the class. | `generics.rs`; `objc_node_disposition.rs` |
 | `category.methods` | `@interface C (Cat)` adding methods | `IMPLEMENTED` | Merged into one dispatch table at build time; a category method is indistinguishable from a primary one in the output. | `adapted/bucket_b/dispatch_category_merge.m` |
@@ -103,7 +104,7 @@ the constraint authors hit first and it is not obvious from any single file.
 | `return.instancetype` | `instancetype` | `IMPLEMENTED` | Covaries with the enclosing class, including through `super`. | `regression_instancetype_covariance.rs::super_init_covaries_with_enclosing_class` |
 | `method.variadic` | `- (void)log:(char *)f, ...;` | `REFUSED` | A dispatch shim declares one concrete signature per selector, so an ellipsis has nowhere to go. A variadic plain **C** function is unaffected -- `OZLog` is one. | `staticbar::check_variadic_parameter`; #538 |
 | `method.duplicate-param` | two parameters with one name | `REFUSED` | Was reaching GCC. | `method_declaration_refusals.rs`; `staticbar::check_duplicate_parameter_names` |
-| `selector.empty-piece` | `- (void)a:(int)x :(int)y;` | `GAP` | The selector is built as `a::` and lowered correctly **on its own**. It collides with a selector literally named `a__`: `selector_to_c` is `replace(':', "_")` and is not injective, nothing checks that one class's selectors mangle apart, and oz2c emits two conflicting declarations *and* definitions then exits 0. GCC refuses the generated C. `put:to:` against `put_to_` is the same defect without the exotic syntax. | #605; `emit.rs:1264` |
+| `selector.empty-piece` | `- (void)a:(int)x :(int)y;` | `IMPLEMENTED` | The selector is `a::` and lowers to `X_a__`, as it always did. **Supported, and discouraged** — an unnamed argument names neither what it is nor what it does; prefer `-moveTo:from:`. It no longer collides with a selector literally named `a__`, which escapes to `a_5F__5F_` (#605). | `emitted_name_collisions.rs::family_1_an_empty_piece_and_an_underscore_name_differ`; #605 |
 
 ## 3 — Properties and ivars
 
