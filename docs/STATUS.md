@@ -51,8 +51,8 @@ hidden a defect.
 
 | Subject | Status |
 | --- | --- |
-| Rust suite (`cargo test`) | **362 tests**, `RUSTFLAGS=-D warnings` clean. The primary gate |
-| Behaviour corpus | **74/74** transpile, compile and run — gcc/clang × `-O0`/`-O2`, plus ASan, UBSan and LeakSanitizer |
+| Rust suite (`cargo test`) | **952 tests**, `RUSTFLAGS=-D warnings` clean. The primary gate |
+| Behaviour corpus | **81/81** transpile, compile and run — gcc/clang × `-O0`/`-O2`, plus ASan, UBSan and LeakSanitizer |
 | Corpus ISO C validity | Gate at **0** under `-std=c17 -pedantic-errors` |
 | Adapted upstream tests | **37/37** (LLVM, GNUstep, Apple, ObjFW, mulle-objc) |
 | Samples on ARM (`mps2/an385`) | **14/14** built and run under twister |
@@ -62,7 +62,7 @@ hidden a defect.
 | Kernel lock validation | `CONFIG_SPIN_VALIDATE` silent on ARM (14/14) and SMP (10/10) |
 | Generated C warnings | `-Wall -Wextra` clean across all samples |
 | Pedantic sweep on target | Gate at **10 sites**, every one inside Zephyr's own macros |
-| Zephyr integration (ztest) | **18 cases in 5 suites** over committed oz2c output |
+| Zephyr integration (ztest) | **24 cases in 7 suites** over committed oz2c output |
 
 ## What is not verified
 
