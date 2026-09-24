@@ -827,6 +827,74 @@ class parsed with ivars, and hard-error naming the class and the `.m` to add.
 
 ## How measurements mislead
 
+### Three explanations for one guard, and the two that measured next to the question (#611, #612)
+
+`CONFIG_OBJZ` depended on `CPU_CORTEX_M || CPU_CORTEX_A || (RISCV &&
+!RISCV_ISA_RV32E)`, mirroring the per-CPU triple table in
+`cmake/ObjcClang.cmake`. Asked what actually prevented other architectures,
+three answers came out in order, each better evidenced than the last, and
+the first two wrong.
+
+  - *"Nothing -- the allowlist is vestigial."* From the absence of
+    architecture-specific **code**: the only arch-specific source,
+    `src/runtime_legacy/arch/riscv/objc_msgSend.S`, is reached by no
+    `CMakeLists.txt`, cmake module or justfile recipe; the PAL routes on
+    `OZ_PLATFORM_ZEPHYR`/`OZ_PLATFORM_HOST` rather than an arch; the
+    behaviour corpus already runs the generated C on x86-64 and arm64. All
+    true. The restriction was never in the code.
+  - *"The toolchain is the constraint."* The Zephyr SDK's clang-19 registers
+    only ARM and RISC-V targets, and `--target=i386-none-elf -c` fails on it
+    for want of an X86 backend. Also true, also not the reason -- oz2c never
+    asks clang to generate code. The dump is `-fsyntax-only`, and
+    `--target=i386-none-elf -fsyntax-only -Xclang -ast-dump=json` succeeds on
+    that same clang. Which means the `-c` probe in `objz_find_clang()` is
+    **over-strict**: it rejects clangs that would serve, and it is the reason
+    the README still tells macOS users that RISC-V needs Homebrew LLVM. Left
+    in place for now, recorded here as a known wrong guard.
+  - The real one: **inline asm.** Zephyr's arch headers carry it, and Clang
+    validates register names and operand constraints against the triple:
+
+        armv7m over x86 headers ..... zephyr/arch/x86/arch.h:65
+            error: invalid input constraint 'a' in asm        (16 total)
+        armv7m over RISC-V headers .. zephyr/arch/riscv/syscall.h:44
+            error: unknown register name 'a0' in asm          (15 total)
+
+    oz2c refuses a dump whose clang run errored, so the build stops. The
+    table is load-bearing, and its justification had never been written down.
+
+**The measurement that made the fixed triple look safe was the instructive
+failure.** A single fixed triple for every board was implemented, tested and
+reverted. The evidence for it was real: varying only `--target`, the facts
+`oz2c --dump-ast-facts` extracts came back byte-identical for all 13 `.m`
+files of `samples/hello_category`, and for four candidate triples across
+Cortex-M, RISC-V 32 and Cortex-A53 header sets. 13 of 13, 75 fact lines
+everywhere, both pointer widths.
+
+Every one of those numbers is true and none of them bears on the question.
+The facts only matter once the dump is **accepted**, and a mismatched triple
+means there is no dump to read -- so the comparison was between the contents
+of dumps the real pipeline throws away. Comparing outputs is not the same as
+checking that the step succeeds, and a sweep over 13 files with a clean
+result is exactly the shape that stops anyone asking. The check that would
+have caught it in one command was building a sample, which is what finally
+did.
+
+**A second-order lesson from the same attempt:** the intuitive choice for a
+fixed triple was `aarch64-none-elf`, on "use the best-supported
+architecture". It was the worst candidate -- 29 diagnostics against RISC-V
+headers where `armv7m-none-eabi` had 15 -- and 29 is past Clang's default
+`-ferror-limit` of 20, where the dump is silently truncated (#267). Had the
+approach been viable, the natural pick would have reintroduced the bug the
+triple table was created to fix.
+
+**What shipped instead:** x86 added to both lists, `qemu_x86` added to
+`samples/hello_category`'s `platform_allow` (without which twister filters
+it and reports a clean run for a configuration it never built), and
+`tests/arch_support_is_declared_once.rs` gating the two lists against drift
+in both directions. Per-architecture, with a gate each time, rather than by
+deleting the constraint.
+
+
 ### A count nobody can hold still (#601, #603)
 
 `tests/README.md` and this file recorded the Rust suite's test total. #601
