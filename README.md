@@ -471,6 +471,18 @@ Supported architectures:
 - ARM Cortex-M
 - ARM Cortex-A
 - RISC-V 32/64-bit (requires LLVM Clang, not Apple Clang)
+- x86 32/64-bit (#612) — needs no particular clang, unlike RISC-V above
+
+The list is not a property of the generated C, which Zephyr's own toolchain
+compiles. It mirrors the triples in `_objz_get_clang_target_triple()`
+(`cmake/ObjcClang.cmake`), because the Clang AST dump oz2c reads as an
+ownership oracle has to be parsed *for the target*: the arch headers carry
+inline asm whose register names and operand constraints Clang validates
+against the triple, and a mismatch fails the dump rather than degrading it.
+Adding an architecture means adding to both lists —
+`tests/arch_support_is_declared_once.rs` fails if only one is touched — and
+then a configuration that builds and runs it. `mps2/an385`, `qemu_riscv32`
+and `qemu_x86` each run `samples/hello_category` on every PR.
 
 ## Build Commands
 
