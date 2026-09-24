@@ -134,6 +134,36 @@ function(objz_find_clang)
 endfunction()
 
 # ─── Map Zephyr CPU config to LLVM target triple ────────────────────
+#
+# This has to follow the target, and the reason is inline asm. Zephyr's arch
+# headers carry it, and Clang validates register names and operand
+# constraints against the triple, so a mismatched one fails outright:
+#
+#   armv7m triple over x86 headers ... zephyr/arch/x86/arch.h:65
+#       error: invalid input constraint 'a' in asm          (16 in total)
+#   armv7m triple over RISC-V headers  zephyr/arch/riscv/syscall.h:44
+#       error: unknown register name 'a0' in asm            (15 in total)
+#
+# oz2c then refuses the dump -- `oz2c: Clang reported an error while dumping
+# this AST` -- because only two ARC-specific messages are tolerated. So the
+# build stops, and the per-CPU branch below is load-bearing.
+#
+# Worth stating because it is not the obvious reason and two plausible ones
+# are wrong. The *facts* oz2c reads out of a dump are genuinely
+# triple-independent: varying only `--target`, all 13 `.m` files of
+# samples/hello_category gave byte-identical `--dump-ast-facts` output. That
+# measurement invites collapsing this to one fixed triple, and it is beside
+# the point -- facts only matter once the dump is accepted, and a mismatched
+# triple means there is no dump to read. Nor is the constraint LLVM backend
+# availability: the dump is `-fsyntax-only`, which needs no codegen target,
+# and `--target=i386-none-elf -fsyntax-only -Xclang -ast-dump=json` succeeds
+# on the Zephyr SDK's clang-19 even though `-c` with that triple fails for
+# want of an X86 backend (#612).
+#
+# Adding an architecture is therefore this table plus the `depends on` in
+# Kconfig, kept in step by `tests/arch_support_is_declared_once.rs`, and then
+# a gate that builds and runs it. The `FATAL_ERROR` below names this function
+# for exactly that reason.
 function(_objz_get_clang_target_triple result)
     if(CONFIG_CPU_CORTEX_M0 OR CONFIG_CPU_CORTEX_M0PLUS OR CONFIG_CPU_CORTEX_M1)
         set(_triple "armv6m-none-eabi")
@@ -161,6 +191,12 @@ function(_objz_get_clang_target_triple result)
             set(_triple "riscv64-unknown-elf")
         else()
             set(_triple "riscv32-unknown-elf")
+        endif()
+    elseif(CONFIG_X86)
+        if(CONFIG_64BIT)
+            set(_triple "x86_64-none-elf")
+        else()
+            set(_triple "i386-none-elf")
         endif()
     else()
         message(FATAL_ERROR

@@ -13,6 +13,10 @@ tests:
       - mps2/an385
       - qemu_riscv32
       - nrf52833dk/nrf52833
+      # x86, so the third architecture objective-z declares support for has
+      # a configuration that builds and runs it rather than only a triple
+      # in a table (#612).
+      - qemu_x86
 
   # The same sample with CONFIG_OBJZ_DEBUG_LINES on, which since #395 is
   # what CONFIG_DEBUG=y gets you and the only way to get it. No sample

@@ -1,11 +1,24 @@
 menuconfig OBJZ
 	bool "Objective-Z transpiler support"
-	depends on CPU_CORTEX_M || CPU_CORTEX_A || (RISCV && !RISCV_ISA_RV32E)
+	depends on CPU_CORTEX_M || CPU_CORTEX_A || (RISCV && !RISCV_ISA_RV32E) || X86
 	select STATIC_INIT_GNU
 	help
 	  Enable Objective-Z transpiled C support with the Platform
 	  Abstraction Layer (PAL). The transpiler converts Objective-C
 	  (.m) sources to plain C at build time via Clang AST analysis.
+
+	  The architecture list here is not a statement about the
+	  generated C, which Zephyr's own toolchain compiles. It mirrors
+	  the triples in _objz_get_clang_target_triple()
+	  (cmake/ObjcClang.cmake), because the Clang AST dump oz2c reads
+	  as an ownership oracle has to be parsed for the target: the arch
+	  headers carry inline asm whose register names and constraints
+	  Clang checks against the triple, and a mismatch fails the dump
+	  outright rather than degrading it.
+
+	  Adding an architecture means adding both, plus a gate that
+	  builds and runs it. tests/arch_support_is_declared_once.rs
+	  keeps the two lists in step (#612).
 
 	  Collections need one option this deliberately does not turn on:
 	  CONFIG_SYS_MEM_BLOCKS=y. OZArray, OZDictionary and the @[...]
